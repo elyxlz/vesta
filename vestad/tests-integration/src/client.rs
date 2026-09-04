@@ -629,6 +629,12 @@ impl Client {
         Ok((status, body))
     }
 
+    /// The gateway api key this client authenticates with, for a test that carries it in a
+    /// URL of its own.
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     /// The status of a proxied GET, for the authorization table where the body is noise.
     pub fn proxy_status(&self, path: &str, auth: ProxyAuth) -> Result<u16, String> {
         Ok(self.proxy_get(path, auth)?.0)

@@ -177,8 +177,8 @@ fn token_fingerprint(token: &str) -> String {
 }
 
 /// The two carriers a client credential rides in (`presented_tokens` reads them, the agent
-/// proxy removes the values that are vestad's own before forwarding): the `Authorization`
-/// header and the `?token=` pair.
+/// proxy removes the values that are the gateway's own before forwarding): the
+/// `Authorization` header and the `?token=` pair.
 pub(crate) const CLIENT_CREDENTIAL_HEADER: &str = "authorization";
 pub(crate) const CLIENT_CREDENTIAL_QUERY_PREFIX: &str = "token=";
 
@@ -204,41 +204,19 @@ pub(crate) fn presented_tokens<'req>(
     presented_bearer(headers).into_iter().chain(query)
 }
 
-/// Whether `token` is a credential vestad itself issued: the api key, an access token minted
-/// from it, or a live service key for this agent and service. The proxy removes exactly these
-/// before forwarding, so a gateway-tier secret never lands in a container, and forwards every
-/// other value untouched: a third party's bearer is the service's own to verify.
-pub(crate) fn is_gateway_credential(
-    token: &str,
-    api_key: &str,
-    agent: &str,
-    service_name: &str,
-    keys: &crate::service_keys::ServiceKeyStore,
-    now: u64,
-) -> bool {
-    verify_token(token, api_key) || keys.accepts(agent, service_name, token, now)
-}
-
-/// The presented tokens `is_gateway_credential` recognizes, owned so the caller can drop the
-/// request's borrow and rewrite it. The key store is read only when a token is present.
-pub(crate) async fn gateway_credentials(
-    state: &SharedState,
+/// The presented tokens that are the gateway's own: the api key and access tokens minted
+/// from it, the user's tier that opens every agent. The proxy removes exactly these before
+/// forwarding, so that tier never lands in a container, and forwards every other value
+/// untouched: a service key is the agent's own, minted for that service, and a third party's
+/// bearer is the service's to verify. Owned, so the caller can drop the request's borrow
+/// and rewrite it.
+pub(crate) fn gateway_credentials(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
-    agent: &str,
-    service_name: &str,
+    api_key: &str,
 ) -> Vec<String> {
-    let presented: Vec<&str> = presented_tokens(headers, uri).collect();
-    if presented.is_empty() {
-        return Vec::new();
-    }
-    let now = crate::time_utils::now_epoch_secs();
-    let keys = state.service_keys.read().await;
-    presented
-        .into_iter()
-        .filter(|token| {
-            is_gateway_credential(token, &state.api_key, agent, service_name, &keys, now)
-        })
+    presented_tokens(headers, uri)
+        .filter(|token| verify_token(token, api_key))
         .map(str::to_owned)
         .collect()
 }
@@ -721,7 +699,7 @@ mod presented_tokens_tests {
 /// escalation if it flipped, so the rows are deliberately not collapsed into a loop.
 #[cfg(test)]
 mod authorization_table {
-    use super::{authorizes, is_gateway_credential, presented_tokens};
+    use super::{authorizes, gateway_credentials, presented_tokens};
     use crate::jwt;
     use crate::service_keys::ServiceKeyStore;
     use crate::settings::ServiceEntry;
@@ -752,21 +730,26 @@ mod authorization_table {
         authorizes(presented, API_KEY, AGENT, SERVICE, Some(&PRIVATE), keys, NOW)
     }
 
-    /// The proxy removes a credential vestad issued and forwards any other bearer, so the
-    /// predicate must recognize exactly vestad's own: the api key, an access token, and a
-    /// live key for this service, never a third party's token or a key for another service.
+    /// The proxy removes the gateway's own credentials and forwards every other value, so the
+    /// selection must be exactly the api key and an access token: a service key is the
+    /// agent's own and a third party's token is the service's to verify.
     #[test]
-    fn only_a_credential_vestad_issued_is_a_gateway_credential() {
-        let (keys, secret) = store_with_live_key();
+    fn only_the_api_key_and_an_access_token_are_gateway_credentials() {
+        let (_, secret) = store_with_live_key();
         let access = jwt::create_token(API_KEY, "access", jwt::ACCESS_TOKEN_TTL);
-        let is_ours = |token: &str, service: &str| {
-            is_gateway_credential(token, API_KEY, AGENT, service, &keys, NOW)
-        };
-        assert!(is_ours(API_KEY, SERVICE));
-        assert!(is_ours(&access, SERVICE));
-        assert!(is_ours(&secret, SERVICE));
-        assert!(!is_ours(&secret, "other-service"));
-        assert!(!is_ours("eyJ.third.party", SERVICE));
+        let uri =
+            format!("/agents/alpha/dashboard/?token={API_KEY}&token=third-party&token={access}")
+                .parse::<Uri>()
+                .expect("uri");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {secret}")).expect("ascii header"),
+        );
+        assert_eq!(
+            gateway_credentials(&headers, &uri, API_KEY),
+            vec![API_KEY.to_string(), access]
+        );
     }
 
     #[test]

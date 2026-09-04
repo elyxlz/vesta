@@ -181,7 +181,7 @@ fn keyed_forward_path(
 }
 
 /// The query string forwarded upstream: the client's query minus each `token=` pair whose
-/// value is one of `consumed`, the credentials vestad issued. Every other pair passes
+/// value is one of `consumed`, the gateway's own credentials. Every other pair passes
 /// untouched. `None` when nothing remains, so the URL carries no stray `?`.
 fn forwarded_query(query: &str, consumed: &[String]) -> Option<String> {
     let is_consumed = |pair: &str| {
@@ -196,20 +196,13 @@ fn forwarded_query(query: &str, consumed: &[String]) -> Option<String> {
     (!kept.is_empty()).then_some(kept)
 }
 
-/// Remove the credentials vestad issued (`auth::gateway_credentials`) from the request, the
+/// Remove the gateway's own credentials (`auth::gateway_credentials`) from the request, the
 /// bearer header and the `token=` query pairs alike, and return the query to forward. Vestad
-/// is the gate, so no upstream is handed a gateway-tier secret; everything else the caller
-/// sent rides through untouched, a third party's bearer included, since verifying that one is
-/// the service's own job.
-async fn remove_gateway_credentials(
-    state: &SharedState,
-    request: &mut Request,
-    agent: &str,
-    service_name: &str,
-) -> Option<String> {
-    let consumed =
-        auth::gateway_credentials(state, request.headers(), request.uri(), agent, service_name)
-            .await;
+/// is the gate, so no upstream is handed the user's tier; everything else the caller sent
+/// rides through untouched, a service key or a third party's bearer included, since reading
+/// those is the service's own job.
+fn remove_gateway_credentials(api_key: &str, request: &mut Request) -> Option<String> {
+    let consumed = auth::gateway_credentials(request.headers(), request.uri(), api_key);
     let bearer_consumed = auth::presented_bearer(request.headers())
         .is_some_and(|bearer| consumed.iter().any(|token| token == bearer));
     if bearer_consumed {
@@ -343,9 +336,7 @@ pub async fn agent_proxy_handler(
     // Both the HTTP and WS branches forward this path and these headers, so the credential
     // removal covers both.
     let mut target_path = stripped_path;
-    if let Some(query) =
-        remove_gateway_credentials(&state, &mut request, &name, first_segment).await
-    {
+    if let Some(query) = remove_gateway_credentials(&state.api_key, &mut request) {
         target_path.push('?');
         target_path.push_str(&query);
     }
@@ -428,7 +419,7 @@ async fn forward_raw_agent_http(
         guard,
     } = resolve_raw_agent_target(&state, &name).await?;
     let mut target_path = raw_path;
-    if let Some(query) = remove_gateway_credentials(&state, &mut request, &name, "").await {
+    if let Some(query) = remove_gateway_credentials(&state.api_key, &mut request) {
         target_path.push('?');
         target_path.push_str(&query);
     }
@@ -596,8 +587,8 @@ async fn forward_http_to_container(
         .await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {e}")))?;
 
-    // Every client header rides through except the hop-by-hop set; the credentials vestad
-    // consumed are already gone (`remove_gateway_credentials`).
+    // Every client header rides through except the hop-by-hop set; the gateway's own
+    // credentials are already gone (`remove_gateway_credentials`).
     let mut req_builder = state.http_client.request(method, &url);
     for (name, value) in &parts.headers {
         if HOP_BY_HOP_HEADERS.contains(&name.as_str()) {
@@ -765,10 +756,10 @@ mod tests {
         assert_eq!(injected_agent_token(None, true), None);
     }
 
-    /// A `?token=` pair carrying a credential vestad issued is consumed by the gate, so the
-    /// forwarded query never contains it, while every other pair passes untouched: a `token=`
-    /// a third party set is theirs, not vestad's. Both the HTTP forward and the WS upstream
-    /// dial use the path this filter produces.
+    /// A `?token=` pair carrying one of the gateway's own credentials is consumed by the gate,
+    /// so the forwarded query never contains it, while every other pair passes untouched: a
+    /// `token=` a third party set is theirs, not vestad's. Both the HTTP forward and the WS
+    /// upstream dial use the path this filter produces.
     #[test]
     fn the_forwarded_query_drops_the_consumed_token_pairs_and_keeps_the_rest() {
         let consumed = ["secret".to_string(), "one".to_string()];
