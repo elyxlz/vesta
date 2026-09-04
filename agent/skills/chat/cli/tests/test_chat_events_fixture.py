@@ -15,8 +15,8 @@ import os
 import pathlib as pl
 
 from aiohttp.test_utils import TestClient, TestServer
-from app_chat_cli.service import ServiceState, create_app
-from app_chat_cli.store import Store, StoredEvent, store_path
+from chat_cli.service import ServiceState, create_app
+from chat_cli.store import Store, StoredEvent, store_path
 
 # ts is a wall-clock value stamped inside intake; normalize it so the committed fixture is stable. The
 # ids are the contract under test and are kept exactly as the real store produced them.

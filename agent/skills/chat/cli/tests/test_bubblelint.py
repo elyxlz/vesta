@@ -1,6 +1,6 @@
 """Mirrors telegram/whatsapp cli/bubblelint_test.go for the app-chat Python port."""
 
-from app_chat_cli.bubblelint import bubble_lint_reason, text_after_full_stop
+from chat_cli.bubblelint import bubble_lint_reason, text_after_full_stop
 
 
 def test_bubble_lint_passes():

@@ -7,8 +7,8 @@ import asyncio
 import json
 
 from aiohttp.test_utils import TestClient, TestServer
-from app_chat_cli.service import ServiceState, create_app
-from app_chat_cli.store import Store, StoredEvent, store_path
+from chat_cli.service import ServiceState, create_app
+from chat_cli.store import Store, StoredEvent, store_path
 
 
 def _service_state(tmp_path):
@@ -484,7 +484,7 @@ def test_attachment_unknown_id_is_404_everywhere(tmp_path):
 
 
 def test_attachment_removed_blob_serves_410(tmp_path):
-    from app_chat_cli import attachments as attachments_store
+    from chat_cli import attachments as attachments_store
 
     state, _ = _service_state(tmp_path)
 

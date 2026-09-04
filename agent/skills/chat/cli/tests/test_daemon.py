@@ -12,9 +12,9 @@ import threading
 import types
 
 import pytest
-from app_chat_cli import attachments, commands, daemon
-from app_chat_cli.service import ServiceState
-from app_chat_cli.store import Store, StoredEvent, store_path
+from chat_cli import attachments, commands, daemon
+from chat_cli.service import ServiceState
+from chat_cli.store import Store, StoredEvent, store_path
 
 
 @pytest.fixture

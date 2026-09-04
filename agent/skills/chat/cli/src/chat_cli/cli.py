@@ -11,8 +11,8 @@ Commands:
 import argparse
 import sys
 
-from app_chat_cli.commands import cmd_attachments_list, cmd_attachments_rm, cmd_history, cmd_import, cmd_send
-from app_chat_cli.daemon import cmd_serve, daemon_cmd
+from chat_cli.commands import cmd_attachments_list, cmd_attachments_rm, cmd_history, cmd_import, cmd_send
+from chat_cli.daemon import cmd_serve, daemon_cmd
 
 _HELP_ARGS = ("--help", "-h", "help")
 

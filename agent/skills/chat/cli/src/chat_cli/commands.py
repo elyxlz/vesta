@@ -10,9 +10,9 @@ import sqlite3
 import sys
 import typing as tp
 
-from app_chat_cli import attachments
-from app_chat_cli.bubblelint import bubble_lint_reason
-from app_chat_cli.store import Store, store_path
+from chat_cli import attachments
+from chat_cli.bubblelint import bubble_lint_reason
+from chat_cli.store import Store, store_path
 
 
 def _fail(payload: dict[str, object]) -> None:

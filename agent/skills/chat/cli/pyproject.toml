@@ -1,17 +1,19 @@
 [project]
-name = "app-chat-cli"
+name = "chat-cli"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["aiohttp>=3.9"]
 
 [project.scripts]
-app-chat = "app_chat_cli:main"
+chat = "chat_cli:main"
+# LEGACY(remove-when: every box has applied 2026-09-chat-rooms): old migration prompts call app-chat by name.
+app-chat = "chat_cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.4.0"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/app_chat_cli"]
+packages = ["src/chat_cli"]
 
 [build-system]
 requires = ["hatchling"]

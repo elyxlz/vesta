@@ -5,7 +5,7 @@ import json
 import sqlite3
 
 import pytest
-from app_chat_cli.store import Store, store_path
+from chat_cli.store import Store, store_path
 
 
 def _store(tmp_path) -> Store:
