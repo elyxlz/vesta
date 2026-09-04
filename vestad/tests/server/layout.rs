@@ -49,7 +49,7 @@ fn fresh_agent_has_expected_directory_structure() {
     // (seeded from default-skills.txt). The image ships ALL skills on disk, but only the
     // active ones are linked; assert a default optional (tasks) and a core skill are linked.
     wait_for_path(&cid, 'd', "/root/.claude/skills");
-    for skill in ["personality", "app-chat", "tasks", "upstream-sync"] {
+    for skill in ["personality", "chat", "tasks", "upstream-sync"] {
         let path = format!("/root/.claude/skills/{skill}");
         exec_in_container(&cid, &format!("test -L {path}"))
             .unwrap_or_else(|_| panic!("{path} should be a symlink"));

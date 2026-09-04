@@ -1,16 +1,16 @@
 //! `/sync` WebSocket integration scenarios, driven end-to-end against a real vestad + agent
 //! container through the T1 harness `SyncSocket`. The state plane carries roster + snapshot + pending
 //! notifications + `reauth` + the always-on `user_notification` delta; it no longer transports chat.
-//! Chat lives wholly on the app-chat service: its echo streams on the per-connection chat socket
-//! (`GET /agents/{name}/app-chat/ws` through the proxy, `open_app_chat_socket`), replay-free, so the
+//! Chat lives wholly on the `chat` service: its echo streams on the per-connection chat socket
+//! (`GET /agents/{name}/chat/ws` through the proxy, `open_chat_socket`), replay-free, so the
 //! send/echo scenario opens that socket and reads the echo carrying its `intent_id` there. User
 //! notifications (a new reply, a rate limit) come from the agent-side user-notification primitive
 //! looped back through vestad (`POST /agents/{name}/user-notification`, `X-Agent-Token`), which fans a
 //! `user_notification` delta to every connected session; the user-notification scenario exercises that
 //! path and the closed-kind 400, and the reauth/unknown scenarios reuse it as a liveness probe.
 //!
-//! Fake-token agents settle unprovisioned and run no model, so a helper starts their app-chat daemon
-//! by hand (`start_app_chat_daemon`, docker exec); that daemon owns the skill service the sends target
+//! Fake-token agents settle unprovisioned and run no model, so a helper starts their chat daemon
+//! by hand (`start_chat_daemon`, docker exec); that daemon owns the skill service the sends target
 //! and fans the live echo the chat socket reads, so no real model is needed.
 //!
 //! Two spec sub-scenarios are deliberately absent: below-window client rejection (D2, dropped, since
@@ -46,7 +46,7 @@ const EXPECT_MIN_SUPPORTED: &str = "0.2.16";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
 /// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The
-/// app-chat echo the chat socket reads is fanned by the skill daemon, which a model-less agent never
+/// echo the chat socket reads is fanned by the skill daemon, which a model-less agent never
 /// boots itself, so start it by hand once the agent is up.
 fn running_agent<'a>(c: &'a Client, prefix: &str) -> TestAgent<'a> {
     let agent = TestAgent::create(c, &unique_agent(prefix)).expect("create agent");
@@ -54,8 +54,8 @@ fn running_agent<'a>(c: &'a Client, prefix: &str) -> TestAgent<'a> {
     c.start_agent(&agent.name).expect("start agent");
     c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running");
-    c.start_app_chat_daemon(&agent.name)
-        .expect("start app-chat daemon");
+    c.start_chat_daemon(&agent.name)
+        .expect("start chat daemon");
     agent
 }
 
@@ -79,23 +79,23 @@ fn is_close_error(msg: &str) -> bool {
     msg.contains("closed") || msg.contains("ended") || msg.contains("socket error")
 }
 
-/// Open the agent's app-chat chat socket, retrying briefly past a still-registering service: the proxy
+/// Open the agent's chat socket, retrying briefly past a still-registering service: the proxy
 /// 404s the ws upgrade until `register-service` records the daemon's port. Bounded, never a bare sleep.
 async fn open_chat_socket(c: &Client, agent: &str) -> SyncSocket {
     let deadline = Instant::now() + CHAT_SOCKET_OPEN_TIMEOUT;
     loop {
-        match c.open_app_chat_socket(agent).await {
+        match c.open_chat_socket(agent).await {
             Ok(sock) => return sock,
             Err(e) => assert!(
                 Instant::now() < deadline,
-                "the app-chat chat socket never opened for {agent}: {e}"
+                "the chat socket never opened for {agent}: {e}"
             ),
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
-/// Drive one app-chat message onto `agent` and return the intent id it used plus the echo the chat
+/// Drive one chat message onto `agent` and return the intent id it used plus the echo the chat
 /// socket delivered for it. A fresh intent each attempt: the daemon dedups a repeated intent whole (no
 /// re-echo), so a retry that closes the subscriber-registration race must carry a new id. The winning
 /// echo proves both the send landed and the socket was subscribed for the reply that follows.
@@ -174,7 +174,7 @@ async fn hello_then_snapshot_carries_agent_info_branch() {
 
 /// (2) `POST /agents/{name}/user-notification {kind:"message",...}` carrying the agent's own
 /// `X-Agent-Token` fans a `user_notification` delta `{id,at,agent,kind,title,body}` to a connected `/sync`
-/// session (the loopback path the app-chat reply hook and the rate-limit notice use). The kind is a
+/// session (the loopback path the chat reply hook and the rate-limit notice use). The kind is a
 /// closed set: an unknown kind is a 400.
 #[tokio::test]
 async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
@@ -185,7 +185,7 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
     let mut sock = c.open_sync().await.expect("open sync");
     handshake(&mut sock).await;
 
-    // A valid user notification (kind message, the app-chat reply hook's shape) fans a delta carrying
+    // A valid user notification (kind message, the chat reply hook's shape) fans a delta carrying
     // the closed-set kind and the title/body triple to the connected session.
     c.send_user_notification(&agent.name, &token, "message", &agent.name, "a fresh reply")
         .expect("send user notification message");
@@ -250,9 +250,9 @@ async fn marking_the_feed_seen_projects_the_watermark_on_the_gateway_branch() {
     sock.close().await.ok();
 }
 
-/// (3) `POST /app-chat/message` with an explicit intent id round-trips end-to-end: the echo on the
+/// (3) `POST /chat/message` with an explicit intent id round-trips end-to-end: the echo on the
 /// replay-free chat socket carries the SAME `intent_id` the HTTP intake was given (the delivery-truth
-/// contract clients dedup and confirm on), and `GET /app-chat/history` then returns that message.
+/// contract clients dedup and confirm on), and `GET /chat/history` then returns that message.
 #[tokio::test]
 async fn send_message_intent_id_echoes_on_the_chat_socket() {
     let c = SERVER.client();
@@ -268,7 +268,7 @@ async fn send_message_intent_id_echoes_on_the_chat_socket() {
     assert!(echo.get("id").is_some(), "the echoed event carries an id");
 
     // The durable copy is in the store: history returns the same message keyed by its intent id.
-    let history = c.fetch_app_chat_history(&agent.name, 50).expect("fetch history");
+    let history = c.fetch_chat_history(&agent.name, 50).expect("fetch history");
     let events = history["events"].as_array().expect("history events array");
     assert!(
         events.iter().any(|e| e["intent_id"].as_str() == Some(intent.as_str())),
