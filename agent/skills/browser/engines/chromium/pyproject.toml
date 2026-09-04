@@ -1,0 +1,11 @@
+[project]
+name = "vesta-browser-engine-chromium"
+version = "0.1.0"
+description = "Locked executor environment for the browser daemon's Chromium route: browser-use CLI over Browser Harness (CDP)."
+requires-python = ">=3.11"
+dependencies = [
+    "browser-use==0.13.10",
+]
+
+[tool.uv]
+package = false

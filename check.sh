@@ -223,6 +223,16 @@ check_guards() {
   }
   rm -f agent/core/uv.lock.before
 
+  for engine in agent/skills/browser/engines/chromium agent/skills/browser/engines/camoufox; do
+    cp "$engine/uv.lock" "$engine/uv.lock.before"
+    uv lock --project "$engine"
+    diff -q "$engine/uv.lock.before" "$engine/uv.lock" >/dev/null || {
+      echo "error: $engine/uv.lock is out of date — run 'uv lock --project $engine' and commit the changes" >&2
+      failed=1
+    }
+    rm -f "$engine/uv.lock.before"
+  done
+
   python3 scripts/sync-design-tokens.py --check || {
     echo "error: generated design tokens are stale — run 'python3 scripts/sync-design-tokens.py' and commit the changes" >&2
     failed=1
