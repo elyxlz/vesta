@@ -1,4 +1,4 @@
-app-chat
+chat
 birth
 browser
 claude-code

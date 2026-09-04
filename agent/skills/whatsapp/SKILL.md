@@ -107,7 +107,7 @@ Falling back to another channel is the entire remedy available to you.
 
 Pick the fallback channel by their last inbound there, never by your own last outbound: a channel
 whose recent traffic is all yours is dead, and silence from it reads exactly like an answer. Read
-it with that channel's own command (`telegram messages --to <name>`, `app-chat history`) first.
+it with that channel's own command (`telegram messages --to <name>`, `chat history`) first.
 
 ## Read
 
