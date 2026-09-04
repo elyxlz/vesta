@@ -13,11 +13,11 @@
   "scripts": {
     "dev": "npm run compile && node scripts/dev.mjs",
     "make-icons": "uv run --with pillow --with numpy scripts/make-icons.py",
-    "compile": "tsc",
+    "compile": "tsc && node scripts/bundle-preload.mjs",
     "check": "tsc --noEmit",
     "lint": "eslint src scripts --max-warnings 0",
     "test": "vitest run",
-    "build": "npm -w @vesta/web run build && tsc && electron-builder --publish never",
+    "build": "npm -w @vesta/web run build && npm run compile && electron-builder --publish never",
     "format": "prettier --write src",
     "format:check": "prettier --check src"
   },
@@ -27,6 +27,7 @@
   "devDependencies": {
     "electron": "44.0.0",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "globals": "^17.11.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
