@@ -38,6 +38,7 @@ describe("notification navigation", () => {
         agentNames: ["alex"],
         routeReady: false,
         currentGateway: "https://first.vesta.run",
+        viewingAgent: null,
       }),
     ).toBe("wait");
     expect(
@@ -49,6 +50,7 @@ describe("notification navigation", () => {
         agentNames: ["alex"],
         routeReady: true,
         currentGateway: "https://first.vesta.run",
+        viewingAgent: null,
       }),
     ).toBe("wait");
   });
@@ -61,6 +63,7 @@ describe("notification navigation", () => {
       agentsReady: true,
       routeReady: true,
       currentGateway: "https://first.vesta.run",
+      viewingAgent: null,
     };
     expect(
       notificationNavigationDecision({ ...ready, agentNames: ["alex"] }),
@@ -68,6 +71,24 @@ describe("notification navigation", () => {
     expect(
       notificationNavigationDecision({ ...ready, agentNames: ["other"] }),
     ).toBe("discard");
+  });
+
+  it("discards a notification for the agent already on screen", () => {
+    const ready = {
+      pending,
+      sessionStatus: "connected" as const,
+      reachable: true,
+      agentsReady: true,
+      agentNames: ["alex"],
+      routeReady: true,
+      currentGateway: "https://first.vesta.run",
+    };
+    expect(
+      notificationNavigationDecision({ ...ready, viewingAgent: "alex" }),
+    ).toBe("discard");
+    expect(
+      notificationNavigationDecision({ ...ready, viewingAgent: "other" }),
+    ).toBe("open");
   });
 
   it("discards a stale notification after switching gateways", () => {
@@ -80,6 +101,7 @@ describe("notification navigation", () => {
         agentNames: ["alex"],
         routeReady: true,
         currentGateway: "https://second.vesta.run",
+        viewingAgent: null,
       }),
     ).toBe("discard");
   });

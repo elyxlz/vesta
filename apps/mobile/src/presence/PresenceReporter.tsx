@@ -1,10 +1,10 @@
 import { useContext, useEffect, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import { useGlobalSearchParams, useSegments } from "expo-router";
 import { ControllerContext } from "@/controller/context";
 import { registerBackgroundReport } from "@/device-context/background-report";
 import { readDeviceContext } from "@/device-context/device-context";
 import { requestLocationIfUndecided } from "@/device-context/location-consent";
+import { useViewedAgent } from "@/hooks/use-viewed-agent";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 function isFocused(state: AppStateStatus): boolean {
@@ -19,9 +19,7 @@ function isFocused(state: AppStateStatus): boolean {
 export function PresenceReporter() {
   const controller = useContext(ControllerContext);
   const { shareLocation } = usePreferences();
-  const segments = useSegments();
-  const { name } = useGlobalSearchParams<{ name?: string }>();
-  const agent = segments[0] === "agent" && name !== undefined ? name : null;
+  const agent = useViewedAgent();
   const [active, setActive] = useState(() => isFocused(AppState.currentState));
 
   useEffect(() => {
