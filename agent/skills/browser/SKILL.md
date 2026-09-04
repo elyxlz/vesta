@@ -3,6 +3,12 @@ name: browser
 description: Browse, navigate, click, fill forms, screenshot, or scrape web pages with a stealth (Camoufox) browser.
 ---
 
+**Current interface**: run `browser daemon start` to start the daemon, then `browser exec
+--session <name> [--stealth]` to run Python against that session, script on stdin (helpers
+include `new_tab`, `goto_url`, `page_info`, `js`, `click_at_xy`, `fill_input`,
+`capture_screenshot`, and more). The detailed reference below this block lags the CLI; run
+`browser --help` for the authoritative command list.
+
 # Browser
 
 Camoufox (an anti-detection Firefox that spoofs its fingerprint in C++ below JS) driven over raw
