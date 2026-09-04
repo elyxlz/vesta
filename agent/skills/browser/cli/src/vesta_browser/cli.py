@@ -27,14 +27,20 @@ USAGE = """Usage:
   browser handover start [--url <url>] [--session <name>] [--stealth] [--minutes <n>]
   browser handover status | stop"""
 RPC_TIMEOUT_SLACK_SECS = 30
+CANCEL_TIMEOUT_SECS = 5
 
 
 def _request_id() -> str:
     return f"r_{uuid.uuid4().hex[:12]}"
 
 
+def _daemon_down(payload: dict[str, p.JsonValue], message: str) -> p.Result:
+    err = p.error("daemon_down", "validation", message, retryable=True, suggested_action="run: browser daemon start")
+    return p.result(request_id=str(payload["request_id"]), op=str(payload["op"]), ok=False, err=err)
+
+
 def send(paths: Paths, payload: dict[str, p.JsonValue], timeout: float) -> p.Result:
-    """One request, one reply. A socket that is absent or refuses is `daemon_down`."""
+    """One request, one reply. A socket that is absent, refuses, or closes with no answer is `daemon_down`."""
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(timeout)
@@ -47,15 +53,14 @@ def send(paths: Paths, payload: dict[str, p.JsonValue], timeout: float) -> p.Res
                     break
                 data += chunk
     except OSError as exc:
-        err = p.error(
-            "daemon_down",
-            "validation",
-            f"browser daemon not reachable at {paths.socket}: {exc}",
-            retryable=True,
-            suggested_action="run: browser daemon start",
-        )
-        return p.result(request_id=str(payload["request_id"]), op=str(payload["op"]), ok=False, err=err)
-    return json.loads(data)
+        return _daemon_down(payload, f"browser daemon not reachable at {paths.socket}: {exc}")
+    try:
+        result = json.loads(data) if data else None
+    except json.JSONDecodeError:
+        result = None
+    if not isinstance(result, dict):
+        return _daemon_down(payload, f"browser daemon closed the connection without an answer at {paths.socket}")
+    return result
 
 
 def emit(result: p.Result) -> int:
@@ -68,7 +73,9 @@ def emit(result: p.Result) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="browser", usage=USAGE, add_help=True)
+    # argparse prepends its own "usage: "; passing the full USAGE (which already opens with
+    # "Usage:") would print "usage: Usage:" on an unknown command, so strip that header here.
+    parser = argparse.ArgumentParser(prog="browser", usage=USAGE.removeprefix("Usage:\n").strip(), add_help=True)
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("exec")
     run.add_argument("--session", default=p.DEFAULT_SESSION)
@@ -103,7 +110,11 @@ def _exec(paths: Paths, args: argparse.Namespace) -> int:
 
     def on_signal(_signum: int, _frame: object) -> None:
         cancelled.set()
-        send(paths, {"version": p.PROTOCOL_VERSION, "op": "cancel", "request_id": _request_id(), "target_request_id": request_id}, 5)
+        send(
+            paths,
+            {"version": p.PROTOCOL_VERSION, "op": "cancel", "request_id": _request_id(), "target_request_id": request_id},
+            CANCEL_TIMEOUT_SECS,
+        )
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)

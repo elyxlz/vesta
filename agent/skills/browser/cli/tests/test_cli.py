@@ -1,5 +1,6 @@
 import io
 import json
+import socket
 import subprocess
 import sys
 import threading
@@ -19,6 +20,30 @@ def test_daemon_down_is_a_loud_error_on_stderr(tmp_path, monkeypatch, capsys):
     envelope = json.loads(err)
     assert envelope["ok"] is False and envelope["error"]["code"] == "daemon_down"
     assert envelope["error"]["suggested_action"] == "run: browser daemon start"
+
+
+def test_daemon_closing_without_an_answer_is_also_daemon_down(tmp_path, monkeypatch, capsys):
+    """A crashed daemon, or `daemon stop` racing an in-flight request, closes the socket having
+    written nothing; that must read as `daemon_down`, not a raw json.JSONDecodeError traceback."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    paths = load_paths({}, tmp_path)
+    paths.root.mkdir(parents=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(paths.socket))
+    server.listen(1)
+
+    def stub():
+        conn, _ = server.accept()
+        conn.makefile("rb").readline()
+        conn.close()
+
+    threading.Thread(target=stub, daemon=True).start()
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    code = cli.main(["exec"])
+    out, err = capsys.readouterr()
+    assert code == 1 and out == ""
+    envelope = json.loads(err)
+    assert envelope["ok"] is False and envelope["error"]["code"] == "daemon_down"
 
 
 def test_exec_sends_the_request_and_prints_one_line(tmp_path, monkeypatch, capsys):
@@ -99,8 +124,6 @@ def test_sigint_during_exec_sends_cancel(tmp_path, monkeypatch):
     """Runs the real CLI as a subprocess against a stub daemon that holds the exec until it sees cancel."""
     paths = load_paths({}, tmp_path)
     paths.root.mkdir(parents=True)
-    import socket
-
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(paths.socket))
     server.listen(2)
