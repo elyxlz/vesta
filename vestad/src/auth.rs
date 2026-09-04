@@ -177,26 +177,48 @@ fn token_fingerprint(token: &str) -> String {
 }
 
 /// The two carriers a client credential rides in (`presented_tokens` reads them, the agent
-/// proxy strips them before forwarding): the `Authorization` header and the `?token=` pair.
+/// proxy removes the values that are the gateway's own before forwarding): the
+/// `Authorization` header and the `?token=` pair.
 pub(crate) const CLIENT_CREDENTIAL_HEADER: &str = "authorization";
 pub(crate) const CLIENT_CREDENTIAL_QUERY_PREFIX: &str = "token=";
 
-/// Every credential the request presents: the Bearer header and the `?token=` query param.
+/// The bearer value of the `Authorization` header, when it carries one.
+pub(crate) fn presented_bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(CLIENT_CREDENTIAL_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
+/// Every credential the request presents: the Bearer header and each `?token=` query pair.
 /// One place enumerates them so each carrier is checked identically.
 pub(crate) fn presented_tokens<'req>(
     headers: &'req HeaderMap,
     uri: &'req axum::http::Uri,
 ) -> impl Iterator<Item = &'req str> {
-    let bearer = headers
-        .get(CLIENT_CREDENTIAL_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    let query = uri.query().and_then(|query| {
+    let query = uri.query().into_iter().flat_map(|query| {
         query
             .split('&')
-            .find_map(|pair| pair.strip_prefix(CLIENT_CREDENTIAL_QUERY_PREFIX))
+            .filter_map(|pair| pair.strip_prefix(CLIENT_CREDENTIAL_QUERY_PREFIX))
     });
-    bearer.into_iter().chain(query)
+    presented_bearer(headers).into_iter().chain(query)
+}
+
+/// The presented tokens that are the gateway's own: the api key and access tokens minted
+/// from it, the user's tier that opens every agent. The proxy removes exactly these before
+/// forwarding, so that tier never lands in a container, and forwards every other value
+/// untouched: a service key is the agent's own, minted for that service, and a third party's
+/// bearer is the service's to verify. Owned, so the caller can drop the request's borrow
+/// and rewrite it.
+pub(crate) fn gateway_credentials(
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    api_key: &str,
+) -> Vec<String> {
+    presented_tokens(headers, uri)
+        .filter(|token| verify_token(token, api_key))
+        .map(str::to_owned)
+        .collect()
 }
 
 pub(crate) fn has_valid_api_auth(
@@ -659,11 +681,11 @@ mod presented_tokens_tests {
     }
 
     #[test]
-    fn enumerates_the_bearer_header_and_the_token_query_param() {
-        let uri = Uri::from_static("/agents/alpha/tasks/tasks?token=from-query");
+    fn enumerates_the_bearer_header_and_every_token_query_pair() {
+        let uri = Uri::from_static("/agents/alpha/tasks/tasks?token=first&lang=en&token=second");
         let headers = bearer("from-header");
         let found: Vec<&str> = presented_tokens(&headers, &uri).collect();
-        assert_eq!(found, vec!["from-header", "from-query"]);
+        assert_eq!(found, vec!["from-header", "first", "second"]);
     }
 
     #[test]
@@ -677,7 +699,7 @@ mod presented_tokens_tests {
 /// escalation if it flipped, so the rows are deliberately not collapsed into a loop.
 #[cfg(test)]
 mod authorization_table {
-    use super::{authorizes, presented_tokens};
+    use super::{authorizes, gateway_credentials, presented_tokens};
     use crate::jwt;
     use crate::service_keys::ServiceKeyStore;
     use crate::settings::ServiceEntry;
@@ -706,6 +728,28 @@ mod authorization_table {
     /// The decision for a request to the private `(alpha, dashboard)` service.
     fn opens_private(presented: &[&str], keys: &ServiceKeyStore) -> bool {
         authorizes(presented, API_KEY, AGENT, SERVICE, Some(&PRIVATE), keys, NOW)
+    }
+
+    /// The proxy removes the gateway's own credentials and forwards every other value, so the
+    /// selection must be exactly the api key and an access token: a service key is the
+    /// agent's own and a third party's token is the service's to verify.
+    #[test]
+    fn only_the_api_key_and_an_access_token_are_gateway_credentials() {
+        let (_, secret) = store_with_live_key();
+        let access = jwt::create_token(API_KEY, "access", jwt::ACCESS_TOKEN_TTL);
+        let uri =
+            format!("/agents/alpha/dashboard/?token={API_KEY}&token=third-party&token={access}")
+                .parse::<Uri>()
+                .expect("uri");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {secret}")).expect("ascii header"),
+        );
+        assert_eq!(
+            gateway_credentials(&headers, &uri, API_KEY),
+            vec![API_KEY.to_string(), access]
+        );
     }
 
     #[test]
