@@ -89,20 +89,24 @@ async def start(session: Session, paths: Paths) -> ChromiumRuntime:
         stderr=asyncio.subprocess.DEVNULL,
     )
     deadline = time.monotonic() + CHROMIUM_READY_TIMEOUT_SECS
-    while time.monotonic() < deadline:
-        if process.returncode is not None:
-            raise _unavailable(f"chromium exited with {process.returncode} during startup")
-        if port_file.is_file():
-            first = port_file.read_text().splitlines()
-            if first and first[0].isdigit():
-                port = int(first[0])
-                try:
-                    await asyncio.to_thread(_fetch_json, f"http://127.0.0.1:{port}/json/version")
-                except OSError:
-                    pass
-                else:
-                    return ChromiumRuntime(process=process, port=port)
-        await asyncio.sleep(READY_POLL_SECS)
+    try:
+        while time.monotonic() < deadline:
+            if process.returncode is not None:
+                raise _unavailable(f"chromium exited with {process.returncode} during startup")
+            if port_file.is_file():
+                first = port_file.read_text().splitlines()
+                if first and first[0].isdigit():
+                    port = int(first[0])
+                    try:
+                        await asyncio.to_thread(_fetch_json, f"http://127.0.0.1:{port}/json/version")
+                    except OSError:
+                        pass
+                    else:
+                        return ChromiumRuntime(process=process, port=port)
+            await asyncio.sleep(READY_POLL_SECS)
+    except asyncio.CancelledError:
+        await kill_group(process, BROWSER_STOP_GRACE_SECS)
+        raise
     await kill_group(process, BROWSER_STOP_GRACE_SECS)
     raise _unavailable(f"chromium did not expose DevTools within {CHROMIUM_READY_TIMEOUT_SECS}s")
 
@@ -136,15 +140,18 @@ async def observe(runtime: ChromiumRuntime) -> p.PageInfo:
         return p.page_unavailable()
     if not isinstance(targets, list):
         return p.page_unavailable()
-    for target in targets:
-        if isinstance(target, dict) and target["type"] == "page" and not str(target["url"]).startswith(("chrome://", "devtools://")):
-            return {
-                "state": "ready",
-                "tab_id": str(target["id"]),
-                "url": str(target["url"]),
-                "title": str(target["title"]),
-                "observed_at": p.now_iso(),
-            }
+    try:
+        for target in targets:
+            if isinstance(target, dict) and target["type"] == "page" and not str(target["url"]).startswith(("chrome://", "devtools://")):
+                return {
+                    "state": "ready",
+                    "tab_id": str(target["id"]),
+                    "url": str(target["url"]),
+                    "title": str(target["title"]),
+                    "observed_at": p.now_iso(),
+                }
+    except (KeyError, TypeError):
+        return p.page_unavailable()
     return p.page_unavailable()
 
 

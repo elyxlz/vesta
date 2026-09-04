@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 
 import pytest
 from vesta_browser import chromium, sessions
@@ -116,3 +117,50 @@ def test_start_fails_engine_unavailable_when_the_binary_is_missing(tmp_path):
     with pytest.raises(chromium.p.BrowserError) as excinfo:
         _run(chromium.start(session, paths))
     assert excinfo.value.err["code"] == "engine_unavailable" and excinfo.value.err["phase"] == "launch"
+
+
+def test_observe_returns_unavailable_when_a_target_entry_is_malformed(rig):
+    paths, session = rig
+    (session.profile_dir / "malformed-list").touch()
+
+    async def run():
+        runtime = await chromium.start(session, paths)
+        try:
+            return await chromium.observe(runtime)
+        finally:
+            await chromium.stop(runtime, session)
+
+    assert _run(run()) == {"state": "unavailable"}
+
+
+def test_start_kills_chromium_when_cancelled_before_devtools_is_ready(rig, monkeypatch):
+    paths, session = rig
+    monkeypatch.setattr(chromium, "CHROMIUM_READY_TIMEOUT_SECS", 60)
+    (session.profile_dir / "no-port").touch()
+    pid_file = session.profile_dir / "fake.pid"
+
+    async def run():
+        task = asyncio.ensure_future(chromium.start(session, paths))
+        loop = asyncio.get_running_loop()
+        pid_deadline = loop.time() + 5
+        while True:
+            if pid_file.is_file():
+                break
+            if loop.time() > pid_deadline:
+                raise TimeoutError("fake chromium never wrote fake.pid")
+            await asyncio.sleep(0.05)
+        pid = int(pid_file.read_text())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        death_deadline = loop.time() + 2
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            if loop.time() > death_deadline:
+                return False
+            await asyncio.sleep(0.05)
+
+    assert _run(run()) is True

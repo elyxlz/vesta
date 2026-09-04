@@ -5,19 +5,24 @@ import stat
 import sys
 
 FAKE_CHROMIUM = f"""#!{sys.executable}
-import http.server, json, pathlib, sys, threading
+import http.server, json, os, pathlib, sys, threading
 args = sys.argv[1:]
 profile = next(a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir="))
+pathlib.Path(profile, "fake.pid").write_text(str(os.getpid()))
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         body = {{"webSocketDebuggerUrl": "ws://127.0.0.1:%d/devtools/browser/x" % self.server.server_port}}
         if self.path == "/json/list":
-            body = [{{"type": "page", "id": "T1", "url": "https://example.com/", "title": "Example Domain"}}]
+            entry = {{"type": "page", "id": "T1", "url": "https://example.com/"}}
+            if not pathlib.Path(profile, "malformed-list").exists():
+                entry["title"] = "Example Domain"
+            body = [entry]
         data = json.dumps(body).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-pathlib.Path(profile, "DevToolsActivePort").write_text(f"{{srv.server_port}}\\n/devtools/browser/x\\n")
+if not pathlib.Path(profile, "no-port").exists():
+    pathlib.Path(profile, "DevToolsActivePort").write_text(f"{{srv.server_port}}\\n/devtools/browser/x\\n")
 srv.serve_forever()
 """
 
