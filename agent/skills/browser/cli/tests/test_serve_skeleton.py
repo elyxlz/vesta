@@ -44,6 +44,17 @@ def test_unknown_version_and_op_are_invalid_requests(paths):
     assert bad_op["ok"] is False and bad_op["error"]["code"] == "invalid_request" and bad_op["error"]["phase"] == "validation"
 
 
+def test_missing_request_id_answers_without_dropping_the_connection(paths):
+    async def run():
+        missing = await serve.request(paths, {"version": 1, "op": "status"})
+        follow_up = await serve.request(paths, {"version": 1, "op": "status", "request_id": "r2"})
+        return missing, follow_up
+
+    missing, follow_up = asyncio.run(_serve_for(paths, run()))
+    assert missing["ok"] is False and missing["error"]["code"] == "invalid_request"
+    assert follow_up["ok"] is True and follow_up["request_id"] == "r2"
+
+
 def test_socket_is_private(paths):
     async def run():
         return oct(paths.socket.stat().st_mode & 0o777)

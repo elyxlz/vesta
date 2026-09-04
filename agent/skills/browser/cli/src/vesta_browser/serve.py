@@ -32,27 +32,30 @@ def _invalid(message: str) -> p.Error:
     return p.error("invalid_request", "validation", message, retryable=False, suggested_action="fix the request and retry")
 
 
-async def op_status(state: State, request_id: str) -> p.Result:
+async def op_status(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
     data: p.JsonValue = {"protocol_version": p.PROTOCOL_VERSION, "pid": os.getpid(), "socket": str(state.paths.socket)}
     return p.result(request_id=request_id, op="status", ok=True, data=data)
 
 
-async def op_engines(state: State, request_id: str) -> p.Result:
+async def op_engines(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
     return p.result(request_id=request_id, op="engines", ok=True, data=routes(state.paths))
 
 
-Handler = tp.Callable[[State, dict[str, p.JsonValue]], tp.Awaitable[p.Result]]
+Handler = tp.Callable[[State, str, dict[str, p.JsonValue]], tp.Awaitable[p.Result]]
 
 
 async def handle_request(state: State, request: dict[str, p.JsonValue]) -> p.Result:
-    request_id = str(request["request_id"]) if "request_id" in request else ""
     op = str(request["op"]) if "op" in request else ""
+    request_id = ""
     try:
+        if "request_id" not in request or not isinstance(request["request_id"], str) or not request["request_id"]:
+            raise p.BrowserError(_invalid("request_id must be a non-empty string"))
+        request_id = request["request_id"]
         if "version" not in request or request["version"] != p.PROTOCOL_VERSION:
             raise p.BrowserError(_invalid(f"unsupported protocol version; this daemon speaks {p.PROTOCOL_VERSION}"))
         if op not in HANDLERS:
             raise p.BrowserError(_invalid(f"unknown op {op!r}"))
-        return await HANDLERS[op](state, request)
+        return await HANDLERS[op](state, request_id, request)
     except p.BrowserError as exc:
         state.last_error = exc.err
         return p.result(request_id=request_id, op=op, ok=False, err=exc.err)
@@ -68,7 +71,7 @@ async def _handle_connection(state: State, reader: asyncio.StreamReader, writer:
         if not isinstance(request, dict):
             raise ValueError("request must be an object")
         response = await handle_request(state, request)
-    except ValueError as exc:
+    except (ValueError, KeyError) as exc:
         response = p.result(request_id="", op="", ok=False, err=_invalid(f"unreadable request: {exc}"))
     writer.write((json.dumps(response) + "\n").encode())
     with contextlib.suppress(ConnectionError):
@@ -155,8 +158,8 @@ async def request(paths: Paths, payload: dict[str, p.JsonValue]) -> p.Result:
 
 
 HANDLERS: dict[str, Handler] = {
-    "status": lambda state, req: op_status(state, str(req["request_id"])),
-    "engines": lambda state, req: op_engines(state, str(req["request_id"])),
+    "status": op_status,
+    "engines": op_engines,
 }
 
 
