@@ -49,6 +49,19 @@ def test_install_downloads_verifies_extracts_and_publishes(tmp_path, monkeypatch
     assert not list(tmp_path.glob(".*"))  # no .part or .staging left behind
 
 
+def test_install_replaces_a_half_installed_tag_directory(tmp_path, monkeypatch):
+    """An interrupted install leaves the tag directory there without the binary; replace() onto a
+    non-empty directory fails, so the publish step has to clear it first."""
+    payload = _zip_bytes(with_exec_bit=True)
+    monkeypatch.setitem(ci.CAMOUFOX_ASSETS, "x86_64", ("asset.zip", hashlib.sha256(payload).hexdigest()))
+    home = tmp_path / ci.CAMOUFOX_RELEASE_TAG
+    home.mkdir(parents=True)
+    (home / "leftover").write_text("half an extraction")
+    exe = ci.install(root=tmp_path, arch="x86_64", download=lambda url, dest: pl.Path(dest).write_bytes(payload))
+    assert exe == home / "camoufox" and exe.is_file()
+    assert not (home / "leftover").exists()
+
+
 def test_sha_mismatch_refuses_and_leaves_no_install(tmp_path, monkeypatch):
     payload = _zip_bytes(with_exec_bit=True)
     monkeypatch.setitem(ci.CAMOUFOX_ASSETS, "x86_64", ("asset.zip", "0" * 64))

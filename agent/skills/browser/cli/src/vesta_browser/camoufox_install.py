@@ -153,6 +153,9 @@ def install(root: pl.Path = INSTALL_ROOT, arch: str = platform.machine(), downlo
             shutil.rmtree(staging)
         _extract_preserving_mode(part, staging)
         repair_search_stub(staging)
+        # replace() onto a non-empty directory fails, and a half-extracted tag directory is exactly
+        # what an interrupted install leaves behind.
+        shutil.rmtree(home, ignore_errors=True)
         staging.replace(home)
     finally:
         part.unlink(missing_ok=True)
