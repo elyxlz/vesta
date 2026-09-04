@@ -246,7 +246,7 @@ Phases: `validation | routing | launch | execution | observation | handover | cl
 
 A session record holds: name, mode, engine, protocol, state, profile dir, scratch dir, browser pid and CDP endpoint (Chromium) or worker pid (Camoufox), Browser Harness daemon pid (Chromium), in-flight request id, last activity, handover id when handed over. The table is in memory and rebuilt from disk on daemon start: a profile directory under `profiles/<engine>/<session>/` is a known session in state `stopped`. No stale processes survive a daemon restart: `lifecycle.py` places every child in a process group the daemon owns and kills the groups on stop.
 
-Session names match `^[a-z0-9][a-z0-9._-]{0,63}$`. `SESSION_IDLE_STOP_SECS = 1800`: an idle session's browser (and worker or harness daemon) is stopped, state becomes `stopped`, the profile stays. Engines start on demand: a stealth-only agent never runs Chromium.
+Session names match `^[a-z0-9][a-z0-9_-]{0,63}$` (a subset of Browser Harness's `BU_NAME` rule, `[A-Za-z0-9_-]{1,64}`). `SESSION_IDLE_STOP_SECS = 1800`: an idle session's browser (and worker or harness daemon) is stopped, state becomes `stopped`, the profile stays. Engines start on demand: a stealth-only agent never runs Chromium.
 
 `stop-all` stops every session of this agent and nothing else. `session stop <name>` stops one.
 
@@ -254,8 +254,8 @@ Session names match `^[a-z0-9][a-z0-9._-]{0,63}$`. `SESSION_IDLE_STOP_SECS = 180
 
 1. On first exec, launch `/usr/bin/chromium --headless=new --no-sandbox --remote-debugging-port=0 --user-data-dir=<profile> --no-first-run --disable-background-networking ...` in its own process group, `DISPLAY` unset. `--no-sandbox` is required because the container runs as root.
 2. Read the port from `<profile>/DevToolsActivePort`, confirm `http://127.0.0.1:<port>/json/version`, record the endpoint. Failure → `engine_unavailable`.
-3. Per exec, spawn `<engines/chromium/.venv>/bin/browser-use` with the code on stdin, cwd `artifacts/<session>/`, and a minimal env: `PATH`, `HOME`, `LANG`, `TMPDIR=sessions/<session>/`, `BU_NAME=<session>`, `BU_CDP_URL=http://127.0.0.1:<port>`, `ANONYMIZED_TELEMETRY=false` (browser-use's telemetry switch). `DISPLAY`, `PYTHONPATH`, `PYTHONHOME`, `AGENT_TOKEN`, and every other agent variable are absent.
-4. Browser Harness spawns its own per-`BU_NAME` daemon on first use under that `TMPDIR`. The daemon records its pid from the harness's record in the scratch dir and kills it on session stop, idle stop, and daemon shutdown.
+3. Per exec, spawn `<engines/chromium/.venv>/bin/browser-use` with the code on stdin, cwd `artifacts/<session>/`, and a minimal env: `PATH`, `HOME`, `LANG`, `TMPDIR`, `BH_RUNTIME_DIR=sessions/<session>/runtime` (the harness socket and pid), `BH_TMP_DIR=sessions/<session>/tmp` (its screenshots), `BH_HOME=sessions/<session>/home`, `BU_NAME=<session>`, `BU_CDP_URL=http://127.0.0.1:<port>`, `BH_UPDATE_CHECK=0`, `BH_TELEMETRY=0`, `PYTHONUNBUFFERED=1`. `DISPLAY`, `PYTHONPATH`, `PYTHONHOME`, `AGENT_TOKEN`, and every other agent variable are absent. The chromium engine venv is never `uv tool install`ed: browser-use ships a console script named `browser`.
+4. Browser Harness spawns its own per-`BU_NAME` daemon on first use and records its pid at `<BH_RUNTIME_DIR>/bu.pid`. The daemon reads that record and kills the harness daemon on session stop, idle stop, and daemon shutdown.
 5. Timeout kills the child's process group only. The browser and harness daemon survive.
 6. Page observation after every exec: `GET /json/list`, take the first `page` target, report `targetId`, `url`, `title`. Failure → `page.state = unavailable` with a warning naming the cause.
 
@@ -454,7 +454,7 @@ Live tier (`check.sh live`, real binaries, marked and skipped when absent): one 
 
 One epic branch, three stacked PRs reviewed in order and released together, because the fleet must never run a release where callers and runtime disagree:
 
-1. `feat(skills/browser): browser daemon with chromium and camoufox executors`: `cli/`, `engines/`, `install-engines.sh`, Dockerfile layer, tests, daemon-contract row. The old runtime still exists in the tree but nothing calls the new one yet.
+1. `feat(skills/browser): browser daemon with chromium and camoufox executors`: `cli/`, `engines/`, `install-engines.sh`, Dockerfile layer, tests, daemon-contract row. The old runtime is deleted here, because one console script and one package cannot hold both; between PR 1 and PR 3 the tree's callers point at commands that no longer exist, which is why the three PRs release together.
 2. `feat(skills/browser): private handover through the daemon`: `handover.py`, service-exposure and AGENTS.md updates.
 3. `refactor(skills): move browser callers to browser exec, rewrite the skill, retire the old runtime`: `SKILL.md`, `SETUP.md`, maps, microsoft, flights, MEMORY.md, the migration, deletions.
 
