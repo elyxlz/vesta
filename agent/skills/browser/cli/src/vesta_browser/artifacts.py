@@ -18,6 +18,7 @@ from .runtime_paths import Paths
 from .sessions import Session
 
 IMAGE_PATH_RE = re.compile(r"(/[^\s'\"`<>|]+?\.(?:png|jpe?g|webp))\b", re.IGNORECASE)
+OWN_NAME_RE = re.compile(r"^\d{8}T\d{6}Z-\d+\.(?:png|jpg|webp)$")
 SIGNATURES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
@@ -42,7 +43,9 @@ def _contained(path: pl.Path, session: Session) -> bool:
 
 def _candidates(session: Session, stdout: str, started_at: float) -> list[pl.Path]:
     printed = [pl.Path(match) for match in IMAGE_PATH_RE.findall(stdout)]
-    present = [path for path in session.artifact_dir.iterdir() if path.is_file() and not path.name.startswith(".")]
+    present = [
+        path for path in session.artifact_dir.iterdir() if path.is_file() and not path.name.startswith(".") and not OWN_NAME_RE.match(path.name)
+    ]
     seen: dict[pl.Path, None] = {}
     for path in [*printed, *present]:
         if path.is_file() and path.stat().st_mtime >= started_at:
@@ -50,10 +53,18 @@ def _candidates(session: Session, stdout: str, started_at: float) -> list[pl.Pat
     return list(seen)
 
 
+def _free_target(artifact_dir: pl.Path, stamp: str, ext: str) -> pl.Path:
+    index = 1
+    while (target := artifact_dir / f"{stamp}-{index}.{ext}").exists():
+        index += 1
+    return target
+
+
 def collect(session: Session, stdout: str, started_at: float, now: tp.Callable[[], str]) -> tuple[list[Artifact], list[str]]:
     found: list[Artifact] = []
     warnings: list[str] = []
-    for index, path in enumerate(_candidates(session, stdout, started_at), start=1):
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    for path in _candidates(session, stdout, started_at):
         if not _contained(path, session):
             warnings.append(f"artifact_skipped: {path} is outside the session directories")
             continue
@@ -65,8 +76,7 @@ def collect(session: Session, stdout: str, started_at: float, now: tp.Callable[[
         if size > ARTIFACT_MAX_BYTES:
             warnings.append(f"artifact_skipped: {path} exceeds {ARTIFACT_MAX_BYTES} bytes")
             continue
-        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
-        target = session.artifact_dir / f"{stamp}-{index}.{EXTENSION_FOR_MIME[mime]}"
+        target = _free_target(session.artifact_dir, stamp, EXTENSION_FOR_MIME[mime])
         if path != target:
             path.replace(target)
         found.append({"kind": "screenshot", "path": str(target), "mime_type": mime, "bytes": size, "captured_at": now()})

@@ -66,6 +66,33 @@ def test_wrong_magic_and_oversize_are_skipped(session, monkeypatch):
     ]
 
 
+def test_two_collects_in_the_same_second_produce_distinct_artifacts(session):
+    started = time.time() - 1
+    shot = session.scratch_dir / "tmp" / "shot.png"
+    shot.parent.mkdir()
+    shot.write_bytes(PNG)
+    found1, warnings1 = a.collect(session, f"{shot}\n", started, now=lambda: "t")
+    assert warnings1 == [] and len(found1) == 1
+    shot2 = session.scratch_dir / "tmp" / "shot.png"
+    shot2.write_bytes(JPEG)
+    found2, warnings2 = a.collect(session, f"{shot2}\n", started, now=lambda: "t")
+    assert warnings2 == [] and len(found2) == 1
+    assert found1[0]["path"] != found2[0]["path"]
+    assert pl.Path(found1[0]["path"]).read_bytes() == PNG
+    assert pl.Path(found2[0]["path"]).read_bytes() == JPEG
+
+
+def test_a_renamed_artifact_is_not_re_swept_by_a_later_collect(session):
+    started = time.time() - 1
+    shot = session.scratch_dir / "tmp" / "shot.png"
+    shot.parent.mkdir()
+    shot.write_bytes(PNG)
+    found1, warnings1 = a.collect(session, f"{shot}\n", started, now=lambda: "t")
+    assert warnings1 == [] and len(found1) == 1
+    found2, warnings2 = a.collect(session, "", time.time() - 1, now=lambda: "t")
+    assert found2 == [] and warnings2 == []
+
+
 def test_prune_removes_only_files_past_retention(tmp_path):
     paths = load_paths({}, tmp_path)
     table = s.load_table(paths)
