@@ -32,7 +32,6 @@ class Paths:
     camoufox_python: pl.Path
     camoufox_exe: pl.Path
     worker_script: pl.Path
-    presets_dir: pl.Path
 
 
 def _override(env: tp.Mapping[str, str], key: str, default: pl.Path) -> pl.Path:
@@ -55,5 +54,4 @@ def load_paths(env: tp.Mapping[str, str], home: pl.Path) -> Paths:
         camoufox_python=_override(env, "VESTA_BROWSER_CAMOUFOX_PYTHON", ENGINES_DIR / "camoufox/.venv/bin/python"),
         camoufox_exe=_override(env, "VESTA_BROWSER_CAMOUFOX_EXE", CAMOUFOX_INSTALL_ROOT / CAMOUFOX_RELEASE_TAG / "camoufox"),
         worker_script=ENGINES_DIR / "camoufox/worker.py",
-        presets_dir=SKILL_DIR / "cli/src/vesta_browser/presets",
     )

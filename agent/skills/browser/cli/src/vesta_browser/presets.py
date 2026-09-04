@@ -1,12 +1,10 @@
 """Bundled real-Firefox fingerprint presets, seed-selected per profile dir.
 
-Camoufox reads its fingerprint from the CAMOU_CONFIG env var (chunked into
-CAMOU_CONFIG_1..N past the 32767-byte Linux cap) at launch; the C++ patches apply
-it below JS. We bypass Camoufox's Python launcher, so we own config selection:
-one coherent preset per profile, stable across restarts (a real machine has one
-identity), different across profiles. Coherence across surfaces is the actual
-anti-detect win, so presets are authored/scraped as whole consistent identities,
-never mixed field-by-field.
+Camoufox applies one fingerprint config below JS through its C++ patches, and the worker hands it
+that config at launch. Selection is owned here: one coherent preset per profile, stable across
+restarts (a real machine has one identity) and different across profiles. Coherence across surfaces
+is the actual anti-detect win, so presets are authored as whole consistent identities, never mixed
+field-by-field.
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ import hashlib
 import json
 from pathlib import Path
 
-CHUNK = 32767  # Linux env-var cap read by Camoufox MaskConfig::GetJson
 _DIR = Path(__file__).parent / "presets"
 
 # Config defaults merged under every selected preset. showcursor defaults on in Camoufox (a red
@@ -64,13 +61,3 @@ def fit_to_screen(preset: dict, width: int, height: int) -> dict:
         "window.innerWidth": width - chrome_w,
         "window.innerHeight": height - chrome_h,
     }
-
-
-def camou_config_env(preset: dict) -> dict[str, str]:
-    """Serialize a preset to CAMOU_CONFIG_1..N chunks Camoufox concatenates back."""
-    payload = {key: value for key, value in preset.items() if not key.startswith("_")}
-    blob = json.dumps(payload, separators=(",", ":"))
-    env = {}
-    for offset in range(0, len(blob), CHUNK):
-        env[f"CAMOU_CONFIG_{offset // CHUNK + 1}"] = blob[offset : offset + CHUNK]
-    return env

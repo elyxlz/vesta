@@ -17,7 +17,6 @@ def test_defaults_hang_off_home_and_the_skill_dir(tmp_path):
     assert paths.camoufox_python.name == "python" and "engines/camoufox/.venv/bin" in str(paths.camoufox_python)
     assert paths.worker_script.name == "worker.py" and paths.worker_script.parent.name == "camoufox"
     assert str(paths.camoufox_exe).startswith("/opt/camoufox/") and paths.camoufox_exe.name == "camoufox"
-    assert paths.presets_dir.is_dir()
 
 
 def test_env_overrides_every_binary(tmp_path):

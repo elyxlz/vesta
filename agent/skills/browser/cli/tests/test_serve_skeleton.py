@@ -1,8 +1,13 @@
 import asyncio
+import sys
 
 import pytest
 from vesta_browser import serve
 from vesta_browser.runtime_paths import load_paths
+
+from .fakes import write_fakes
+
+BINARY_KEYS = {"VESTA_BROWSER_CHROMIUM", "VESTA_BROWSER_BROWSER_USE", "VESTA_BROWSER_CAMOUFOX_PYTHON", "VESTA_BROWSER_CAMOUFOX_EXE"}
 
 
 @pytest.fixture
@@ -62,17 +67,35 @@ def test_socket_is_private(paths):
     assert asyncio.run(_serve_for(paths, run())) == "0o600"
 
 
-def test_engines_reports_readiness_from_binaries(paths, tmp_path):
+def _engines(paths):
     async def run():
         return await serve.request(paths, {"version": 1, "op": "engines", "request_id": "r1"})
 
-    res = asyncio.run(_serve_for(paths, run()))
+    return asyncio.run(_serve_for(paths, run()))
+
+
+def test_engines_reports_the_route_table(paths):
+    res = _engines(paths)
     routes = res["data"]["routes"]
     assert routes["standard"]["engine"] == "chromium" and routes["standard"]["protocol"] == "cdp"
     assert routes["stealth"]["engine"] == "camoufox" and routes["stealth"]["protocol"] == "playwright-firefox"
-    assert routes["standard"]["ready"] is False  # /usr/bin/chromium is not on the test box's path override
     assert res["data"]["portable_helpers"][0] == "new_tab"
     assert res["data"]["profiles_shared_between_engines"] is False
+
+
+def test_engines_reports_not_ready_when_the_binaries_are_missing(tmp_path):
+    missing = {key: str(tmp_path / f"missing-{key.lower()}") for key in BINARY_KEYS}
+    routes = _engines(load_paths(missing, tmp_path))["data"]["routes"]
+    assert routes["standard"]["ready"] is False and routes["stealth"]["ready"] is False
+
+
+def test_engines_reports_ready_when_every_binary_is_present(tmp_path):
+    camoufox_exe = tmp_path / "camoufox"
+    camoufox_exe.touch()
+    env = {**write_fakes(tmp_path / "bin"), "VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(camoufox_exe)}
+    assert set(env) == BINARY_KEYS
+    routes = _engines(load_paths(env, tmp_path))["data"]["routes"]
+    assert routes["standard"]["ready"] is True and routes["stealth"]["ready"] is True
 
 
 def test_ping_is_false_with_no_daemon(paths):

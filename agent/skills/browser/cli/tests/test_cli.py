@@ -152,7 +152,12 @@ def test_sigint_during_exec_sends_cancel(tmp_path, monkeypatch):
     )
     proc.stdin.write("SLEEP")
     proc.stdin.close()
-    time.sleep(0.5)
+    # The CLI installs its SIGINT handler before it sends, so the stub seeing the exec request is
+    # the signal that interrupting it now reaches that handler.
+    deadline = time.monotonic() + 10
+    while not seen_ops and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert seen_ops == ["exec"]
     proc.send_signal(2)
     # Not proc.communicate(): CPython's communicate() unconditionally reflushes stdin and only
     # catches BrokenPipeError, so a stdin already closed above raises ValueError on 3.12. wait()
