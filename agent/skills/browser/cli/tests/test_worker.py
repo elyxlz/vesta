@@ -146,3 +146,13 @@ def test_portable_helper_list_matches_the_protocol(worker):
 def test_stop_ends_the_worker(worker):
     ask, _, _ = worker
     assert ask({"op": "stop"}) == {"stopped": True}
+
+
+def test_a_child_writing_to_fd_1_cannot_corrupt_the_protocol_stream(worker):
+    """Model code that shells out inherits fd 1; the protocol answer must still parse and carry
+    nothing the child printed."""
+    ask, _, _ = worker
+    res = ask({"op": "exec", "code": "import os; os.system('echo stray'); print('mine')"})
+    assert res["exit_code"] == 0
+    assert res["stdout"] == "mine\n" and "stray" not in res["stdout"]
+    assert ask({"op": "exec", "code": "print('still here')"})["stdout"] == "still here\n"

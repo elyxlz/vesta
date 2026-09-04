@@ -12,6 +12,7 @@ import contextlib
 import dataclasses
 import io
 import json
+import os
 import pathlib as pl
 import sys
 import time
@@ -294,9 +295,21 @@ def run_exec(state: WorkerState, code: str) -> dict[str, object]:
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "exit_code": exit_code, "capability_mismatch": mismatch, "page": observe(state)}
 
 
-def emit(payload: dict[str, object]) -> None:
-    sys.stdout.write(json.dumps(payload) + "\n")
-    sys.stdout.flush()
+def emit(channel: tp.TextIO, payload: dict[str, object]) -> None:
+    channel.write(json.dumps(payload) + "\n")
+    channel.flush()
+
+
+def protocol_channel() -> tp.TextIO:
+    """Moves the protocol stream off fd 1 and points fd 1 at stderr.
+
+    Exec'd code that shells out inherits fd 1, so one stray `echo` in a child would otherwise land
+    in the middle of a JSON line the daemon is parsing. Redirecting `sys.stdout` cannot help: it
+    rebinds a python object, while a child writes to the file descriptor.
+    """
+    channel = os.fdopen(os.dup(1), "w", buffering=1)
+    os.dup2(2, 1)
+    return channel
 
 
 def main() -> int:
@@ -308,6 +321,7 @@ def main() -> int:
     parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()
     config = json.loads(pl.Path(args.config).read_text())
+    channel = protocol_channel()
     from camoufox.sync_api import Camoufox
 
     options: dict[str, object] = {
@@ -321,15 +335,15 @@ def main() -> int:
     with Camoufox(**options) as context:
         state = WorkerState(context, pl.Path(args.artifacts))
         _set_page(state, context.pages[0] if context.pages else context.new_page())
-        emit({"ready": True})
+        emit(channel, {"ready": True})
         for line in sys.stdin:
             request = json.loads(line)
             if request["op"] == "exec":
-                emit(run_exec(state, str(request["code"])))
+                emit(channel, run_exec(state, str(request["code"])))
             elif request["op"] == "observe":
-                emit({"page": observe(state)})
+                emit(channel, {"page": observe(state)})
             elif request["op"] == "stop":
-                emit({"stopped": True})
+                emit(channel, {"stopped": True})
                 return 0
     return 0
 
