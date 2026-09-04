@@ -20,15 +20,19 @@ export default function verifyPack(context) {
         )
       : path.join(context.appOutDir, "resources", "app.asar");
 
-  const files = asar.listPackage(asarPath);
-  if (!files.some((file) => file.startsWith("/node_modules/electron-updater"))) {
+  // asar.listPackage returns OS-separator paths (backslashes on Windows); normalize before
+  // matching, and address files inside the asar with forward slashes on every platform.
+  const files = asar
+    .listPackage(asarPath)
+    .map((file) => file.replace(/\\/g, "/").replace(/^\//, ""));
+  if (!files.some((file) => file.startsWith("node_modules/electron-updater"))) {
     throw new Error(
       `packaged asar is missing production node_modules (electron-updater): ${asarPath}`,
     );
   }
 
   const preload = asar
-    .extractFile(asarPath, path.join("dist-electron", "preload.js"))
+    .extractFile(asarPath, "dist-electron/preload.js")
     .toString("utf8");
   if (RELATIVE_REQUIRE.test(preload)) {
     throw new Error(
