@@ -9,6 +9,8 @@ import http.server, json, os, pathlib, sys, threading
 args = sys.argv[1:]
 profile = next(a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir="))
 pathlib.Path(profile, "fake.pid").write_text(str(os.getpid()))
+with open(os.path.join(profile, "launches"), "a") as f:
+    f.write(str(os.getpid()) + "\\n")
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
@@ -27,7 +29,8 @@ srv.serve_forever()
 """
 
 FAKE_BROWSER_USE = f"""#!{sys.executable}
-import json, os, sys, time
+import json, os, pathlib, sys, time
+pathlib.Path(os.environ["BH_TMP_DIR"], "exec.pid").write_text(str(os.getpid()))
 code = sys.stdin.read()
 if "SLEEP" in code:
     time.sleep(30)

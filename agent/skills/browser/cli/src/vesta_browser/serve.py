@@ -84,12 +84,18 @@ async def _ensure_running(state: State, session: sessions_mod.Session) -> list[s
     return ["worker_restarted"] if restarted else []
 
 
-async def _stop_session(session: sessions_mod.Session) -> None:
+async def _stop_session(session: sessions_mod.Session, *, force: bool = False) -> bool:
+    """Stops a session's runtime. The one owner of the decision: refuses (returns False) a busy or
+    starting session unless `force`, so a stop path never tears a runtime out from under an exec.
+    """
+    if not force and session.state in ("busy", "starting"):
+        return False
     runtime = session.runtime
     session.runtime = None
     if runtime is not None:
         await ENGINES[session.engine].stop(runtime, session)
     sessions_mod.mark(session, "stopped")
+    return True
 
 
 def _outcome_error(outcome: ExecOutcome, session: sessions_mod.Session) -> p.Error | None:
@@ -124,26 +130,32 @@ def _outcome_error(outcome: ExecOutcome, session: sessions_mod.Session) -> p.Err
 
 
 async def _run_exec(state: State, session: sessions_mod.Session, request_id: str, code: str, timeout: int) -> tuple[ExecOutcome, float]:
-    """Spawns the engine exec as an owned, cancellable task and waits for it out to a terminal outcome."""
+    """Spawns the engine exec as an owned, cancellable task. The `finally` is the one place session
+    state is restored, so a cancellation, a timeout, or any other exception all leave the session
+    usable again instead of stuck `busy`: only a Camoufox restart-needed outcome stays stopped.
+    """
     assert session.runtime is not None
     engine = ENGINES[session.engine]
     started_at = time.time()
     task = asyncio.ensure_future(engine.exec_code(session.runtime, session, state.paths, code, timeout))
     state.inflight[request_id] = task
+    outcome: ExecOutcome | None = None
     try:
         outcome = await task
+        return outcome, started_at
     except asyncio.CancelledError:
         outcome = ExecOutcome("", "", None, int((time.time() - started_at) * 1000), cancelled=True)
+        return outcome, started_at
     finally:
         state.inflight.pop(request_id, None)
         session.request_id = None
-    if outcome.timed_out and session.engine == "camoufox":
-        await _stop_session(session)
-        state.restart_pending.add(session.name)
-    else:
-        sessions_mod.mark(session, "ready")
-    sessions_mod.touch(state.table, session)
-    return outcome, started_at
+        needs_restart = outcome is not None and session.engine == "camoufox" and (outcome.timed_out or "worker_restarted" in outcome.warnings)
+        if needs_restart:
+            await _stop_session(session, force=True)
+            state.restart_pending.add(session.name)
+        else:
+            sessions_mod.mark(session, "ready")
+        sessions_mod.touch(state.table, session)
 
 
 async def _finish_exec(
@@ -185,8 +197,8 @@ async def op_exec(state: State, request_id: str, request: dict[str, p.JsonValue]
                 suggested_action="wait for browser handover stop",
             )
         )
-    if session.state == "busy":
-        raise p.BrowserError(_invalid(f"session {name!r} is busy with request {session.request_id}"))
+    if session.state in ("busy", "starting"):
+        raise p.BrowserError(_invalid(f"session {name!r} is {session.state}; retry once the current request finishes"))
     warnings += await _ensure_running(state, session)
     sessions_mod.mark(session, "busy")
     session.request_id = request_id
@@ -212,14 +224,18 @@ async def op_session_stop(state: State, request_id: str, request: dict[str, p.Js
     name = str(request["session"]) if "session" in request else ""
     if name not in state.table.sessions:
         raise p.BrowserError(_invalid(f"unknown session {name!r}"))
-    await _stop_session(state.table.sessions[name])
+    session = state.table.sessions[name]
+    if not await _stop_session(session):
+        raise p.BrowserError(_invalid(f"session {name!r} is {session.state}; refusing to stop"))
     return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
 
 
 async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
-    stopped = [s.name for s in state.table.sessions.values() if s.runtime is not None]
+    stopped: list[str] = []
     for session in state.table.sessions.values():
-        await _stop_session(session)
+        was_stopped = session.state == "stopped"
+        if await _stop_session(session) and not was_stopped:
+            stopped.append(session.name)
     return p.result(request_id=request_id, op="stop_all", ok=True, data={"stopped": stopped})
 
 
@@ -250,6 +266,11 @@ async def handle_request(state: State, request: dict[str, p.JsonValue]) -> p.Res
     except p.BrowserError as exc:
         state.last_error = exc.err
         return p.result(request_id=request_id, op=op, ok=False, err=exc.err)
+    except Exception as exc:
+        logger.exception("unhandled error in op %r", op)
+        err = p.error("execution_failed", "execution", f"internal error: {exc}", retryable=False, suggested_action="run: browser doctor")
+        state.last_error = err
+        return p.result(request_id=request_id, op=op, ok=False, err=err)
 
 
 async def _handle_connection(state: State, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -306,9 +327,12 @@ async def serve(paths: Paths) -> int:
     try:
         await stop.wait()
     finally:
+        # server.close() first so no new connections land; shutdown() BEFORE wait_closed() because
+        # wait_closed() blocks until every connection's handler returns, and an exec handler is
+        # parked on its inflight task until shutdown() cancels it.
         server.close()
-        await server.wait_closed()
         await shutdown(state)
+        await server.wait_closed()
         paths.socket.unlink(missing_ok=True)
         if not state.asked_to_stop:
             _write_daemon_died(paths, "signal")
@@ -316,19 +340,19 @@ async def serve(paths: Paths) -> int:
 
 
 async def shutdown(state: State) -> None:
-    """Cancels the idle sweep and every inflight exec, then stops every session."""
+    """Cancels the idle sweep, cancels and awaits every inflight exec, then force-stops every session."""
     for task in list(state.tasks):
         task.cancel()
     for task in list(state.tasks):
         with contextlib.suppress(asyncio.CancelledError):
             await task
-    for task in list(state.inflight.values()):
+    inflight = list(state.inflight.values())
+    for task in inflight:
         task.cancel()
-    for task in list(state.inflight.values()):
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+    if inflight:
+        await asyncio.gather(*inflight, return_exceptions=True)
     for session in state.table.sessions.values():
-        await _stop_session(session)
+        await _stop_session(session, force=True)
 
 
 def ping(paths: Paths, timeout: float) -> bool:
