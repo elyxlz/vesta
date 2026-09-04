@@ -8,7 +8,16 @@ PID=$(cut -d' ' -f1 ~/agent/data/daemons/app-chat.pid 2>/dev/null); [ -n "$PID" 
 
 SIGTERM is the deliberate stop, so this fires no `daemon_died`. A missing record means nothing was running.
 
-### 2. Reinstall the command under its new name
+### 2. Move the data directory
+
+```bash
+[ -d ~/.app-chat ] && [ ! -d ~/.chat ] && mv ~/.app-chat ~/.chat
+cd ~/.chat 2>/dev/null && for f in app-chat.db app-chat.db-wal app-chat.db-shm; do [ -f "$f" ] && mv "$f" "chat${f#app-chat}"; done; rm -f ~/.chat/app-chat.sock; ls ~/.chat
+```
+
+The listing must show `chat.db` and no `app-chat.db`. A box with no `~/.app-chat` never chatted and has nothing to move; continue. This step runs before the reinstall: until then no daemon can start, so nothing creates `~/.chat` ahead of the move.
+
+### 3. Reinstall the command under its new name
 
 ```bash
 uv tool uninstall app-chat-cli 2>/dev/null; uv tool install --editable --force ~/agent/skills/chat/cli
@@ -16,15 +25,6 @@ command -v chat
 ```
 
 The last line must print a path under `~/.local/bin`. If it does not, STOP and leave this migration unmarked.
-
-### 3. Move the data directory
-
-```bash
-[ -d ~/.app-chat ] && [ ! -d ~/.chat ] && mv ~/.app-chat ~/.chat
-cd ~/.chat 2>/dev/null && for f in app-chat.db app-chat.db-wal app-chat.db-shm; do [ -f "$f" ] && mv "$f" "chat${f#app-chat}"; done; rm -f ~/.chat/app-chat.sock; ls ~/.chat
-```
-
-The listing must show `chat.db` and no `app-chat.db`. A box with no `~/.app-chat` never chatted and has nothing to move; continue.
 
 ### 4. Re-register the service and fix the daemon line
 
