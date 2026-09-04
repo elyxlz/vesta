@@ -11,6 +11,7 @@ import contextlib
 import json
 import pathlib as pl
 import time
+import typing as tp
 
 from . import protocol as p
 from .presets import select_preset
@@ -25,6 +26,11 @@ WORKER_STOP_GRACE_SECS = 5
 
 def _unavailable(message: str) -> p.BrowserError:
     return p.BrowserError(p.error("engine_unavailable", "launch", message, retryable=True, suggested_action="run: browser doctor"))
+
+
+async def _fail_startup(process: asyncio.subprocess.Process, message: str) -> tp.NoReturn:
+    await kill_group(process, 1)
+    raise _unavailable(message) from None
 
 
 def _page_info(raw: p.JsonValue) -> p.PageInfo:
@@ -73,11 +79,19 @@ async def start(session: Session, paths: Paths, *, headed: bool = False) -> Camo
     try:
         line = await asyncio.wait_for(process.stdout.readline(), CAMOUFOX_READY_TIMEOUT_SECS)
     except TimeoutError:
+        await _fail_startup(process, f"camoufox worker did not report ready within {CAMOUFOX_READY_TIMEOUT_SECS}s")
+    except asyncio.CancelledError:
         await kill_group(process, 1)
-        raise _unavailable(f"camoufox worker did not report ready within {CAMOUFOX_READY_TIMEOUT_SECS}s") from None
-    if not line or json.loads(line) != {"ready": True}:
-        await kill_group(process, 1)
-        raise _unavailable(f"camoufox worker exited during startup (code {process.returncode})")
+        raise
+    if not line:
+        await _fail_startup(process, f"camoufox worker exited during startup (code {process.returncode})")
+    try:
+        ready = json.loads(line)
+    except ValueError:
+        await _fail_startup(process, f"camoufox worker sent a malformed first line: {line[:80]!r}")
+    else:
+        if ready != {"ready": True}:
+            await _fail_startup(process, f"camoufox worker exited during startup (code {process.returncode})")
     return CamoufoxRuntime(process=process, config_path=config_path, last_page=p.page_unavailable())
 
 
@@ -131,7 +145,9 @@ async def observe(runtime: CamoufoxRuntime) -> p.PageInfo:
 
 
 async def stop(runtime: CamoufoxRuntime, _session: Session) -> None:
-    if runtime.process.returncode is None:
-        with contextlib.suppress(TimeoutError, ConnectionError, ValueError):
-            await _ask(runtime, {"op": "stop"}, WORKER_STOP_GRACE_SECS)
-    await kill_group(runtime.process, WORKER_STOP_GRACE_SECS)
+    try:
+        if runtime.process.returncode is None:
+            with contextlib.suppress(TimeoutError, ConnectionError, ValueError):
+                await _ask(runtime, {"op": "stop"}, WORKER_STOP_GRACE_SECS)
+    finally:
+        await kill_group(runtime.process, WORKER_STOP_GRACE_SECS)
