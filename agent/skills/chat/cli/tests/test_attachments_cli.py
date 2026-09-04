@@ -1,4 +1,4 @@
-"""Tests for `app-chat attachments list|rm`: the agent's disk-management verbs. Direct disk readers
+"""Tests for `chat attachments list|rm`: the agent's disk-management verbs. Direct disk readers
 (store db + attachments dir), no daemon socket, single-line JSON envelopes."""
 
 import argparse

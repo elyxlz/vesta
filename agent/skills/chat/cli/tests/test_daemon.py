@@ -1,4 +1,4 @@
-"""Tests for the app-chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, and the
+"""Tests for the chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, and the
 start/stop/restart/status verbs against the pid and port records."""
 
 import argparse
@@ -23,9 +23,9 @@ def records(tmp_path, monkeypatch):
     daemons_dir = tmp_path / "daemons"
     daemons_dir.mkdir()
     monkeypatch.setattr(daemon, "DAEMONS_DIR", daemons_dir)
-    monkeypatch.setattr(daemon, "PIDFILE", daemons_dir / "app-chat.pid")
-    monkeypatch.setattr(daemon, "PORTFILE", daemons_dir / "app-chat.port")
-    monkeypatch.setattr(daemon, "LOG", tmp_path / "logs" / "app-chat.log")
+    monkeypatch.setattr(daemon, "PIDFILE", daemons_dir / "chat.pid")
+    monkeypatch.setattr(daemon, "PORTFILE", daemons_dir / "chat.port")
+    monkeypatch.setattr(daemon, "LOG", tmp_path / "logs" / "chat.log")
     return daemons_dir
 
 
@@ -34,9 +34,9 @@ def test_default_notifications_dir_defaults_to_agent_notifications(monkeypatch, 
     assert daemon.default_notifications_dir() == tmp_path / "agent" / "notifications"
 
 
-def test_default_data_dir_defaults_to_dot_app_chat(monkeypatch, tmp_path):
+def test_default_data_dir_defaults_to_dot_chat(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert daemon.default_data_dir() == tmp_path / ".app-chat"
+    assert daemon.default_data_dir() == tmp_path / ".chat"
 
 
 def test_write_death_notification_writes_source_and_type(tmp_path):
@@ -44,10 +44,10 @@ def test_write_death_notification_writes_source_and_type(tmp_path):
 
     daemon.write_death_notification(notif_dir)
 
-    files = list(notif_dir.glob("*-app-chat-daemon_died.json"))
+    files = list(notif_dir.glob("*-chat-daemon_died.json"))
     assert len(files) == 1
     data = json.loads(files[0].read_text())
-    assert data["source"] == "app-chat"
+    assert data["source"] == "chat"
     assert data["type"] == "daemon_died"
 
 
@@ -178,7 +178,7 @@ def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
 def _daemon_state(tmp_path) -> daemon.DaemonState:
     service = ServiceState(Store(store_path(tmp_path)), tmp_path / "notifications", tmp_path / "attachments")
     return daemon.DaemonState(
-        sock_path=tmp_path / "app-chat.sock",
+        sock_path=tmp_path / "chat.sock",
         data_dir=tmp_path,
         notifications_dir=tmp_path / "notifications",
         port=1,
@@ -247,15 +247,15 @@ def test_refused_send_rewakes_the_agent_when_the_floor_clears(tmp_path, monkeypa
     asyncio.run(_socket_command(state, {"command": "send", "message": "mid-turn reply"}))
     state.service.set_speaking(speaking_conn, False)
 
-    files = list((tmp_path / "notifications").glob("*-app-chat-user_finished_talking.json"))
+    files = list((tmp_path / "notifications").glob("*-chat-user_finished_talking.json"))
     assert len(files) == 1
     fields = json.loads(files[0].read_text())
-    assert fields["source"] == "app-chat" and fields["type"] == "user_finished_talking" and fields["interrupt"] is True
+    assert fields["source"] == "chat" and fields["type"] == "user_finished_talking" and fields["interrupt"] is True
 
     # A turn with no refusal clears silently: the marker was consumed by the one nudge above.
     state.service.set_speaking(speaking_conn, True)
     state.service.set_speaking(speaking_conn, False)
-    assert len(list((tmp_path / "notifications").glob("*-app-chat-user_finished_talking.json"))) == 1
+    assert len(list((tmp_path / "notifications").glob("*-chat-user_finished_talking.json"))) == 1
     state.service.store.close()
 
 
@@ -475,7 +475,7 @@ def test_send_attach_only_is_valid_and_notifies_with_the_filename(tmp_path, monk
 
 
 def _send_args(tmp_path, **overrides):
-    sock = tmp_path / "app-chat.sock"
+    sock = tmp_path / "chat.sock"
     sock.touch()
     defaults = {"message": None, "socket": str(sock), "longform": False, "attach": [], "gap": None}
     defaults.update(overrides)

@@ -1,4 +1,4 @@
-"""Tests for `app-chat history`: recent-list and --search projections read from the skill's own store."""
+"""Tests for `chat history`: recent-list and --search projections read from the skill's own store."""
 
 import argparse
 import json

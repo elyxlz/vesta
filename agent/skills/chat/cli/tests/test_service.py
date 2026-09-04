@@ -1,4 +1,4 @@
-"""Tests for the app-chat service: POST /message intake (persist + emit + notification, intent_id
+"""Tests for the chat service: POST /message intake (persist + emit + notification, intent_id
 dedup, validation), GET /history paging, and GET /ws (the replay-free live chat stream). The live echo
 now fans out in-process to connected /ws subscribers, so a test attaches its own subscriber queue (or a
 real websocket) to observe it, standing independent of core's bus (Task 9)."""
@@ -70,14 +70,14 @@ def test_message_persists_emits_and_writes_notification(tmp_path):
     assert [(e["id"], e["type"], e["text"]) for e in events] == [(1, "user", "hello there")]
     emitted = _drain(queue)
     assert len(emitted) == 1 and emitted[0]["id"] == 1 and emitted[0]["text"] == "hello there"
-    files = list(notif_dir.glob("*-app-chat-message.json"))
+    files = list(notif_dir.glob("*-chat-message.json"))
     assert len(files) == 1
     notif = json.loads(files[0].read_text())
-    assert notif["source"] == "app-chat"
+    assert notif["source"] == "chat"
     assert notif["type"] == "message"
     assert notif["message"] == "hello there"
     assert notif["interrupt"] is True
-    assert notif["reply_command"] == "app-chat send --message -"
+    assert notif["reply_command"] == "chat send --message -"
     assert notif["reply_hint"] == "think about how you can best show your personality"
     state.store.close()
 
@@ -97,7 +97,7 @@ def test_duplicate_intent_id_is_dropped_whole(tmp_path):
     assert second == {"ok": True, "deduped": True}
     assert len(_drain(queue)) == 1
     assert len(state.store.page()[0]) == 1
-    assert len(list(notif_dir.glob("*-app-chat-message.json"))) == 1
+    assert len(list(notif_dir.glob("*-chat-message.json"))) == 1
     state.store.close()
 
 
@@ -108,7 +108,7 @@ def test_intent_id_stays_on_event_and_out_of_model_notification(tmp_path):
     _post(state, {"text": "hi", "intent_id": "xyz"})
 
     assert _drain(queue)[0]["intent_id"] == "xyz"
-    notif = json.loads(next(iter(notif_dir.glob("*-app-chat-message.json"))).read_text())
+    notif = json.loads(next(iter(notif_dir.glob("*-chat-message.json"))).read_text())
     assert "intent_id" not in notif
     state.store.close()
 
@@ -175,7 +175,7 @@ def test_failed_notification_write_is_recoverable_on_retry(tmp_path):
     assert second_status == 200 and second_body["ok"] is True and second_body["id"] == 1
     assert len(state.store.page()[0]) == 1  # persisted exactly once
     assert len(_drain(queue)) == 1  # echoed exactly once
-    assert len(list((tmp_path / "notifications").glob("*-app-chat-message.json"))) == 1
+    assert len(list((tmp_path / "notifications").glob("*-chat-message.json"))) == 1
     state.store.close()
 
 
@@ -310,7 +310,7 @@ def test_ws_disconnect_after_a_refusal_writes_the_turn_end_notification(tmp_path
         assert state.refuse_send_while_speaking() is not None
         await ws.close()
         await _wait_for(lambda: not state.speaking)
-        assert len(list(notif_dir.glob("*-app-chat-user_finished_talking.json"))) == 1
+        assert len(list(notif_dir.glob("*-chat-user_finished_talking.json"))) == 1
 
     asyncio.run(_with_client(state, scenario))
     state.store.close()
@@ -653,7 +653,7 @@ def test_notification_carries_attachment_line_with_paths(tmp_path):
 
     attachment_id, _, _ = _message_with_attachment(state, tmp_path)
 
-    notif = json.loads(next(iter(notif_dir.glob("*-app-chat-message.json"))).read_text())
+    notif = json.loads(next(iter(notif_dir.glob("*-chat-message.json"))).read_text())
     assert notif["message"] == "look at this"
     line = notif["attachments"]
     assert line.startswith("photo.jpg (image/jpeg, 13 B) at ")

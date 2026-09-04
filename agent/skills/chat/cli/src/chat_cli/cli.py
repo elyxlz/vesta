@@ -1,11 +1,11 @@
-"""App Chat CLI entry point.
+"""Chat CLI entry point.
 
 Commands:
-  serve   — daemon: runs the app-chat HTTP service (intake, history, live chat socket), accepts CLI commands via Unix socket
+  serve   — daemon: runs the chat HTTP service (intake, history, live chat socket), accepts CLI commands via Unix socket
   daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports whether it is up and on which port)
   send    — send a message to the app (via daemon Unix socket)
   history — search/list chat history from the skill's own store
-  import  — one-time copy of pre-existing app-chat history from core's events.db into the skill store
+  import  — one-time copy of pre-existing chat history from core's events.db into the skill store
 """
 
 import argparse
@@ -18,10 +18,10 @@ _HELP_ARGS = ("--help", "-h", "help")
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="app-chat", description="Vesta app chat skill")
+    parser = argparse.ArgumentParser(prog="chat", description="Vesta chat skill")
     sub = parser.add_subparsers(dest="command")
 
-    serve_p = sub.add_parser("serve", help="Run the app-chat daemon in the foreground")
+    serve_p = sub.add_parser("serve", help="Run the chat daemon in the foreground")
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes
     # --notifications-dir): accepted and ignored. Intake is owned by the HTTP service; kept so
     # existing launch lines don't break argparse.
@@ -30,7 +30,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # accepted and ignored. The daemon does not connect to core's /ws; the live echo fans out
     # in-process to the service's /ws subscribers. Kept so an existing launch line doesn't break argparse.
     serve_p.add_argument("--ws-url", default=None, help=argparse.SUPPRESS)
-    serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
     serve_p.add_argument("--port", type=int, default=None, help="Service port (default: resolved via register-service)")
 
     daemon_p = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
@@ -60,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Attach a file (repeatable); the daemon copies it into its own store, so a temp file may be deleted after",
     )
-    send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.app-chat/app-chat.sock)")
+    send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.chat/chat.sock)")
     send_p.add_argument(
         "--longform",
         action="store_true",
@@ -73,19 +73,19 @@ def _build_parser() -> argparse.ArgumentParser:
     att_list_p.add_argument("--sort", choices=("size", "date"), default="size", help="Order: size (largest first) or date (newest first)")
     att_list_p.add_argument("--limit", type=int, default=None, help="Trim the printed array (count/total_bytes still cover everything)")
     att_list_p.add_argument("--min-size", dest="min_size", type=int, default=None, metavar="BYTES", help="Only attachments at least this big")
-    att_list_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    att_list_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
     att_rm_p = att_sub.add_parser("rm", help="Free an attachment's bytes; chat history keeps a clean 'no longer available' tile")
     att_rm_p.add_argument("ids", nargs="+", metavar="ID")
-    att_rm_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    att_rm_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
 
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
     history_p.add_argument("--limit", "-n", type=int, default=20, help="Max results")
-    history_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    history_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
 
-    import_p = sub.add_parser("import", help="Copy pre-existing app-chat history from core's events.db into the skill store")
+    import_p = sub.add_parser("import", help="Copy pre-existing chat history from core's events.db into the skill store")
     import_p.add_argument("--events-db", default=None, help="Path to core's events.db (default: $AGENT_DIR/data/events.db)")
-    import_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    import_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
 
     return parser
 
