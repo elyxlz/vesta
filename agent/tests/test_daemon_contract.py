@@ -234,8 +234,8 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
-        command=["uv", "run", "--project", str(SKILLS_DIR / "app-chat/cli"), "app-chat"],
-        name="app-chat",
+        command=["uv", "run", "--project", str(SKILLS_DIR / "chat/cli"), "chat"],
+        name="chat",
         serves_port=True,
         emits_daemon_died=True,
     ),

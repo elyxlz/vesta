@@ -60,7 +60,7 @@ async def _drain_until(ws, predicate, timeout=1.0):
 
 @pytest.mark.anyio
 async def test_ws_snapshot_omits_chat(event_bus):
-    """The connect snapshot carries state + notifications + config, never chat: the app-chat skill owns
+    """The connect snapshot carries state + notifications + config, never chat: the chat skill owns
     chat end to end on its own service socket, so core neither transports nor seeds it."""
     runner, base = await _start_server(event_bus)
     try:
@@ -701,8 +701,8 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_history_rejects_app_chat_channel_with_410(event_bus):
-    """app-chat history moved to the app-chat skill service: core /history rejects channel=app-chat
+async def test_history_rejects_the_retired_chat_channel_with_410(event_bus):
+    """Chat history lives on the chat skill's service: core /history rejects the retired channel value
     with 410 so a stale client fails loud rather than silently getting the full stream. Other channels
     are untouched."""
     from core.api import _history_handler

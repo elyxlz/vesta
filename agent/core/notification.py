@@ -28,7 +28,7 @@ DeliveredDisposition = tp.Literal["interrupt", "snooze"]
 
 # Fields promoted to the <channel> element's inner body (the message), in priority order.
 # Everything else on a notification renders as an attribute. Skills that carry a human-readable
-# message use one of these keys (whatsapp/app-chat write `message`); metadata-only notifications
+# message use one of these keys (whatsapp/chat write `message`); metadata-only notifications
 # (email, reactions) have none and render as attributes with an empty body.
 _CONTENT_FIELDS = ("message", "text", "content")
 

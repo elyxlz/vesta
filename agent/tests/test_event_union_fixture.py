@@ -62,7 +62,7 @@ def _emit_all(bus: EventBus, variants: list[StreamEvent]) -> list[StreamEvent]:
 
 def _snapshot() -> SnapshotEvent:
     """Build the connect snapshot the way api.py does. The tap reads `state`, `config.timezone`, and
-    `notifications.pending`; chat is not on the snapshot (the app-chat skill owns it). The snapshot is a
+    `notifications.pending`; chat is not on the snapshot (the chat skill owns it). The snapshot is a
     frame, not an event, so it has no id of its own."""
     return SnapshotEvent(
         type="snapshot",
