@@ -10,14 +10,18 @@ import asyncio
 import dataclasses
 
 from . import protocol as p
+from . import sessions as sessions_mod
 from .runtime_paths import Paths
+from .runtimes import ExecOutcome
 
 
 @dataclasses.dataclass
 class State:
     paths: Paths
-    inflight: dict[str, asyncio.Task[p.Result]] = dataclasses.field(default_factory=dict)
+    table: sessions_mod.SessionTable
+    inflight: dict[str, asyncio.Task[ExecOutcome]] = dataclasses.field(default_factory=dict)
     tasks: set[asyncio.Task[None]] = dataclasses.field(default_factory=set)
+    restart_pending: set[str] = dataclasses.field(default_factory=set)
     last_error: p.Error | None = None
     asked_to_stop: bool = False
 

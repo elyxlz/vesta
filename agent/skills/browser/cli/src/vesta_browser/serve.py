@@ -19,13 +19,19 @@ import sys
 import time
 import typing as tp
 
+from . import artifacts, camoufox, chromium
 from . import protocol as p
+from . import sessions as sessions_mod
 from .daemon_state import State, routes
 from .runtime_paths import Paths, load_paths
+from .runtimes import ExecOutcome
 
 logger = logging.getLogger(__name__)
 IDLE_SWEEP_SECS = 60
+IDLE_STOP_SECS = p.SESSION_IDLE_STOP_SECS
 CLIENT_TIMEOUT_SECS = 5.0
+
+ENGINES = {"chromium": chromium, "camoufox": camoufox}
 
 
 def _invalid(message: str) -> p.Error:
@@ -39,6 +45,191 @@ async def op_status(state: State, request_id: str, _request: dict[str, p.JsonVal
 
 async def op_engines(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
     return p.result(request_id=request_id, op="engines", ok=True, data=routes(state.paths))
+
+
+def _validate_exec(request: dict[str, p.JsonValue]) -> tuple[str, p.Mode | None, int, str, list[str]]:
+    """Returns (session, mode, timeout_s, code, warnings) or raises BrowserError(invalid_request)."""
+    code = request["code"] if "code" in request else ""
+    if not isinstance(code, str) or not code.strip():
+        raise p.BrowserError(_invalid("code is empty"))
+    if len(code.encode()) > p.CODE_MAX_BYTES:
+        raise p.BrowserError(_invalid(f"code exceeds {p.CODE_MAX_BYTES} bytes"))
+    session = request["session"] if "session" in request else p.DEFAULT_SESSION
+    if not isinstance(session, str):
+        raise p.BrowserError(_invalid("session must be a string"))
+    mode = request["mode"] if "mode" in request else None
+    if mode not in (None, "standard", "stealth"):
+        raise p.BrowserError(_invalid("mode must be standard, stealth, or null"))
+    raw_timeout = request["timeout_s"] if "timeout_s" in request else p.EXEC_TIMEOUT_DEFAULT_SECS
+    if not isinstance(raw_timeout, int):
+        raise p.BrowserError(_invalid("timeout_s must be an integer"))
+    timeout = min(max(raw_timeout, p.EXEC_TIMEOUT_MIN_SECS), p.EXEC_TIMEOUT_MAX_SECS)
+    warnings = ["timeout_clamped"] if timeout != raw_timeout else []
+    return session, tp.cast(p.Mode | None, mode), timeout, code, warnings
+
+
+async def _ensure_running(state: State, session: sessions_mod.Session) -> list[str]:
+    """Starts the session's engine when it is not running. Returns warnings (worker_restarted after a kill)."""
+    if session.runtime is not None:
+        return []
+    restarted = session.state == "stopped" and session.name in state.restart_pending
+    state.restart_pending.discard(session.name)
+    sessions_mod.mark(session, "starting")
+    try:
+        session.runtime = await ENGINES[session.engine].start(session, state.paths)
+    except p.BrowserError:
+        sessions_mod.mark(session, "stopped")
+        raise
+    sessions_mod.mark(session, "ready")
+    return ["worker_restarted"] if restarted else []
+
+
+async def _stop_session(session: sessions_mod.Session) -> None:
+    runtime = session.runtime
+    session.runtime = None
+    if runtime is not None:
+        await ENGINES[session.engine].stop(runtime, session)
+    sessions_mod.mark(session, "stopped")
+
+
+def _outcome_error(outcome: ExecOutcome, session: sessions_mod.Session) -> p.Error | None:
+    if outcome.timed_out:
+        return p.error(
+            "timed_out",
+            "execution",
+            "execution exceeded its budget",
+            retryable=True,
+            suggested_action="raise --timeout (and the Bash timeout) or split the program",
+        )
+    if outcome.cancelled:
+        return p.error("cancelled", "execution", "the client cancelled this request", retryable=False, suggested_action="rerun when ready")
+    if outcome.capability_mismatch is not None:
+        other = "chromium" if session.engine == "camoufox" else "camoufox"
+        return p.error(
+            "engine_capability_mismatch",
+            "execution",
+            f"{outcome.capability_mismatch}() is unavailable on {session.engine}",
+            retryable=False,
+            suggested_action=f"change the code to the portable helpers, or start a new {other} session under a new name",
+        )
+    if outcome.exit_code != 0:
+        return p.error(
+            "execution_failed",
+            "execution",
+            f"the program exited with {outcome.exit_code}",
+            retryable=False,
+            suggested_action="read output.stderr and fix the code",
+        )
+    return None
+
+
+async def _run_exec(state: State, session: sessions_mod.Session, request_id: str, code: str, timeout: int) -> tuple[ExecOutcome, float]:
+    """Spawns the engine exec as an owned, cancellable task and waits for it out to a terminal outcome."""
+    assert session.runtime is not None
+    engine = ENGINES[session.engine]
+    started_at = time.time()
+    task = asyncio.ensure_future(engine.exec_code(session.runtime, session, state.paths, code, timeout))
+    state.inflight[request_id] = task
+    try:
+        outcome = await task
+    except asyncio.CancelledError:
+        outcome = ExecOutcome("", "", None, int((time.time() - started_at) * 1000), cancelled=True)
+    finally:
+        state.inflight.pop(request_id, None)
+        session.request_id = None
+    if outcome.timed_out and session.engine == "camoufox":
+        await _stop_session(session)
+        state.restart_pending.add(session.name)
+    else:
+        sessions_mod.mark(session, "ready")
+    sessions_mod.touch(state.table, session)
+    return outcome, started_at
+
+
+async def _finish_exec(
+    state: State, session: sessions_mod.Session, request_id: str, outcome: ExecOutcome, started_at: float, warnings: list[str]
+) -> p.Result:
+    """Observes the page, collects artifacts, and builds the exec envelope from a terminal outcome."""
+    engine = ENGINES[session.engine]
+    page = await engine.observe(session.runtime) if session.runtime is not None else p.page_unavailable()
+    found, artifact_warnings = artifacts.collect(session, outcome.stdout, started_at, now=p.now_iso)
+    stdout, cut_out = p.truncate(outcome.stdout, p.STDOUT_CAP_BYTES)
+    stderr, cut_err = p.truncate(outcome.stderr, p.STDERR_CAP_BYTES)
+    warnings = [*warnings, *outcome.warnings, *artifact_warnings, *(["output_truncated"] if cut_out or cut_err else [])]
+    err = _outcome_error(outcome, session)
+    if err is not None:
+        state.last_error = err
+    return p.result(
+        request_id=request_id,
+        op="exec",
+        ok=err is None,
+        session=sessions_mod.info(session),
+        page=page,
+        output={"stdout": stdout, "stderr": stderr, "exit_code": outcome.exit_code, "duration_ms": outcome.duration_ms},
+        artifacts=found,
+        warnings=warnings,
+        err=err,
+    )
+
+
+async def op_exec(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:
+    name, mode, timeout, code, warnings = _validate_exec(request)
+    session = sessions_mod.resolve_session(state.table, name, mode)
+    if session.state == "handed_over":
+        raise p.BrowserError(
+            p.error(
+                "handover_in_use",
+                "routing",
+                f"session {name!r} is handed over to the user",
+                retryable=True,
+                suggested_action="wait for browser handover stop",
+            )
+        )
+    if session.state == "busy":
+        raise p.BrowserError(_invalid(f"session {name!r} is busy with request {session.request_id}"))
+    warnings += await _ensure_running(state, session)
+    sessions_mod.mark(session, "busy")
+    session.request_id = request_id
+    outcome, started_at = await _run_exec(state, session, request_id, code, timeout)
+    return await _finish_exec(state, session, request_id, outcome, started_at, warnings)
+
+
+async def op_cancel(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:
+    target = str(request["target_request_id"]) if "target_request_id" in request else ""
+    task = state.inflight.pop(target, None)
+    if task is None:
+        return p.result(request_id=request_id, op="cancel", ok=True, data={"cancelled": False})
+    task.cancel()
+    return p.result(request_id=request_id, op="cancel", ok=True, data={"cancelled": True})
+
+
+async def op_sessions(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
+    listing: p.JsonValue = [dict(sessions_mod.info(s)) for s in state.table.sessions.values()]
+    return p.result(request_id=request_id, op="sessions", ok=True, data={"sessions": listing})
+
+
+async def op_session_stop(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:
+    name = str(request["session"]) if "session" in request else ""
+    if name not in state.table.sessions:
+        raise p.BrowserError(_invalid(f"unknown session {name!r}"))
+    await _stop_session(state.table.sessions[name])
+    return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
+
+
+async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
+    stopped = [s.name for s in state.table.sessions.values() if s.runtime is not None]
+    for session in state.table.sessions.values():
+        await _stop_session(session)
+    return p.result(request_id=request_id, op="stop_all", ok=True, data={"stopped": stopped})
+
+
+async def _idle_sweep(state: State) -> None:
+    while True:
+        await asyncio.sleep(IDLE_SWEEP_SECS)
+        for session in sessions_mod.idle_sessions(state.table, IDLE_STOP_SECS):
+            logger.info("stopping idle session %s", session.name)
+            await _stop_session(session)
+        artifacts.prune(state.paths)
 
 
 Handler = tp.Callable[[State, str, dict[str, p.JsonValue]], tp.Awaitable[p.Result]]
@@ -89,7 +280,7 @@ def _write_daemon_died(paths: Paths, reason: str) -> None:
 
 
 async def serve(paths: Paths) -> int:
-    state = State(paths=paths)
+    state = State(paths=paths, table=sessions_mod.load_table(paths))
     paths.root.mkdir(parents=True, exist_ok=True)
     paths.socket.unlink(missing_ok=True)
     stop = asyncio.Event()
@@ -108,6 +299,9 @@ async def serve(paths: Paths) -> int:
         )
     finally:
         os.umask(old_umask)
+    sweep_task = asyncio.create_task(_idle_sweep(state))
+    state.tasks.add(sweep_task)
+    sweep_task.add_done_callback(state.tasks.discard)
     logger.info("browser daemon listening on %s", paths.socket)
     try:
         await stop.wait()
@@ -122,12 +316,19 @@ async def serve(paths: Paths) -> int:
 
 
 async def shutdown(state: State) -> None:
-    """Stops every session; Task 9 fills this in. The skeleton has nothing to stop."""
+    """Cancels the idle sweep and every inflight exec, then stops every session."""
     for task in list(state.tasks):
         task.cancel()
     for task in list(state.tasks):
         with contextlib.suppress(asyncio.CancelledError):
             await task
+    for task in list(state.inflight.values()):
+        task.cancel()
+    for task in list(state.inflight.values()):
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    for session in state.table.sessions.values():
+        await _stop_session(session)
 
 
 def ping(paths: Paths, timeout: float) -> bool:
@@ -160,6 +361,11 @@ async def request(paths: Paths, payload: dict[str, p.JsonValue]) -> p.Result:
 HANDLERS: dict[str, Handler] = {
     "status": op_status,
     "engines": op_engines,
+    "exec": op_exec,
+    "cancel": op_cancel,
+    "sessions": op_sessions,
+    "session_stop": op_session_stop,
+    "stop_all": op_stop_all,
 }
 
 

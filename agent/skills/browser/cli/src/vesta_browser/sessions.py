@@ -104,8 +104,8 @@ def mark(session: Session, state: p.SessionState) -> None:
     session.state = state
 
 
-def idle_sessions(table: SessionTable) -> list[Session]:
-    cutoff = table.clock() - p.SESSION_IDLE_STOP_SECS
+def idle_sessions(table: SessionTable, idle_secs: int = p.SESSION_IDLE_STOP_SECS) -> list[Session]:
+    cutoff = table.clock() - idle_secs
     return [x for x in table.sessions.values() if x.state == "ready" and x.last_activity < cutoff]
 
 
