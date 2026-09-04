@@ -41,6 +41,12 @@ var (
 		`|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec` +
 		`|inc|ltd|co|corp|ave|rd|blvd|vol|ch|pp)\.`)
 	bubbleEllipsisRe = regexp.MustCompile(`\.{3,}`) // ellipsis: a texting beat, not a full stop
+	// Em dash (U+2014) and en dash (U+2013). House style (personality SKILL.md: "Write without
+	// em dashes ... covers everything you send, including text you quote or relay") bans them
+	// everywhere, so dashReason runs on every send, --longform included: relayed reference
+	// material must have its dashes rephrased too. Models reach for these by default and the
+	// slip clusters in generated/relayed content, exactly where remembering the rule fails.
+	bubbleDashRe = regexp.MustCompile(`[\x{2014}\x{2013}]`)
 	// A line-leading ordered-list marker ("1.", "2)") is not a full stop: each item is one
 	// short thought. Only the marker is blanked, so a real wall inside an item still trips.
 	bubbleListMarkerRe = regexp.MustCompile(`(?m)^[ \t]*\d+[.)][ \t]`)
@@ -83,6 +89,19 @@ func containsWord(text string) bool {
 	return strings.ContainsFunc(text, func(r rune) bool {
 		return unicode.IsLetter(r) || unicode.IsNumber(r)
 	})
+}
+
+// dashReason returns a non-empty explanation when message contains an em or en
+// dash, or "" if it is clean. Unlike the wall lint it has no --longform bypass:
+// the house rule covers quoted and relayed text too. The caller blocks the send
+// so the agent rewrites with commas, colons, or a restructured sentence.
+func dashReason(message string) string {
+	if bubbleDashRe.MatchString(message) {
+		return "send blocked: message contains an em dash or en dash (U+2014 / U+2013). " +
+			"house style forbids them everywhere, including quoted or relayed reference " +
+			"material. rewrite with commas, colons, or a restructured sentence, then resend."
+	}
+	return ""
 }
 
 // bubbleLintReason returns a non-empty explanation when message is a wall (too
