@@ -28,7 +28,7 @@ from .handover_state import Handover, StopReason, payload
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
 from .runtimes import EngineRuntime
-from .session_control import ENGINES, ensure_running
+from .session_control import ENGINES, ensure_running, stop_session
 
 logger = logging.getLogger(__name__)
 SERVICE = "browser"
@@ -37,8 +37,9 @@ LIFETIME_DEFAULT_MINUTES = 30
 LIFETIME_MIN_MINUTES = 1
 LIFETIME_MAX_MINUTES = 240
 NAVIGATE_TIMEOUT_SECS = 30
-# What the client waits behind, not the sum of the steps below it: every one of them has its own
-# bound, and a bring-up still running at this point is one the user is no longer waiting for.
+# One deadline for the whole start, the engine's own launch included: what the client waits
+# behind, under the CLI's own RPC timeout. Every step inside it has its own bound too, and a start
+# still running at this point is one the user is no longer waiting for.
 HANDOVER_START_BUDGET_SECS = 100.0
 # A rollback runs while a SIGTERM may already be in flight, so it never waits on vestad as long as
 # a foreground call does: the daemon must be gone before `browser daemon stop` SIGKILLs it.
@@ -55,6 +56,10 @@ def _in_use(message: str) -> p.BrowserError:
 
 def _failed(message: str) -> p.BrowserError:
     return p.BrowserError(p.error("handover_failed", "handover", message, retryable=True, suggested_action="run: browser doctor"))
+
+
+def _too_slow() -> p.BrowserError:
+    return _failed(f"the handover was still coming up after {HANDOVER_START_BUDGET_SECS}s")
 
 
 def _env(name: str) -> str:
@@ -150,22 +155,32 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     session = sessions_mod.resolve_session(state.table, session_name, mode)
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))
-    # The browser comes up before anything is marked or registered, because an engine that cannot
-    # start is the session's own failure to report, with no handover to roll back.
-    warnings = await ensure_running(state, session)
-    sessions_mod.mark(session, "handed_over")
+    deadline = time.monotonic() + HANDOVER_START_BUDGET_SECS
     handover_id = uuid.uuid4().hex[:8]
     handover = Handover(id=handover_id, session=session, key_label=f"browser-handover-{handover_id}", state="starting")
+    # Claimed with no await between the check above and this line, so a second start arriving while
+    # this one waits on the engine is refused rather than replacing it.
     state.handover = handover
+    # The browser comes up before the session is marked or anything is registered, because an engine
+    # that cannot start is the session's own failure to report, with no handover to roll back.
+    try:
+        warnings = await asyncio.wait_for(ensure_running(state, session), deadline - time.monotonic())
+    except TimeoutError as exc:
+        state.handover = None
+        raise _too_slow() from exc
+    except BaseException:
+        state.handover = None
+        raise
+    sessions_mod.mark(session, "handed_over")
     # The bring-up runs as a task the daemon owns, because it holds the stream for as long as it
     # runs: a shutdown must be able to cancel it and take the stream back.
     bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes, warnings=warnings))
     handover.task = bring_up
     try:
-        await asyncio.wait_for(asyncio.shield(bring_up), HANDOVER_START_BUDGET_SECS)
+        await asyncio.wait_for(asyncio.shield(bring_up), deadline - time.monotonic())
     except TimeoutError as exc:
         await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
-        raise _failed(f"the handover was still coming up after {HANDOVER_START_BUDGET_SECS}s") from exc
+        raise _too_slow() from exc
     except BaseException as exc:
         # The shield keeps an outer cancellation off the bring-up, so which of the two was cancelled
         # is what tells them apart: this caller going away is not a handover failure to report. Read
@@ -227,7 +242,8 @@ async def _teardown(state: State, handover: Handover, reason: StopReason, gatewa
     deregister. Each step owns whether it has anything to undo, so a half-started handover is fine.
 
     The session gets its browser back on the display it has held all along, `ready` for the next
-    exec, and `stopped` when the runtime the user was driving died under them.
+    exec. A runtime that died under the user is reaped with that display instead, and the session is
+    queued for a restart, so the next exec starts a fresh browser and says it did.
     """
     session = handover.session
     done = [
@@ -238,8 +254,11 @@ async def _teardown(state: State, handover: Handover, reason: StopReason, gatewa
         await _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),
     ]
     handover.state = "inactive" if reason == "stopped" else reason
-    alive = session.runtime is not None and session.runtime.process.returncode is None
-    sessions_mod.mark(session, "ready" if alive else "stopped")
+    if session.runtime is not None and session.runtime.process.returncode is None:
+        sessions_mod.mark(session, "ready")
+    else:
+        done.append(await _guarded(stop_session(state.paths, session, force=True), "reap the browser that died"))
+        state.restart_pending.add(session.name)
     sessions_mod.touch(state.table, session)
     return [] if all(done) else ["cleanup_incomplete"]
 

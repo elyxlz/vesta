@@ -4,8 +4,10 @@ import asyncio
 import contextlib
 import datetime as dt
 import json
+import os
 import pathlib as pl
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -17,7 +19,15 @@ from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_display_fakes, write_fakes, write_script
 from .hermetic import isolated_path
-from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_all_dead, with_daemon
+from .waiting import (
+    POLL_DEADLINE_SECS,
+    POLL_INTERVAL_SECS,
+    pid_alive,
+    wait_for_state,
+    wait_until_all_dead,
+    wait_until_dead,
+    with_daemon,
+)
 
 FAKE_CAMOUFOX = pl.Path(__file__).parent / "fake_camoufox"
 PUBLIC_URL = "https://gw.example"
@@ -262,6 +272,77 @@ def test_handover_stop_releases_the_key_the_service_and_the_stream(rig):
     assert ran["ok"] is True and ran["session"]["state"] == "ready"
     assert status["data"]["state"] == "inactive" and status["data"]["user_url"] is None
     assert not rig.paths.handover_web.exists()
+
+
+def test_a_handover_whose_browser_died_gives_the_session_back_stopped(rig):
+    """A runtime the user lost is reaped with its display, so the next exec starts a fresh one."""
+
+    async def run():
+        await serve.request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        os.kill(browser, signal.SIGKILL)
+        reaped = await wait_until_dead(browser)
+        stopped = await serve.request(rig.paths, _op("handover_stop"))
+        await wait_for_state(rig.paths, "research", "stopped")
+        gone = await wait_until_all_dead(pids)
+        again = await serve.request(rig.paths, _exec("research", "print(1)"))
+        return reaped, stopped, gone, again
+
+    reaped, stopped, gone, again = with_daemon(rig.paths, run)
+    assert reaped is True
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert gone is True
+    assert again["ok"] is True and again["warnings"] == ["worker_restarted"]
+
+
+def test_a_start_whose_engine_never_comes_up_fails_inside_the_one_budget(rig, monkeypatch):
+    """The engine start is inside the budget the client waits behind, not beside it."""
+    profile = rig.paths.profiles / "chromium" / "research"
+    profile.mkdir(parents=True)
+    (profile / "no-port").write_text("")
+    monkeypatch.setattr(handover, "HANDOVER_START_BUDGET_SECS", BUDGET_SECS)
+
+    async def run():
+        began = time.monotonic()
+        started = await serve.request(rig.paths, _start())
+        elapsed = time.monotonic() - began
+        listing = await serve.request(rig.paths, _op("sessions", request_id="h7"))
+        gone = await wait_until_all_dead(rig.display_pids())
+        status = await serve.request(rig.paths, _op("handover_status"))
+        return started, elapsed, listing, gone, status
+
+    started, elapsed, listing, gone, status = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert f"{BUDGET_SECS}s" in started["error"]["message"]
+    assert BUDGET_SECS <= elapsed < 10
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
+    assert gone is True
+    assert status["data"]["state"] == "inactive"
+    assert rig.register_lines() == ["deregister browser"]
+
+
+def test_two_starts_at_once_leave_exactly_one_handover(rig):
+    """The handover record is claimed before the engine start, so the second caller is refused."""
+
+    async def run():
+        first, second = await asyncio.gather(
+            serve.request(rig.paths, _start(session="one", request_id="h1")),
+            serve.request(rig.paths, _start(session="two", request_id="h2")),
+        )
+        pids = rig.display_pids()
+        await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
+        gone = await wait_until_all_dead(pids[2:])
+        return first, second, pids, gone
+
+    first, second, pids, gone = with_daemon(rig.paths, run)
+    answers = sorted([first["ok"], second["ok"]])
+    refused = first if first["ok"] is False else second
+    assert answers == [False, True], (first, second)
+    assert refused["error"]["code"] == "handover_in_use"
+    assert len(pids) == 4 and gone is True
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
 
 
 def test_an_engine_that_cannot_start_refuses_the_handover(rig):
