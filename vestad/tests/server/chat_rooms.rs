@@ -2,9 +2,10 @@
 //! intake and its echo on `/rooms/ws`, paged history, the speaking and burst gates, history
 //! import, and the rename/delete hooks, all driven against a real vestad through the harness.
 //!
-//! Nothing here starts a container. `POST /agents` mints the direct room before it answers, the
-//! chat gate resolves an agent token from the env file vestad wrote on the host, and every route
-//! under test is vestad's own, so a created agent is the whole fixture.
+//! Nothing here needs anything running inside a container: no docker exec, no wait for an agent
+//! to boot. `POST /agents` mints the direct room before it answers, the chat gate resolves an
+//! agent token from the env file vestad wrote on the host, and every route under test is vestad's
+//! own, so `TestAgent::create` (which does create and start a container) is the whole fixture.
 //!
 //! `GET /rooms` is gateway-wide and this target runs its scenarios in parallel against one shared
 //! server, so every room-list assertion is containment over ids this scenario made, never

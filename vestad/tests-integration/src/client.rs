@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::tungstenite::Message;
 use ureq::http::Response;
 use ureq::Body;
@@ -562,9 +564,6 @@ impl Client {
         path_and_query: &str,
         auth: ProxyAuth<'_>,
     ) -> Result<SyncSocket, String> {
-        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-        use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
-
         let url = format!("{}{}", ws_base_url(&self.base_url), path_and_query);
         let mut request = url
             .into_client_request()
