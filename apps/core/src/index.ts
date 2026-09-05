@@ -12,6 +12,8 @@ export type { ReleaseNote } from "./release-notes/release-notes";
 export { parseAnsi, resolveAnsiColor } from "./ansi/ansi";
 export type { AnsiColor, AnsiStyle } from "./ansi/ansi";
 
+export { relativeTime } from "./time/relative-time";
+
 export type {
   AgentActivityState,
   AgentInfo,
@@ -27,6 +29,7 @@ export type {
   GatewayOperation,
   RateLimitedInfo,
   ReleaseChannel,
+  Room,
   ServiceInfo,
   Tree,
 } from "./protocol/tree";
@@ -54,6 +57,14 @@ export {
 export { parseServerFrame } from "./protocol/parse";
 export { selectDevices, devicesEqual } from "./tree/devices";
 export {
+  directRoomId,
+  roomKind,
+  roomLabel,
+  roomsEqual,
+  selectRooms,
+} from "./tree/rooms";
+export type { RoomKind } from "./tree/rooms";
+export {
   gatewayOperationLabel,
   gatewayOperationsEqual,
   selectGatewayOperation,
@@ -70,7 +81,11 @@ export type { SseHandle, StreamEvent } from "./transport/sse";
 
 export type { ForegroundSignal } from "./adapters/types";
 
-export { agentHoldKey, createKeyedHoldStore } from "./holds/keyed-hold";
+export {
+  agentHoldKey,
+  createKeyedHoldStore,
+  roomHoldKey,
+} from "./holds/keyed-hold";
 export type { KeyedHoldStore } from "./holds/keyed-hold";
 
 export {
@@ -92,7 +107,6 @@ export type { ChatMessage, ChatState } from "./chat/chat-stream-model";
 
 export {
   attachmentKind,
-  chatAttachmentPath,
   formatBytes,
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "./attachments/attachment-model";
@@ -108,7 +122,11 @@ export type {
 export { draftTotalBytes } from "./attachments/attachment-draft";
 export type { DraftAttachment } from "./attachments/attachment-draft";
 
-export { chatMessageSide, startsNewBubbleGroup } from "./chat/bubble-grouping";
+export {
+  chatMessageSide,
+  senderOf,
+  startsNewBubbleGroup,
+} from "./chat/bubble-grouping";
 export type { ChatMessageSide } from "./chat/bubble-grouping";
 
 export { createChatSession } from "./chat/chat-session";
@@ -191,7 +209,8 @@ export type {
   FieldPredicate,
   NotificationInterruptRule,
 } from "./api/config-rules";
-export { chatSocketPath, getNotificationHistory } from "./api/history";
+export { getNotificationHistory } from "./api/history";
+export { createRoom, roomAttachmentPath, roomsSocketPath } from "./api/rooms";
 export { fetchFileTree, readFile, writeFile } from "./api/files";
 export type { FileReadResponse, FileTreeEntry } from "./api/files";
 export {
@@ -250,7 +269,6 @@ export { rosterFromTree, rostersEqual } from "./tree/roster";
 export type { AgentRow } from "./tree/roster";
 
 export {
-  agentIsConnectable,
   agentIsDown,
   agentNeedsUser,
   agentStatusKind,

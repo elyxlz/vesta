@@ -134,12 +134,13 @@ export const syncProtocolFixtures = {
       "body": "hello",
       "id": 3,
       "kind": "message",
+      "room": "dm:sample",
       "title": "sample-agent",
       "type": "user_notification"
     }
   },
   "hello": {
-    "min_supported": "0.2.16",
+    "min_supported": "0.3.5",
     "type": "hello",
     "version": "0.1.0"
   },

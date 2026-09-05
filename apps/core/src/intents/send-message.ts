@@ -1,3 +1,4 @@
+import { roomMessagesPath } from "../api/rooms";
 import type { InputMethod } from "../protocol/events";
 import { ApiError, type HttpClient } from "../transport/http";
 
@@ -30,13 +31,13 @@ export interface SentMessage {
 // the outcome promise the caller reflects into the bubble's send_state.
 export function sendMessage(
   http: HttpClient,
-  agent: string,
+  roomId: string,
   body: SendMessageBody,
   newId: IdGenerator,
 ): SentMessage {
   const id = newId();
   const outcome = http
-    .json(`/agents/${encodeURIComponent(agent)}/chat/message`, {
+    .json(roomMessagesPath(roomId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

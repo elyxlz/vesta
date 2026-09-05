@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@vesta/core";
-import { buildDecorated, lastSeenIndex } from "./rows";
+import { buildDecorated, lastSeenIndex, senderCaption } from "./rows";
 
 function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
+}
+
+function chatMsg(sender: string, ts: string): ChatMessage {
+  return { type: "chat", text: "hey", ts, sender };
 }
 
 describe("buildDecorated", () => {
@@ -63,6 +67,30 @@ describe("buildDecorated", () => {
     ]);
     expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
   });
+
+  // A room with several agents alternates senders on one side, so grouping breaks on the name as
+  // well as on the side: each agent's run opens and closes its own bubble group.
+  it("breaks a group when a second agent speaks in the same room", () => {
+    const rows = buildDecorated([
+      chatMsg("ada", "2026-06-08T10:00:00"),
+      chatMsg("ada", "2026-06-08T10:01:00"),
+      chatMsg("nova", "2026-06-08T10:02:00"),
+      chatMsg("ada", "2026-06-08T10:03:00"),
+    ]);
+    expect(rows.map((r) => r.isGroupStart)).toEqual([true, false, true, true]);
+    expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
+    expect(rows.map((r) => r.gap)).toEqual(["mt-2", "mt-1.5", "mt-5", "mt-5"]);
+  });
+
+  it("keeps one agent's run in a single group", () => {
+    const rows = buildDecorated([
+      chatMsg("ada", "2026-06-08T10:00:00"),
+      chatMsg("ada", "2026-06-08T10:01:00"),
+      chatMsg("ada", "2026-06-08T10:02:00"),
+    ]);
+    expect(rows.map((r) => r.isGroupStart)).toEqual([true, false, false]);
+    expect(rows.map((r) => r.isGroupEnd)).toEqual([false, false, true]);
+  });
 });
 
 describe("lastSeenIndex", () => {
@@ -90,5 +118,45 @@ describe("lastSeenIndex", () => {
     const after = rows("2026-06-08T10:00:00Z");
     expect(lastSeenIndex(after, null)).toBe(-1);
     expect(lastSeenIndex(after, "2026-01-01T00:00:00Z-user")).toBe(-1);
+  });
+});
+
+describe("senderCaption", () => {
+  const caption = (messages: ChatMessage[], showSenders = true) =>
+    buildDecorated(messages).map((row) => senderCaption(row, showSenders));
+
+  it("names the agent that opens a bubble group in a room with several members", () => {
+    expect(
+      caption([
+        chatMsg("ada", "2026-06-08T10:00:00Z"),
+        chatMsg("ada", "2026-06-08T10:01:00Z"),
+        chatMsg("nova", "2026-06-08T10:02:00Z"),
+      ]),
+    ).toEqual(["ada", null, "nova"]);
+  });
+
+  it("names nobody in a one-agent conversation", () => {
+    expect(caption([chatMsg("ada", "2026-06-08T10:00:00Z")], false)).toEqual([
+      null,
+    ]);
+  });
+
+  it("never names the user, the one member every room shares", () => {
+    expect(caption([userMsg("2026-06-08T10:00:00Z")])).toEqual([null]);
+  });
+
+  // An error or a rate-limit row is the client speaking; senderOf answers "agent" for it, which
+  // would otherwise print a member name no room has.
+  it.each<ChatMessage>([
+    { type: "error", text: "boom", ts: "2026-06-08T10:00:00Z" },
+    {
+      type: "rate_limited",
+      text: "wait",
+      window: null,
+      resets_at: null,
+      ts: "2026-06-08T10:00:00Z",
+    },
+  ])("never captions a $type row", (event) => {
+    expect(caption([event])).toEqual([null]);
   });
 });

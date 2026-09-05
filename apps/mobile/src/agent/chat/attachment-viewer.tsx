@@ -22,7 +22,7 @@ import { VideoView, useVideoPlayer } from "expo-video";
 import { Ionicons } from "@expo/vector-icons";
 import {
   attachmentKind,
-  chatAttachmentPath,
+  roomAttachmentPath,
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
@@ -192,12 +192,10 @@ function VideoPlayback({ uri }: { uri: string }) {
 
 export function AttachmentViewer({
   api,
-  agent,
   request,
   onClose,
 }: {
   api: ApiClient;
-  agent: string;
   request: OpenViewerRequest | null;
   onClose: () => void;
 }) {
@@ -207,14 +205,14 @@ export function AttachmentViewer({
   const attachment = request?.attachment ?? null;
   const uri = useAuthedMediaUri(
     api,
-    attachment ? chatAttachmentPath(agent, attachment.id) : null,
+    attachment ? roomAttachmentPath(attachment.id) : null,
   );
   if (attachment === null) return null;
   const kind = attachmentKind(attachment.mime);
 
   const share = () => {
     setSharing(true);
-    saveAttachment(expoSaveIo(api), agent, attachment)
+    saveAttachment(expoSaveIo(api), attachment)
       .catch(() => {
         showError(`Couldn't share ${attachment.name}`);
       })

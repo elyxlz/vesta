@@ -110,6 +110,70 @@ describe("parseServerFrame", () => {
     }
   });
 
+  it("carries the room a message notification names", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        id: 13,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+        body: "hello there",
+        room: "dm:scout",
+      }),
+    );
+    expect(parsed.kind).toBe("delta");
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect(parsed.delta.room).toBe("dm:scout");
+    }
+  });
+
+  it("parses a user_notification without a room exactly as before", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        id: 14,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "task",
+        title: "scout",
+        body: "done",
+      }),
+    );
+    expect(parsed).toEqual({
+      kind: "delta",
+      delta: {
+        type: "user_notification",
+        id: 14,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "task",
+        title: "scout",
+        body: "done",
+      },
+    });
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect("room" in parsed.delta).toBe(false);
+    }
+  });
+
+  it("ignores a user_notification whose room is not a string", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        id: 15,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+        body: "hi",
+        room: 7,
+      }),
+    );
+    expect(parsed.kind).toBe("unknown");
+  });
+
   it("carries the gateway's own update announcement, which names no agent", () => {
     const parsed = parseServerFrame(
       JSON.stringify({

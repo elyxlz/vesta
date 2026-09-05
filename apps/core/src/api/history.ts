@@ -1,6 +1,5 @@
 import type { HistoryPage } from "../chat/chat-stream-model";
 import type { NotificationEvent } from "../protocol/events";
-import { parseHistoryPage } from "../protocol/parse-chat";
 import type { HttpClient } from "../transport/http";
 import { agentPath } from "./agents";
 
@@ -8,27 +7,6 @@ function cursorQuery(cursor: number | undefined): URLSearchParams {
   const params = new URLSearchParams();
   if (cursor !== undefined) params.set("cursor", String(cursor));
   return params;
-}
-
-// The chat service's own paged, id-cursored history (GET .../chat/history).
-function chatHistoryPath(name: string, cursor?: number): string {
-  const query = cursorQuery(cursor).toString();
-  return agentPath(name, `/chat/history${query ? `?${query}` : ""}`);
-}
-
-// The replay-free live chat socket (GET .../chat/ws); dialed with the token in the query.
-export function chatSocketPath(name: string): string {
-  return agentPath(name, "/chat/ws");
-}
-
-export async function fetchChatHistory(
-  http: HttpClient,
-  name: string,
-  cursor?: number,
-): Promise<HistoryPage> {
-  return parseHistoryPage(
-    await http.json<unknown>(chatHistoryPath(name, cursor)),
-  );
 }
 
 // One page of received notifications, newest first (GET /history?channel=notifications). Pass the

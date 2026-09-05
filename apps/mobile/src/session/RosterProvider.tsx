@@ -6,12 +6,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AgentRow, DeviceInfo, ReleaseChannel, Tree } from "@vesta/core";
+import type {
+  AgentRow,
+  DeviceInfo,
+  ReleaseChannel,
+  Room,
+  Tree,
+} from "@vesta/core";
 import {
   devicesEqual,
+  roomsEqual,
   rosterFromTree,
   rostersEqual,
   selectDevices,
+  selectRooms,
 } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
@@ -34,13 +42,15 @@ interface RosterValue {
   updateAvailable: boolean;
   latestVersion: string | null;
   devices: DeviceInfo[];
+  // Every conversation on the node, busiest first: the Chats list, and what resolves a room id.
+  rooms: Room[];
 }
 
 const RosterContext = createContext<RosterValue | null>(null);
 
 // The roster consumes five gateway fields; selecting them with their own equality keeps every
 // unrelated gateway delta (e.g. an operation phase tick) from re-identifying the context value.
-type GatewaySummary = Omit<RosterSnapshot, "agents">;
+type GatewaySummary = Omit<RosterSnapshot, "agents" | "rooms">;
 
 function selectGatewaySummary(tree: Tree | null): GatewaySummary | null {
   const gateway = tree?.gateway;
@@ -108,6 +118,7 @@ function servedRoster(
 ): Omit<RosterValue, "devices"> {
   return {
     agents: hold.agents,
+    rooms: hold.rooms,
     agentsReady: hold.agentsReady,
     reachable: live.reachable,
     gatewayVersion: hold.gatewayVersion,
@@ -155,10 +166,11 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     gatewaySummariesEqual,
   );
   const devices = useReplica(replica, selectDevices, devicesEqual);
+  const rooms = useReplica(replica, selectRooms, roomsEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
   const fresh = useMemo<RosterSnapshot | null>(
-    () => (gateway ? { agents, ...gateway } : null),
-    [agents, gateway],
+    () => (gateway ? { agents, rooms, ...gateway } : null),
+    [agents, rooms, gateway],
   );
   const value = useServedRoster(
     store,

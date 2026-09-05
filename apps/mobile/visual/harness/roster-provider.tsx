@@ -1,9 +1,11 @@
 import { createContext, use, type ReactNode } from "react";
+import { directRoomId } from "@vesta/core";
 import type {
   AgentOperation,
   AgentRow,
   AgentStatus,
   DeviceInfo,
+  Room,
 } from "@vesta/core";
 import { visualSwitch } from "./launch-query";
 import {
@@ -121,6 +123,26 @@ const allDevices: DeviceInfo[] = [
   },
 ];
 export const fixtureDevices = devicesVariant === "none" ? [] : allDevices;
+// Every fixture agent has its own direct room, so the chat scenarios open the conversation the
+// app actually reads. visualRooms=group adds a group the Chats list and the room screen render.
+export const GROUP_ROOM_ID = "grp-launch";
+const groupRoom: Room = {
+  id: GROUP_ROOM_ID,
+  name: "Launch week",
+  agents: ["aria", "nova"],
+  createdAt: 1_754_000_000,
+  lastMessageAt: 1_754_038_800,
+};
+const fixtureRooms: Room[] = [
+  ...(visualSwitch("visualRooms") === "group" ? [groupRoom] : []),
+  ...fixtureAgents.map((agent, index) => ({
+    id: directRoomId(agent.name),
+    name: null,
+    agents: [agent.name],
+    createdAt: 1_753_900_000,
+    lastMessageAt: 1_754_038_000 - index * 3_600,
+  })),
+];
 const fixture: RosterValue = {
   agents: startsLoading ? [] : fixtureAgents,
   agentsReady: !startsLoading,
@@ -131,6 +153,7 @@ const fixture: RosterValue = {
   updateAvailable: hasGatewayUpdate,
   latestVersion: hasGatewayUpdate ? "0.2.1" : null,
   devices: fixtureDevices,
+  rooms: startsLoading ? [] : fixtureRooms,
 };
 const FixtureContext = createContext<RosterValue | null>(null);
 

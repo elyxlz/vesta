@@ -39,3 +39,9 @@ export function createKeyedHoldStore<T>(): KeyedHoldStore<T> {
 export function agentHoldKey(agent: string, connectionKey: string): string {
   return `${agent}\n${connectionKey}`;
 }
+
+// A conversation's cells (the chat tail, the composer draft, the attachment drafts) key by room
+// instead: the prefix keeps a room id out of the agent-keyed namespace it shares the store with.
+export function roomHoldKey(roomId: string, connectionKey: string): string {
+  return `room:${roomId}\n${connectionKey}`;
+}

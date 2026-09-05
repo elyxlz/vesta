@@ -8,10 +8,11 @@ import type { LogLine } from "@/agent/log-list-model";
 import type { ReplyTarget } from "@/agent/message-actions";
 import type { AgentPageKey } from "@/agent/pager-model";
 
-// Per-agent view state held ABOVE navigation and the controller epoch, so popping the agent
-// screen, backgrounding, or a socket rebuild never resets what the user saw: the chat tail
-// renders stale then reseeds, the composer keeps its half-typed draft and armed reply, the pager
-// reopens on the last page, and the log buffer resumes. One keyed cell per concern.
+// View state held ABOVE navigation and the controller epoch, so popping a screen, backgrounding,
+// or a socket rebuild never resets what the user saw: the chat tail renders stale then reseeds,
+// the composer keeps its half-typed draft and armed reply, the pager reopens on the last page, and
+// the log buffer resumes. One keyed cell per concern. A conversation's cells (chat, composer,
+// attachments) key by room; the pager and the log buffer are agent facts and key by agent.
 export interface ComposerHold {
   draft: string;
   replyTarget: ReplyTarget | null;

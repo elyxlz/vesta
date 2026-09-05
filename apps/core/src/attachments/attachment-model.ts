@@ -51,14 +51,3 @@ export function formatBytes(size: number): string {
   }
   return `${String(size)} B`;
 }
-
-// The service subpaths behind vestad's per-agent proxy. Apps stamp auth themselves (authedUrl for
-// media elements, the header-authed client for downloads).
-export function chatAttachmentPath(
-  agent: string,
-  id: string,
-  download = false,
-): string {
-  const base = `/agents/${encodeURIComponent(agent)}/chat/attachments/${encodeURIComponent(id)}`;
-  return download ? `${base}?download=1` : base;
-}

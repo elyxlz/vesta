@@ -775,6 +775,24 @@
       "group": "Chat"
     },
     {
+      "id": "room-chat-senders",
+      "title": "Group chat, senders",
+      "description": "A room with two agents, each run of bubbles captioned by who wrote it.",
+      "group": "Chat"
+    },
+    {
+      "id": "home-chats-section",
+      "title": "Home, chats section",
+      "description": "Every conversation under the carousel, with New group in the heading.",
+      "group": "Home"
+    },
+    {
+      "id": "new-room",
+      "title": "New group",
+      "description": "Naming a group and picking the agents that answer in it.",
+      "group": "Home"
+    },
+    {
       "id": "agent-chat-attach-sheet",
       "title": "Attach source menu",
       "description": "The native attach menu offering the library, the camera, and files.",

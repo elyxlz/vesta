@@ -1,17 +1,26 @@
-import { useContext, useMemo } from "react";
-import { AgentSocketContext } from "@/providers/AgentSocketProvider/context";
-import type { NotificationEvent } from "@vesta/core";
+import { useCallback, useContext, useMemo } from "react";
+import type { NotificationEvent, Tree } from "@vesta/core";
+import { useReplica } from "@vesta/core/react";
+import { useController } from "@/providers/ControllerProvider/context";
+import { RoomSocketContext } from "@/providers/RoomSocketProvider/context";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 
-// Bridges the agent socket into the notifications view. Reads the context tolerantly (no throw) so
-// the card still renders REST-only when there's no AgentSocketProvider (e.g. in tests). Surfaces the
-// pending seed from the connect snapshot, plus live arrivals and the ids cleared since connect.
+function idsEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
+}
+
+// Bridges the agent's live room into the notifications view. Reads the socket context tolerantly
+// (no throw) so the card still renders REST-only when there is no RoomSocketProvider. The pending
+// seed is an agent fact, so it comes off the replica rather than the conversation.
 export function useLiveNotifications(): {
   pendingSeed: string[];
   arrivals: NotificationEvent[];
   cleared: string[];
   connected: boolean;
 } {
-  const socket = useContext(AgentSocketContext);
+  const { name } = useSelectedAgent();
+  const controller = useController();
+  const socket = useContext(RoomSocketContext);
   const messages = socket?.messages;
 
   const arrivals = useMemo(
@@ -30,8 +39,17 @@ export function useLiveNotifications(): {
     [messages],
   );
 
+  const pendingSelector = useCallback(
+    (tree: Tree | null): string[] =>
+      (tree?.agents[name]?.notifications.pending ?? []).flatMap((notif) =>
+        notif.notif_id ? [notif.notif_id] : [],
+      ),
+    [name],
+  );
+  const pendingSeed = useReplica(controller.replica, pendingSelector, idsEqual);
+
   return {
-    pendingSeed: socket?.pendingNotifications ?? [],
+    pendingSeed,
     arrivals,
     cleared,
     connected: socket?.connected ?? false,

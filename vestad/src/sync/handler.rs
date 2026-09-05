@@ -230,6 +230,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     kind: user_notification.kind.clone(),
                     title: user_notification.title.clone(),
                     body: user_notification.body.clone(),
+                    room: user_notification.room.clone(),
                 };
                 if send_frame(&mut tx, &frame).await.is_err() {
                     break;

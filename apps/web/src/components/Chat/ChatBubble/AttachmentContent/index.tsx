@@ -2,8 +2,8 @@ import { useRef, useState } from "react";
 import { Ban, Download, Maximize2, RotateCcw } from "lucide-react";
 import {
   attachmentKind,
-  chatAttachmentPath,
   formatBytes,
+  roomAttachmentPath,
   type ChatAttachment,
 } from "@vesta/core";
 import { httpClient } from "@/api/client";
@@ -40,9 +40,9 @@ type MediaPhase = "loading" | "loaded" | "removed" | "error";
 
 // An <img> error carries no status, so the phase probe asks the endpoint with a bodyless HEAD:
 // a 410 is the terminal removed state, anything else a retryable load failure.
-async function probePhase(agent: string, id: string): Promise<MediaPhase> {
+async function probePhase(id: string): Promise<MediaPhase> {
   try {
-    await httpClient.request(chatAttachmentPath(agent, id), {
+    await httpClient.request(roomAttachmentPath(id), {
       method: "HEAD",
     });
     return "error";
@@ -81,11 +81,9 @@ function DownloadOverlay({ id }: { id: string }) {
 }
 
 function ImageBlock({
-  agent,
   attachment,
   onOpen,
 }: {
-  agent: string;
   attachment: ChatAttachment;
   onOpen?: (request: OpenViewerRequest) => void;
 }) {
@@ -93,7 +91,7 @@ function ImageBlock({
   // Each retry bumps the epoch: useAuthedSrc rebuilds the token URL, so a retry after token
   // expiry dials fresh instead of remounting the same stale src.
   const [epoch, setEpoch] = useState(0);
-  const src = useAuthedSrc(chatAttachmentPath(agent, attachment.id), epoch);
+  const src = useAuthedSrc(roomAttachmentPath(attachment.id), epoch);
 
   if (phase === "removed") return <RemovedTile attachment={attachment} />;
   if (phase === "error") {
@@ -133,7 +131,7 @@ function ImageBlock({
             setPhase("loaded");
           }}
           onError={() => {
-            void probePhase(agent, attachment.id).then(setPhase);
+            void probePhase(attachment.id).then(setPhase);
           }}
         />
       )}
@@ -158,17 +156,15 @@ function SizeBadge({ size, hidden }: { size: number; hidden: boolean }) {
 }
 
 function VideoBlock({
-  agent,
   attachment,
   onOpen,
 }: {
-  agent: string;
   attachment: ChatAttachment;
   onOpen?: (request: OpenViewerRequest) => void;
 }) {
   const [played, setPlayed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const src = useAuthedSrc(chatAttachmentPath(agent, attachment.id));
+  const src = useAuthedSrc(roomAttachmentPath(attachment.id));
   return (
     <span
       className="relative block overflow-hidden rounded-xl"
@@ -207,14 +203,8 @@ function VideoBlock({
   );
 }
 
-function AudioBlock({
-  agent,
-  attachment,
-}: {
-  agent: string;
-  attachment: ChatAttachment;
-}) {
-  const src = useAuthedSrc(chatAttachmentPath(agent, attachment.id));
+function AudioBlock({ attachment }: { attachment: ChatAttachment }) {
+  const src = useAuthedSrc(roomAttachmentPath(attachment.id));
   return (
     <span className="flex flex-col gap-0.5">
       {src !== null && (
@@ -227,13 +217,7 @@ function AudioBlock({
   );
 }
 
-function FileBlock({
-  agent,
-  attachment,
-}: {
-  agent: string;
-  attachment: ChatAttachment;
-}) {
+function FileBlock({ attachment }: { attachment: ChatAttachment }) {
   const download = useDownload(attachment.id);
   const startDownload = useDownloadsStore((state) => state.start);
 
@@ -254,7 +238,7 @@ function FileBlock({
       aria-label={`download ${attachment.name}`}
       disabled={fetching}
       onClick={() => {
-        startDownload(agent, attachment);
+        startDownload(attachment);
       }}
       className="flex items-center gap-2.5 rounded-xl bg-background px-3 py-2 text-left text-foreground hover:bg-muted"
     >
@@ -280,20 +264,17 @@ function FileBlock({
 }
 
 export function AttachmentContent({
-  agent,
   attachment,
   onOpen,
 }: {
-  agent: string;
   attachment: ChatAttachment;
   onOpen?: (request: OpenViewerRequest) => void;
 }) {
   const kind = attachmentKind(attachment.mime);
   if (kind === "image")
-    return <ImageBlock agent={agent} attachment={attachment} onOpen={onOpen} />;
+    return <ImageBlock attachment={attachment} onOpen={onOpen} />;
   if (kind === "video")
-    return <VideoBlock agent={agent} attachment={attachment} onOpen={onOpen} />;
-  if (kind === "audio")
-    return <AudioBlock agent={agent} attachment={attachment} />;
-  return <FileBlock agent={agent} attachment={attachment} />;
+    return <VideoBlock attachment={attachment} onOpen={onOpen} />;
+  if (kind === "audio") return <AudioBlock attachment={attachment} />;
+  return <FileBlock attachment={attachment} />;
 }

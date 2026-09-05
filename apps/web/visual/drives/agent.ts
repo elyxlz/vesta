@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
+import { directRoomId } from "@vesta/core";
 import type { AgentInfo, AgentStatus } from "@vesta/core";
-import { chatRoutes, SERVICE_KEY } from "../harness/chat-fixtures";
+import { chatRoutes } from "../harness/chat-fixtures";
 import {
   AGENT as AGENT_NAME,
   providerRoute,
@@ -10,7 +11,16 @@ import {
 import type { Scenario, ScenarioState } from "../harness/scenario-state";
 import { agentNode } from "../harness/sync-fixtures";
 
+// The dashboard iframe is the one app surface still opened by a minted service key, so the
+// scenario mints one and serves the frame under its path prefix.
+const SERVICE_KEY = {
+  id: "visual-key",
+  key: "visual-service-key",
+  expires_at: null,
+};
+
 const AGENT_ROUTE = `/agent/${AGENT_NAME}`;
+const DIRECT_ROOM = directRoomId(AGENT_NAME);
 const CHAT_ROUTE = `${AGENT_ROUTE}/chat`;
 const SETTINGS_ROUTE = `${AGENT_ROUTE}/settings`;
 const DASHBOARD_KEYS_PATH = `/agents/${AGENT_NAME}/services/dashboard/keys`;
@@ -114,10 +124,10 @@ function agentPage(options: AgentPageOptions = {}): ScenarioState {
     },
     routes: [
       { path: `/agents/${AGENT_NAME}/backups`, method: "GET", json: [] },
-      ...chatRoutes(AGENT_NAME, { events: [] }),
+      ...chatRoutes(DIRECT_ROOM, { events: [] }),
       ...(options.routes ?? []),
     ],
-    chatSocket: { agent: AGENT_NAME, events: [] },
+    chatSocket: { events: [] },
     storage: options.storage,
   };
 }

@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { directRoomId } from "@vesta/core";
 import type {
   AgentInfo,
   AgentNode,
@@ -7,6 +8,7 @@ import type {
   Delta,
   DeviceInfo,
   GatewayInfo,
+  Room,
   Tree,
 } from "@vesta/core";
 
@@ -31,8 +33,20 @@ export const GATEWAY: GatewayInfo = {
   operation: null,
 };
 
+// The node opens a direct room for every agent it knows, so a fixture that names agents and no
+// rooms still reaches the conversation each agent page chats in.
+export function directRooms(agents: Record<string, AgentNode>): Room[] {
+  return Object.keys(agents).map((agent) => ({
+    id: directRoomId(agent),
+    name: null,
+    agents: [agent],
+    createdAt: 1_755_500_000,
+    lastMessageAt: null,
+  }));
+}
+
 export function baseTree(agents: Record<string, AgentNode> = {}): Tree {
-  return { gateway: GATEWAY, agents, devices: [], rooms: [] };
+  return { gateway: GATEWAY, agents, devices: [], rooms: directRooms(agents) };
 }
 
 export function snapshotFrame(tree: Tree): { type: "snapshot"; tree: Tree } {
@@ -97,6 +111,8 @@ export type SyncMode = "open" | "hello-only" | "refuse";
 export interface SyncFixture {
   agents?: Record<string, AgentNode>;
   gateway?: Partial<GatewayInfo>;
+  // Defaults to one direct room per agent; a scenario that needs a group names the whole list.
+  rooms?: Room[];
   devices?: DeviceInfo[];
   deltas?: Delta[];
   mode?: SyncMode;
@@ -107,11 +123,12 @@ export async function installSyncSocket(
   fixture: SyncFixture = {},
 ): Promise<void> {
   const mode = fixture.mode ?? "open";
+  const agents = fixture.agents ?? {};
   const tree: Tree = {
     gateway: { ...GATEWAY, ...fixture.gateway },
-    agents: fixture.agents ?? {},
+    agents,
     devices: fixture.devices ?? [],
-    rooms: [],
+    rooms: fixture.rooms ?? directRooms(agents),
   };
   await page.routeWebSocket(/\/sync/, (ws) => {
     ws.onMessage(() => undefined);

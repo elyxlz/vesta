@@ -1,5 +1,10 @@
 import { createContext, useContext } from "react";
-import type { DeviceInfo, GatewayOperation, ReleaseChannel } from "@vesta/core";
+import type {
+  DeviceInfo,
+  GatewayOperation,
+  ReleaseChannel,
+  Room,
+} from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
 
 export interface GatewayContextValue {
@@ -20,6 +25,8 @@ export interface GatewayContextValue {
   updatedTo: string | null;
   agents: AgentRow[];
   agentsFetched: boolean;
+  /** Every conversation on the node, busiest first; the room list every chat surface reads. */
+  rooms: Room[];
   devices: DeviceInfo[];
   /** The user-notification feed's synced seen watermark, 0 before the first catch-up ever. */
   userNotificationsSeenAt: number;
@@ -47,6 +54,7 @@ export const disconnectedValue: GatewayContextValue = {
   updatedTo: null,
   agents: [],
   agentsFetched: false,
+  rooms: [],
   devices: [],
   userNotificationsSeenAt: 0,
   lastUserNotificationAt: null,

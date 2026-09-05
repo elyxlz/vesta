@@ -11,7 +11,7 @@ import {
   type Scenario,
   type ScenarioState,
 } from "../harness/scenario-state";
-import { agentNode, gatewayDelta } from "../harness/sync-fixtures";
+import { agentNode, directRooms, gatewayDelta } from "../harness/sync-fixtures";
 
 const HOME_ROUTE = "/";
 const LATEST_VERSION = "0.2.4";
@@ -179,6 +179,39 @@ function operationBody(page: Page) {
   return page.locator('[data-slot="empty-content"]');
 }
 
+// The conversation list under the carousel: the agents' own chats plus a group and a pair, each
+// with the time of its last message.
+const CHATS_AGENTS = Object.fromEntries(
+  ["luna", "atlas", "iris"].map((name) => [name, agentNode()] as const),
+);
+const CHATS_ROOMS = [
+  ...directRooms(CHATS_AGENTS).map((room, index) => ({
+    ...room,
+    lastMessageAt: FIXED_TIME.getTime() / 1000 - (index + 1) * 900,
+  })),
+  {
+    id: "grp-trip",
+    name: "lisbon trip",
+    agents: ["luna", "atlas"],
+    createdAt: 1_755_400_000,
+    lastMessageAt: FIXED_TIME.getTime() / 1000 - 4 * 3600,
+  },
+  {
+    id: "peer-research",
+    name: null,
+    agents: ["atlas", "iris"],
+    createdAt: 1_755_300_000,
+    lastMessageAt: FIXED_TIME.getTime() / 1000 - 3 * 86400,
+  },
+];
+
+function chatsState(): ScenarioState {
+  return {
+    route: HOME_ROUTE,
+    sync: { agents: CHATS_AGENTS, rooms: CHATS_ROOMS },
+  };
+}
+
 export const HOME: Record<string, Scenario> = {
   "home-loading": {
     state: { route: HOME_ROUTE, sync: { mode: "hello-only" } },
@@ -265,9 +298,37 @@ export const HOME: Record<string, Scenario> = {
     // The island on the page being left can still carry the same line for a
     // frame, so the assertion is the card's own copy of it.
     settle: async (page) => {
-      const card = page.getByRole("button", { name: `open ${AGENT}` });
+      // Exact: the chats list below the carousel carries an `open <agent> chat` row too.
+      const card = page.getByRole("button", {
+        name: `open ${AGENT}`,
+        exact: true,
+      });
       await expect(card).toBeVisible();
       await expect(card.getByText(START_REFUSED)).toBeVisible();
+    },
+  },
+  "home-chats-list": {
+    state: chatsState(),
+    drive: noDrive,
+    settle: async (page) => {
+      await expect(
+        page.getByRole("button", { name: "open lisbon trip chat" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "open atlas & iris chat" }),
+      ).toBeVisible();
+    },
+  },
+  "new-room-dialog": {
+    state: chatsState(),
+    drive: async (page) => {
+      await page.getByRole("button", { name: "new group" }).click();
+      await page.getByLabel("group name").fill("weekend plans");
+      await page.getByRole("checkbox").first().click();
+    },
+    settle: async (page) => {
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByRole("button", { name: "create" })).toBeEnabled();
     },
   },
   "notifications-popover": {

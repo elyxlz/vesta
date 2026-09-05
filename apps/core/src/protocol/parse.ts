@@ -198,11 +198,22 @@ function parseUserNotification(frame: Record<string, unknown>): ParsedFrame {
   const kind = str(frame.kind);
   const title = str(frame.title);
   const body = str(frame.body);
+  const room = nullableStr(frame.room);
   if (id === null || at === null || agent === null) return UNKNOWN;
   if (kind === null || title === null || body === null) return UNKNOWN;
+  if (room === undefined) return UNKNOWN;
   return {
     kind: "delta",
-    delta: { type: "user_notification", id, at, agent, kind, title, body },
+    delta: {
+      type: "user_notification",
+      id,
+      at,
+      agent,
+      kind,
+      title,
+      body,
+      ...(room === null ? {} : { room }),
+    },
   };
 }
 

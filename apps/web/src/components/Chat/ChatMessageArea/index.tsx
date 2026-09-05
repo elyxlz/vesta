@@ -8,15 +8,20 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import type { ChatMessage } from "@vesta/core";
+import { type ChatMessage } from "@vesta/core";
 import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
-import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
 import { CHAT_CONTENT_COLUMN } from "../content-column";
-import { buildDecorated, lastSeenIndex, type DecoratedRow } from "./rows";
+import { ChatEmptyState } from "./empty-state";
+import {
+  buildDecorated,
+  lastSeenIndex,
+  senderCaption,
+  type DecoratedRow,
+} from "./rows";
 import { useChatScroll } from "./use-chat-scroll";
 
 export interface ChatScrollHandle {
@@ -34,7 +39,14 @@ interface ChatMessageAreaProps {
   chatMessages: ChatMessage[];
   connected: boolean;
   historyLoaded: boolean;
-  agentName: string;
+  // What this conversation is called: the agent in a direct room, the members or the group name
+  // otherwise. It titles the empty state.
+  label: string;
+  // True in the one-agent conversation, whose empty state speaks for that agent. A peer or group
+  // room has no single agent behind it, so it stays neutral.
+  direct: boolean;
+  // True when the room holds several agents, which is when a bubble names who wrote it.
+  showSenders: boolean;
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
@@ -50,62 +62,6 @@ interface ChatMessageAreaProps {
   bottomOverhang?: number;
   // Fires when pinned-to-latest flips; drives the parent's scroll-to-bottom button.
   onAtBottomChange: (atBottom: boolean) => void;
-}
-
-// Placeholder bubbles shown while the first page of history is in flight, so a slow
-// load reads as a conversation arriving rather than an empty/"needs to sign in" state.
-// Mirrors ChatBubble: bg-secondary on the left (agent), bg-primary on the right (you),
-// clustered into runs like a real chat. The column is bottom-anchored and overflows the
-// top, so it reads as a thread continuing above the fold.
-const SKELETON_ROWS: { side: "agent" | "user"; size: string }[] = [
-  { side: "agent", size: "h-9 w-40" },
-  { side: "agent", size: "h-14 w-56" },
-  { side: "user", size: "h-9 w-28" },
-  { side: "user", size: "h-9 w-44" },
-  { side: "user", size: "h-9 w-24" },
-  { side: "agent", size: "h-9 w-48" },
-  { side: "agent", size: "h-9 w-32" },
-  { side: "user", size: "h-14 w-52" },
-  { side: "agent", size: "h-9 w-44" },
-  { side: "user", size: "h-9 w-36" },
-  { side: "user", size: "h-9 w-28" },
-  { side: "agent", size: "h-14 w-60" },
-  { side: "agent", size: "h-9 w-36" },
-  { side: "user", size: "h-9 w-40" },
-];
-
-function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
-  return (
-    <div
-      className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4"
-      style={{ paddingBottom: bottomPad }}
-    >
-      {SKELETON_ROWS.map((row, i) => {
-        const isUser = row.side === "user";
-        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1]?.side === row.side;
-        const isGroupEnd = SKELETON_ROWS[i + 1]?.side !== row.side;
-        return (
-          <div
-            key={i}
-            className={cn(
-              "flex",
-              isUser ? "justify-end" : "justify-start",
-              i > 0 && (sameAsPrev ? "mt-1.5" : "mt-5"),
-            )}
-          >
-            <div
-              className={cn(
-                "animate-pulse",
-                row.size,
-                isUser ? "bg-primary" : "bg-secondary",
-              )}
-              style={bubbleRadiusStyle(isUser, isGroupEnd)}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 // One mask owns both fades, each shown only on the edge that can still scroll so the oldest
@@ -150,48 +106,13 @@ function scrollerMask({
   return `linear-gradient(to bottom, ${top}, ${bottom})`;
 }
 
-function ChatEmptyState({
-  connected,
-  historyLoaded,
-  notAuthenticated,
-  agentName,
-  bottomInset,
-}: {
-  connected: boolean;
-  historyLoaded: boolean;
-  notAuthenticated: boolean;
-  agentName: string;
-  bottomInset: number;
-}) {
-  if (connected && !historyLoaded) {
-    // The extra 16px mirrors the real list's trailing pb-4 (the typing
-    // indicator slot after the last row), so the skeleton's last bubble
-    // sits exactly where a real last bubble does.
-    return <ChatSkeleton bottomPad={bottomInset + 16} />;
-  }
-  return (
-    <div
-      className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center"
-      style={{ paddingBottom: bottomInset + 24 }}
-    >
-      <span className="text-xs text-muted-foreground">
-        {!connected
-          ? "connecting..."
-          : notAuthenticated
-            ? `${agentName} needs to sign in`
-            : `${agentName} is setting things up`}
-      </span>
-    </div>
-  );
-}
-
 function MessageRow({
   row,
   index,
   isMobile,
   isNewAppend,
   onRetry,
-  agentName,
+  showSenders,
   onOpenAttachment,
 }: {
   row: DecoratedRow;
@@ -199,7 +120,7 @@ function MessageRow({
   isMobile: boolean;
   isNewAppend: boolean;
   onRetry?: RetryHandler;
-  agentName: string;
+  showSenders: boolean;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
   const bubble = (
@@ -208,8 +129,8 @@ function MessageRow({
       className={row.gap}
       isMobile={isMobile}
       hasTail={row.isGroupEnd}
+      sender={senderCaption(row, showSenders)}
       onRetry={onRetry}
-      agentName={agentName}
       onOpenAttachment={onOpenAttachment}
     />
   );
@@ -275,7 +196,9 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   chatMessages,
   connected,
   historyLoaded,
-  agentName,
+  label,
+  direct,
+  showSenders,
   notAuthenticated,
   isTyping,
   isMobile,
@@ -359,7 +282,8 @@ export const ChatMessageArea = memo(function ChatMessageArea({
           connected={connected}
           historyLoaded={historyLoaded}
           notAuthenticated={notAuthenticated}
-          agentName={agentName}
+          label={label}
+          direct={direct}
           bottomInset={bottomInset}
         />
       )}
@@ -427,7 +351,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
                 isMobile={isMobile}
                 isNewAppend={prevLastIndex >= 0 && index > prevLastIndex}
                 onRetry={onRetry}
-                agentName={agentName}
+                showSenders={showSenders}
                 onOpenAttachment={onOpenAttachment}
               />
             ))}

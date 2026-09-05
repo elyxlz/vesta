@@ -524,6 +524,11 @@ async fn an_agent_post_reaches_the_user_socket_and_mints_a_message_notification(
         entry["at"].as_u64().is_some(),
         "the feed entry carries its stamp"
     );
+    assert_eq!(
+        entry["room"].as_str(),
+        Some(room.as_str()),
+        "the feed entry names the room the reply was written in"
+    );
     sock.close().await.ok();
 }
 

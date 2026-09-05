@@ -139,3 +139,41 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-chat-draft.png
+- stopApp
+- openLink:
+    link: "vesta-dev://chat/grp-launch?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualRooms=group"
+- extendedWaitUntil:
+    visible: '.*release notes still need a pass.*'
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: room-chat-senders
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: room-chat-senders.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualRooms=group"
+- extendedWaitUntil:
+    visible: "Open Launch week chat"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: home-chats-section
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-chats-section.png
+- tapOn:
+    text: "New group"
+- extendedWaitUntil:
+    visible: ".*every agent you pick reads.*"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: new-room
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: new-room.png

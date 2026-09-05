@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { HttpClient } from "../transport/http";
 import {
+  createRoom,
+  deleteRoom,
   fetchRoomHistory,
   roomAttachmentPath,
   roomAttachmentsPath,
@@ -29,6 +31,46 @@ describe("room paths", () => {
 
   it("leaves the socket path query-free, since the session URL builder appends its own", () => {
     expect(roomsSocketPath()).toBe("/rooms/ws");
+  });
+});
+
+describe("createRoom", () => {
+  it("posts the name and the members, and answers the opened room", async () => {
+    const room = {
+      id: "grp-1",
+      name: "Ops",
+      agents: ["ada", "ben"],
+      createdAt: 1_700_000_000,
+      lastMessageAt: null,
+    };
+    const json = vi.fn().mockResolvedValue({ room });
+    const http: HttpClient = { request: vi.fn(), json };
+
+    const opened = await createRoom(http, "Ops", ["ada", "ben"]);
+
+    const call = json.mock.calls[0];
+    if (!call) throw new Error("no POST");
+    expect(call[0]).toBe("/rooms");
+    const init = call[1] as { method: string; body: string };
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      name: "Ops",
+      agents: ["ada", "ben"],
+    });
+    expect(opened.room).toEqual(room);
+  });
+});
+
+describe("deleteRoom", () => {
+  it("deletes the room by id, escaping it", async () => {
+    const request = vi.fn().mockResolvedValue(new Response(null));
+    const http: HttpClient = { request, json: vi.fn() };
+
+    await deleteRoom(http, "dm:scout");
+
+    expect(request).toHaveBeenCalledWith("/rooms/dm%3Ascout", {
+      method: "DELETE",
+    });
   });
 });
 

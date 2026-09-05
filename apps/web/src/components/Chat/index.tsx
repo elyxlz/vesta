@@ -17,8 +17,8 @@ import { CHAT_CONTENT_COLUMN } from "./content-column";
 import { useToast } from "@/stores/use-toast";
 import { useLayout } from "@/stores/use-layout";
 import { useComposerInset } from "./use-composer-inset";
-import { useAgentSocket } from "@/providers/AgentSocketProvider/context";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useRoom } from "@/providers/RoomProvider/context";
+import { useRoomSocket } from "@/providers/RoomSocketProvider/context";
 import { useVoice } from "@/stores/use-voice";
 import { useChatDraft } from "@/stores/use-chat-draft";
 import { useAttachmentDrafts } from "@/stores/use-attachment-drafts";
@@ -55,8 +55,13 @@ interface ChatProps {
 }
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
-  const { name, agent } = useSelectedAgent();
-  const notAuthenticated = agentNeedsUser(agent.status);
+  const { roomId, kind, label, agents, directAgent } = useRoom();
+  // Only a direct room follows one agent's sign-in state; a peer or group message queues on the
+  // node, so its composer is always live.
+  const notAuthenticated =
+    directAgent !== null && agentNeedsUser(directAgent.status);
+  // Voice is the direct agent's own service: it has no meaning in a room with several members.
+  const direct = kind === "direct";
   const isMobile = useIsMobile();
   const toast = useToast();
   const navbarHeight = useLayout((s) => s.navbarHeight);
@@ -70,6 +75,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     cancelVoice,
     voiceError,
     registerChat,
+    clearChat,
   } = useVoice();
 
   const {
@@ -84,10 +90,10 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     send,
     retry,
     reportSpeaking,
-  } = useAgentSocket();
+  } = useRoomSocket();
 
-  const [input, setInput] = useChatDraft(name);
-  const attachments = useAttachmentDrafts(name);
+  const [input, setInput] = useChatDraft(roomId);
+  const attachments = useAttachmentDrafts(roomId);
   const { dragActive, handlers: dropHandlers } = useFileDrop(
     !notAuthenticated,
     attachments.addFiles,
@@ -130,9 +136,22 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (ta) ta.style.height = "auto";
   }, [setInput]);
 
+  // Voice speaks into the direct agent's own chat alone: a room with several members leaves the
+  // binding cleared rather than pointing at the chat the user just left.
   useEffect(() => {
+    if (!direct) {
+      clearChat();
+      return;
+    }
     registerChat(sendWithDrafts, clearComposer, reportSpeaking);
-  }, [registerChat, sendWithDrafts, clearComposer, reportSpeaking]);
+  }, [
+    direct,
+    clearChat,
+    registerChat,
+    sendWithDrafts,
+    clearComposer,
+    reportSpeaking,
+  ]);
 
   // Focus the composer whenever the chat becomes the visible surface: on mount,
   // and again when a logs/settings subpage closes (the pane stays mounted, so a
@@ -140,10 +159,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // would raise the keyboard on every open. A fullscreen and a panel Chat can
   // both be mounted; focus() is a no-op on the visibility-hidden one.
   const { pathname } = useLocation();
+  const agentName = directAgent?.name ?? null;
   useEffect(() => {
-    if (isMobile || agentSubpage(pathname, name) !== null) return;
+    if (isMobile) return;
+    if (agentName !== null && agentSubpage(pathname, agentName) !== null)
+      return;
     textareaRef.current?.focus({ preventScroll: true });
-  }, [isMobile, pathname, name]);
+  }, [isMobile, pathname, agentName]);
 
   const inConversation = recordingMode === "conversation";
   const {
@@ -214,7 +236,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       return;
     }
     if (!connected) {
-      toast.error(`can't reach ${name} right now, message not sent`);
+      toast.error(`can't reach ${label} right now, message not sent`);
       return;
     }
     const uploaded = attachments.uploaded;
@@ -260,13 +282,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           isMobile && "bg-transparent overflow-visible",
         )}
       >
-        <DropOverlay active={dragActive} agentName={name} />
-        <AttachmentViewer agent={name} request={viewer} onClose={closeViewer} />
+        <DropOverlay active={dragActive} label={label} />
+        <AttachmentViewer request={viewer} onClose={closeViewer} />
         <ChatHeaderActions
           fullscreen={fullscreen}
           receded={inConversation}
           onCollapse={onCollapse}
-          agentName={name}
+          agentName={agentName}
         />
 
         <ChatMessageArea
@@ -279,7 +301,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           chatMessages={chatMessages}
           connected={connected}
           historyLoaded={historyLoaded}
-          agentName={name}
+          label={label}
+          direct={direct}
+          showSenders={agents.length > 1}
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
@@ -349,9 +373,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             <BottomBanner error={voiceError} />
             <ChatComposer
               fullscreen={fullscreen}
-              agentName={name}
+              label={label}
               notAuthenticated={notAuthenticated}
-              voiceConfigured={voiceConfigured}
+              voiceConfigured={direct && voiceConfigured}
               recordingMode={recordingMode}
               listening={listening}
               liveTranscript={liveTranscript}

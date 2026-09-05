@@ -42,6 +42,8 @@ export interface UserNotificationDelta {
   kind: string;
   title: string;
   body: string;
+  /** The room a chat reply landed in, so a client viewing it stays quiet. Absent on every other kind. */
+  room?: string;
 }
 
 interface PresenceDelta {
