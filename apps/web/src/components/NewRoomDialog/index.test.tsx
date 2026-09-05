@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 
 const navigate = vi.fn<(to: string) => Promise<void>>();
 vi.mock("react-router-dom", () => ({
@@ -85,5 +91,29 @@ describe("NewRoomDialog", () => {
     await waitFor(() => {
       expect(navigate).toHaveBeenCalledWith("/chat/grp-1");
     });
+  });
+
+  // Closing the dialog during the settle window is the user leaving: the wait it left behind must
+  // not steer the app into the room once the delta lands.
+  it("opens nothing when the dialog closes while the create settles", async () => {
+    const { getByLabelText, getByRole, getByText, fake } = mount();
+
+    fireEvent.change(getByLabelText("group name"), {
+      target: { value: "trip" },
+    });
+    fireEvent.click(getByRole("checkbox"));
+    fireEvent.click(getByText("create"));
+
+    await waitFor(() => {
+      expect(json).toHaveBeenCalledWith("/rooms", expect.anything());
+    });
+    fireEvent.click(getByText("cancel"));
+
+    await act(async () => {
+      fake.emit({ type: "rooms", rooms: [OPENED.room] });
+      await Promise.resolve();
+    });
+
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

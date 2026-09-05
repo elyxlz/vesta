@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createRoom } from "@vesta/core";
 import { httpClient } from "@/api/client";
@@ -32,6 +32,15 @@ function NewRoomBody({ onClose }: { onClose: () => void }) {
   const [members, setMembers] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const canCreate = name.trim().length > 0 && members.length > 0 && !creating;
+  // Every close path (cancel, the escape key, the scrim) unmounts this body. A create still inside
+  // its settle window then has no dialog behind it and must not steer the app into the room.
+  const live = useRef(true);
+  useEffect(
+    () => () => {
+      live.current = false;
+    },
+    [],
+  );
 
   const toggle = (agent: string) => {
     setMembers((current) =>
@@ -47,6 +56,7 @@ function NewRoomBody({ onClose }: { onClose: () => void }) {
       const opened = await createRoom(httpClient, name.trim(), members);
       // The room route reads the tree, so hold the dialog until the delta lands.
       if (controller) await waitForRoom(controller.replica, opened.room.id);
+      if (!live.current) return;
       onClose();
       await navigate(`/chat/${encodeURIComponent(opened.room.id)}`);
     } catch (error) {

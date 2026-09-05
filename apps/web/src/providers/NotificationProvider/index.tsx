@@ -164,8 +164,8 @@ export function NotificationProvider({
     [onOpenAgent],
   );
 
-  // The gateway announces an update only to clients that were away for it, so this raises with the
-  // same focus mute as a chat preview and opens nothing: there is no agent behind it.
+  // The gateway's own news reaches the clients that were away for it, so this raises with the same
+  // focus mute as a chat preview and opens nothing: there is no agent behind it.
   const notifyGateway = useCallback(
     (title: string, text: string) => {
       if (anyoneFocused()) return;
@@ -205,9 +205,10 @@ export function NotificationProvider({
         notifyNeedsUser(agent, title, body);
         return;
       }
-      // The gateway's own announcement, sent only to clients that missed the update: it names no
-      // agent, so it carries its own title and lights no unseen badge.
-      if (kind === "gateway_updated") {
+      // The gateway's own news (the update it applied, the release it found, a device that
+      // connected) names no agent: there is no conversation behind it, so it carries its own
+      // title, opens nothing, and lights no unseen badge.
+      if (agent === "") {
         notifyGateway(title, body);
         return;
       }

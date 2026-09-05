@@ -288,6 +288,20 @@ const toastCases: ToastCase[] = [
     ],
   },
   {
+    name: "announces gateway news that names no agent with the gateway's title",
+    kind: "update_available",
+    focused: false,
+    agent: "",
+    title: "v0.1.191 is available",
+    body: "Update the gateway from Settings.",
+    expected: [
+      {
+        title: "v0.1.191 is available",
+        body: "Update the gateway from Settings.",
+      },
+    ],
+  },
+  {
     name: "does not announce a gateway update to a focused client",
     kind: "gateway_updated",
     focused: true,
@@ -390,6 +404,32 @@ describe("NotificationProvider", () => {
     await waitFor(() => {
       expect(onOpenRoom).toHaveBeenCalledWith(...row.opens);
     });
+  });
+
+  // Gateway news names no agent, so there is no conversation behind it: it derives no room, lights
+  // no unseen badge, and its toast opens nothing.
+  it("keeps gateway news out of the room funnel", async () => {
+    const onOpenRoom = vi.fn();
+    const { controller, emit } = fakeController(tree());
+    mount(controller, null, { onOpenRoom });
+    await settle();
+    setWindowFocus(controller, false);
+    setHidden(true);
+
+    act(() => {
+      emit(
+        userNotification("update_available", {
+          agent: "",
+          title: "v0.1.191 is available",
+          body: "Update the gateway from Settings.",
+        }),
+      );
+    });
+
+    expect(setAppBadgeMock).not.toHaveBeenCalledWith(true);
+    expect(setFaviconUnseenMock).not.toHaveBeenCalledWith(true);
+    expect(built[0]?.onclick).toBeNull();
+    expect(onOpenRoom).not.toHaveBeenCalled();
   });
 
   // The fleet-wide pending count is the replica's truth for unprocessed notifications: a rise while

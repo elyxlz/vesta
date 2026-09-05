@@ -302,6 +302,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           connected={connected}
           historyLoaded={historyLoaded}
           label={label}
+          direct={direct}
           showSenders={agents.length > 1}
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
