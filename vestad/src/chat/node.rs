@@ -487,7 +487,8 @@ impl ChatNode {
         self.publish_rooms(&store, None);
     }
 
-    /// A deleted agent leaves every member set; its rooms and messages stay readable.
+    /// A deleted agent leaves every member set. A room left with no agents goes with it, messages
+    /// included; a room that keeps a member stays readable.
     pub(crate) fn forget_agent(&self, name: &str) {
         self.known_agents
             .lock()
@@ -495,8 +496,14 @@ impl ChatNode {
             .remove(name);
         let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         for mut room in store.rooms() {
-            if room.has_agent(name) {
-                room.agents.retain(|member| member != name);
+            if !room.has_agent(name) {
+                continue;
+            }
+            room.agents.retain(|member| member != name);
+            if room.agents.is_empty() {
+                store.remove_room(&room.id);
+                self.publish_rooms(&store, Some(ChatEvent::RoomDeleted { room: room.id }));
+            } else {
                 store.put_room(room);
             }
         }
@@ -886,13 +893,14 @@ mod tests {
     }
 
     #[test]
-    fn forget_then_ensure_restores_the_direct_rooms_membership() {
+    fn forget_drops_the_direct_room_and_ensure_opens_a_fresh_one() {
         let (_tmp, node) = node();
         node.reconcile_agents(&["alice".into()], 1);
         node.forget_agent("alice");
-        let restored = node.ensure_direct_room("alice", 9);
-        assert_eq!(restored.agents, vec!["alice".to_string()]);
-        assert_eq!(restored.created_at, 1, "the room is claimed, not recreated");
+        assert!(node.room("dm:alice").is_none(), "the direct room goes");
+        let reopened = node.ensure_direct_room("alice", 9);
+        assert_eq!(reopened.agents, vec!["alice".to_string()]);
+        assert_eq!(reopened.created_at, 9, "a name reused opens a new room");
     }
 
     #[test]
@@ -937,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn forget_agent_drops_it_from_member_sets_and_keeps_the_rooms() {
+    fn forget_agent_keeps_a_room_with_a_member_and_drops_an_empty_one() {
         let (_tmp, node) = node();
         node.reconcile_agents(&["alice".into(), "bob".into()], 1);
         node.open_room(
@@ -948,10 +956,43 @@ mod tests {
             2,
         )
         .expect("peer");
+        node.append(draft("dm:alice", MessageKind::User, "user", "hello"));
+        let mut events = node.subscribe_events();
         node.forget_agent("alice");
         let peer = node.room("dm:alice:bob").expect("peer stays");
         assert_eq!(peer.agents, vec!["bob".to_string()]);
-        let direct = node.room("dm:alice").expect("direct stays");
-        assert!(direct.agents.is_empty());
+        assert!(node.room("dm:alice").is_none(), "an empty room goes");
+        assert!(
+            node.page("dm:alice", None, 10).0.is_empty(),
+            "its messages go with it"
+        );
+        assert_eq!(
+            *events.try_recv().expect("event"),
+            ChatEvent::RoomDeleted {
+                room: "dm:alice".into()
+            }
+        );
+    }
+
+    #[test]
+    fn forget_agent_drops_a_group_only_when_its_last_agent_leaves() {
+        let (_tmp, node) = node();
+        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        let (group, _) = node
+            .open_room(
+                OpenRoom {
+                    name: Some("trip".into()),
+                    agents: vec!["alice".into(), "bob".into()],
+                },
+                2,
+            )
+            .expect("group");
+        node.forget_agent("alice");
+        assert_eq!(
+            node.room(&group.id).expect("group stays").agents,
+            vec!["bob".to_string()]
+        );
+        node.forget_agent("bob");
+        assert!(node.room(&group.id).is_none(), "the last agent takes it");
     }
 }

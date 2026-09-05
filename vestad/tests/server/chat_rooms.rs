@@ -728,8 +728,9 @@ fn an_agent_imports_its_history_idempotently() {
     assert_eq!(events[1]["sender"].as_str(), Some(agent.name.as_str()));
 }
 
-/// (8) A rename carries the direct room to the new name, and a direct room outlives everything but
-/// its agent: deletable once the agent is gone, refused while it lives.
+/// (8) A rename carries the direct room to the new name. A direct room lives as long as its agent:
+/// the delete is refused while the agent is there, and destroying the agent takes the room itself,
+/// while a peer room that keeps a member stays readable and stays deletable by the user.
 #[test]
 fn rename_and_delete_follow_the_agent() {
     let client = SERVER.client();
@@ -755,6 +756,17 @@ fn rename_and_delete_follow_the_agent() {
         "the old direct room id is gone: {ids:?}"
     );
 
+    let (status, body) = open_room(
+        &client,
+        ProxyAuth::ApiKey,
+        &serde_json::json!({ "agents": [new_name, bystander.name] }),
+    );
+    assert_eq!(status, 201, "the peer room is created: {body}");
+    let peer = body["room"]["id"]
+        .as_str()
+        .expect("the peer room carries an id")
+        .to_string();
+
     // A direct room lives as long as its agent: the delete is refused while the agent is there.
     let (status, raw) = client
         .proxy_delete(&direct_room_path(&bystander.name), ProxyAuth::ApiKey)
@@ -769,15 +781,30 @@ fn rename_and_delete_follow_the_agent() {
     );
 
     client.destroy_agent(&new_name).expect("destroy the agent");
-    let (status, raw) = client
-        .proxy_delete(&direct_room_path(&new_name), ProxyAuth::ApiKey)
-        .expect("delete the destroyed agent's direct room");
-    assert_eq!(status, 200, "the room goes once its agent is gone: {raw}");
-    assert_eq!(parse(&raw)["ok"].as_bool(), Some(true));
-
-    let ids = room_ids(&list_rooms(&client, ProxyAuth::ApiKey));
+    let rooms = list_rooms(&client, ProxyAuth::ApiKey);
+    let ids = room_ids(&rooms);
     assert!(
         !ids.contains(&direct_room(&new_name)),
+        "the destroyed agent's direct room goes with it: {ids:?}"
+    );
+    let survivor = rooms
+        .iter()
+        .find(|room| room["id"].as_str() == Some(peer.as_str()))
+        .unwrap_or_else(|| panic!("the peer room keeps its other member: {ids:?}"));
+    assert_eq!(
+        survivor["agents"].as_array().map(Vec::as_slice),
+        Some([serde_json::json!(bystander.name)].as_slice())
+    );
+
+    // The room the user is left alone in is theirs to delete.
+    let (status, raw) = client
+        .proxy_delete(&format!("/rooms/{peer}"), ProxyAuth::ApiKey)
+        .expect("delete the peer room");
+    assert_eq!(status, 200, "a room with no direct agent goes: {raw}");
+    assert_eq!(parse(&raw)["ok"].as_bool(), Some(true));
+    let ids = room_ids(&list_rooms(&client, ProxyAuth::ApiKey));
+    assert!(
+        !ids.contains(&peer),
         "the deleted room is out of the list: {ids:?}"
     );
 }
