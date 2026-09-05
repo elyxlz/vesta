@@ -13,6 +13,9 @@ import {
   LOG_RETRY_MAX_DELAY_MS,
   subscribeLogs,
 } from "@/agent/log-stream-subscription";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
+import { SheetChrome } from "@/components/sheet-chrome";
+import { SheetTitle } from "@/components/sheet-title";
 import { useSession } from "@/session/SessionProvider";
 
 // The gateway's own log, read over the api client like the agent log so the stream presents
@@ -31,7 +34,7 @@ function openGatewayLogStream(
   );
 }
 
-export default function GatewayLogsScreen() {
+function GatewayLogs() {
   const { api } = useSession();
   const [logs, setLogs] = useState<LogLine[]>([]);
   const logsRef = useRef(logs);
@@ -66,4 +69,15 @@ export default function GatewayLogsScreen() {
   );
 
   return <LogList logs={logs} logError={logError} presentation="standalone" />;
+}
+
+export default function GatewayLogsScreen() {
+  return (
+    <>
+      <SheetTitle>Gateway logs</SheetTitle>
+      <NativeSheetCloseButton accessibilityLabel="Close gateway logs" />
+      <SheetChrome title="Gateway logs" closeLabel="Close gateway logs" />
+      <GatewayLogs />
+    </>
+  );
 }

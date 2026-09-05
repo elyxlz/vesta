@@ -299,15 +299,19 @@ function SessionNavigation() {
               />
               <Stack.Screen
                 name="gateway-logs"
-                options={{
-                  title: "Gateway logs",
-                  ...(IS_ANDROID
+                // The same shell as an agent's Logs sheet: iOS inherits the settings sheet's
+                // modal context, Android spells the sheet out.
+                options={
+                  IS_ANDROID
                     ? {
-                        headerTransparent: false,
-                        headerStyle: { backgroundColor: colors.background },
+                        presentation: "formSheet",
+                        ...formSheetCorners,
+                        sheetAllowedDetents: [1],
+                        sheetGrabberVisible: false,
+                        sheetExpandsWhenScrolledToEdge: false,
                       }
-                    : {}),
-                }}
+                    : {}
+                }
               />
               <Stack.Screen
                 name="debug"
