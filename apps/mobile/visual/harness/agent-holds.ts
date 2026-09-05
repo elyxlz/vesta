@@ -1,6 +1,7 @@
 import {
-  agentHoldKey,
+  directRoomId,
   initialChatState,
+  roomHoldKey,
   seedTail,
   type ChatAttachment,
   type ChatMessage,
@@ -10,6 +11,7 @@ import {
 import { agentHolds } from "../../src/holds/agent-holds";
 import { connectionKeyOf } from "../../src/session/session-model";
 import { visualSwitch } from "./launch-query";
+import { GROUP_ROOM_ID } from "./roster-provider";
 import { visualConnection } from "./session-provider";
 
 export * from "../../src/holds/agent-holds";
@@ -299,15 +301,69 @@ const chipDrafts: DraftAttachment[] =
           ]
         : [];
 
+// The group transcript for the room-chat scenario: two agents answering in turn, so each run of
+// bubbles carries the writer's name.
+const groupConversation: ChatMessage[] = [
+  {
+    id: 301,
+    type: "user",
+    text: "Where are we on launch week?",
+    ts: "2026-08-01T10:00:00.000Z",
+    sender: "user",
+  },
+  {
+    id: 302,
+    type: "chat",
+    text: "Onboarding copy is signed off and the store screenshots are queued.",
+    ts: "2026-08-01T10:00:20.000Z",
+    sender: "aria",
+  },
+  {
+    id: 303,
+    type: "chat",
+    text: "I can take the screenshots tonight.",
+    ts: "2026-08-01T10:00:35.000Z",
+    sender: "aria",
+  },
+  {
+    id: 304,
+    type: "chat",
+    text: "The release notes still need a pass, and the beta channel is one build behind.",
+    ts: "2026-08-01T10:01:10.000Z",
+    sender: "nova",
+  },
+  {
+    id: 305,
+    type: "user",
+    text: "Split it: aria on the store, nova on the notes.",
+    ts: "2026-08-01T10:02:00.000Z",
+    sender: "user",
+  },
+  {
+    id: 306,
+    type: "chat",
+    text: "Taking the notes now.",
+    ts: "2026-08-01T10:02:12.000Z",
+    sender: "nova",
+  },
+];
+
 const connectionKey = connectionKeyOf(visualConnection) ?? "";
-agentHolds.chat.persist(agentHoldKey("aria", connectionKey), chatState);
+agentHolds.chat.persist(
+  roomHoldKey(directRoomId("aria"), connectionKey),
+  chatState,
+);
 if (chipDrafts.length > 0)
   agentHolds.attachments.persist(
-    agentHoldKey("aria", connectionKey),
+    roomHoldKey(directRoomId("aria"), connectionKey),
     chipDrafts,
   );
 // nova has history loaded and no messages, so opening nova renders the empty-chat state.
 agentHolds.chat.persist(
-  agentHoldKey("nova", connectionKey),
+  roomHoldKey(directRoomId("nova"), connectionKey),
   seedTail(initialChatState(), { events: [], cursor: null }),
+);
+agentHolds.chat.persist(
+  roomHoldKey(GROUP_ROOM_ID, connectionKey),
+  seedTail(initialChatState(), { events: groupConversation, cursor: null }),
 );

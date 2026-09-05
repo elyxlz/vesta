@@ -8,28 +8,20 @@ import {
 } from "react";
 import * as Crypto from "expo-crypto";
 import {
-  agentHoldKey,
-  chatSocketPath,
   createChatSession,
+  roomHoldKey,
+  roomsSocketPath,
   type ChatAttachment,
   type ChatSession,
   type Controller,
   type InputMethod,
-  type Tree,
 } from "@vesta/core";
-import { useChatSession, useReplica, useSyncState } from "@vesta/core/react";
+import { useChatSession, useSyncState } from "@vesta/core/react";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
-import {
-  agentActivitySnapshotsEqual,
-  selectAgentActivitySnapshot,
-} from "./agent-activity-model";
+import { setVisibleRoomSocket } from "@/notifications/foreground-policy";
 import { agentHolds } from "@/holds/agent-holds";
-
-function idsEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
 
 // A slot whose occupant the effect owns, read through useSyncExternalStore: the session is
 // created by the effect whose cleanup closes it, so the two lifetimes cannot diverge.
@@ -49,19 +41,24 @@ function createSessionSlot() {
   };
 }
 
-// The mobile adapter over core's chat session: it injects the platform ports (the session's
-// token-stamped socket URL, expo-crypto ids, the pacing preference) and the stale-while-reconnecting
-// hold, which seeds the session across a controller epoch so backgrounding never blanks the chat and
-// receives every commit so a popped screen keeps its tail.
-export function useAgentSocket(
-  name: string,
-  active: boolean,
+// The mobile adapter over core's chat session, one per room: it injects the platform ports (the
+// session's token-stamped socket URL, expo-crypto ids, the pacing preference) and the
+// stale-while-reconnecting hold, which seeds the session across a controller epoch so backgrounding
+// never blanks the chat and receives every commit so a popped screen keeps its tail. It also
+// registers the room as the visible conversation, which is what defers a foreground notification
+// for the chat already on screen.
+export function useRoomSocket(
+  roomId: string,
+  // Whose pacing preference this conversation follows: a direct room reads its own agent's choice,
+  // a room with several members paces naturally.
+  pacingAgent: string | null,
   controller: Controller | null,
 ) {
   const preferences = usePreferences();
   const { connection } = useSession();
-  const key = agentHoldKey(name, connectionKeyOf(connection) ?? "");
-  const naturalPacing = preferences.naturalChatPacingForAgent(name);
+  const key = roomHoldKey(roomId, connectionKeyOf(connection) ?? "");
+  const naturalPacing =
+    pacingAgent === null || preferences.naturalChatPacingForAgent(pacingAgent);
   // Read by the session at each pacing step, so a preference flip lands without a rebuild.
   const naturalPacingRef = useRef(naturalPacing);
   useEffect(() => {
@@ -73,17 +70,20 @@ export function useAgentSocket(
   const session = useSyncExternalStore(slot.subscribe, slot.get);
 
   useEffect(() => {
-    if (!active || !name || !controller) return;
-    const agent = name;
+    if (!roomId || !controller) return;
     const created = createChatSession({
       http: controller.http,
-      agent,
-      buildUrl: () => controller.session.websocketUrl(chatSocketPath(agent)),
+      roomId,
+      buildUrl: () =>
+        controller.session.websocketUrl(
+          roomsSocketPath(),
+          new URLSearchParams({ room: roomId }),
+        ),
       makeId: () => Crypto.randomUUID(),
       naturalPacing: () => naturalPacingRef.current,
       initialState: agentHolds.chat.read(key) ?? undefined,
     });
-    // The key is captured here, so a commit from a previous agent/gateway epoch can only ever
+    // The key is captured here, so a commit from a previous room/gateway epoch can only ever
     // write its own cell, never the next one's.
     const unsubscribe = created.subscribe(() => {
       agentHolds.chat.persist(key, created.getState().chat);
@@ -94,7 +94,12 @@ export function useAgentSocket(
       created.close();
       slot.set(null);
     };
-  }, [active, name, controller, key, slot]);
+  }, [roomId, controller, key, slot]);
+
+  useEffect(
+    () => setVisibleRoomSocket(connection?.url ?? "", roomId, connected),
+    [connection?.url, roomId, connected],
+  );
 
   // A preference flip mid-conversation commits whatever was still typing out.
   useEffect(() => {
@@ -102,31 +107,6 @@ export function useAgentSocket(
   }, [naturalPacing, slot]);
 
   const state = useChatSession(session);
-
-  const activitySelector = useCallback(
-    (tree: Tree | null) => selectAgentActivitySnapshot(tree, active, name),
-    [active, name],
-  );
-  const agentActivity = useReplica(
-    controller?.replica ?? null,
-    activitySelector,
-    agentActivitySnapshotsEqual,
-  );
-
-  const pendingSelector = useCallback(
-    (tree: Tree | null): string[] =>
-      name
-        ? (tree?.agents[name]?.notifications.pending ?? []).flatMap((notif) =>
-            notif.notif_id ? [notif.notif_id] : [],
-          )
-        : [],
-    [name],
-  );
-  const pendingNotifications = useReplica(
-    controller?.replica ?? null,
-    pendingSelector,
-    idsEqual,
-  );
 
   const send = useCallback(
     (
@@ -166,17 +146,14 @@ export function useAgentSocket(
     [slot],
   );
 
-  // Memoized so the AgentContext value built on top of it only changes identity when a consumed
-  // field does; otherwise every provider render would re-render all four agent pages.
+  // Memoized so the chat context built on top of it only changes identity when a consumed field
+  // does; otherwise every provider render would re-render all four agent pages.
   return useMemo(
     () => ({
       events: state.chat.messages,
-      agentState: agentActivity.state,
-      agentStateReady: agentActivity.ready,
       isTyping: state.typing,
       connected,
       historyLoaded: state.chat.historyLoaded,
-      pendingNotifications,
       latestLiveChat: state.latestReply,
       hasMore: state.chat.cursor !== null,
       loadingMore: state.loadingMore,
@@ -187,17 +164,8 @@ export function useAgentSocket(
       reportSpeaking,
       reseedRevision: state.reseedRevision,
     }),
-    [
-      state,
-      agentActivity.state,
-      agentActivity.ready,
-      connected,
-      pendingNotifications,
-      loadMore,
-      trimHistory,
-      send,
-      retry,
-      reportSpeaking,
-    ],
+    [state, connected, loadMore, trimHistory, send, retry, reportSpeaking],
   );
 }
+
+export type RoomSocket = ReturnType<typeof useRoomSocket>;

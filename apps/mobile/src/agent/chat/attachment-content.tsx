@@ -5,7 +5,7 @@ import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { Ionicons } from "@expo/vector-icons";
 import {
   attachmentKind,
-  chatAttachmentPath,
+  roomAttachmentPath,
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
@@ -36,7 +36,6 @@ type MediaPhase = "loading" | "loaded" | "removed" | "error";
 
 interface BlockContext {
   api: ApiClient;
-  agent: string;
   user: boolean;
   // Android only: reopens the message menu, which the block's own Pressable would otherwise
   // swallow the long-press from.
@@ -165,7 +164,7 @@ function ImageBlock({
   const [epoch, setEpoch] = useState(0);
   const uri = useAuthedMediaUri(
     context.api,
-    chatAttachmentPath(context.agent, attachment.id),
+    roomAttachmentPath(attachment.id),
     epoch,
   );
   const size = mediaSize(attachment);
@@ -211,7 +210,7 @@ function ImageBlock({
             // An image error carries no status; a bodyless HEAD tells removed from transient.
             void probeAttachmentStatus(
               context.api,
-              chatAttachmentPath(context.agent, attachment.id),
+              roomAttachmentPath(attachment.id),
             )
               .then((status) => {
                 setPhase(status === 410 ? "removed" : "error");
@@ -307,10 +306,7 @@ function ActiveAudioTile({
   attachment: ChatAttachment;
   onRemoved: () => void;
 }) {
-  const uri = useAuthedMediaUri(
-    context.api,
-    chatAttachmentPath(context.agent, attachment.id),
-  );
+  const uri = useAuthedMediaUri(context.api, roomAttachmentPath(attachment.id));
   const player = useAudioPlayer(uri ? { uri } : null);
   const status = useAudioPlayerStatus(player);
   // The tap that mounted this tile meant "play": start once the source has loaded.
@@ -341,7 +337,7 @@ function ActiveAudioTile({
           // The player load failed silently; a bodyless HEAD tells removed from transient.
           void probeAttachmentStatus(
             context.api,
-            chatAttachmentPath(context.agent, attachment.id),
+            roomAttachmentPath(attachment.id),
           )
             .then((probed) => {
               if (probed === 410) onRemoved();
@@ -378,16 +374,11 @@ function FileBlock({
   const start = () => {
     setPhase("fetching");
     setReceived(0);
-    saveAttachment(
-      expoSaveIo(context.api),
-      context.agent,
-      attachment,
-      (bytes) => {
-        setReceived((previous) =>
-          throttledProgress(previous, bytes, attachment.size),
-        );
-      },
-    ).then(
+    saveAttachment(expoSaveIo(context.api), attachment, (bytes) => {
+      setReceived((previous) =>
+        throttledProgress(previous, bytes, attachment.size),
+      );
+    }).then(
       () => {
         setPhase("idle");
       },
@@ -423,20 +414,18 @@ function FileBlock({
 
 export function AttachmentContent({
   api,
-  agent,
   user,
   attachment,
   onOpen,
   onLongPress,
 }: {
   api: ApiClient;
-  agent: string;
   user: boolean;
   attachment: ChatAttachment;
   onOpen: (request: OpenViewerRequest) => void;
   onLongPress?: () => void;
 }) {
-  const context: BlockContext = { api, agent, user, onLongPress };
+  const context: BlockContext = { api, user, onLongPress };
   const kind = attachmentKind(attachment.mime);
   if (kind === "image")
     return (

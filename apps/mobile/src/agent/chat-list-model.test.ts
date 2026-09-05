@@ -158,4 +158,138 @@ describe("inverted chat rows", () => {
     });
     expect(rows[2]).toMatchObject({ startsNewBubbleGroup: true });
   });
+
+  // A room with several agents alternates senders on the agent side, so a group breaks on the
+  // writer as well as on the side: each agent's run opens and closes its own bubble group.
+  it("breaks a bubble group when a second agent speaks in the room", () => {
+    const rows = createInvertedChatRows(
+      [
+        {
+          type: "chat",
+          text: "one",
+          ts: "2026-07-15T10:00:00Z",
+          sender: "aria",
+        },
+        {
+          type: "chat",
+          text: "two",
+          ts: "2026-07-15T10:01:00Z",
+          sender: "aria",
+        },
+        {
+          type: "chat",
+          text: "three",
+          ts: "2026-07-15T10:02:00Z",
+          sender: "nova",
+        },
+        {
+          type: "chat",
+          text: "four",
+          ts: "2026-07-15T10:03:00Z",
+          sender: "aria",
+        },
+      ],
+      false,
+    );
+
+    expect(
+      [...rows].reverse().flatMap((row) =>
+        row.kind === "event"
+          ? [
+              {
+                startsNewBubbleGroup: row.startsNewBubbleGroup,
+                isGroupStart: row.isGroupStart,
+                endsBubbleGroup: row.endsBubbleGroup,
+              },
+            ]
+          : [],
+      ),
+    ).toEqual([
+      {
+        startsNewBubbleGroup: false,
+        isGroupStart: true,
+        endsBubbleGroup: false,
+      },
+      {
+        startsNewBubbleGroup: false,
+        isGroupStart: false,
+        endsBubbleGroup: true,
+      },
+      { startsNewBubbleGroup: true, isGroupStart: true, endsBubbleGroup: true },
+      { startsNewBubbleGroup: true, isGroupStart: true, endsBubbleGroup: true },
+    ]);
+  });
+
+  it("keeps one agent's run in a single bubble group", () => {
+    const rows = createInvertedChatRows(
+      [
+        {
+          type: "chat",
+          text: "one",
+          ts: "2026-07-15T10:00:00Z",
+          sender: "aria",
+        },
+        {
+          type: "chat",
+          text: "two",
+          ts: "2026-07-15T10:01:00Z",
+          sender: "aria",
+        },
+        {
+          type: "chat",
+          text: "three",
+          ts: "2026-07-15T10:02:00Z",
+          sender: "aria",
+        },
+      ],
+      false,
+    );
+
+    expect(
+      [...rows]
+        .reverse()
+        .flatMap((row) => (row.kind === "event" ? [row.isGroupStart] : [])),
+    ).toEqual([true, false, false]);
+  });
+
+  // The user is one sender however many agents answer, so their own bubbles group as always.
+  it("groups the user's own bubbles across a room's agents", () => {
+    const rows = createInvertedChatRows(
+      [
+        {
+          type: "user",
+          text: "hi",
+          ts: "2026-07-15T10:00:00Z",
+          sender: "user",
+        },
+        {
+          type: "user",
+          text: "again",
+          ts: "2026-07-15T10:00:30Z",
+          sender: "user",
+        },
+        {
+          type: "chat",
+          text: "hey",
+          ts: "2026-07-15T10:01:00Z",
+          sender: "nova",
+        },
+      ],
+      false,
+    );
+
+    expect(
+      [...rows]
+        .reverse()
+        .flatMap((row) =>
+          row.kind === "event"
+            ? [{ start: row.isGroupStart, end: row.endsBubbleGroup }]
+            : [],
+        ),
+    ).toEqual([
+      { start: true, end: false },
+      { start: false, end: true },
+      { start: true, end: true },
+    ]);
+  });
 });

@@ -1,5 +1,6 @@
 import {
   chatMessageSide,
+  senderOf,
   startsNewBubbleGroup,
   type ChatMessage,
   type ChatMessageSide,
@@ -9,8 +10,12 @@ export interface EventChatRow {
   kind: "event";
   key: string;
   event: ChatMessage;
+  // Extra space above this bubble. A date header supplies its own separation, so the row under
+  // one carries no gap even though it opens a group.
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
+  // First bubble of its group. A room with several agents prints who spoke above this one.
+  isGroupStart: boolean;
 }
 
 export interface TypingChatRow {
@@ -53,34 +58,36 @@ function eventRows(events: ChatMessage[]): EventChatRow[] {
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
     const startsNew = startsNewBubbleGroup(previousSided, event);
-    if (chatMessageSide(event)) previousSided = event;
+    const sided = chatMessageSide(event) !== null;
+    const opens = sided && (previousSided === null || startsNew);
+    if (sided) previousSided = event;
     return {
       kind: "event" as const,
       key: count === 0 ? base : `${base}#${count}`,
       event,
       startsNewBubbleGroup: startsNew,
       endsBubbleGroup: false,
+      isGroupStart: opens,
     };
   });
 
-  let nextBubbleType: "user" | "chat" | null = null;
+  // A group closes on the writer changing, not merely the side: two agents answering in one room
+  // each get their own run of bubbles, and only the last of a run carries the tail.
+  let nextSender: string | null = null;
   let nextBubbleDay: string | null = null;
   let nextBubbleStartsNewGroup = false;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
     if (!row) continue;
-    const bubbleType =
-      row.event.type === "user" || row.event.type === "chat"
-        ? row.event.type
-        : null;
-    if (!bubbleType) continue;
+    if (row.event.type !== "user" && row.event.type !== "chat") continue;
+    const sender = senderOf(row.event);
     const bubbleDay = calendarDay(row.event.ts);
     row.endsBubbleGroup =
-      nextBubbleType === null ||
-      bubbleType !== nextBubbleType ||
+      nextSender === null ||
+      sender !== nextSender ||
       bubbleDay !== nextBubbleDay ||
       nextBubbleStartsNewGroup;
-    nextBubbleType = bubbleType;
+    nextSender = sender;
     nextBubbleDay = bubbleDay;
     nextBubbleStartsNewGroup = row.startsNewBubbleGroup;
   }
@@ -96,6 +103,8 @@ function addDateRows(rows: EventChatRow[]): ChatRow[] {
     const bucket = day ?? "unknown";
     if (bucket !== previousBucket) {
       row.startsNewBubbleGroup = false;
+      if (row.event.type === "user" || row.event.type === "chat")
+        row.isGroupStart = true;
       datedRows.push({
         kind: "date",
         key: day ? `date-${day}` : `date-unknown-${row.key}`,

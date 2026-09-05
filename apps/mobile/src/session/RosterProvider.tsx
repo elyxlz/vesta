@@ -6,12 +6,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AgentRow, DeviceInfo, ReleaseChannel, Tree } from "@vesta/core";
+import type {
+  AgentRow,
+  DeviceInfo,
+  ReleaseChannel,
+  Room,
+  Tree,
+} from "@vesta/core";
 import {
   devicesEqual,
+  roomsEqual,
   rosterFromTree,
   rostersEqual,
   selectDevices,
+  selectRooms,
 } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
@@ -34,6 +42,8 @@ interface RosterValue {
   updateAvailable: boolean;
   latestVersion: string | null;
   devices: DeviceInfo[];
+  // Every conversation on the node, busiest first: the Chats list, and what resolves a room id.
+  rooms: Room[];
 }
 
 const RosterContext = createContext<RosterValue | null>(null);
@@ -105,7 +115,7 @@ function useRosterHold(): RosterHoldStore {
 function servedRoster(
   hold: RosterHold,
   live: { reachable: boolean },
-): Omit<RosterValue, "devices"> {
+): Omit<RosterValue, "devices" | "rooms"> {
   return {
     agents: hold.agents,
     agentsReady: hold.agentsReady,
@@ -128,7 +138,7 @@ function useServedRoster(
   connectionKey: string,
   fresh: RosterSnapshot | null,
   reachable: boolean,
-): Omit<RosterValue, "devices"> {
+): Omit<RosterValue, "devices" | "rooms"> {
   const hold = useMemo(
     () => reconcileRosterHold(store.read(), connectionKey, fresh),
     [store, connectionKey, fresh],
@@ -155,6 +165,7 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     gatewaySummariesEqual,
   );
   const devices = useReplica(replica, selectDevices, devicesEqual);
+  const rooms = useReplica(replica, selectRooms, roomsEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
   const fresh = useMemo<RosterSnapshot | null>(
     () => (gateway ? { agents, ...gateway } : null),
@@ -166,7 +177,10 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     fresh,
     syncState === "open",
   );
-  const contextValue = useMemo(() => ({ ...value, devices }), [value, devices]);
+  const contextValue = useMemo(
+    () => ({ ...value, devices, rooms }),
+    [value, devices, rooms],
+  );
 
   return (
     <RosterContext.Provider value={contextValue}>

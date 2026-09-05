@@ -315,6 +315,20 @@ function SessionNavigation() {
                 name="agent/[name]"
                 options={{ headerShown: false }}
               />
+              <Stack.Screen name="chat/[roomId]" />
+              <Stack.Screen
+                name="new-room"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  ...formSheetCorners,
+                  sheetAllowedDetents: [0.6, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
+              />
             </Stack.Protected>
             {/* Declared after both groups: a screen listed before them becomes the router's
                 fallback base route whenever the guarded initial route is unavailable, and a base

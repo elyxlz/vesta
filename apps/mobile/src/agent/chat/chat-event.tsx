@@ -165,7 +165,7 @@ export const ChatDateHeader = memo(function ChatDateHeader({
 
 export const ChatEvent = memo(function ChatEvent({
   event,
-  agentName,
+  showSender,
   startsNewBubbleGroup,
   endsBubbleGroup,
   canSpeak,
@@ -176,11 +176,13 @@ export const ChatEvent = memo(function ChatEvent({
   onOpenAttachment,
 }: {
   event: ChatMessage;
-  agentName: string;
+  // Print who wrote this above the bubble: true only on the first bubble of a group in a room with
+  // several agents. The user's own bubbles never carry a name.
+  showSender: boolean;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
   canSpeak: boolean;
-  onReply: (text: string, user: boolean) => void;
+  onReply: (text: string, user: boolean, sender: string | null) => void;
   onEditAndResend: (text: string) => void;
   onReadAloud: (text: string) => void;
   onRetry: (
@@ -262,6 +264,12 @@ export const ChatEvent = memo(function ChatEvent({
   const sendState = event.type === "user" ? event.send_state : undefined;
   const intentId = event.type === "user" ? event.intent_id : undefined;
   const messageText = "text" in event ? event.text : "";
+  // The member who wrote this, as the node stamped it. Absent on a row from a conversation that
+  // names nobody, which is every row a one-agent chat ever held.
+  const sender =
+    event.type === "user" || event.type === "chat"
+      ? (event.sender ?? null)
+      : null;
   const actions = useMemo<MessageMenuAction<MessageActionId>[]>(
     () =>
       messageActionIds({ user, canSpeak }).map(
@@ -273,7 +281,7 @@ export const ChatEvent = memo(function ChatEvent({
     (action: MessageActionId) => {
       switch (action) {
         case "reply":
-          onReply(messageText, user);
+          onReply(messageText, user, sender);
           break;
         case "copy":
           void Clipboard.setStringAsync(messageText);
@@ -291,7 +299,7 @@ export const ChatEvent = memo(function ChatEvent({
           break;
       }
     },
-    [messageText, onEditAndResend, onReadAloud, onReply, user],
+    [messageText, onEditAndResend, onReadAloud, onReply, sender, user],
   );
   if (event.type === "error" || event.type === "rate_limited") {
     const text =
@@ -338,7 +346,6 @@ export const ChatEvent = memo(function ChatEvent({
         <AttachmentContent
           key={attachment.id}
           api={api}
-          agent={agentName}
           user={user}
           attachment={attachment}
           onOpen={onOpenAttachment}
@@ -392,6 +399,11 @@ export const ChatEvent = memo(function ChatEvent({
         user ? styles.userRow : styles.agentRow,
       ]}
     >
+      {showSender && !user && sender !== null ? (
+        <Text style={[styles.senderName, { color: colors.tertiaryText }]}>
+          {sender}
+        </Text>
+      ) : null}
       <MessageContextMenu
         actions={actions}
         menuRef={menuRef}
@@ -437,10 +449,10 @@ export const ChatEvent = memo(function ChatEvent({
 });
 
 export const TypingIndicator = memo(function TypingIndicator({
-  agentName,
+  label,
   startsNewBubbleGroup,
 }: {
-  agentName: string;
+  label: string;
   startsNewBubbleGroup: boolean;
 }) {
   const { colors } = usePreferences();
@@ -480,7 +492,7 @@ export const TypingIndicator = memo(function TypingIndicator({
   return (
     <View
       accessible
-      accessibilityLabel={`${agentName} is typing`}
+      accessibilityLabel={`${label} is typing`}
       style={[
         styles.messageRow,
         startsNewBubbleGroup ? styles.newBubbleGroup : null,
@@ -542,6 +554,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   messageRow: { width: "100%", marginVertical: 3 },
+  senderName: { fontSize: 12, marginBottom: 3, marginLeft: 12 },
   newBubbleGroup: { marginTop: 13 },
   userRow: { alignItems: "flex-end" },
   agentRow: { alignItems: "flex-start" },

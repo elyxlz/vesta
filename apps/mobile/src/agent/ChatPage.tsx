@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  agentHoldKey,
+  roomHoldKey,
   TRIM_HISTORY_SETTLE_MS,
   fetchVoiceStatus,
 } from "@vesta/core";
@@ -18,7 +18,7 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAgent } from "@/agent/AgentProvider";
+import { useChat } from "@/chat/chat-context";
 import {
   ChatComposerInput,
   type ChatComposerInputRef,
@@ -64,13 +64,16 @@ const COMPOSER_INSET_OPEN = 12;
 
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
-  const { agent, socket, name } = useAgent();
+  const { agent, socket, roomId, label, agents, kind } = useChat();
   const { api, connection } = useSession();
   const { showError } = useToast();
   const { colors } = usePreferences();
-  // The draft and armed reply live in a per-agent hold, so popping back to home (or switching
-  // agents) never discards half-typed input; a successful send clears the cell via setInput("").
-  const holdKey = agentHoldKey(name, connectionKeyOf(connection) ?? "");
+  // Voice belongs to one agent's own services, so it is a direct-room affordance only.
+  const direct = kind === "direct";
+  const agentName = agent?.name ?? null;
+  // The draft and armed reply live in a per-room hold, so popping back to home (or opening
+  // another conversation) never discards half-typed input; a send clears the cell via setInput("").
+  const holdKey = roomHoldKey(roomId, connectionKeyOf(connection) ?? "");
   const [input, setInputState] = useState(
     () => agentHolds.composer.read(holdKey)?.draft ?? "",
   );
@@ -165,22 +168,25 @@ export default function ChatPage() {
     },
     [composerInset],
   );
-  const hasVoiceService = Boolean(agent && "voice" in agent.services);
+  const hasVoiceService = Boolean(direct && agent && "voice" in agent.services);
   const speechToText = useQuery({
-    queryKey: ["voice", name, "stt"],
-    queryFn: () => fetchVoiceStatus(api, name, "stt"),
-    enabled: Boolean(name && hasVoiceService),
+    queryKey: ["voice", agentName, "stt"],
+    queryFn: () => fetchVoiceStatus(api, agentName ?? "", "stt"),
+    enabled: Boolean(agentName && hasVoiceService),
   });
   const voiceEnabled = Boolean(
     speechToText.data?.configured && speechToText.data.enabled,
   );
-  const canSend = socket.connected && agent?.status === "alive";
+  // A direct room follows its agent's sign-in state; a peer or group message queues on the node,
+  // so its composer stays live whatever the members are doing.
+  const canSend =
+    socket.connected && (agent === null || agent.status === "alive");
   const canSendRef = useRef(canSend);
   useEffect(() => {
     canSendRef.current = canSend;
   });
   const sendChat = socket.send;
-  const attachments = useAttachmentDrafts(name, holdKey, api, showError);
+  const attachments = useAttachmentDrafts(holdKey, api, showError);
   const attachmentsRef = useRef(attachments);
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -216,7 +222,7 @@ export default function ChatPage() {
     [handleTranscript],
   );
   const voice = useLiveVoice({
-    name,
+    name: agentName ?? "",
     enabled: voiceEnabled,
     sttStatus: speechToText.data ?? null,
     onTranscript: handleVoiceTranscript,
@@ -253,11 +259,11 @@ export default function ChatPage() {
   }, []);
   const cancelReply = useCallback(() => setReplyTarget(null), [setReplyTarget]);
   const replyToMessage = useCallback(
-    (text: string, user: boolean) => {
-      setReplyTarget({ text, sender: user ? "You" : name });
+    (text: string, user: boolean, sender: string | null) => {
+      setReplyTarget({ text, sender: user ? "You" : (sender ?? label) });
       focusComposer();
     },
-    [focusComposer, name, setReplyTarget],
+    [focusComposer, label, setReplyTarget],
   );
   const editAndResend = useCallback(
     (text: string) => {
@@ -335,7 +341,8 @@ export default function ChatPage() {
     <View style={styles.screen}>
       <ChatTranscript
         rows={rows}
-        agentName={name}
+        label={label}
+        showSenders={agents.length > 1}
         canSpeak={speechEnabled}
         historyLoaded={socket.historyLoaded}
         loadingMore={socket.loadingMore}
@@ -351,12 +358,7 @@ export default function ChatPage() {
         onRetry={socket.retry}
         onOpenAttachment={openAttachment}
       />
-      <AttachmentViewer
-        api={api}
-        agent={name}
-        request={viewer}
-        onClose={closeViewer}
-      />
+      <AttachmentViewer api={api} request={viewer} onClose={closeViewer} />
       <KeyboardStickyView
         offset={{ closed: 0, opened: composerKeyboardOffset }}
         pointerEvents="box-none"
@@ -416,7 +418,7 @@ export default function ChatPage() {
                             ? "Waiting for agent…"
                             : hasChips && input.length === 0
                               ? "Add a caption…"
-                              : `Message ${name}`
+                              : `Message ${label}`
                       }
                       placeholderTextColor={colors.tertiaryText}
                       selectionColor={colors.accent}
@@ -427,7 +429,7 @@ export default function ChatPage() {
                       canSend={canSend}
                       hasDraft={hasDraft}
                       recordingMode={recordingMode}
-                      voiceEnabled={voiceEnabled}
+                      voiceEnabled={direct && voiceEnabled}
                       onSend={send}
                       onDictate={startDictation}
                       onConfirm={confirmDictation}

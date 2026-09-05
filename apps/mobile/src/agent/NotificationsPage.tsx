@@ -134,7 +134,7 @@ export default function NotificationsPage({
   presentation = "pager",
 }: NotificationsPageProps) {
   const { api } = useSession();
-  const { name, socket } = useAgent();
+  const { name, socket, pendingNotifications } = useAgent();
   const { colors } = usePreferences();
   const insets = useSafeAreaInsets();
   const { data, isLoading, refetch } = useQuery({
@@ -155,8 +155,8 @@ export default function NotificationsPage({
     displayItems.length,
   );
   const pendingIds = useMemo(
-    () => getPendingNotificationIds(socket.pendingNotifications, socket.events),
-    [socket.events, socket.pendingNotifications],
+    () => getPendingNotificationIds(pendingNotifications, socket.events),
+    [socket.events, pendingNotifications],
   );
 
   useEffect(() => {

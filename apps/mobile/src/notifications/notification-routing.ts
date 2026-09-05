@@ -1,8 +1,31 @@
+import { directRoomId } from "@vesta/core";
+
 export interface PendingNotification {
   identifier: string;
   agent: string;
   eventType: string;
   gateway: string | null;
+  // The conversation the push points at, resolved from the route the gateway stamped on it.
+  room: string;
+}
+
+// Where a push belongs, read off the route the gateway stamped: `/chat/<id>` names a room, an
+// `/agent/<name>` route (a reply in that agent's direct chat, or news about the agent itself) that
+// agent's own conversation. A push from a gateway that stamped no route at all answers the same
+// direct room, which is where it used to land.
+export function pushRoom(route: unknown, agent: string): string {
+  if (typeof route === "string") {
+    const segments = route.split("/").filter((segment) => segment.length > 0);
+    const [head, id] = segments;
+    if (head === "chat" && id !== undefined) return decodeURIComponent(id);
+  }
+  return directRoomId(agent);
+}
+
+// Which screen opens the push: the agent page for a direct room (the chat pager is that page), the
+// room screen for anything else.
+export function pushOpensAgentPage(pending: PendingNotification): boolean {
+  return pending.room === directRoomId(pending.agent);
 }
 
 export function pendingNotificationFromData(
@@ -12,12 +35,15 @@ export function pendingNotificationFromData(
   if (!data || typeof data.agent !== "string" || !data.agent.trim()) {
     return null;
   }
+  const agent = data.agent.trim();
   return {
     identifier,
-    agent: data.agent.trim(),
+    agent,
     eventType: typeof data.eventType === "string" ? data.eventType : "",
     gateway:
       typeof data.gateway === "string" && data.gateway ? data.gateway : null,
+    room:
+      typeof data.room === "string" ? data.room : pushRoom(data.route, agent),
   };
 }
 

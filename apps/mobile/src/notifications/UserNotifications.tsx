@@ -4,7 +4,7 @@ import type { Controller, Delta } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
 import { shouldPresentUserNotification } from "./user-notification-presentation";
-import { activeAgentName, setSyncConnected } from "./foreground-policy";
+import { activeRoomId, setSyncConnected } from "./foreground-policy";
 
 // The single owner of foreground notifications: it presents ONE local notification per server
 // `user_notification` delta (defer-to-active applied), mirroring web's ReplicaNotifications. While it
@@ -21,7 +21,7 @@ function LiveUserNotifications({ controller }: { controller: Controller }) {
   useEffect(() => {
     return controller.subscribeDeltas((delta: Delta) => {
       if (delta.type !== "user_notification") return;
-      if (!shouldPresentUserNotification(delta, activeAgentName())) return;
+      if (!shouldPresentUserNotification(delta, activeRoomId())) return;
       void Notifications.scheduleNotificationAsync({
         content: { title: delta.title, body: delta.body },
         trigger: null,
