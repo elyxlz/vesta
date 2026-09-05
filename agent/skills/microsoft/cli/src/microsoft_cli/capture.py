@@ -181,6 +181,8 @@ def _harvest(account_email: str) -> dict[str, dict[str, float | str]]:
 
 def finish_interactive(_config, account_email: str) -> dict[str, dict[str, float | str]]:
     """After the user has signed in, close the handover window and lift both tokens from the session."""
+    # The stop ends the headed browser, which flushes the SSO cookies to the session profile that
+    # the harvest below reads after the daemon relaunches the session.
     stop()
     captured = _harvest(account_email)
     if not captured:
