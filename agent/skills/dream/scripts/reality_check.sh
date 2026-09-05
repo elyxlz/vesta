@@ -7,6 +7,13 @@
 # Disk knobs: own usage is RED only while the host is also at the pressure percent, the host alone
 # is RED at the RED percent, and the du walk is bounded so a stuck filesystem cannot hang the dream.
 OWN_USAGE_RED_MB=20000
+# Own-usage alone is a size, not a problem: an agent whose job is a document corpus can sit on tens
+# of GB forever on a disk that is two thirds empty, and then this probe is RED every single night
+# with nothing to clear. A permanent RED is worse than no probe, because it teaches you to skim the
+# one output that exists to stop you skimming. So own usage only turns RED when the filesystem is
+# ALSO under real pressure; below that it prints as context. The v0.3.0 split that idea into two
+# thresholds and this file keeps theirs: PRESSURE is where own usage starts to matter, RED is where
+# the host is about to fail writes and the news goes to the user instead of into a cleanup.
 HOST_DISK_PRESSURE_PERCENT=85
 HOST_DISK_RED_PERCENT=97
 DU_TIMEOUT_SECS=120
@@ -78,17 +85,58 @@ for log in "$HOME"/agent/logs/*.log; do
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
-    if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
+    # A bare count under the threshold reads as OK and tells you nothing about WHAT is failing.
+    # On 5 Sep 2026 chat-mirror.log sat at 153 errors, comfortably under 200, and every one of them
+    # was the same thing: a daemon silently dropping the owner's messages, 43% of its sends. The
+    # count was green while the daemon was mostly broken. So whenever there is any error at all,
+    # name the dominant pattern: one extra line, and it turns a number into a lead.
+    if [ "$errors" -gt 0 ]; then
+        top=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | grep -iE 'error|traceback' \
+              | grep -v '\[AGENT\]' \
+              | sed -E 's/^[^ ]*[0-9]{2}:[0-9]{2}:[0-9]{2}[^ ]*//; s/[0-9a-f]{8,}/<id>/g; s/[0-9]+/N/g' \
+              | cut -c1-70 | sort | uniq -c | sort -rn | head -1 | sed 's/^ *//')
     else
-        ok "$(basename "$log"): $errors error lines in the last 2 days"
+        top=""
+    fi
+    if [ "$errors" -gt 200 ]; then
+        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer${top:+ | most common: $top}"
+    else
+        ok "$(basename "$log"): $errors error lines in the last 2 days${top:+ | most common: $top}"
     fi
 done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
 # refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+#
+# **But that line alone OVER-COUNTS, and it over-counts by a lot (nurnetai, 4 Sep 2026).** This
+# probe reported "the provider refused 13 turns today" and every single one was innocent: 6 were
+# COMPACTION BOUNDARIES (the turn that compacts bills nothing, and logs `compact_result: success`
+# right above) and 7 were PREEMPTS (a notification cutting in, `Preempt sent (priority=now)`,
+# duration 0.1s). Zero real refusals out of 13, classified by reading the block above each line.
+# Both are ordinary healthy behaviour, so any agent that compacts or gets interrupted trips this
+# every single day: a PERMANENT RED, which by this file's own reasoning above is worse than no
+# probe at all, because it teaches you to skim the one output whose job is to stop you skimming.
+# And its advice ("find the window and what it dropped") sends you hunting something that is not
+# there, which is the expensive half.
+# So the zero-usage line is necessary and not sufficient: a real refusal is one with NEITHER a
+# compaction boundary NOR a preempt in the few lines before it. awk keeps that short window.
+#
+# **TESTING THIS PROBE POISONS IT, and it caught me the same minute.** Right after the fix the
+# count read 1 instead of the expected 0. The one hit was MY OWN FIXTURE: writing a fake
+# `in=0 out=0 cache_read=0` line into /tmp got the whole command echoed into vesta.log by the
+# tool-call logger, so the fabricated marker landed inside the very log this probe greps. Any
+# probe that reads the agent's own log has this property: the act of testing it writes into its
+# input. Build fixture markers from concatenated pieces at runtime so the literal never appears
+# in a command line, or test against a log path this probe does not read. A contaminated count
+# is timestamped today, so it also ages out on its own, which makes it look like a real fix.
+refused=$(grep -h -B4 "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null \
+    | awk '
+        /Compaction boundary reached/ { innocente = 1 }
+        /Preempt sent/                { innocente = 1 }
+        /\[USAGE\] in=0 out=0 cache_read=0 / { if (!innocente) n++; innocente = 0 }
+        /^--$/                        { innocente = 0 }
+        END { print n + 0 }')
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
     bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
