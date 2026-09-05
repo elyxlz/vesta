@@ -6,17 +6,33 @@ import pytest
 from gmaps_cli import browser_bridge
 from gmaps_cli.browser_bridge import BrowserUnavailableError, SignedOutError, WriteRejectedError, _Envelope
 
-_READ_SHIM = (
+# Reads the program on stdin and answers one browser.result.v1 envelope. `SHIM_LOG` (when set)
+# records argv and whether DISPLAY leaked into the shim's environment, for the callers below to
+# assert on. `FAKE_ERROR_CODE`/`FAKE_ERROR_MESSAGE` (when set) answer a failing envelope on
+# stderr with exit 1; otherwise `FAKE_EVAL_OUT` answers a successful one on stdout.
+_SHIM = (
     "#!/usr/bin/env python3\n"
-    "import os, sys\n"
-    "cmd = sys.argv[1] if len(sys.argv) > 1 else ''\n"
-    "sys.stdout.write(os.environ['FAKE_EVAL_OUT'] if cmd == 'evaluate' else '{}')\n"
+    "import json, os, sys\n"
+    "code = sys.stdin.read()\n"
+    "if 'SHIM_LOG' in os.environ:\n"
+    "    with open(os.environ['SHIM_LOG'], 'w') as f:\n"
+    "        json.dump({'argv': sys.argv[1:], 'display': 'DISPLAY' in os.environ, 'code': code}, f)\n"
+    "if 'FAKE_ERROR_CODE' in os.environ:\n"
+    "    envelope = {'schema': 'browser.result.v1', 'ok': False, 'error': {\n"
+    "        'code': os.environ['FAKE_ERROR_CODE'], 'phase': 'launch',\n"
+    "        'message': os.environ['FAKE_ERROR_MESSAGE'], 'retryable': True,\n"
+    "        'suggested_action': 'run: browser daemon start'}}\n"
+    "    sys.stderr.write(json.dumps(envelope))\n"
+    "    sys.exit(1)\n"
+    "envelope = {'schema': 'browser.result.v1', 'ok': True,\n"
+    "    'output': {'stdout': os.environ['FAKE_EVAL_OUT'], 'stderr': '', 'exit_code': 0, 'duration_ms': 1}}\n"
+    "sys.stdout.write(json.dumps(envelope))\n"
 )
 
 
 def _install_shim(tmp_path: Path, eval_out: str, monkeypatch) -> None:
     shim = tmp_path / "browser"
-    shim.write_text(_READ_SHIM)
+    shim.write_text(_SHIM)
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("MAPS_BROWSER_BIN", str(shim))
     monkeypatch.setenv("FAKE_EVAL_OUT", eval_out)
@@ -35,10 +51,34 @@ def test_entitylist_get_raises_signed_out(tmp_path, monkeypatch):
         browser_bridge.entitylist_get("list", "!1e3")
 
 
+def test_entitylist_get_uses_exec_default_session_with_no_display(tmp_path, monkeypatch):
+    envelope = json.dumps({"signed_in": True, "status": 200, "body": ")]}'\n[[1]]"})
+    _install_shim(tmp_path, envelope, monkeypatch)
+    log = tmp_path / "shim.json"
+    monkeypatch.setenv("SHIM_LOG", str(log))
+    monkeypatch.delenv("DISPLAY", raising=False)
+    browser_bridge.entitylist_get("list", "!1e3")
+    logged = json.loads(log.read_text())
+    assert logged["argv"] == ["exec", "--session", "default"]
+    assert logged["display"] is False
+
+
 def test_missing_browser_binary_raises_unavailable(tmp_path, monkeypatch):
     monkeypatch.setenv("MAPS_BROWSER_BIN", str(tmp_path / "does-not-exist"))
     with pytest.raises(BrowserUnavailableError):
         browser_bridge.entitylist_get("list", "!1e3")
+
+
+def test_daemon_down_error_names_browser_daemon_start(tmp_path, monkeypatch):
+    shim = tmp_path / "browser"
+    shim.write_text(_SHIM)
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("MAPS_BROWSER_BIN", str(shim))
+    monkeypatch.setenv("FAKE_ERROR_CODE", "daemon_down")
+    monkeypatch.setenv("FAKE_ERROR_MESSAGE", "browser daemon not reachable at /run/browser.sock")
+    with pytest.raises(BrowserUnavailableError) as exc_info:
+        browser_bridge.entitylist_get("list", "!1e3")
+    assert "start the browser daemon" in str(exc_info.value)
 
 
 def test_entitylist_write_tries_pool_until_accepted(monkeypatch):

@@ -76,14 +76,14 @@ import stat
 
 _SHIM_SIGNED_OUT = """#!/usr/bin/env python3
 import json, sys
-cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-js = sys.argv[2] if len(sys.argv) > 2 else ""
-if cmd != "evaluate":
-    sys.stdout.write("{}")
-elif "maps/search/coffee" in js:
-    sys.stdout.write(json.dumps("<html>Sign in to continue</html>"))  # no token: writes read signed-out
+code = sys.stdin.read()
+if "maps/search/coffee" in code:
+    stdout = json.dumps("<html>Sign in to continue</html>")  # no token: writes read signed-out
 else:
-    sys.stdout.write(json.dumps({"signed_in": False, "status": 302, "body": ""}))
+    stdout = json.dumps({"signed_in": False, "status": 302, "body": ""})
+envelope = {"schema": "browser.result.v1", "ok": True,
+    "output": {"stdout": stdout, "stderr": "", "exit_code": 0, "duration_ms": 1}}
+sys.stdout.write(json.dumps(envelope))
 """
 
 
