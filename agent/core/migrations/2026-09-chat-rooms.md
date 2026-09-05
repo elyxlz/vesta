@@ -46,7 +46,15 @@ chat daemon start
 
 It must print `{"status":"started"}` or `{"status":"already_running"}`.
 
-### 5. Drop the stale name from the active skill list
+### 5. Hand the node the conversation this box already holds
+
+```bash
+chat import-to-node
+```
+
+It prints one JSON line carrying `imported` and `skipped`. The node keeps every message it already holds, so a re-run skips those and imports only what is missing.
+
+### 6. Drop the stale name from the active skill list
 
 ```bash
 ~/agent/skills/skills-registry/scripts/skills-deactivate app-chat
@@ -54,11 +62,11 @@ It must print `{"status":"started"}` or `{"status":"already_running"}`.
 
 `chat` is a default skill and activates on every boot, so nothing has to be added.
 
-### 6. Rewrite your notification rules
+### 7. Rewrite your notification rules
 
 Run `notifications list`. For each rule whose `source` is `app-chat`, run `notifications add` with the same `--type`, `--match`, and `--action` values but `--source chat`, then `notifications remove <id>` for the old rule. A rule that shows `expires_at` is temporary: re-add it with `--for` set to the time left, or skip it if it has already expired. Rules under any other source stay. No rule under `app-chat` means nothing to do.
 
-### 7. Update your own notes
+### 8. Update your own notes
 
 ```bash
 grep -l 'app-chat' ~/agent/MEMORY.md ~/agent/skills/personality/presets/*.md 2>/dev/null | xargs -r sed -i 's/app-chat/chat/g'; grep -c 'app-chat' ~/agent/MEMORY.md || true
@@ -66,6 +74,6 @@ grep -l 'app-chat' ~/agent/MEMORY.md ~/agent/skills/personality/presets/*.md 2>/
 
 The count must be 0.
 
-### 8. Mark this migration applied
+### 9. Mark this migration applied
 
 Call `mark_migration_applied` with this migration's name.
