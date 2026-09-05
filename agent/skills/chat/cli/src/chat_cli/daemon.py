@@ -267,6 +267,8 @@ async def _upload_attachments(replica: ReplicaState, root: pl.Path, attach: list
             return [], f"no such file: {path}"
         except attachments.SizeError as exc:
             return [], str(exc)
+        except attachments.UnknownAttachmentError as exc:
+            return [], f"the node answered an attachment id this store cannot hold: {exc}"
         except OSError as exc:
             return [], f"cannot read {path}: {exc}"
         ids.append(meta["id"])

@@ -14,6 +14,7 @@ from chat_cli import attachments, commands
 from chat_cli.node_client import NODE_UNREACHABLE
 from chat_cli.store import Store, direct_room_id, store_path
 
+from .attachment_fixture import stored_attachment
 from .fake_node import FakeNode
 
 AGENT = "vesta"
@@ -153,8 +154,8 @@ def test_import_to_node_uploads_an_attachment_and_skips_one_whose_file_is_gone(t
     root = attachments.attachments_root(tmp_path)
     source = tmp_path / "chart.png"
     source.write_bytes(b"pngbytes")
-    kept = attachments.ingest_file(root, source, "image/png")
-    gone = attachments.ingest_file(root, source, "image/png")
+    kept = stored_attachment(root, source, "image/png")
+    gone = stored_attachment(root, source, "image/png")
     attachments.remove_blob(root, gone["id"])
     store = Store(store_path(tmp_path), AGENT)
     store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "here", "attachments": [kept, gone]})

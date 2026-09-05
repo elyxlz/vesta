@@ -19,6 +19,7 @@ from chat_cli.replica import ReplicaState, run_replica
 from chat_cli.service import ServiceState
 from chat_cli.store import Store, StoredEvent, direct_room_id, store_path
 
+from .attachment_fixture import stored_attachment
 from .fake_node import FakeNode, connected_client
 
 AGENT = "vesta"
@@ -488,6 +489,56 @@ def test_send_with_attach_uploads_it_and_keeps_the_blob_under_the_node_id(tmp_pa
     assert attachments.blob_path(root, upload.meta["id"]).exists()
 
 
+def test_the_replica_does_not_fetch_back_a_blob_this_agent_just_sent(tmp_path):
+    # The send already put the file in the store under the node's id, so the own-sender frame's ingest
+    # keeps it rather than moving the same bytes a second time.
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"pngbytes")
+
+    async def scenario(state):
+        shutdown = asyncio.Event()
+        task = asyncio.create_task(run_replica(state.replica, shutdown))
+        try:
+            await _wait_for(lambda: state.replica.connected)
+            await _socket_command(state, {"command": "send", "message": "here", "attach": [str(source)]})
+            await _wait_for(lambda: state.service.store.page()[0] != [])
+            return state.service.store.page()[0]
+        finally:
+            shutdown.set()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    stored = _with_node(fake, tmp_path, scenario)
+
+    [upload] = list(fake.attachments.values())
+    assert [(method, path) for method, path, _ in fake.requests if path == f"/rooms/attachments/{upload.meta['id']}"] == []
+    assert [meta["id"] for meta in stored[0]["attachments"]] == [upload.meta["id"]]
+    assert attachments.blob_path(tmp_path / "attachments", upload.meta["id"]).read_bytes() == b"pngbytes"
+
+
+def test_an_attachment_id_this_store_cannot_hold_is_an_error_not_a_crash(tmp_path, monkeypatch):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"pngbytes")
+
+    def refuse(root, copied, meta):
+        raise attachments.UnknownAttachmentError(meta["id"])
+
+    monkeypatch.setattr(attachments, "store_copy", refuse)
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "here", "attach": [str(source)]})
+
+    response = _with_node(fake, tmp_path, scenario)
+
+    assert "cannot hold" in str(response["error"])
+    assert fake.messages == []
+
+
 def test_send_with_missing_attach_path_errors_and_posts_nothing(tmp_path):
     fake = FakeNode()
     fake.seed_room([AGENT])
@@ -685,8 +736,8 @@ def test_send_attach_must_be_a_list_of_paths(tmp_path):
 def test_run_sweep_uses_structured_references(tmp_path, monkeypatch):
     state = _daemon_state(tmp_path)
     root = state.service.attachments_root
-    referenced = attachments.ingest_file(root, _seed_file(tmp_path, "keep.bin"), None)
-    orphan = attachments.ingest_file(root, _seed_file(tmp_path, "orphan.bin"), None)
+    referenced = stored_attachment(root, _seed_file(tmp_path, "keep.bin"), None)
+    orphan = stored_attachment(root, _seed_file(tmp_path, "orphan.bin"), None)
     state.service.store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "", "attachments": [referenced]})
     ancient = 1000
     for directory in (root / referenced["id"], root / orphan["id"]):

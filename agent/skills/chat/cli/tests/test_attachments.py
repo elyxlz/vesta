@@ -1,5 +1,5 @@
-"""Tests for the attachment blob store: offset-addressed staging, idempotent finalize, ingest-by-copy
-for agent sends, blob-only removal (the 410 state), and the GC sweep. The store is pure filesystem
+"""Tests for the attachment blob store: offset-addressed staging, idempotent finalize, copy-in under an
+id minted elsewhere, blob-only removal (the 410 state), and the GC sweep. The store is pure filesystem
 functions under one root; the service and CLI layer routes on top of it."""
 
 import time
@@ -16,15 +16,17 @@ from chat_cli.attachments import (
     create_session,
     finalize,
     human_size,
-    ingest_file,
     is_removed,
     read_meta,
     remove_blob,
     sanitize_filename,
     staged_size,
+    store_copy,
     sweep,
     upload_status,
 )
+
+from .attachment_fixture import stored_attachment
 
 
 def _create(root, name="photo.jpg", mime="image/jpeg", size=10, extra=None):
@@ -112,25 +114,23 @@ def test_read_meta_is_none_before_finalize_and_for_unknown(tmp_path):
     assert read_meta(tmp_path, attachment_id) is not None
 
 
-def test_ingest_file_copies_and_guesses_mime(tmp_path):
+def test_store_copy_publishes_a_blob_under_the_id_it_carries(tmp_path):
     source = tmp_path / "report.pdf"
     source.write_bytes(b"%PDF-fake")
-    meta = ingest_file(tmp_path / "store", source, None)
+    meta = stored_attachment(tmp_path / "store", source)
     assert meta["name"] == "report.pdf"
     assert meta["mime"] == "application/pdf"
     assert meta["size"] == len(b"%PDF-fake")
-    assert blob_path(tmp_path / "store", meta["id"]).read_bytes() == b"%PDF-fake"
+    assert read_meta(tmp_path / "store", meta["id"]) == meta
     source.unlink()  # the copy stands alone
     assert blob_path(tmp_path / "store", meta["id"]).read_bytes() == b"%PDF-fake"
 
 
-def test_ingest_file_rejects_oversize_and_missing_source(tmp_path):
-    big = tmp_path / "big.bin"
-    big.write_bytes(b"x" * 8)
-    with pytest.raises(SizeError):
-        ingest_file(tmp_path / "store", big, None, max_bytes=4)
-    with pytest.raises(FileNotFoundError):
-        ingest_file(tmp_path / "store", tmp_path / "absent.bin", None)
+def test_store_copy_refuses_an_id_the_store_cannot_hold(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF-fake")
+    with pytest.raises(UnknownAttachmentError):
+        store_copy(tmp_path / "store", source, {"id": "not-a-store-id", "name": "report.pdf", "mime": "application/pdf", "size": 9})
 
 
 def test_sanitize_filename_strips_traversal_and_never_returns_empty():
@@ -210,10 +210,10 @@ def test_control_filenames_cannot_clobber_the_store(tmp_path):
         assert read_meta(tmp_path, attachment_id) == meta
 
 
-def test_ingest_control_filename_round_trips(tmp_path):
+def test_a_copied_in_control_filename_round_trips(tmp_path):
     source = tmp_path / "meta.json"
     source.write_bytes(b'{"user": "export"}')
-    meta = ingest_file(tmp_path / "store", source, None)
+    meta = stored_attachment(tmp_path / "store", source)
     assert blob_path(tmp_path / "store", meta["id"]).read_bytes() == b'{"user": "export"}'
     assert read_meta(tmp_path / "store", meta["id"]) == meta
 

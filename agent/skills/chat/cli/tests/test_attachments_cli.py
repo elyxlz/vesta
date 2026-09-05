@@ -9,14 +9,16 @@ from chat_cli import attachments
 from chat_cli.commands import cmd_attachments_list, cmd_attachments_rm
 from chat_cli.store import Store, store_path
 
+from .attachment_fixture import stored_attachment
+
 
 def _seed(tmp_path):
     """Three finalized attachments: a large received one, a small sent one, and an unreferenced one."""
     root = tmp_path / "attachments"
     store = Store(store_path(tmp_path), "vesta")
-    big = attachments.ingest_file(root, _file(tmp_path, "video.mp4", 9000), "video/mp4")
-    small = attachments.ingest_file(root, _file(tmp_path, "note.txt", 10), "text/plain")
-    orphan = attachments.ingest_file(root, _file(tmp_path, "orphan.bin", 500), None)
+    big = stored_attachment(root, _file(tmp_path, "video.mp4", 9000), "video/mp4")
+    small = stored_attachment(root, _file(tmp_path, "note.txt", 10), "text/plain")
+    orphan = stored_attachment(root, _file(tmp_path, "orphan.bin", 500), None)
     store.append({"type": "user", "ts": "2026-08-01T00:00:00", "text": "look", "attachments": [big]})
     store.append({"type": "chat", "ts": "2026-08-02T00:00:00", "text": "here", "attachments": [small]})
     store.close()

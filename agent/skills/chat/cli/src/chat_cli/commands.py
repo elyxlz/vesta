@@ -32,6 +32,10 @@ from chat_cli.store import RoomRecord, Store, StoredEvent, direct_room_id, store
 # in as few round trips as the node accepts.
 IMPORT_BATCH_SIZE = 500
 
+# How long `send` waits for the daemon's answer. Wide, because the daemon answers only once the node
+# has the whole message, and an attachment of up to the store's limit uploads first.
+SEND_REPLY_TIMEOUT_SECS = 900.0
+
 
 def _fail(payload: dict[str, object]) -> tp.NoReturn:
     """The one failure printer: the payload goes to stderr so stdout carries only success output."""
@@ -255,7 +259,7 @@ async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str], 
         request = json.dumps(body)
         writer.write(request.encode())
         writer.write_eof()
-        data = await asyncio.wait_for(reader.read(65536), timeout=10.0)
+        data = await asyncio.wait_for(reader.read(65536), timeout=SEND_REPLY_TIMEOUT_SECS)
         writer.close()
         await writer.wait_closed()
         return json.loads(data.decode())

@@ -190,14 +190,21 @@ async def _wait_out(shutdown: asyncio.Event, seconds: float) -> None:
 
 async def _pull_attachments(state: ReplicaState, message: NodeMessage) -> tuple[list[AttachmentMeta], set[str]]:
     """Bring every attachment the message carries into the local store under the node's own id, so the
-    notification names a path the agent opens and `chat attachments list` sees the file. A file this
-    replica could not fetch stays on the message and is named as unfetched, so the agent reads that
-    something was sent instead of nothing at all."""
+    notification names a path the agent opens and `chat attachments list` sees the file. A file the
+    store already holds under that id is the one this agent sent, so it is kept as it stands. A file
+    this replica could not fetch stays on the message and is named as unfetched, so the agent reads
+    that something was sent instead of nothing at all."""
     if "attachments" not in message:
         return [], set()
     carried: list[AttachmentMeta] = []
     unfetched: set[str] = set()
     for meta in message["attachments"]:
+        held = await asyncio.to_thread(attachments.read_meta, state.attachments_root, meta["id"])
+        if held is not None:
+            # This agent's own send already put the file here under the node's id, so fetching it back
+            # would move the same bytes a second time.
+            carried.append(held)
+            continue
         try:
             blob = await asyncio.to_thread(attachments.blob_destination, state.attachments_root, meta)
             await state.client.download(meta["id"], blob)
