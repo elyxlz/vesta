@@ -259,10 +259,30 @@ def _calls(log: Path) -> list[dict]:
     [
         ("Alice@Example.com", "microsoft-alice_example_com"),
         ("a.b+c@company.co.uk", "microsoft-a_b_c_company_co_uk"),
+        ("jos\u00e9.garc\u00eda@empresa.es", "microsoft-jos__garc_a_empresa_es"),
+        ("a" * 40 + "@" + "b" * 11 + ".com", "microsoft-" + "a" * 40 + "_" + "b" * 4 + "-fbb1a465"),
     ],
 )
 def test_session_name_is_one_chromium_session_per_account(account, session):
     assert capture.session_name(account) == session
+
+
+@pytest.mark.parametrize(
+    "account",
+    ["Alice@Example.com", "jos\u00e9.garc\u00eda@empresa.es", "a" * 40 + "@" + "b" * 11 + ".com", "\u4e2d\u6587@example.com"],
+)
+def test_session_name_fits_the_shape_the_browser_daemon_takes(account):
+    name = capture.session_name(account)
+    assert capture.SESSION_NAME_RE.match(name)
+    assert len(name) <= capture.SESSION_NAME_MAX
+    assert capture.session_name(account) == name  # the same address always names the same session
+
+
+def test_session_name_over_the_cap_fills_the_budget_and_stays_unique():
+    long_account = "a" * 40 + "@" + "b" * 11 + ".com"  # 55 characters
+    name = capture.session_name(long_account)
+    assert len(name) == capture.SESSION_NAME_MAX
+    assert name != capture.session_name("a" * 40 + "@" + "b" * 11 + ".net")  # the digest separates them
 
 
 def test_capture_token_runs_the_token_program_on_the_accounts_session(tmp_path, monkeypatch):
@@ -273,6 +293,20 @@ def test_capture_token_runs_the_token_program_on_the_accounts_session(tmp_path, 
     assert logged["argv"] == ["exec", "--session", "microsoft-a_x_com", "--timeout", "60"]
     assert capture.MAIL_URL in logged["code"]
     assert "wait_for_load()" in logged["code"]
+
+
+def test_harvest_navigates_the_current_tab_instead_of_opening_one_per_poll(tmp_path, monkeypatch):
+    """Every poll drives the tab it finds, so a harvest leaves one tab behind, not one per poll."""
+    log = _install_shim(tmp_path, monkeypatch, stdout="NONE")
+    with pytest.raises(capture.CaptureError):
+        capture.refresh(Config(data_dir=tmp_path), "a@x.com")
+    programs = [call["code"] for call in _calls(log)]
+    assert len(programs) == 24  # 12 polls of each of the two kinds
+    for program in programs:
+        assert program.count("new_tab(") == 1
+        assert program.index("if not list_tabs():") < program.index("new_tab(")
+        assert "goto_url(" in program
+        assert "close_tab" not in program
 
 
 def test_capture_token_reads_the_teams_url_for_the_teams_kind(tmp_path, monkeypatch):

@@ -2,7 +2,7 @@
 Microsoft web-session tokens on a locked tenant, and to refresh them with no user in the loop.
 
 A locked tenant hands out no MSAL refresh token, so the browser session itself is the credential.
-Each account owns one Chromium session, ``microsoft-<slug of the address>``: the user signs in once
+Each account owns one Chromium session, ``microsoft-<the address in ASCII>``: the user signs in once
 through a handover on that session, and its SSO cookies live on there. Every capture afterwards runs
 one ``browser exec`` program on that same session (open the web app, wait for the load, read the
 token the SPA minted from the still-valid cookies), so onboarding and silent refresh share one path
@@ -13,13 +13,15 @@ All ``browser`` subprocess calls live here so the coupling to that skill stays i
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import string
 import subprocess
 import time
 import typing as tp
 
 from . import owa_rest, teams
-from .slug import slug
 
 MAIL_URL = "https://outlook.office.com/mail/"
 TEAMS_URL = "https://teams.microsoft.com/v2/"
@@ -28,11 +30,17 @@ TEAMS_URL = "https://teams.microsoft.com/v2/"
 REFRESH_MARGIN_SECS = 2 * 60 * 60
 
 # The `browser` CLI answers its own RPC inside these; the subprocess budget adds the slack on top.
-EXEC_TIMEOUT_SECS = 120.0
 TOKEN_TIMEOUT_SECS = 60.0
 HANDOVER_TIMEOUT_SECS = 150.0
 RPC_SLACK_SECS = 30
 HANDOVER_MINUTES = 30
+
+# The session-name shape the browser daemon takes, and the length it caps a name at.
+SESSION_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+SESSION_NAME_MAX = 64
+_SESSION_PREFIX = "microsoft-"
+_SESSION_ALPHABET = frozenset(string.ascii_lowercase + string.digits)
+_SESSION_DIGEST_CHARS = 8
 
 TokenKind = tp.Literal["mail", "teams"]
 TOKEN_KINDS: tuple[TokenKind, ...] = ("mail", "teams")
@@ -87,13 +95,31 @@ _TEAMS_TOKEN_JS = """
 
 _TOKEN_SOURCES: dict[TokenKind, tuple[str, str]] = {"mail": (MAIL_URL, _MAIL_TOKEN_JS), "teams": (TEAMS_URL, _TEAMS_TOKEN_JS)}
 
-# The program `browser exec` runs: open the web app on this account's session and print its token.
-_TOKEN_PROGRAM = "new_tab({url!r})\nwait_for_load()\nprint(js({expression!r}))\n"
+# The program `browser exec` runs: drive this session's one tab to the web app and print its token.
+# Each poll navigates the tab it finds, so a run of polls holds one tab open, not one per poll.
+_TOKEN_PROGRAM = """if not list_tabs():
+    new_tab({url!r})
+goto_url({url!r})
+wait_for_load()
+print(js({expression!r}))
+"""
 
 
 def session_name(account_email: str) -> str:
-    """The Chromium session that holds this account's sign-in. One account, one session."""
-    return f"microsoft-{slug(account_email.lower(), fallback='account')}"
+    """The Chromium session that holds this account's sign-in. One account, one session.
+
+    The daemon takes `SESSION_NAME_RE`, so the address maps to ASCII lowercase alphanumerics with
+    every other character replaced by `_`. An address that overruns `SESSION_NAME_MAX` keeps the
+    head that fits plus a digest of the whole address, so the name stays inside the cap, unique to
+    the account, and the same on every call.
+    """
+    address = account_email.lower()
+    mapped = "".join(char if char in _SESSION_ALPHABET else "_" for char in address)
+    if len(_SESSION_PREFIX) + len(mapped) <= SESSION_NAME_MAX:
+        return f"{_SESSION_PREFIX}{mapped}"
+    head = SESSION_NAME_MAX - len(_SESSION_PREFIX) - 1 - _SESSION_DIGEST_CHARS
+    digest = hashlib.sha256(address.encode()).hexdigest()[:_SESSION_DIGEST_CHARS]
+    return f"{_SESSION_PREFIX}{mapped[:head]}-{digest}"
 
 
 def _send(args: list[str], *, code: str | None = None, timeout: float) -> dict[str, JsonValue]:
@@ -118,7 +144,7 @@ def _send(args: list[str], *, code: str | None = None, timeout: float) -> dict[s
     return envelope
 
 
-def _exec(code: str, *, session: str, timeout: float = EXEC_TIMEOUT_SECS) -> str:
+def _exec(code: str, *, session: str, timeout: float) -> str:
     """Run a Python program on `session` and return what it printed."""
     args = ["exec", "--session", session, "--timeout", str(int(timeout))]
     envelope = _send(args, code=code, timeout=timeout + RPC_SLACK_SECS)
