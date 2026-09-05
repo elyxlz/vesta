@@ -44,6 +44,16 @@ describe("roomKind", () => {
   it("reads three or more agents as a group even unnamed", () => {
     expect(roomKind(room({ agents: ["ada", "ben", "cy"] }))).toBe("group");
   });
+
+  it("reads a room carrying its one agent's direct id as a direct room", () => {
+    expect(roomKind(room({ id: "dm:bob", agents: ["bob"] }))).toBe("direct");
+  });
+
+  it("reads a peer room listing one agent as a peer, not as that agent's direct room", () => {
+    expect(roomKind(room({ id: "dm:alice:bob", agents: ["bob"] }))).toBe(
+      "peer",
+    );
+  });
 });
 
 describe("roomLabel", () => {
@@ -53,6 +63,12 @@ describe("roomLabel", () => {
 
   it("joins the two agents of a peer room", () => {
     expect(roomLabel(room({ agents: ["ada", "ben"] }))).toBe("ada & ben");
+  });
+
+  it("names a peer room listing one agent after that agent", () => {
+    expect(roomLabel(room({ id: "dm:alice:bob", agents: ["bob"] }))).toBe(
+      "bob",
+    );
   });
 
   it("names a group room after itself", () => {
@@ -85,6 +101,16 @@ describe("selectRooms", () => {
       "dm:ada",
       "dm:ben",
       "dm:zed",
+    ]);
+  });
+
+  it("hides a room that lists no agent at all", () => {
+    const rooms = [
+      room({ id: "dm:ada", agents: [] }),
+      room({ id: "dm:ben", agents: ["ben"] }),
+    ];
+    expect(selectRooms(treeWith(rooms)).map((entry) => entry.id)).toEqual([
+      "dm:ben",
     ]);
   });
 

@@ -47,13 +47,18 @@ export function roomsPath(): string {
   return "/rooms";
 }
 
+// One room by id, the base every per-room subpath hangs off and the target of a delete.
+function roomPath(id: string): string {
+  return `/rooms/${encodeURIComponent(id)}`;
+}
+
 export function roomHistoryPath(id: string, cursor?: number): string {
   const query = cursor === undefined ? "" : `?cursor=${String(cursor)}`;
-  return `/rooms/${encodeURIComponent(id)}/history${query}`;
+  return `${roomPath(id)}/history${query}`;
 }
 
 export function roomMessagesPath(id: string): string {
-  return `/rooms/${encodeURIComponent(id)}/messages`;
+  return `${roomPath(id)}/messages`;
 }
 
 // The upload surface: POST here to open a session, then address the id it answers. The data,
@@ -87,7 +92,7 @@ export async function createRoom(
 }
 
 export async function deleteRoom(http: HttpClient, id: string): Promise<void> {
-  await http.request(`/rooms/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await http.request(roomPath(id), { method: "DELETE" });
 }
 
 export async function fetchRoomHistory(

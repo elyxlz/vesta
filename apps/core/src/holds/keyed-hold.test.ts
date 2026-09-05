@@ -111,9 +111,11 @@ describe("keyed hold store", () => {
     store.persist(roomHoldKey("grp-1", GW), tailWith([2, "b"]));
 
     const direct = store.read(roomHoldKey("dm:ada", GW));
+    if (!direct) throw new Error("expected held state");
     const group = store.read(roomHoldKey("grp-1", GW));
-    expect(direct ? texts(direct) : null).toEqual(["a"]);
-    expect(group ? texts(group) : null).toEqual(["b"]);
+    if (!group) throw new Error("expected held state");
+    expect(texts(direct)).toEqual(["a"]);
+    expect(texts(group)).toEqual(["b"]);
     expect(roomHoldKey("dm:ada", GW)).toBe(`room:dm:ada\n${GW}`);
     expect(roomHoldKey("dm:ada", GW)).not.toBe(agentHoldKey("dm:ada", GW));
     expect(store.read(roomHoldKey("dm:ada", "https://gw-b"))).toBeNull();

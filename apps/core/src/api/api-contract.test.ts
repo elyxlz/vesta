@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { vestadApiFixtures } from "../../fixtures/vestad-api-fixtures";
 import type { HistoryPage } from "../chat/chat-stream-model";
+import type { LoggedUserNotification } from "../notifications-pill/user-notification-feed";
 import type { AgentStatus } from "../protocol/tree";
 import type { AgentStatusResponse } from "./agents";
 import type { AgentBackupSettings, BackupInfo } from "./backups";
@@ -118,6 +119,18 @@ describe("vestad API contract", () => {
     const imported =
       vestadApiFixtures.chat_import satisfies DeepReadonly<ChatImportAck>;
     expect(imported.skipped).toBe(1);
+  });
+
+  it("a user-notification page satisfies the logged feed entry, with and without a room", () => {
+    const page = vestadApiFixtures.user_notifications satisfies DeepReadonly<{
+      notifications: LoggedUserNotification[];
+    }>;
+    expect(page.notifications.map((entry) => entry.kind)).toEqual([
+      "message",
+      "update_available",
+    ]);
+    expect(page.notifications[0].room).toBe("dm:sample-agent");
+    expect(page.notifications[1].agent).toBe("");
   });
 
   it("the attachment acks satisfy their shapes and history carries the metadata", () => {

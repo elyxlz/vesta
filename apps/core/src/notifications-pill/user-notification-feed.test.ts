@@ -45,6 +45,22 @@ describe("fetchUserNotifications", () => {
     expect(result.map((notification) => notification.id)).toEqual([3, 2]);
   });
 
+  it("keeps the room a chat notification names and leaves it off every other kind", async () => {
+    const seen: string[] = [];
+    const http = httpReturning(
+      {
+        notifications: [
+          { ...entry, room: "dm:aria" },
+          { ...entry, id: 2, kind: "update_available" },
+        ],
+      },
+      seen,
+    );
+    const result = await fetchUserNotifications(http);
+    expect(result[0]?.room).toBe("dm:aria");
+    expect(result[1]?.room).toBeUndefined();
+  });
+
   it("asks for the newest page with no options and tolerates a missing list", async () => {
     const seen: string[] = [];
     const result = await fetchUserNotifications(httpReturning({}, seen));
@@ -59,6 +75,15 @@ describe("loggedFromDelta", () => {
       entry,
     );
     expect(loggedFromDelta({ type: "presence", anyFocused: true })).toBeNull();
+  });
+
+  it("carries the room a chat delta names", () => {
+    const logged = loggedFromDelta({
+      type: "user_notification",
+      ...entry,
+      room: "dm:aria",
+    });
+    expect(logged?.room).toBe("dm:aria");
   });
 });
 

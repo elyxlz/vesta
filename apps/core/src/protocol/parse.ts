@@ -34,13 +34,6 @@ function str(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-// An additive optional field: absent answers null, a present value of the wrong type answers
-// undefined so the caller drops the frame, matching the chat parser's own convention.
-function optionalStr(value: unknown): string | null | undefined {
-  if (value === undefined || value === null) return null;
-  return typeof value === "string" ? value : undefined;
-}
-
 function arr(value: unknown): unknown[] | null {
   return Array.isArray(value) ? (value as unknown[]) : null;
 }
@@ -205,7 +198,7 @@ function parseUserNotification(frame: Record<string, unknown>): ParsedFrame {
   const kind = str(frame.kind);
   const title = str(frame.title);
   const body = str(frame.body);
-  const room = optionalStr(frame.room);
+  const room = nullableStr(frame.room);
   if (id === null || at === null || agent === null) return UNKNOWN;
   if (kind === null || title === null || body === null) return UNKNOWN;
   if (room === undefined) return UNKNOWN;
