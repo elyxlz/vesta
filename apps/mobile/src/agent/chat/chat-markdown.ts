@@ -66,7 +66,15 @@ function buildMarkdownStyles(colors: AppColors) {
       color: colors.tertiaryText,
       textDecorationLine: "line-through" as const,
     },
-    paragraph: { marginTop: 0, marginBottom: 8 },
+    // A column, not the library's wrapping row: the textgroup rule folds a paragraph into one
+    // Text, and a Text inside a wrapping row is measured at its one-line width on Android and
+    // overflows instead of wrapping.
+    paragraph: {
+      marginTop: 0,
+      marginBottom: 8,
+      flexDirection: "column" as const,
+      flexWrap: "nowrap" as const,
+    },
     link: {
       color: colors.interactive,
       fontFamily: fontNames.sans.native["500"],
@@ -102,8 +110,9 @@ function buildMarkdownStyles(colors: AppColors) {
       textAlign: "right" as const,
       fontVariant: ["tabular-nums"] as const,
     },
-    bullet_list_content: { flex: 1 },
-    ordered_list_content: { flex: 1 },
+    // minWidth 0 lets the content shrink below its text inside a shrink-to-fit bubble.
+    bullet_list_content: { flex: 1, minWidth: 0 },
+    ordered_list_content: { flex: 1, minWidth: 0 },
     code_inline: {
       color: colors.text,
       fontFamily: fontNames.mono.native["400"],
