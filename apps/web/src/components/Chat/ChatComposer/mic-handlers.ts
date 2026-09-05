@@ -44,20 +44,3 @@ export function micHandlers(
     },
   };
 }
-
-// Expand a hair before the last word would wrap so the narrow field never shows two lines
-// first; once expanded, hold until the text clearly fits again (hysteresis).
-
-// Expand a hair before the last word would wrap so the narrow field never shows two lines
-// first; once expanded, hold until the text clearly fits again (hysteresis).
-export function expandedNext(
-  prev: boolean,
-  value: string,
-  avail: number,
-  width: number,
-): boolean {
-  if (value.trim().length === 0) return false;
-  if (value.includes("\n")) return true;
-  if (avail <= 0) return prev;
-  return prev ? width > avail - 24 : width > avail - 8;
-}

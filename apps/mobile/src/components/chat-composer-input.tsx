@@ -2,6 +2,7 @@ import { useImperativeHandle, useRef, type ComponentRef } from "react";
 import { StyleSheet, TextInput } from "react-native";
 import {
   CHAT_COMPOSER_CONTROL_HEIGHT,
+  CHAT_COMPOSER_INPUT_HORIZONTAL_PADDING,
   type ChatComposerInputProps,
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input.types";
@@ -53,7 +54,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: MIN_HEIGHT,
     maxHeight: MAX_HEIGHT,
-    paddingHorizontal: 9,
+    paddingHorizontal: CHAT_COMPOSER_INPUT_HORIZONTAL_PADDING,
     paddingTop: VERTICAL_PADDING,
     paddingBottom: VERTICAL_PADDING,
     fontFamily: fontNames.sans.native["400"],

@@ -113,6 +113,7 @@ export type { ChatMessageSide } from "./chat/bubble-grouping";
 
 export { createChatSession } from "./chat/chat-session";
 export type { ChatSession } from "./chat/chat-session";
+export { composerExpandedNext } from "./chat/composer-wrap";
 export { createDraftStore } from "./attachments/draft-store";
 export type { DraftSource, DraftStore } from "./attachments/draft-store";
 
