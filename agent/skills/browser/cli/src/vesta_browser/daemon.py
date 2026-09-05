@@ -2,8 +2,9 @@
 
 start claims the pid record then spawns `browser serve` detached, stop is a SIGTERM the
 serve path reads as deliberate, and status answers from the pid record alone. Unlike the
-port-serving daemons, browser carries no port record: nothing calls `register-service` and
-status always reports `port: null`.
+port-serving daemons, browser carries no port record: the handover registers the `browser`
+service private for its own lifetime, the daemon deregisters it at startup, and status
+always reports `port: null`.
 """
 
 from __future__ import annotations

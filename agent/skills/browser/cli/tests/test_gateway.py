@@ -56,3 +56,17 @@ def test_missing_script_raises_gateway_error(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
     with pytest.raises(gateway.GatewayError, match="register-service"):
         asyncio.run(gateway.register_service("browser"))
+
+
+def test_a_non_executable_script_raises_gateway_error(tmp_path, monkeypatch):
+    (tmp_path / "deregister-service").write_text("#!/bin/sh\necho hi\n")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(gateway.GatewayError, match="deregister-service"):
+        asyncio.run(gateway.deregister_service("browser"))
+
+
+def test_find_key_id_rejects_a_malformed_key_entry(gateway_env):
+    body = f'#!{sys.executable}\nimport json; print(json.dumps({{"keys": [{{"id": "id1"}}]}}))\n'
+    write_script(gateway_env / "bin", "service-key", body)
+    with pytest.raises(gateway.GatewayError, match="malformed"):
+        asyncio.run(gateway.find_key_id("browser", "browser-handover-abc"))

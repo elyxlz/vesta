@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import datetime as dt
 import json
-import os
 import pathlib as pl
 import shutil
 import sys
@@ -16,7 +15,8 @@ import pytest
 from vesta_browser import display, handover, serve
 from vesta_browser.runtime_paths import load_paths
 
-from .fakes import write_display_fakes, write_fakes, write_gateway_fakes, write_script
+from .fakes import write_display_fakes, write_fakes, write_script
+from .hermetic import isolated_path
 from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_all_dead, with_daemon
 
 FAKE_CAMOUFOX = pl.Path(__file__).parent / "fake_camoufox"
@@ -54,12 +54,11 @@ class Rig:
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    bin_dir = tmp_path / "bin"
     # AF_UNIX addresses cap at 108 bytes and a pytest tmp_path plus the X socket name can pass it.
     x11_dir = pl.Path(tempfile.mkdtemp(dir="/tmp"))
+    bin_dir = isolated_path(tmp_path, monkeypatch)
     env = write_fakes(bin_dir)
     write_display_fakes(bin_dir, x11_dir)
-    write_gateway_fakes(bin_dir)
     novnc = tmp_path / "novnc"
     (novnc / "core").mkdir(parents=True)
     (novnc / "core" / "rfb.js").write_text("export default class RFB {}\n")
@@ -75,7 +74,6 @@ def rig(tmp_path, monkeypatch):
         }
     )
     web_port = display.free_port(WEB_PORT_FIRST)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("PYTHONPATH", str(FAKE_CAMOUFOX))
     monkeypatch.setenv("FAKE_KEYS", str(tmp_path / "keys.json"))
     monkeypatch.setenv("FAKE_REGISTER_LOG", str(tmp_path / "register.log"))

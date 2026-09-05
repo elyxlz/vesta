@@ -1,18 +1,19 @@
 import asyncio
-import os
 import sys
 
 import pytest
 from vesta_browser import serve
 from vesta_browser.runtime_paths import load_paths
 
-from .fakes import write_fakes, write_gateway_fakes
+from .fakes import write_fakes
+from .hermetic import isolated_path
 
 BINARY_KEYS = {"VESTA_BROWSER_CHROMIUM", "VESTA_BROWSER_BROWSER_USE", "VESTA_BROWSER_CAMOUFOX_PYTHON", "VESTA_BROWSER_CAMOUFOX_EXE"}
 
 
 @pytest.fixture
-def paths(tmp_path):
+def paths(tmp_path, monkeypatch):
+    isolated_path(tmp_path, monkeypatch)
     return load_paths({}, tmp_path)
 
 
@@ -84,16 +85,18 @@ def test_engines_reports_the_route_table(paths):
     assert res["data"]["profiles_shared_between_engines"] is False
 
 
-def test_engines_reports_not_ready_when_the_binaries_are_missing(tmp_path):
+def test_engines_reports_not_ready_when_the_binaries_are_missing(tmp_path, monkeypatch):
+    isolated_path(tmp_path, monkeypatch)
     missing = {key: str(tmp_path / f"missing-{key.lower()}") for key in BINARY_KEYS}
     routes = _engines(load_paths(missing, tmp_path))["data"]["routes"]
     assert routes["standard"]["ready"] is False and routes["stealth"]["ready"] is False
 
 
-def test_engines_reports_ready_when_every_binary_is_present(tmp_path):
+def test_engines_reports_ready_when_every_binary_is_present(tmp_path, monkeypatch):
+    bin_dir = isolated_path(tmp_path, monkeypatch)
     camoufox_exe = tmp_path / "camoufox"
     camoufox_exe.touch()
-    env = {**write_fakes(tmp_path / "bin"), "VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(camoufox_exe)}
+    env = {**write_fakes(bin_dir), "VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(camoufox_exe)}
     assert set(env) == BINARY_KEYS
     routes = _engines(load_paths(env, tmp_path))["data"]["routes"]
     assert routes["standard"]["ready"] is True and routes["stealth"]["ready"] is True
@@ -112,9 +115,7 @@ def _status(paths):
 
 def test_the_daemon_deregisters_the_browser_route_before_it_listens(tmp_path, monkeypatch):
     """A SIGKILLed daemon leaves the route behind, so every start reconciles it."""
-    bin_dir = tmp_path / "bin"
-    write_gateway_fakes(bin_dir)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    isolated_path(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_REGISTER_LOG", str(tmp_path / "register.log"))
 
     assert _status(load_paths({}, tmp_path))["ok"] is True

@@ -109,14 +109,16 @@ def test_camoufox_headless_start_has_no_window_or_software_render_env(camoufox_r
     async def run():
         runtime = await camoufox.start(session, paths)
         try:
-            return json.loads((session.profile_dir / "launch.json").read_text())
+            launch = json.loads((session.profile_dir / "launch.json").read_text())
+            user_js_written = (session.profile_dir / "user.js").exists()
+            return launch, user_js_written
         finally:
             await camoufox.stop(runtime, session)
 
-    launch = asyncio.run(run())
+    launch, user_js_written = asyncio.run(run())
     assert "window" not in launch
     assert launch["env_DISPLAY"] == "" and launch["env_LIBGL_ALWAYS_SOFTWARE"] == ""
-    assert not (session.profile_dir / "user.js").exists()
+    assert not user_js_written
 
 
 def test_camoufox_stop_removes_user_js(camoufox_rig):

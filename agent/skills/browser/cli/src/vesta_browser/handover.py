@@ -169,10 +169,12 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
         await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
         raise _failed(f"the handover was still coming up after {HANDOVER_START_BUDGET_SECS}s") from exc
     except BaseException as exc:
-        await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
         # The shield keeps an outer cancellation off the bring-up, so which of the two was cancelled
-        # is what tells them apart: this caller going away is not a handover failure to report.
-        if isinstance(exc, asyncio.CancelledError) and not bring_up.cancelled():
+        # is what tells them apart: this caller going away is not a handover failure to report. Read
+        # before `stop` runs, since `stop` itself cancels the bring-up as part of its teardown.
+        bring_up_was_cancelled = bring_up.cancelled()
+        await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
+        if isinstance(exc, asyncio.CancelledError) and not bring_up_was_cancelled:
             raise
         raise _failed(str(exc) or type(exc).__name__) from exc
     return handover, warnings

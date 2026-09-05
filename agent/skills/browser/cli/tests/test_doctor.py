@@ -9,10 +9,12 @@ from vesta_browser import display, doctor, serve
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_display_fakes, write_fakes
+from .hermetic import isolated_path
 
 
-def test_doctor_reports_daemon_engines_sessions_and_disk(tmp_path):
-    env = write_fakes(tmp_path / "bin")
+def test_doctor_reports_daemon_engines_sessions_and_disk(tmp_path, monkeypatch):
+    bin_dir = isolated_path(tmp_path, monkeypatch)
+    env = write_fakes(bin_dir)
     env["VESTA_BROWSER_CAMOUFOX_PYTHON"] = sys.executable
     paths = load_paths(env, tmp_path)
 
@@ -81,7 +83,7 @@ async def _doctor(paths):
 
 
 def test_doctor_reports_a_ready_handover_and_no_live_handover(tmp_path, monkeypatch):
-    bin_dir = tmp_path / "bin"
+    bin_dir = isolated_path(tmp_path, monkeypatch)
     x11_dir = tmp_path / "x11"
     env = write_fakes(bin_dir)
     write_display_fakes(bin_dir, x11_dir)
@@ -91,7 +93,6 @@ def test_doctor_reports_a_ready_handover_and_no_live_handover(tmp_path, monkeypa
     (novnc / "rfb.js").write_text("export default class RFB {}\n")
     env["VESTA_BROWSER_NOVNC_DIR"] = str(novnc.parent)
     env["VESTA_BROWSER_X11_DIR"] = str(x11_dir)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     paths = load_paths(env, tmp_path)
 
     data = asyncio.run(_doctor(paths))["data"]

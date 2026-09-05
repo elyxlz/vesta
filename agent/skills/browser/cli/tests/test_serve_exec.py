@@ -9,6 +9,7 @@ from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_fakes
+from .hermetic import isolated_path
 from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead, with_daemon
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
@@ -18,7 +19,8 @@ BUDGET_SECS = 1.5
 @pytest.fixture
 def paths(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(FAKE))
-    env = write_fakes(tmp_path / "bin")
+    bin_dir = isolated_path(tmp_path, monkeypatch)
+    env = write_fakes(bin_dir)
     exe = tmp_path / "camoufox"
     exe.write_text("")
     env.update({"VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(exe)})

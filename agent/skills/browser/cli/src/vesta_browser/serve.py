@@ -33,13 +33,13 @@ IDLE_SWEEP_SECS = 60
 IDLE_STOP_SECS = p.SESSION_IDLE_STOP_SECS
 PRUNE_INTERVAL_SECS = 3600
 # `browser daemon stop` SIGKILLs this process two thirds into its own 15s budget, so every teardown
-# below shares one budget under that 10s point. The handover takes up to 2.0 (three vestad calls at
-# 0.6 fit inside it), the display kill it always ends with up to 2.0 more (three parallel kill_group
-# at 1s, then Xvfb), the sessions whatever the handover left of the 6.0, and their SIGKILL
-# escalation 1.0 past that: 2.0 + 2.0 + 6.0 + 1.0 = 11.0 at the worst, and a shutdown with no
-# handover to give back spends none of the first two and gives the sessions the whole 6.0. Two paths
-# can still overrun and are accepted: a hung headed chromium launch unwinds through its own
-# kill_group(process, 5), and a handed-over camoufox's stop can add another 5 in its finally.
+# below shares one budget under that 10s point. A live handover's own steps stay inside
+# HANDOVER_SHUTDOWN_SECS, but the display kill after them is unbounded by that budget (three parallel
+# kill_group at KILL_GRACE_SECS, then Xvfb for one more): 4.0 spent at the worst. The sessions then
+# get whatever SHUTDOWN_BUDGET_SECS has left of that spend (floored at MIN_SESSION_BUDGET_SECS), plus
+# their own KILL_GRACE_SECS escalation past that: 4.0 + 2.0 + 1.0 = 7.0 at the worst, and a shutdown
+# with no handover to give back spends none of the first term and gives the sessions the whole
+# SHUTDOWN_BUDGET_SECS. A hung chromium launch or camoufox's stop can still overrun their own finally.
 SHUTDOWN_BUDGET_SECS = 6.0
 HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6

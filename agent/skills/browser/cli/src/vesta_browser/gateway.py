@@ -24,8 +24,8 @@ async def _run(*argv: str, timeout: float = GATEWAY_TIMEOUT_SECS) -> str:
         process = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True
         )
-    except FileNotFoundError as exc:
-        raise GatewayError(f"{argv[0]} is not on PATH") from exc
+    except OSError as exc:
+        raise GatewayError(f"{argv[0]} could not be run: {exc}") from exc
     try:
         out, err = await asyncio.wait_for(process.communicate(), timeout)
     except TimeoutError as exc:
@@ -60,7 +60,9 @@ async def find_key_id(service: str, label: str, timeout: float = GATEWAY_TIMEOUT
     if not isinstance(listing, dict) or "keys" not in listing or not isinstance(listing["keys"], list):
         raise GatewayError("service-key list answered with an unexpected shape")
     for key in listing["keys"]:
-        if isinstance(key, dict) and key["label"] == label:
+        if not isinstance(key, dict) or "id" not in key or "label" not in key:
+            raise GatewayError("service-key list answered with a malformed key entry")
+        if key["label"] == label:
             return str(key["id"])
     return None
 
