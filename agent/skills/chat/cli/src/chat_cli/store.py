@@ -86,49 +86,64 @@ END;
 # Rooms: every message names the room it belongs to, and one carrying a node id is a message the node
 # also holds. The unique index is what makes replication idempotent (sqlite allows many NULLs in it, so
 # a message the node has never seen stays writable).
-_SCHEMA_V2 = """
-ALTER TABLE events ADD COLUMN room TEXT NOT NULL DEFAULT '';
+_V2_COLUMNS = (
+    ("room", "ALTER TABLE events ADD COLUMN room TEXT NOT NULL DEFAULT ''"),
+    ("node_id", "ALTER TABLE events ADD COLUMN node_id INTEGER"),
+)
 
-ALTER TABLE events ADD COLUMN node_id INTEGER;
-
-CREATE UNIQUE INDEX IF NOT EXISTS events_node_id ON events(node_id);
-
-CREATE TABLE IF NOT EXISTS rooms (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    agents TEXT NOT NULL
-);
-"""
+_V2_STATEMENTS = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS events_node_id ON events(node_id)",
+    "CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY, name TEXT, agents TEXT NOT NULL)",
+)
 
 
 def _migrate_v1(conn: sqlite3.Connection, _agent_name: str) -> None:
+    """The baseline, every statement `IF NOT EXISTS`, so re-running it changes nothing."""
     conn.executescript(_SCHEMA_V1)
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
 
 
 def _migrate_v2(conn: sqlite3.Connection, agent_name: str) -> None:
     """Rooms and node ids. Every row already stored is the conversation between the user and this
     agent, so the whole history is filed under the direct room and paging, search and replication read
-    one coherent conversation."""
-    conn.executescript(_SCHEMA_V2)
-    conn.execute("UPDATE events SET room = ?", (direct_room_id(agent_name),))
+    one coherent conversation.
+
+    The whole step is one transaction, and `ADD COLUMN` runs only for a column the table does not
+    list, so an open that dies mid-step and a second process opening the same db both converge here
+    rather than on `duplicate column name`."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] >= 2:
+            conn.rollback()
+            return
+        stored = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+        for column, statement in _V2_COLUMNS:
+            if column not in stored:
+                conn.execute(statement)
+        for statement in _V2_STATEMENTS:
+            conn.execute(statement)
+        conn.execute("UPDATE events SET room = ?", (direct_room_id(agent_name),))
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
 
 
 # `PRAGMA user_version` is the on-disk version; a step's position in this list is the version it
-# stamps, and each runs exactly once. Version 1 is the baseline (all `CREATE ... IF NOT EXISTS`), so a
-# fresh db and a db written before versioning both converge on it with no data loss. Add a schema
-# change as a version 3 step; never edit a released step, since existing dbs have already run it.
+# stamps, and each step stamps and commits its own version, so it owns how it stays safe to re-run.
+# Version 1 is the baseline (all `CREATE ... IF NOT EXISTS`), so a fresh db and a db written before
+# versioning both converge on it with no data loss. Add a schema change as a version 3 step; never
+# edit a released step, since existing dbs have already run it.
 _MIGRATIONS: tuple[tp.Callable[[sqlite3.Connection, str], None], ...] = (_migrate_v1, _migrate_v2)
 
 
 def _migrate(conn: sqlite3.Connection, agent_name: str) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     for index, step in enumerate(_MIGRATIONS):
-        version = index + 1
-        if current >= version:
-            continue
-        step(conn, agent_name)
-        conn.execute(f"PRAGMA user_version = {version}")
-        conn.commit()
+        if current < index + 1:
+            step(conn, agent_name)
 
 
 def _open(db_path: pl.Path, agent_name: str) -> sqlite3.Connection:

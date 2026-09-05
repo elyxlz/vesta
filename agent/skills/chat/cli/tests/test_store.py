@@ -204,6 +204,73 @@ def test_v1_db_upgrades_to_v2_and_files_every_row_into_the_direct_room(tmp_path)
     store.close()
 
 
+def test_an_interrupted_v2_step_converges_on_the_next_open(tmp_path):
+    """A box killed between the first added column and the version stamp must not brick its chat
+    store: the next open finishes the step instead of failing on a duplicate column."""
+    path = store_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_V1_SCHEMA)
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", ("2026-01-01T00:00:00", json.dumps({"type": "user", "text": "half"})))
+    conn.execute("ALTER TABLE events ADD COLUMN room TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+    conn.close()
+
+    store = Store(path, _AGENT)
+    store.close()
+
+    assert _schema_version(tmp_path) == 2
+    conn = sqlite3.connect(str(path))
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    finally:
+        conn.close()
+    assert {"room", "node_id"} <= columns
+
+    reopened = Store(path, _AGENT)
+    events, _ = reopened.page()
+    assert [(e["text"], e["room"]) for e in events] == [("half", _DIRECT_ROOM)]
+    assert _schema_version(tmp_path) == 2
+    reopened.close()
+
+
+def test_the_v2_step_keeps_imported_ids_fts_and_the_sequence(tmp_path):
+    """The upgrade must leave an imported history exactly as it was: the ids clients cached as
+    cursors, the search index over them, and the sequence that keeps a new id above them."""
+    path = store_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_V1_SCHEMA)
+    conn.execute("PRAGMA user_version = 1")
+    insert = "INSERT INTO events (id, ts, data) VALUES (?, ?, ?)"
+    conn.execute(insert, (100, "2026-01-01T00:00:00", json.dumps({"type": "user", "text": "keel"})))
+    conn.execute(insert, (101, "2026-01-01T00:00:01", json.dumps({"type": "chat", "text": "keel yes"})))
+    conn.commit()
+    conn.close()
+
+    store = Store(path, _AGENT)
+
+    events, _ = store.page()
+    assert [e["id"] for e in events] == [100, 101]
+    assert sorted(e["id"] for e in store.search("keel")) == [100, 101]
+    assert store.append({"type": "chat", "ts": "2026-01-01T00:00:02", "text": "after"}) == 102
+    store.close()
+
+
+def test_a_node_id_is_unique_across_rows(tmp_path):
+    """Two rows must never claim the same node message: the replica asks `has_node_id` first, and a
+    bug that skips the question fails loudly here instead of duplicating a message."""
+    store = _store(tmp_path)
+    first = store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "one"})
+    second = store.append({"type": "chat", "ts": "2026-01-01T00:00:01", "text": "two"})
+    store.mark_node_id(first, 7)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.mark_node_id(second, 7)
+    store.close()
+
+
 def test_append_files_a_roomless_event_into_the_direct_room(tmp_path):
     store = _store(tmp_path)
     event = {"type": "user", "ts": "2026-01-01T00:00:00", "text": "hi"}
