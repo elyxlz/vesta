@@ -7,6 +7,11 @@
 //! agent token from the env file vestad wrote on the host, and every route under test is vestad's
 //! own, so `TestAgent::create` (which does create and start a container) is the whole fixture.
 //!
+//! Two behaviors of the live edge stay out of reach here, and are covered by the node's own tests:
+//! the bounded socket send (a client that stops reading is abandoned after the send timeout) and
+//! the lag close (a session that falls behind the broadcast depth is closed so its client reseeds).
+//! Both need a socket peer that stops reading for longer than this suite's budgets allow.
+//!
 //! `GET /rooms` is gateway-wide and this target runs its scenarios in parallel against one shared
 //! server, so every room-list assertion is containment over ids this scenario made, never
 //! equality. The `server` target as a whole is the Docker gate (`check.sh integration` runs it
@@ -700,4 +705,46 @@ fn rename_and_delete_follow_the_agent() {
         !ids.contains(&direct_room(&new_name)),
         "the deleted room is out of the list: {ids:?}"
     );
+}
+
+/// (9) Membership is decided on every room route: an agent that is not in a room reads nothing
+/// from it and writes nothing into it, and a request carrying no credential at all never gets a
+/// principal to be judged by.
+#[test]
+fn a_stranger_agent_is_refused_and_no_credential_is_401() {
+    let client = SERVER.client();
+    let owner = chat_agent(&client, "rooms-owner");
+    let stranger = chat_agent(&client, "rooms-stranger");
+    let token = agent_token(&stranger.name);
+    let room = direct_room(&owner.name);
+
+    let (status, raw) = client
+        .proxy_get(
+            &format!("/rooms/{room}/history"),
+            ProxyAuth::AgentToken(&token),
+        )
+        .expect("read another agent's history");
+    assert_eq!(status, 403, "a stranger reads no history: {raw}");
+    assert_eq!(
+        parse(&raw)["error"].as_str(),
+        Some("not a member of this room")
+    );
+
+    let (status, body) = post_message(
+        &client,
+        &room,
+        ProxyAuth::AgentToken(&token),
+        &serde_json::json!({ "text": "let me in" }),
+    );
+    assert_eq!(status, 403, "a stranger posts nothing: {body}");
+    assert_eq!(
+        body["error"].as_str(),
+        Some("not a member of this room"),
+        "the refusal names membership, never the room's existence"
+    );
+
+    let (status, raw) = client
+        .proxy_get("/rooms", ProxyAuth::None)
+        .expect("list rooms with no credential");
+    assert_eq!(status, 401, "the room list needs a credential: {raw}");
 }
