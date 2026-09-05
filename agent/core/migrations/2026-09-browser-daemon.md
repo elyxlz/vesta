@@ -13,8 +13,9 @@ running this migration more than once changes nothing further.
 ~/agent/skills/browser/install-engines.sh
 ```
 
-Installs Chromium and the pinned Camoufox bundle under `/opt/camoufox/<tag>/` when either is
-missing, and leaves a binary already present alone.
+Installs Chromium, the display packages (Xvfb, openbox, x11vnc, noVNC), and the pinned Camoufox
+bundle when missing. The Camoufox bundle lands under `/opt/camoufox/<tag>/`, and a binary already
+present is left alone.
 
 ### 2. Install the browser command and build the two engine environments
 
@@ -107,10 +108,10 @@ browser daemon start
 browser doctor
 ```
 
-Read `data.engines.routes.standard.ready` and `data.engines.routes.stealth.ready` in the `doctor`
-output. Both must read `true`. If `doctor` answers an error instead of a report, or either route
-reads `false`, STOP, leave this migration unmarked, and report it to the user with what the answer
-names.
+Read `data.engines.routes.standard.ready`, `data.engines.routes.stealth.ready`, and
+`data.engines.display.ready` in the `doctor` output. All three must read `true`. If `doctor`
+answers an error instead of a report, or any of them reads `false`, STOP, leave this migration
+unmarked, and report it to the user with what the answer names.
 
 ### 7. Carry Microsoft accounts forward
 

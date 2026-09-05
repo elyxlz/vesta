@@ -16,7 +16,7 @@ model. That breaks the naive ways of inserting text.
 - **Synthetic `ClipboardEvent('paste', {clipboardData})`**: ProseMirror's paste handler
   ignores untrusted events (`isTrusted === false`), and Firefox won't let you populate
   `clipboardData` on a constructed event anyway. No-op.
-- **`navigator.clipboard.writeText()` + a real Ctrl+V**: blocked headless:
+- **`navigator.clipboard.writeText()` + a real Ctrl+V**: blocked without a real click:
   `Clipboard write was blocked due to lack of user activation`.
 
 ## What works: real keystrokes, chunked

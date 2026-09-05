@@ -35,8 +35,9 @@ When either is missing, install both:
 ~/agent/skills/browser/install-engines.sh
 ```
 
-The script installs Debian's chromium and the pinned Camoufox bundle under `/opt/camoufox/<tag>/`,
-verifies the download, and is safe to re-run: a binary already present is left alone.
+The script installs Debian's chromium, the pinned Camoufox bundle under `/opt/camoufox/<tag>/`,
+and the display packages (`Xvfb`, `openbox`, `x11vnc`, `websockify`, `novnc`), verifies the
+Camoufox download, and is safe to re-run: a binary already present is left alone.
 
 ## 4. Start the daemon
 
@@ -60,9 +61,10 @@ browser daemon start
 browser doctor
 ```
 
-`data.engines.routes.standard.ready` and `data.engines.routes.stealth.ready` in the report must
-both be `true`. A `false` route names the file it could not find, which points back at step 2 or
-step 3.
+`data.engines.routes.standard.ready`, `data.engines.routes.stealth.ready`, and
+`data.engines.display.ready` in the report must all be `true`. A `false` route names the file it
+could not find, which points back at step 2 or step 3; a `false` display names the missing package
+under `data.engines.display.missing`, which points back at step 3.
 
 ## Runtime paths
 
@@ -87,20 +89,22 @@ the table are what the image ships, so leave them unset here.
 
 ## Handover requirements
 
-`browser handover start` shows the agent's headed browser to the user in their own browser, so it
-needs three things:
+Every session opens its own headed display, an Xvfb plus an `openbox` window manager, from its
+first `browser exec`; the image installs both. `browser handover start` additionally streams that
+display to the user in their own browser, so it needs three more things:
 
 1. `VESTAD_PUBLIC_URL` and `AGENT_NAME` in the daemon's environment. vestad supplies both to
    this container; a handover started while either one is unset answers `handover_failed`.
-2. Four binaries plus the noVNC assets, which the image installs: `Xvfb`, `x11vnc`, `websockify`,
-   `openbox`, and `/usr/share/novnc`. Elsewhere: `apt-get install -y xvfb novnc x11vnc openbox`.
+2. `x11vnc`, `websockify`, and `/usr/share/novnc`, which the image installs alongside the display
+   packages. Elsewhere: `apt-get install -y xvfb openbox x11vnc novnc`.
 3. `data.handover.ready` of `true` in `browser doctor`, which lists any missing piece under
-   `data.handover.missing`.
+   `data.handover.missing`. `data.engines.display.ready` covers the display packages instead,
+   since every session needs them, not only a handover.
 
 ## Recovery
 
 ```bash
-browser doctor                 # binaries, versions, sessions, handover readiness, last error
+browser doctor                 # binaries, versions, sessions, display and handover readiness, last error
 browser daemon restart         # a daemon that answers nothing or answers wrong
 browser stop-all               # stop every session's browser; the profiles stay
 tail -50 ~/agent/logs/browser.log

@@ -365,7 +365,7 @@ def test_finish_interactive_without_a_signed_in_session_raises(tmp_path, monkeyp
         capture.finish_interactive(Config(data_dir=tmp_path), "a@x.com")
 
 
-def test_refresh_harvests_headlessly(tmp_path, monkeypatch):
+def test_refresh_harvests_without_a_handover(tmp_path, monkeypatch):
     log = _install_shim(tmp_path, monkeypatch, stdout=_jwt(time.time() + 7200))
     captured = capture.refresh(Config(data_dir=tmp_path), "a@x.com")
     assert sorted(captured) == ["mail", "teams"]

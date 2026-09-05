@@ -37,10 +37,12 @@ Put as much of one operation as practical in one program. Browser state persists
 cookies, the signed-in profile); Python variables do not, because each program runs with fresh
 globals. Carry a value between programs by printing it and reading it back from `output.stdout`.
 
-`--session` defaults to `default`. Use one session per account and one per parallel task, named in
-lowercase letters, digits, `-`, and `_`, starting with a letter or digit, at most 64 characters. A
-session runs one program at a time. A session idle for 30 minutes stops its browser, and the next
-program starts it again on the same profile.
+`--session` defaults to `default`, Vesta's one everyday browser: sign in there the way a person
+signs in to their own Chrome, and it stays signed in. Use a named session only to isolate an
+account (a second Microsoft tenant) or a parallel task, named in lowercase letters, digits, `-`,
+and `_`, starting with a letter or digit, at most 64 characters. A session runs one program at a
+time. A session idle for 30 minutes stops its browser, and the next program starts it again on the
+same profile.
 
 `--timeout` is the program's budget in seconds: 120 by default, 5 minimum, 600 maximum. Raise the
 Bash tool timeout together with it, or the tool call ends while the program is still running.
@@ -100,13 +102,14 @@ port, a local address, or a screenshot of the page helps nobody. The link lives 
 (30 by default, 240 at most). `browser handover status` reports the state while the user works.
 
 Run `browser handover stop` as soon as the user reports they are done, and confirm it answered.
-The sign-in stays in that session's profile, so continue with `browser exec` on the same session
-name. One handover runs at a time: while one is live, `browser exec` on that session and a second
-`handover start` both answer `handover_in_use`.
+The browser keeps running through the handover; when it ends the session is `ready` with its tabs
+and sign-in in place, so continue with `browser exec` on the same session name. One handover runs
+at a time: while one is live, `browser exec` on that session and a second `handover start` both
+answer `handover_in_use`.
 
 ## Recovery
 
-- `browser doctor`: one report of binaries, versions, sessions, artifacts, handover readiness, and the last error.
+- `browser doctor`: one report of binaries, versions, sessions, artifacts, display and handover readiness, and the last error.
 - `browser engines`: which mode routes to which engine, and whether each engine is ready.
 - `browser sessions`: every session and its state. `browser session stop <name>` stops one, `browser stop-all` stops all.
 - `error.code` of `daemon_down`: run `browser daemon start`, then rerun the program. `browser daemon status|restart|stop` handle the rest.
