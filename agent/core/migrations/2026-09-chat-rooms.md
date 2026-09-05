@@ -52,7 +52,7 @@ It must print `{"status":"started"}` or `{"status":"already_running"}`.
 chat import-to-node
 ```
 
-It prints one JSON line carrying `imported` and `skipped`. The node keeps every message it already holds, so a re-run skips those and imports only what is missing.
+It prints one JSON line carrying `imported` and `skipped`. The node keeps every message it already holds, so a re-run skips those and imports only what is missing. If it prints an error instead, STOP and leave this migration unmarked.
 
 ### 6. Drop the stale name from the active skill list
 
