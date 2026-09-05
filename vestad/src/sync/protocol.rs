@@ -250,9 +250,10 @@ pub(crate) enum ClientFrame {
 /// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
 /// web visibility/window focus or mobile foreground state. `client` identifies the surface that
 /// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
-/// reconnect never looks like the user returning. `viewing` is the agent whose page is open on this
-/// client, or `None` on the roster, a non-agent screen, or a blurred window: it drives the per-agent
-/// presence notification, independently of `focused`.
+/// reconnect never looks like the user returning. `viewing` is the room open on this client
+/// (`dm:<agent>` on an agent page, a room id on a room screen), or `None` on the roster, another
+/// screen, or a blurred window: it drives that room's presence nudge to its agents, independently
+/// of `focused`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientContext {
@@ -730,9 +731,9 @@ mod tests {
         .expect("parse client_context retracting the position");
         let ClientFrame::ClientContext(retracted) = retracted else { panic!("client_context expected") };
         assert_eq!(retracted.context.position, Some(crate::device_registry::PositionReport::Retract));
-        // `viewing` carries the open agent's name; absent it defaults to None (additive-safe).
+        // `viewing` carries the open room's id; absent it defaults to None (additive-safe).
         let viewing: ClientFrame = serde_json::from_str(
-            r#"{"type":"client_context","focused":true,"client":"web","viewing":"scout"}"#,
+            r#"{"type":"client_context","focused":true,"client":"web","viewing":"dm:scout"}"#,
         )
         .expect("parse client_context viewing");
         assert_eq!(
@@ -741,7 +742,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Web,
                 resync: false,
-                viewing: Some("scout".into()),
+                viewing: Some("dm:scout".into()),
                 ..Default::default()
             })
         );
