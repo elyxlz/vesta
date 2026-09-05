@@ -11,7 +11,7 @@ describe("sendMessage", () => {
     const json = vi.fn().mockResolvedValue({});
     const { id, outcome } = sendMessage(
       httpWith(json),
-      "scout",
+      "dm:scout",
       { text: "hi", input_method: "typed" },
       () => "i-1",
     );
@@ -19,7 +19,7 @@ describe("sendMessage", () => {
     expect(id).toBe("i-1");
     const call = json.mock.calls[0];
     if (!call) throw new Error("no POST");
-    expect(call[0]).toBe("/agents/scout/chat/message");
+    expect(call[0]).toBe("/rooms/dm%3Ascout/messages");
     const body = JSON.parse((call[1] as { body: string }).body) as unknown;
     expect(body).toEqual({
       text: "hi",
@@ -37,7 +37,7 @@ describe("sendMessage", () => {
         .mockRejectedValue(new ApiError(status, "unavailable"));
       const { outcome } = sendMessage(
         httpWith(json),
-        "scout",
+        "dm:scout",
         { text: "hi" },
         () => "i-2",
       );
@@ -49,7 +49,7 @@ describe("sendMessage", () => {
     const json = vi.fn().mockRejectedValue(new Error("network down"));
     const { outcome } = sendMessage(
       httpWith(json),
-      "scout",
+      "dm:scout",
       { text: "hi" },
       () => "i-net",
     );
@@ -60,7 +60,7 @@ describe("sendMessage", () => {
     const json = vi.fn().mockRejectedValue(new ApiError(500, "boom"));
     const { outcome } = sendMessage(
       httpWith(json),
-      "scout",
+      "dm:scout",
       { text: "hi" },
       () => "i-3",
     );
@@ -71,7 +71,7 @@ describe("sendMessage", () => {
     const json = vi.fn().mockResolvedValue({});
     const { id } = sendMessage(
       httpWith(json),
-      "scout",
+      "dm:scout",
       { text: "hi" },
       () => "existing",
     );
@@ -84,7 +84,7 @@ describe("sendMessage with attachments", () => {
     const json = vi.fn().mockResolvedValue({});
     const { outcome } = sendMessage(
       httpWith(json),
-      "scout",
+      "dm:scout",
       { text: "", attachments: ["att1", "att2"] },
       () => "i-a",
     );
@@ -101,7 +101,7 @@ describe("sendMessage with attachments", () => {
 
   it("omits the attachments key entirely for plain text sends", () => {
     const json = vi.fn().mockResolvedValue({});
-    sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-b");
+    sendMessage(httpWith(json), "dm:scout", { text: "hi" }, () => "i-b");
     const call = json.mock.calls[0];
     if (!call) throw new Error("no POST");
     const body = JSON.parse((call[1] as { body: string }).body) as Record<

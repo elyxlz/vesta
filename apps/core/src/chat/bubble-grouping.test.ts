@@ -3,6 +3,7 @@ import type { ChatMessage } from "./chat-stream-model";
 import {
   BUBBLE_GROUP_TIME_GAP_MS,
   chatMessageSide,
+  senderOf,
   startsNewBubbleGroup,
 } from "./bubble-grouping";
 
@@ -12,6 +13,10 @@ function user(ts?: string): ChatMessage {
 
 function agent(ts?: string): ChatMessage {
   return { type: "chat", text: "hello", ts };
+}
+
+function from(sender: string, ts?: string): ChatMessage {
+  return { type: "chat", text: "hello", sender, ts };
 }
 
 describe("chatMessageSide", () => {
@@ -30,6 +35,17 @@ describe("chatMessageSide", () => {
         resets_at: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("senderOf", () => {
+  it("reads the named member of a room message", () => {
+    expect(senderOf(from("ada"))).toBe("ada");
+  });
+
+  it("falls back to the side for a message no room named", () => {
+    expect(senderOf(user())).toBe("user");
+    expect(senderOf(agent())).toBe("agent");
   });
 });
 
@@ -64,6 +80,33 @@ describe("startsNewBubbleGroup", () => {
 
   it("starts a new group on a sender change regardless of timing", () => {
     expect(startsNewBubbleGroup(user(base), agent(base))).toBe(true);
+  });
+
+  it("starts a new group when a second agent speaks inside the threshold", () => {
+    expect(
+      startsNewBubbleGroup(
+        from("ada", base),
+        from("ben", plus(BUBBLE_GROUP_TIME_GAP_MS - 1)),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the same agent's messages inside the threshold tight", () => {
+    expect(
+      startsNewBubbleGroup(
+        from("ada", base),
+        from("ada", plus(BUBBLE_GROUP_TIME_GAP_MS - 1)),
+      ),
+    ).toBe(false);
+  });
+
+  it("groups two unnamed agent messages, since both read as the same sender", () => {
+    expect(
+      startsNewBubbleGroup(
+        agent(base),
+        agent(plus(BUBBLE_GROUP_TIME_GAP_MS - 1)),
+      ),
+    ).toBe(false);
   });
 
   it("never starts a group with no previous side-carrying message", () => {

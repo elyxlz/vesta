@@ -63,7 +63,7 @@ const DONE: ChatAttachment = {
   mime: "application/octet-stream",
   size: 4,
 };
-const KEY = "ada@gw";
+const KEY = "dm:ada@gw";
 
 function source(
   name: string,
@@ -112,7 +112,7 @@ beforeEach(() => {
 describe("createDraftStore", () => {
   it("adds a source, tracks progress and waiting, and finalizes to ready", async () => {
     const h = harness();
-    expect(h.store.add(KEY, "ada", source("a.bin", 4))).toBe(true);
+    expect(h.store.add(KEY, source("a.bin", 4))).toBe(true);
     expect(h.list()[0]).toMatchObject({ name: "a.bin", status: "uploading" });
     await settle();
 
@@ -134,7 +134,6 @@ describe("createDraftStore", () => {
     const h = harness();
     h.store.add(
       KEY,
-      "ada",
       source("pic.jpg", 4, {
         mime: "image/jpeg",
         probe: () => Promise.resolve({ width: 640, height: 480 }),
@@ -146,9 +145,9 @@ describe("createDraftStore", () => {
 
   it("refuses a file over the size limit with a notice and keeps taking the rest", () => {
     const h = harness();
-    expect(
-      h.store.add(KEY, "ada", source("huge", MAX_ATTACHMENT_BYTES + 1)),
-    ).toBe(true);
+    expect(h.store.add(KEY, source("huge", MAX_ATTACHMENT_BYTES + 1))).toBe(
+      true,
+    );
     expect(h.list()).toHaveLength(0);
     expect(h.notices[0]).toContain("too large");
   });
@@ -156,14 +155,14 @@ describe("createDraftStore", () => {
   it("refuses past the per-message cap and tells the caller to stop", () => {
     const h = harness();
     for (let i = 0; i < 10; i += 1)
-      expect(h.store.add(KEY, "ada", source(`f${String(i)}`, 1))).toBe(true);
-    expect(h.store.add(KEY, "ada", source("one-too-many", 1))).toBe(false);
+      expect(h.store.add(KEY, source(`f${String(i)}`, 1))).toBe(true);
+    expect(h.store.add(KEY, source("one-too-many", 1))).toBe(false);
     expect(h.notices.at(-1)).toContain("at most");
   });
 
   it("removing a draft aborts its upload and revokes its preview", async () => {
     const h = harness();
-    h.store.add(KEY, "ada", source("a.bin", 4, { preview: "blob:one" }));
+    h.store.add(KEY, source("a.bin", 4, { preview: "blob:one" }));
     await settle();
     expect(h.store.previewUrl("local-1")).toBe("blob:one");
     h.store.remove(KEY, "local-1");
@@ -175,33 +174,22 @@ describe("createDraftStore", () => {
 
   it("marks a retryable failure failed and retries from the kept source", async () => {
     const h = harness();
-    h.store.add(KEY, "ada", source("a.bin", 4));
+    h.store.add(KEY, source("a.bin", 4));
     await settle();
     uploads[0]?.fail(new UploadError("failed"));
     await settle();
     expect(h.list()[0]).toMatchObject({ status: "error", error: "failed" });
 
-    h.store.retry(KEY, "ada", "local-1");
+    h.store.retry(KEY, "local-1");
     expect(h.list()[0]).toMatchObject({ status: "uploading", progress: 0 });
     await settle();
     expect(uploads).toHaveLength(2);
-  });
-
-  it("discards the draft with a notice when the agent cannot receive files", async () => {
-    const h = harness();
-    h.store.add(KEY, "ada", source("a.bin", 4));
-    await settle();
-    uploads[0]?.fail(new UploadError("unsupported_agent"));
-    await settle();
-    expect(h.list()).toHaveLength(0);
-    expect(h.notices[0]).toContain("needs an update");
   });
 
   it("discards the draft with a notice when the source cannot be read", async () => {
     const h = harness();
     h.store.add(
       KEY,
-      "ada",
       source("gone.bin", 4, { open: () => Promise.reject(new Error("io")) }),
     );
     await settle();
@@ -212,7 +200,7 @@ describe("createDraftStore", () => {
 
   it("aborts and frees an upload whose cell vanished from under it", async () => {
     const h = harness();
-    h.store.add(KEY, "ada", source("a.bin", 4));
+    h.store.add(KEY, source("a.bin", 4));
     await settle();
     h.hold.persist(KEY, []);
     uploads[0]?.callbacks.onProgress(1, 4);
@@ -221,8 +209,8 @@ describe("createDraftStore", () => {
 
   it("clear releases every draft in the cell", async () => {
     const h = harness();
-    h.store.add(KEY, "ada", source("a.bin", 4));
-    h.store.add(KEY, "ada", source("b.bin", 4));
+    h.store.add(KEY, source("a.bin", 4));
+    h.store.add(KEY, source("b.bin", 4));
     await settle();
     h.store.clear(KEY);
     expect(uploads.map((u) => u.aborted)).toEqual([true, true]);

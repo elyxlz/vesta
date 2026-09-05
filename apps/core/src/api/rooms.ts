@@ -2,7 +2,7 @@ import type { ChatAttachment } from "../attachments/attachment-model";
 import type { HistoryPage } from "../chat/chat-stream-model";
 import { parseHistoryPage } from "../protocol/parse-chat";
 import type { Room } from "../protocol/tree";
-import type { HttpClient } from "../transport/http";
+import { jsonInit, type HttpClient } from "../transport/http";
 
 // The chat node's REST surface, served by the gateway itself rather than through an agent proxy.
 // The room list also rides the /sync tree, so these bodies are the request-shaped view of it.
@@ -74,6 +74,20 @@ export function roomAttachmentPath(id: string): string {
 // passing `new URLSearchParams({ room: id })` as that builder's second argument.
 export function roomsSocketPath(): string {
   return "/rooms/ws";
+}
+
+// Open a room over the named members. A name is what makes a room a group; a peer room passes
+// null. Opening the same membership twice answers the room that already exists.
+export async function createRoom(
+  http: HttpClient,
+  name: string | null,
+  agents: string[],
+): Promise<RoomOpened> {
+  return http.json<RoomOpened>(roomsPath(), jsonInit("POST", { name, agents }));
+}
+
+export async function deleteRoom(http: HttpClient, id: string): Promise<void> {
+  await http.request(`/rooms/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function fetchRoomHistory(
