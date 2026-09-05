@@ -305,6 +305,9 @@ async def shutdown(state: State, *, budget: float, gateway_timeout: float) -> No
     if handover is None or handover.state == "inactive":
         return
     deadline = time.monotonic() + budget
+    # A shutdown landing inside the engine-start window takes the session's display with it, since
+    # the teardown stops a session that holds no runtime yet. An X client dies with its server, so
+    # the engine start fails at once and `ensure_running` frees what it claimed.
     if handover.state in ("starting", "live"):
         handover.state = "stopping"
         with contextlib.suppress(TimeoutError):

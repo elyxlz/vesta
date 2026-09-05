@@ -3,6 +3,7 @@ import os
 import pathlib as pl
 import shutil
 import socket
+import sys
 import tempfile
 import time
 import urllib.request
@@ -126,6 +127,23 @@ def test_display_reachable_sees_a_server_holding_only_the_abstract_socket(rig):
         assert not display.own_display_serving(rig, number)
     finally:
         sock.close()
+
+
+def test_an_exited_xvfb_is_not_ready_while_another_socket_answers(rig):
+    """Readiness reads the process before the socket, so a dead Xvfb never passes on someone else's."""
+    number = ABSTRACT_ONLY_DISPLAY
+    held = _listening_x_socket(rig.x11_socket_dir / f"X{number}")
+
+    async def run():
+        process = await asyncio.create_subprocess_exec(sys.executable, "-c", "raise SystemExit(1)")
+        await process.wait()
+        return await display._xvfb_ready(rig, process, number)
+
+    try:
+        ready = asyncio.run(run())
+    finally:
+        held.close()
+    assert ready is False
 
 
 def test_claim_display_returns_a_display_this_container_serves(rig):

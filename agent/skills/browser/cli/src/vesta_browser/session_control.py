@@ -1,13 +1,13 @@
 """Starting and stopping a session's engine: the one owner of both decisions.
 
-Below `serve.py` and `handover.py` because both drive the same session runtimes: an exec starts one
-and a handover replaces it with a headed one, and neither may hold its own rule for when a runtime
-may be torn out.
+Below `serve.py` and `handover.py` because both drive the same session runtimes, so neither may
+hold its own rule for when a runtime may be torn out.
 """
 
 from __future__ import annotations
 
 from . import camoufox, chromium, display
+from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State
 from .runtime_paths import Paths
@@ -26,10 +26,13 @@ async def ensure_running(state: State, session: sessions_mod.Session) -> list[st
     state.restart_pending.discard(session.name)
     sessions_mod.mark(session, "starting")
     try:
-        session.display = await display.start_session_display(state.paths)
+        # One claim at a time across the daemon: sessions share one X socket dir, so two claims
+        # running together pick the same free number and one of them ends up on the other's Xvfb.
+        async with state.display_lock:
+            session.display = await display.start_session_display(state.paths)
         headed = HeadedDisplay(session.display.display, display.SCREEN_W, display.SCREEN_H)
         session.runtime = await ENGINES[session.engine].start(session, state.paths, headed=headed)
-    except BaseException:
+    except BaseException as exc:
         # Any failure at all, not only a named one, and a cancellation too: a session left
         # `starting` refuses every later exec and no command can bring it back, and a claimed
         # display must not outlive the start it was claimed for.
@@ -38,6 +41,10 @@ async def ensure_running(state: State, session: sessions_mod.Session) -> list[st
         if session.display is not None:
             await display.stop_session_display(state.paths, session.display)
             session.display = None
+        if isinstance(exc, display.DisplayError):
+            raise p.BrowserError(
+                p.error("engine_unavailable", "launch", str(exc), retryable=True, suggested_action="run: browser doctor")
+            ) from exc
         raise
     sessions_mod.mark(session, "ready")
     return ["worker_restarted"] if restarted else []

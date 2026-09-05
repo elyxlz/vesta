@@ -14,9 +14,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import os
 import pathlib as pl
 import shutil
 import socket
+import tempfile
 import time
 
 from . import protocol as p
@@ -43,7 +45,7 @@ DISPLAY_APT_LINE = "apt-get install -y xvfb openbox x11vnc novnc"
 DEFAULT_X11_SOCKET_DIR = pl.Path("/tmp/.X11-unix")
 ABSTRACT_X11_PREFIX = "\0/tmp/.X11-unix/X"
 
-# The handover display shows exactly one window. Left to itself openbox smart-places it a few pixels
+# A session's display shows exactly one window. Left to itself openbox smart-places it a few pixels
 # off origin and adds a titlebar, so the stream sits misaligned in the page's screen cut-out.
 OPENBOX_RC = """<?xml version="1.0"?>
 <openbox_config xmlns="http://openbox.org/3.4/rc">
@@ -181,10 +183,12 @@ def _clear_stale_records(paths: Paths, number: int) -> None:
 async def _xvfb_ready(paths: Paths, process: asyncio.subprocess.Process, number: int) -> bool:
     deadline = time.monotonic() + XVFB_READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
-        if await asyncio.to_thread(own_display_serving, paths, number):
-            return True
+        # The process first: every claimant in this container probes the same socket path, so a
+        # probe alone cannot tell our own Xvfb from the one that won the number.
         if process.returncode is not None:
             return False
+        if await asyncio.to_thread(own_display_serving, paths, number):
+            return True
         await asyncio.sleep(READY_POLL_SECS)
     return False
 
@@ -202,19 +206,22 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
         number = await asyncio.to_thread(_free_display_number, paths, number)
         display = f":{number}"
         _clear_stale_records(paths, number)
-        process = await asyncio.create_subprocess_exec(
-            "Xvfb",
-            display,
-            "-screen",
-            "0",
-            f"{SCREEN_W}x{SCREEN_H}x24",
-            "-nolisten",
-            "tcp",
-            env=child_env(display),
-            start_new_session=True,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "Xvfb",
+                display,
+                "-screen",
+                "0",
+                f"{SCREEN_W}x{SCREEN_H}x24",
+                "-nolisten",
+                "tcp",
+                env=child_env(display),
+                start_new_session=True,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            raise DisplayError(f"Xvfb could not start: {exc}") from exc
         try:
             ready = await _xvfb_ready(paths, process, number)
         except BaseException:
@@ -228,10 +235,20 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
     raise DisplayError(f"could not claim an X display in {DISPLAY_CLAIM_ATTEMPTS} attempts")
 
 
-async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Process:
+def _openbox_rc(paths: Paths) -> pl.Path:
+    """The rc file every openbox here reads. Staged beside it and renamed onto its path, so a
+    start reading it takes a whole file whatever another start writes."""
     rc_path = paths.root / "openbox-rc.xml"
     rc_path.parent.mkdir(parents=True, exist_ok=True)
-    rc_path.write_text(OPENBOX_RC)
+    handle, staged = tempfile.mkstemp(dir=rc_path.parent, prefix="openbox-rc-", suffix=".xml")
+    with os.fdopen(handle, "w") as staged_file:
+        staged_file.write(OPENBOX_RC)
+    pl.Path(staged).replace(rc_path)
+    return rc_path
+
+
+async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Process:
+    rc_path = await asyncio.to_thread(_openbox_rc, paths)
     return await asyncio.create_subprocess_exec(
         "openbox",
         "--config-file",

@@ -72,7 +72,7 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Cam
     preset = select_preset(session.profile_dir)
     preset = fit_to_screen(preset, headed.width, headed.height)
     # Camoufox's WebRender falls back to software rendering on Xvfb's dummy driver; without
-    # these prefs the worker never paints a frame and the handover's stream stays blank.
+    # these prefs the worker paints no frame at all on the session's display.
     (session.profile_dir / "user.js").write_text('user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n')
     preset = {key: value for key, value in preset.items() if not key.startswith("_")}
     config_path.write_text(json.dumps(preset))

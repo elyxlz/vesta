@@ -199,6 +199,45 @@ def test_sessions_and_session_stop_and_stop_all(paths):
     assert all(s["state"] == "stopped" for s in final["data"]["sessions"])
 
 
+def test_two_concurrent_cold_execs_claim_one_display_each(paths):
+    """Two sessions starting together share the socket dir; neither may read the other's Xvfb as its own."""
+
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        await asyncio.gather(serve.op_exec(state, "r1", _exec("one", "print(1)")), serve.op_exec(state, "r2", _exec("two", "print(2)")))
+        first = state.table.sessions["one"].display
+        second = state.table.sessions["two"].display
+        alive = [pid_alive(first.xvfb.pid), pid_alive(second.xvfb.pid)]
+        await serve.op_session_stop(state, "s1", {"session": "one"})
+        number = display.display_number(second.display)
+        survived = (paths.x11_socket_dir / f"X{number}").exists() and display.own_display_serving(paths, number)
+        await serve.op_session_stop(state, "s2", {"session": "two"})
+        return first.display, second.display, alive, survived
+
+    first, second, alive, survived = asyncio.run(run())
+    assert first != second
+    assert alive == [True, True]
+    assert survived is True
+
+
+def test_a_display_the_daemon_cannot_bring_up_is_engine_unavailable(paths, tmp_path):
+    """A missing display binary is the engine's own launch failure, with the pointer that names the fix."""
+
+    (tmp_path / "bin" / "Xvfb").unlink()
+
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        result = await serve.handle_request(state, _exec("research", "print(1)"))
+        session = state.table.sessions["research"]
+        return result, session.state, session.display, _display_pids(paths)
+
+    result, session_state, session_display, pids = asyncio.run(run())
+    assert result["ok"] is False and result["error"]["code"] == "engine_unavailable"
+    assert result["error"]["phase"] == "launch" and result["error"]["retryable"] is True
+    assert "Xvfb" in result["error"]["message"]
+    assert session_state == "stopped" and session_display is None and pids == []
+
+
 def test_session_stop_ends_the_display_too(paths):
     async def run():
         state = serve.State(paths=paths, table=sessions.load_table(paths))

@@ -24,6 +24,7 @@ class State:
     inflight: dict[str, asyncio.Task[ExecOutcome]] = dataclasses.field(default_factory=dict)
     tasks: set[asyncio.Task[None]] = dataclasses.field(default_factory=set)
     restart_pending: set[str] = dataclasses.field(default_factory=set)
+    display_lock: asyncio.Lock = dataclasses.field(default_factory=asyncio.Lock)
     handover: Handover | None = None
     last_error: p.Error | None = None
     asked_to_stop: bool = False
