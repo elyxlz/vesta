@@ -91,8 +91,8 @@ export {
 export type { ChatMessage, ChatState } from "./chat/chat-stream-model";
 
 export {
-  appChatAttachmentPath,
   attachmentKind,
+  chatAttachmentPath,
   formatBytes,
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "./attachments/attachment-model";

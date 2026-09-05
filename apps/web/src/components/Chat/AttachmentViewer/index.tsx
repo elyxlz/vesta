@@ -10,8 +10,8 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { AnimatePresence, motion } from "motion/react";
 import { Download, X } from "lucide-react";
 import {
-  appChatAttachmentPath,
   attachmentKind,
+  chatAttachmentPath,
   formatBytes,
   type ChatAttachment,
 } from "@vesta/core";
@@ -183,7 +183,7 @@ export function AttachmentViewer({
 }) {
   const attachment = request?.attachment ?? null;
   const src = useAuthedSrc(
-    attachment ? appChatAttachmentPath(agent, attachment.id) : null,
+    attachment ? chatAttachmentPath(agent, attachment.id) : null,
   );
   const download = useDownload(attachment?.id ?? "");
   const startDownload = useDownloadsStore((state) => state.start);

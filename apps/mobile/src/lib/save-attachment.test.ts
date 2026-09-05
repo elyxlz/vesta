@@ -51,7 +51,7 @@ describe("saveAttachment", () => {
     );
     const url = download.mock.calls[0]?.[0] ?? "";
     expect(url).toBe(
-      "https://gw.example/agents/apollo/app-chat/attachments/att1?download=1&token=t",
+      "https://gw.example/agents/apollo/chat/attachments/att1?download=1&token=t",
     );
     expect(share).toHaveBeenCalledTimes(1);
   });

@@ -25,8 +25,8 @@ import type { Scenario, ScenarioState } from "../harness/scenario-state";
 import { agentNode } from "../harness/sync-fixtures";
 
 const CHAT_ROUTE = `/agent/${AGENT}/chat`;
-const HISTORY_PATH = `/agents/${AGENT}/app-chat/history`;
-const MESSAGE_PATH = `/agents/${AGENT}/app-chat/message`;
+const HISTORY_PATH = `/agents/${AGENT}/chat/history`;
+const MESSAGE_PATH = `/agents/${AGENT}/chat/message`;
 const LOGS_PATH = `/agents/${AGENT}/logs`;
 const FIXED_NOW_SECS = Math.floor(Date.parse("2026-08-18T10:00:00Z") / 1000);
 const TWO_HOURS_SECS = 2 * 60 * 60;
@@ -112,7 +112,7 @@ const LOG_LINES = [
   `${ESC}[2m2026-08-18 09:58:09${ESC}[0m ${ESC}[33mWARNING${ESC}[0m core.upstream_sync: agent-v0.2.3 not in HEAD, queueing sync turn`,
   `${ESC}[2m2026-08-18 09:58:10${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: boot turn 1/2 greeting`,
   `${ESC}[2m2026-08-18 09:59:41${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: boot turn 2/2 upstream-sync`,
-  `${ESC}[2m2026-08-18 09:59:58${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: batch of 2 notifications source=app-chat`,
+  `${ESC}[2m2026-08-18 09:59:58${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: batch of 2 notifications source=chat`,
   `${ESC}[2m2026-08-18 09:59:59${ESC}[0m ${ESC}[31mERROR${ESC}[0m core.tools: user_devices: gateway answered 503, retrying`,
   `${ESC}[2m2026-08-18 10:00:00${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: turn complete in 3.2s, idle`,
 ];
@@ -254,7 +254,7 @@ export const CHAT: Record<string, Scenario> = {
             path: MESSAGE_PATH,
             method: "POST",
             status: 500,
-            json: { error: "app-chat intake failed" },
+            json: { error: "chat intake failed" },
           },
         ],
       },

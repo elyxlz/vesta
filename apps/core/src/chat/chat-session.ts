@@ -30,7 +30,7 @@ export interface ChatSessionDeps {
   buildUrl: () => Promise<string>;
   // Defaults to the platform WebSocket; tests inject a fake.
   createSocket?: (url: string) => SocketLike;
-  // Defaults to the app-chat history route over `http`; tests inject a scripted page.
+  // Defaults to the chat history route over `http`; tests inject a scripted page.
   fetchHistory?: (cursor?: number) => Promise<HistoryPage>;
   makeId: () => string;
   // Read at each pacing step, so a preference flip lands mid-conversation. False commits every
@@ -82,7 +82,7 @@ export interface ChatSession {
   close: () => void;
 }
 
-// The chat view-model, framework-free: the replay-free app-chat socket joined to the HTTP history
+// The chat view-model, framework-free: the replay-free chat socket joined to the HTTP history
 // page by event id, the pacing queue that types replies out, and the send path confirmed by its
 // echo. ChatState is the single source of truth; every fold runs synchronously against it so a
 // batch of appends dedups against the running accumulation. The tail is seeded at creation, in

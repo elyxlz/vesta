@@ -91,7 +91,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     send_task: asyncio.Task[None] | None = None
     try:
         # The connect snapshot: one event seeding the client with current agent state. Chat is not
-        # here (the app-chat skill owns it end to end on its own service socket). `notifications`
+        # here (the chat skill owns it end to end on its own service socket). `notifications`
         # carries the ids still on disk so the view can mark pending without polling. Always sent so the
         # client can tell "still loading" from "no messages". Reads run off the loop: a slow scan must
         # not freeze the agent (it would starve vestad's status poll and flap "starting").
@@ -119,7 +119,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 async def _recv_loop(ws: web.WebSocketResponse) -> None:
-    """Drain inbound frames. No inbound frame injects an event into the bus (app-chat owns chat on its
+    """Drain inbound frames. No inbound frame injects an event into the bus (the chat skill owns chat on its
     own service socket); this only keeps the connection live and notices a close."""
     async for msg in ws:
         if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
@@ -173,8 +173,8 @@ async def _history_handler(request: web.Request) -> web.Response:
       q       (str, optional): FTS5 search; returns events ranked by relevance (cursor is null).
       cursor  (int, optional): fetch events before this id. Omit for most recent. Ignored with `q`.
       limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE; 20 for search).
-      channel (str, optional): "notifications" filters to the arrivals list. "app-chat" is gone (410,
-              moved to the app-chat skill service). Ignored with `q`.
+      channel (str, optional): "notifications" filters to the arrivals list. "app-chat", the retired
+              channel value, answers 410 (chat lives on the chat skill's service). Ignored with `q`.
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -191,7 +191,7 @@ async def _history_handler(request: web.Request) -> web.Response:
     kwargs = {"limit": limit} if limit is not None else {}
     channel = request.query.get("channel", "") or None
     if channel == "app-chat":
-        return web.json_response({"error": "app-chat history moved to the app-chat service"}, status=410)
+        return web.json_response({"error": "chat history lives on the chat service"}, status=410)
 
     cursor_raw = request.query.get("cursor", "")
     if cursor_raw:

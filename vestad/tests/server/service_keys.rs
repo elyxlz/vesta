@@ -140,10 +140,10 @@ fn a_private_service_needs_the_api_key_or_a_live_service_key() {
 /// A WebSocket upgrade is gated by the very same decision as a plain GET: `proxy_authorized` runs
 /// and can 401 before the handler looks at `Upgrade` at all, so a live key in `?token=` completes
 /// the handshake and a revoked one is refused with a 401 in place of the 101. That is what lets a
-/// browser socket (the app-chat live chat socket) authenticate with a key it can only put in the
+/// browser socket (the live chat socket) authenticate with a key it can only put in the
 /// query string. The upstream here speaks plain HTTP, so the socket closes right after the
 /// handshake: the handshake IS the gate's verdict, and the data path behind it is driven for real
-/// against the app-chat daemon in `sync.rs`.
+/// against the chat daemon in `sync.rs`.
 #[tokio::test]
 async fn a_service_key_opens_a_websocket_upgrade_until_it_is_revoked() {
     let client = SERVER.client();

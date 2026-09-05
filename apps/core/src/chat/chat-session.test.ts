@@ -92,7 +92,7 @@ function harness(): Harness {
           buildUrl: () => {
             builds += 1;
             return Promise.resolve(
-              `wss://vestad.test/agents/ada/app-chat/ws?token=access-${String(builds)}`,
+              `wss://vestad.test/agents/ada/chat/ws?token=access-${String(builds)}`,
             );
           },
           createSocket: (url) => {
@@ -162,7 +162,7 @@ describe("createChatSession", () => {
 
     expect(h.sockets).toHaveLength(1);
     expect(h.sockets[0]?.url).toBe(
-      "wss://vestad.test/agents/ada/app-chat/ws?token=access-1",
+      "wss://vestad.test/agents/ada/chat/ws?token=access-1",
     );
     expect(h.history).toHaveBeenCalledWith();
     const state = session.getState();

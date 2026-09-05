@@ -1,11 +1,11 @@
-"""Tests for `app-chat history`: recent-list and --search projections read from the skill's own store."""
+"""Tests for `chat history`: recent-list and --search projections read from the skill's own store."""
 
 import argparse
 import json
 
 import pytest
-from app_chat_cli import commands
-from app_chat_cli.store import Store, store_path
+from chat_cli import commands
+from chat_cli.store import Store, store_path
 
 
 def _seed(tmp_path) -> None:

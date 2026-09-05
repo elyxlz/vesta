@@ -139,7 +139,7 @@ Options: available in 4 colors.
 
 | Channel | Override |
 |---|---|
-| app-chat | Send the template as-is via `app-chat send` (markdown renders, so the image link and `[View Product]` link both work). One `app-chat send` per product, then one summary send. |
+| chat | Send the template as-is via `chat send` (markdown renders, so the image link and `[View Product]` link both work). One `chat send` per product, then one summary send. |
 | WhatsApp | Image as a media message, then an interactive message with the product info. No markdown links. |
 | Telegram | Do **not** send an image inline. Send separate messages per product, never one combined message. Inline the "View Product" URL as a link. |
 

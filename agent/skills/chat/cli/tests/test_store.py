@@ -1,11 +1,11 @@
-"""Tests for the app-chat skill store: skill-assigned ids, oldest-to-newest paging with a cursor,
+"""Tests for the chat skill store: skill-assigned ids, oldest-to-newest paging with a cursor,
 FTS5 search decayed toward recent, and idempotent id-preserving import."""
 
 import json
 import sqlite3
 
 import pytest
-from app_chat_cli.store import Store, store_path
+from chat_cli.store import Store, store_path
 
 
 def _store(tmp_path) -> Store:

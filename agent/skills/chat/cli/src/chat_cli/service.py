@@ -1,5 +1,5 @@
-"""The app-chat service: POST /message (intake), GET /history (paged conversation), and GET /ws (the
-replay-free live chat stream). Registered with vestad as the `app-chat` service, reached by clients
+"""The chat service: POST /message (intake), GET /history (paged conversation), and GET /ws (the
+replay-free live chat stream). Registered with vestad as the `chat` service, reached by clients
 through the authenticated proxy. Intake here (not a core sidecar) keeps the `user` echo an honest
 delivery receipt: persist + echo + notification happen in the request coroutine, so a client that got
 a 200 knows its message is durable and delivered. The echo fans out to /ws subscribers in-process, so
@@ -20,7 +20,7 @@ from aiohttp import web
 from . import attachments
 from .store import Store, StoredEvent
 
-logger = logging.getLogger("app-chat.service")
+logger = logging.getLogger("chat.service")
 
 # The intake body cap: one upload chunk plus headroom. Uploads are chunked client-side precisely so no
 # single request ever needs more than this (vestad's proxy buffers request bodies at 10 MiB above us).
@@ -91,7 +91,7 @@ class ServiceState:
         try:
             _write_turn_end_notification(self)
         except OSError as exc:
-            logger.error("failed to write app-chat turn-end notification: %s", exc)
+            logger.error("failed to write chat turn-end notification: %s", exc)
 
     def remember(self, intent_id: str) -> None:
         self.seen_intent_ids[intent_id] = None
@@ -129,20 +129,20 @@ def _emit_notification(state: ServiceState, type_: str, fields: dict[str, object
     directory.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {
         "timestamp": dt.datetime.now().isoformat(),
-        "source": "app-chat",
+        "source": "chat",
         "type": type_,
         "interrupt": True,
-        "reply_command": "app-chat send --message -",
+        "reply_command": "chat send --message -",
         **fields,
     }
-    path = directory / f"{time.time_ns()}-app-chat-{type_}.json"
+    path = directory / f"{time.time_ns()}-chat-{type_}.json"
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
     tmp.replace(path)
 
 
 def _write_notification(state: ServiceState, text: str, metas: list[attachments.AttachmentMeta]) -> None:
-    """Persist an inbound app message as the source=app-chat notification the monitor loop turns into a
+    """Persist an inbound app message as the source=chat notification the monitor loop turns into a
     model turn. The structured reply command and behavioral hint ride along so the model receives the
     producer-owned response guidance. The client-only intent ID stays on the chat event."""
     fields: dict[str, object] = {
@@ -208,7 +208,7 @@ async def message_handler(request: web.Request) -> web.Response:
 
     intent_id = event["intent_id"] if "intent_id" in event else None
     if intent_id is not None and intent_id in state.seen_intent_ids:
-        logger.debug("dropping duplicate app-chat message intent_id=%s", intent_id)
+        logger.debug("dropping duplicate chat message intent_id=%s", intent_id)
         return web.json_response({"ok": True, "deduped": True})
 
     # Resolve ids to finalized metadata before any side effect: a miss is a 400 that persists nothing.
@@ -230,7 +230,7 @@ async def message_handler(request: web.Request) -> web.Response:
     try:
         _write_notification(state, text, metas)
     except OSError as exc:
-        logger.error("failed to write app-chat notification: %s", exc)
+        logger.error("failed to write chat notification: %s", exc)
         return web.json_response({"error": "intake write failed"}, status=500)
     state.store.append(event)
     state.emit(event)
@@ -240,8 +240,8 @@ async def message_handler(request: web.Request) -> web.Response:
 
 
 async def history_handler(request: web.Request) -> web.Response:
-    """Paged conversation, oldest-to-newest, {events, cursor}. Matches what clients consumed from core
-    /history channel=app-chat: pass the returned cursor to fetch the next older page; null means none."""
+    """Paged conversation, oldest-to-newest, {events, cursor}: pass the returned cursor to fetch the
+    next older page; null means none."""
     state = request.app[_STATE_KEY]
     limit_raw = request.query.get("limit", "")
     try:
@@ -404,7 +404,7 @@ def _content_disposition(kind: str, name: str) -> str:
 
 async def attachment_serve_handler(request: web.Request) -> web.StreamResponse:
     """Stream a finalized blob (FileResponse: Range works natively, so video seeking is free). A blob
-    cleaned up by `app-chat attachments rm` keeps its meta and answers 410, which clients render as a
+    cleaned up by `chat attachments rm` keeps its meta and answers 410, which clients render as a
     terminal "no longer available" tile. Only media mimes serve inline: the declared mime is client
     input, so anything else downloads as an opaque octet-stream, and CSP sandbox covers what inline
     rendering remains (an SVG can script)."""

@@ -1,4 +1,4 @@
-// The shared attachment model: the wire metadata shape the app-chat service embeds on user/chat
+// The shared attachment model: the wire metadata shape the chat service embeds on user/chat
 // events, the client-side sizing/retry constants of the chunked upload protocol, and the one owner
 // of kind derivation and byte formatting so every surface renders the same answer.
 
@@ -14,7 +14,7 @@ export interface ChatAttachment {
 
 export type AttachmentKind = "image" | "video" | "audio" | "file";
 
-// Server caps (mirrored from the app-chat service).
+// Server caps (mirrored from the chat service).
 export const MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 // The server rejects a single data PUT above this; the adaptive sizer never exceeds it.
@@ -54,11 +54,11 @@ export function formatBytes(size: number): string {
 
 // The service subpaths behind vestad's per-agent proxy. Apps stamp auth themselves (authedUrl for
 // media elements, the header-authed client for downloads).
-export function appChatAttachmentPath(
+export function chatAttachmentPath(
   agent: string,
   id: string,
   download = false,
 ): string {
-  const base = `/agents/${encodeURIComponent(agent)}/app-chat/attachments/${encodeURIComponent(id)}`;
+  const base = `/agents/${encodeURIComponent(agent)}/chat/attachments/${encodeURIComponent(id)}`;
   return download ? `${base}?download=1` : base;
 }

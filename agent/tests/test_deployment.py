@@ -25,7 +25,7 @@ def test_deployment_structure():
         "zoom",
         "keeper",
         "onedrive",
-        "app-chat",
+        "chat",
     ]
     for skill_name in expected_skills:
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"

@@ -1,6 +1,6 @@
 """Bubble lint: reject wall-of-text chat sends before they reach the app.
 
-Mirrors the telegram/whatsapp CLI bubble lint so app-chat enforces the same
+Mirrors the telegram/whatsapp CLI bubble lint so chat enforces the same
 "short bubbles, one thought per send" rule at send time. A rule the agent only
 has to *remember* is the weakest enforcement and keeps regressing into one
 multi-sentence block that reads like an assistant, not a person. Checking at

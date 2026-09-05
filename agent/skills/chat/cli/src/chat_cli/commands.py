@@ -10,9 +10,9 @@ import sqlite3
 import sys
 import typing as tp
 
-from app_chat_cli import attachments
-from app_chat_cli.bubblelint import bubble_lint_reason
-from app_chat_cli.store import Store, store_path
+from chat_cli import attachments
+from chat_cli.bubblelint import bubble_lint_reason
+from chat_cli.store import Store, store_path
 
 
 def _fail(payload: dict[str, object]) -> None:
@@ -52,7 +52,7 @@ def cmd_send(args: argparse.Namespace) -> None:
             if reason:
                 _fail({"error": reason})
 
-    sock_path = pl.Path(args.socket or (pl.Path.home() / ".app-chat" / "app-chat.sock"))
+    sock_path = pl.Path(args.socket or (pl.Path.home() / ".chat" / "chat.sock"))
 
     if not sock_path.exists():
         _fail({"error": f"daemon not running (no socket at {sock_path})"})
@@ -98,7 +98,7 @@ async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str]) 
 
 
 def cmd_history(args: argparse.Namespace) -> None:
-    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".app-chat"))
+    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".chat"))
     store = Store(store_path(data_dir))
     try:
         if args.search:
@@ -124,7 +124,7 @@ class _ListedAttachment(tp.TypedDict):
 
 
 def _attachments_root(args: argparse.Namespace) -> pl.Path:
-    return attachments.attachments_root(pl.Path(args.data_dir or (pl.Path.home() / ".app-chat")))
+    return attachments.attachments_root(pl.Path(args.data_dir or (pl.Path.home() / ".chat")))
 
 
 def cmd_attachments_list(args: argparse.Namespace) -> None:
@@ -187,11 +187,11 @@ def _default_events_db() -> pl.Path:
 
 
 def cmd_import(args: argparse.Namespace) -> None:
-    """Copy channel=app-chat conversation rows from core's events.db into the skill store, preserving ids
+    """Copy the chat conversation rows from core's events.db into the skill store, preserving ids
     and bumping the sequence above them (D3). Idempotent (INSERT OR IGNORE); the store's AFTER INSERT
     trigger indexes each imported row so `history --search` covers old conversations."""
     events_db = pl.Path(args.events_db) if args.events_db else _default_events_db()
-    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".app-chat"))
+    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".chat"))
     if not events_db.exists():
         print(json.dumps({"status": "no_events_db", "path": str(events_db)}))
         return

@@ -1,12 +1,12 @@
-"""App Chat daemon.
+"""Chat daemon.
 
-Owns the app-chat channel: it runs the skill's HTTP service (POST /message intake, GET /history, and
+Owns the chat channel: it runs the skill's HTTP service (POST /message intake, GET /history, and
 GET /ws, the replay-free live chat stream), and accepts CLI commands via a Unix socket to send replies
-(`app-chat send` -> persist a `chat` event, fan it to the /ws subscribers, send a user notification to
+(`chat send` -> persist a `chat` event, fan it to the /ws subscribers, send a user notification to
 vestad so a backgrounded client gets one). Durability is the skill's own store, so a reply succeeds even
 with no client connected; the live echo fans out in-process to whoever is on /ws.
 
-`app-chat daemon start|stop|restart|status` owns the process lifecycle: start registers the port with
+`chat daemon start|stop|restart|status` owns the process lifecycle: start registers the port with
 vestad and records it beside the pid, stop is a SIGTERM the serve path reads as deliberate, and status
 answers from those two records alone.
 """
@@ -33,7 +33,7 @@ from . import attachments
 from .service import ServiceState, create_app
 from .store import Store, StoredEvent, store_path
 
-NAME = "app-chat"
+NAME = "chat"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
 PORTFILE = DAEMONS_DIR / f"{NAME}.port"
@@ -77,7 +77,7 @@ def _fail(message: str) -> int:
 
 
 def default_data_dir() -> pl.Path:
-    return pl.Path.home() / ".app-chat"
+    return pl.Path.home() / ".chat"
 
 
 def default_notifications_dir() -> pl.Path:
@@ -85,7 +85,7 @@ def default_notifications_dir() -> pl.Path:
 
 
 def _sock_path(data_dir: pl.Path) -> pl.Path:
-    return data_dir / "app-chat.sock"
+    return data_dir / "chat.sock"
 
 
 @dataclass
@@ -138,7 +138,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 
 def _begin_shutdown(state: DaemonState, sig: signal.Signals) -> None:
-    """SIGTERM is what `app-chat daemon stop` sends, so it is the one exit the agent asked for;
+    """SIGTERM is what `chat daemon stop` sends, so it is the one exit the agent asked for;
     every other way out is news the agent needs."""
     state.asked_to_stop = sig == signal.SIGTERM
     state.shutdown.set()
@@ -197,11 +197,11 @@ async def _sweep_loop(state: DaemonState) -> None:
 def write_death_notification(notifications_dir: pl.Path) -> None:
     notifications_dir.mkdir(parents=True, exist_ok=True)
     notification = {
-        "source": "app-chat",
+        "source": "chat",
         "type": "daemon_died",
         "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
-    path = notifications_dir / f"{int(time.time() * 1e6)}-app-chat-daemon_died.json"
+    path = notifications_dir / f"{int(time.time() * 1e6)}-chat-daemon_died.json"
     path.write_text(json.dumps(notification))
 
 
@@ -517,4 +517,4 @@ def daemon_cmd(action: str) -> int:
 
 
 def _log(message: str) -> None:
-    print(f"[app-chat] {message}", file=sys.stderr, flush=True)
+    print(f"[chat] {message}", file=sys.stderr, flush=True)

@@ -42,7 +42,7 @@ _STREAM_FIXTURES: list[tp.Any] = [
 ]
 
 # The connect snapshot wraps current state under domain objects; it has no `ts` (not a streamed
-# event). Chat is not on the snapshot (the app-chat skill owns it); `notifications.pending` is the
+# event). Chat is not on the snapshot (the chat skill owns it); `notifications.pending` is the
 # on-disk id seed.
 _SNAPSHOT_FIXTURE: SnapshotEvent = SnapshotEvent(
     type="snapshot",

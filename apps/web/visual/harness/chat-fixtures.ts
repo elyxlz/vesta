@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import type { VestaEvent } from "@vesta/core";
 import type { RouteFixture } from "./http-fixtures";
 
-// The app-chat service as the web client reads it: a minted service key, the
+// The chat service as the web client reads it: a minted service key, the
 // newest history page, and the live socket. Chat state comes from history; the
 // socket only streams what the fixture pushes after it opens.
 export const SERVICE_KEY = {
@@ -23,12 +23,12 @@ export function chatRoutes(
 ): RouteFixture[] {
   return [
     {
-      path: `/agents/${agent}/services/app-chat/keys`,
+      path: `/agents/${agent}/services/chat/keys`,
       method: "POST",
       json: SERVICE_KEY,
     },
     {
-      path: `/agents/${agent}/app-chat/history`,
+      path: `/agents/${agent}/chat/history`,
       json: { events: history.events ?? [], cursor: history.cursor ?? null },
       hang: history.hang,
     },
@@ -40,7 +40,7 @@ export async function installChatSocket(
   agent: string,
   events: VestaEvent[],
 ): Promise<void> {
-  const pattern = new RegExp(`/agents/${agent}/app-chat/ws`);
+  const pattern = new RegExp(`/agents/${agent}/chat/ws`);
   await page.routeWebSocket(pattern, (ws) => {
     ws.onMessage(() => undefined);
     for (const event of events) ws.send(JSON.stringify(event));
@@ -149,7 +149,7 @@ export function attachmentRoutes(
 ): RouteFixture[] {
   return [
     {
-      path: `/agents/${agent}/app-chat/attachments`,
+      path: `/agents/${agent}/chat/attachments`,
       method: "POST",
       ...(options.failCreate
         ? { status: 400, json: { error: "invalid mime type" } }
@@ -158,13 +158,13 @@ export function attachmentRoutes(
           : { json: { id: ATTACHMENT_ID } }),
     },
     {
-      path: `/agents/${agent}/app-chat/attachments/${ATTACHMENT_ID}/data`,
+      path: `/agents/${agent}/chat/attachments/${ATTACHMENT_ID}/data`,
       method: "PUT",
       json: { ok: true, received: 4 },
       hang: options.stallData,
     },
     {
-      path: `/agents/${agent}/app-chat/attachments/${ATTACHMENT_ID}/complete`,
+      path: `/agents/${agent}/chat/attachments/${ATTACHMENT_ID}/complete`,
       method: "POST",
       json: {
         attachment: {
@@ -235,7 +235,7 @@ function serveRoute(
   id: string,
   fixture: Omit<RouteFixture, "path">,
 ): RouteFixture {
-  return { path: `/agents/${agent}/app-chat/attachments/${id}`, ...fixture };
+  return { path: `/agents/${agent}/chat/attachments/${id}`, ...fixture };
 }
 
 export function attachmentServeRoutes(agent: string): RouteFixture[] {

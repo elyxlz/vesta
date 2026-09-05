@@ -1,13 +1,13 @@
-"""Tests for `app-chat attachments list|rm`: the agent's disk-management verbs. Direct disk readers
+"""Tests for `chat attachments list|rm`: the agent's disk-management verbs. Direct disk readers
 (store db + attachments dir), no daemon socket, single-line JSON envelopes."""
 
 import argparse
 import json
 
 import pytest
-from app_chat_cli import attachments
-from app_chat_cli.commands import cmd_attachments_list, cmd_attachments_rm
-from app_chat_cli.store import Store, store_path
+from chat_cli import attachments
+from chat_cli.commands import cmd_attachments_list, cmd_attachments_rm
+from chat_cli.store import Store, store_path
 
 
 def _seed(tmp_path):

@@ -1,4 +1,4 @@
-import { appChatAttachmentPath, type ChatAttachment } from "@vesta/core";
+import { chatAttachmentPath, type ChatAttachment } from "@vesta/core";
 
 // Saving an attachment on mobile is a native download to the app cache followed by the system
 // share sheet, which is where "save to Files/Photos" lives on both platforms. The expo edges
@@ -30,7 +30,7 @@ export async function saveAttachment(
 ): Promise<void> {
   // The query rides authedUrl's params (the token joins them there); a `?` baked into the path
   // would produce a second `?` and an unauthenticated URL.
-  const path = appChatAttachmentPath(agent, attachment.id);
+  const path = chatAttachmentPath(agent, attachment.id);
   const url = await io.authedUrl(path, new URLSearchParams({ download: "1" }));
   let uri: string;
   try {

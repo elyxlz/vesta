@@ -1,7 +1,7 @@
-"""The app-chat skill's own durability: user messages and the agent's replies, the conversation the
-app shows. A private sqlite db (~/.app-chat/app-chat.db) the daemon owns, replacing core's events.db
-as the source of app-chat history + search. Ids are skill-assigned (AUTOINCREMENT) and passed through
-to the live echo verbatim, so a client cursor stays coherent across the live edge and paged history."""
+"""The chat skill's own durability: user messages and the agent's replies, the conversation the
+app shows. A private sqlite db (~/.chat/chat.db) the daemon owns, and the one source of chat
+history + search. Ids are skill-assigned (AUTOINCREMENT) and passed through to the live echo
+verbatim, so a client cursor stays coherent across the live edge and paged history."""
 
 import json
 import pathlib as pl
@@ -32,7 +32,7 @@ class StoredEvent(tp.TypedDict, total=False):
 
 def store_path(data_dir: pl.Path) -> pl.Path:
     """The store's db path under a data dir. The store owns its own filename."""
-    return data_dir / "app-chat.db"
+    return data_dir / "chat.db"
 
 
 # FTS5 external-content index over the conversation text, kept in sync by insert/delete triggers, so a

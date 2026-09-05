@@ -30,7 +30,7 @@ Suites:
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
   telegram       gofmt + go vet + go build + go test for the telegram skill CLI
   otp            gofmt + go vet + go build + go test for the otp skill CLI
-  app-chat       pytest for the app-chat skill CLI (its own standalone uv project)
+  chat           pytest for the chat skill CLI (its own standalone uv project)
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -73,9 +73,9 @@ check_agent() {
     (
       unset UV_PROJECT_ENVIRONMENT
       for tool in skills/*/cli core/skills/*/cli; do
-        # app-chat has its own dedicated suite (check_app_chat), run in the
+        # chat has its own dedicated suite (check_chat), run in the
         # communication-channels CI job alongside whatsapp/telegram.
-        [ "$tool" = "skills/app-chat/cli" ] && continue
+        [ "$tool" = "skills/chat/cli" ] && continue
         if [ -d "$tool/tests" ]; then
           uv run --project "$tool" pytest "$tool/tests" -q
         fi
@@ -293,9 +293,9 @@ check_otp() {
   )
 }
 
-check_app_chat() {
+check_chat() {
   (
-    cd agent/skills/app-chat/cli
+    cd agent/skills/chat/cli
     # Standalone uv project (own venv + lockfile), like every skill CLI.
     uv run --project . pytest tests -q
   )
@@ -376,7 +376,7 @@ for suite in "$@"; do
     whatsapp) check_whatsapp ;;
     telegram) check_telegram ;;
     otp) check_otp ;;
-    app-chat) check_app_chat ;;
+    chat) check_chat ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_guards && check_agent && check_vestad && check_web ;;

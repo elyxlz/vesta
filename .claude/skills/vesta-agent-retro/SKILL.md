@@ -92,7 +92,7 @@ transcript as a companion file so each claim is checkable.
   alone, every tool result is missing and you will not notice, the rows exist, they are
   just empty of output. Use the `.jsonl`.
 - **A pasted secret lands in three places.** A key the user typed into chat sits in the
-  `.jsonl`, `events.db`, AND the app-chat store; the agent scrubbing one does not clear the
+  `.jsonl`, `events.db`, AND the chat store; the agent scrubbing one does not clear the
   others. The extractor redacts on the way out, so the transcript is safe to share even
   when the raw stores are not.
 - **Shared host with live agents.** These are real users' agents. Read only; never write to

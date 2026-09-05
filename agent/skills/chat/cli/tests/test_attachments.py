@@ -5,7 +5,7 @@ functions under one root; the service and CLI layer routes on top of it."""
 import time
 
 import pytest
-from app_chat_cli.attachments import (
+from chat_cli.attachments import (
     MAX_ATTACHMENT_BYTES,
     OffsetMismatchError,
     SizeError,

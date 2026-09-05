@@ -10,7 +10,7 @@ interface Base {
 }
 type VariantParser = (frame: Frame, base: Base) => ChatMessage | null;
 
-// The app-chat service's events, as they arrive on the live chat socket and the history page.
+// The chat service's events, as they arrive on the live chat socket and the history page.
 // Like the /sync parser, this routes on `type` and checks the fields each variant keys on; a
 // frame it cannot classify is dropped, so a renamed daemon field fails loudly in tests rather
 // than reaching the view as `undefined`.
