@@ -33,6 +33,7 @@ FAKE_BROWSER_USE = f"""#!{sys.executable}
 import json, os, pathlib, sys, time
 pathlib.Path(os.environ["BH_TMP_DIR"], "exec.pid").write_text(str(os.getpid()))
 code = sys.stdin.read()
+pathlib.Path(os.environ["BH_TMP_DIR"], "code.txt").write_text(code)
 if "SLEEP" in code:
     time.sleep(30)
 if "FAIL" in code:

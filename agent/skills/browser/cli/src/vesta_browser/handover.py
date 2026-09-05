@@ -109,7 +109,9 @@ def _healthy(paths: Paths, handover: Handover) -> bool:
 
 
 async def _navigate(paths: Paths, session: sessions_mod.Session, runtime: EngineRuntime, url: str) -> list[str]:
-    outcome = await ENGINES[session.engine].exec_code(runtime, session, paths, f"new_tab({url!r})", NAVIGATE_TIMEOUT_SECS)
+    # Both engines open a new tab behind the visible one; activate= is what puts it in front of the user.
+    code = f"switch_tab(new_tab({url!r}), activate=True)"
+    outcome = await ENGINES[session.engine].exec_code(runtime, session, paths, code, NAVIGATE_TIMEOUT_SECS)
     return [] if outcome.exit_code == 0 else ["navigation_failed"]
 
 

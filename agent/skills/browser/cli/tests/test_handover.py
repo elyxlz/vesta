@@ -137,12 +137,14 @@ def test_handover_start_serves_the_page_and_hands_the_session_over(rig):
             status = await serve.request(rig.paths, _op("handover_status"))
             listing = await serve.request(rig.paths, _op("sessions", request_id="h3"))
             page = await asyncio.to_thread(_fetch, f"http://127.0.0.1:{rig.web_port}/handover.html")
-            return started, status, listing, page, rig.register_lines()
+            navigate = (rig.paths.sessions / "research/tmp/code.txt").read_text()
+            return started, status, listing, page, rig.register_lines(), navigate
         finally:
             await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
 
-    started, status, listing, page, registered = with_daemon(rig.paths, run)
+    started, status, listing, page, registered, navigate = with_daemon(rig.paths, run)
     assert started["ok"] is True, started
+    assert navigate == "switch_tab(new_tab('https://example.com/'), activate=True)"
     data = started["data"]
     assert data["state"] == "live" and data["engine"] == "chromium" and data["session"] == "research"
     assert data["user_url"] == f"{PUBLIC_URL}/agents/{AGENT}/browser/k/secret-browser-handover-{data['handover_id']}/handover.html"
