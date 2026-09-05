@@ -5,6 +5,7 @@ import { ChatContext, type ChatContextValue } from "@/chat/chat-context";
 import { useRoomSocket } from "@/chat/useRoomSocket";
 import { ControllerContext } from "@/controller/context";
 import { useRoster } from "@/session/RosterProvider";
+import { resolveRoom } from "./room-resolution";
 
 // One conversation off the node's room list, for every room that is not an agent's own: the room
 // screen instantiates it with the id it routed to.
@@ -16,12 +17,12 @@ export function RoomProvider({
   children: ReactNode;
 }) {
   const { rooms, agentsReady } = useRoster();
-  const room = rooms.find((candidate) => candidate.id === roomId);
+  // The held room list, so a controller epoch keeps this conversation on screen.
+  const resolution = resolveRoom(rooms, agentsReady, roomId);
 
-  // Before the snapshot lands the room list is unknown, not empty; only a loaded tree that does
-  // not carry this id means the conversation is gone (deleted elsewhere, or a stale deep link).
-  if (!room) return agentsReady ? <Redirect href="/" /> : null;
-  return <RoomChat room={room}>{children}</RoomChat>;
+  if (resolution.state === "unknown") return null;
+  if (resolution.state === "gone") return <Redirect href="/" />;
+  return <RoomChat room={resolution.room}>{children}</RoomChat>;
 }
 
 function RoomChat({ room, children }: { room: Room; children: ReactNode }) {

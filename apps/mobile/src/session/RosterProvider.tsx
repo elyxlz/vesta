@@ -50,7 +50,7 @@ const RosterContext = createContext<RosterValue | null>(null);
 
 // The roster consumes five gateway fields; selecting them with their own equality keeps every
 // unrelated gateway delta (e.g. an operation phase tick) from re-identifying the context value.
-type GatewaySummary = Omit<RosterSnapshot, "agents">;
+type GatewaySummary = Omit<RosterSnapshot, "agents" | "rooms">;
 
 function selectGatewaySummary(tree: Tree | null): GatewaySummary | null {
   const gateway = tree?.gateway;
@@ -115,9 +115,10 @@ function useRosterHold(): RosterHoldStore {
 function servedRoster(
   hold: RosterHold,
   live: { reachable: boolean },
-): Omit<RosterValue, "devices" | "rooms"> {
+): Omit<RosterValue, "devices"> {
   return {
     agents: hold.agents,
+    rooms: hold.rooms,
     agentsReady: hold.agentsReady,
     reachable: live.reachable,
     gatewayVersion: hold.gatewayVersion,
@@ -138,7 +139,7 @@ function useServedRoster(
   connectionKey: string,
   fresh: RosterSnapshot | null,
   reachable: boolean,
-): Omit<RosterValue, "devices" | "rooms"> {
+): Omit<RosterValue, "devices"> {
   const hold = useMemo(
     () => reconcileRosterHold(store.read(), connectionKey, fresh),
     [store, connectionKey, fresh],
@@ -168,8 +169,8 @@ export function RosterProvider({ children }: { children: ReactNode }) {
   const rooms = useReplica(replica, selectRooms, roomsEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
   const fresh = useMemo<RosterSnapshot | null>(
-    () => (gateway ? { agents, ...gateway } : null),
-    [agents, gateway],
+    () => (gateway ? { agents, rooms, ...gateway } : null),
+    [agents, rooms, gateway],
   );
   const value = useServedRoster(
     store,
@@ -177,10 +178,7 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     fresh,
     syncState === "open",
   );
-  const contextValue = useMemo(
-    () => ({ ...value, devices, rooms }),
-    [value, devices, rooms],
-  );
+  const contextValue = useMemo(() => ({ ...value, devices }), [value, devices]);
 
   return (
     <RosterContext.Provider value={contextValue}>

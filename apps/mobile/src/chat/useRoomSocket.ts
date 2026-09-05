@@ -45,8 +45,8 @@ function createSessionSlot() {
 // session's token-stamped socket URL, expo-crypto ids, the pacing preference) and the
 // stale-while-reconnecting hold, which seeds the session across a controller epoch so backgrounding
 // never blanks the chat and receives every commit so a popped screen keeps its tail. It also
-// registers the room as the visible conversation, which is what defers a foreground notification
-// for the chat already on screen.
+// registers this socket and its health, which is what defers the Expo-push fallback for a chat
+// already showing the message.
 export function useRoomSocket(
   roomId: string,
   // Whose pacing preference this conversation follows: a direct room reads its own agent's choice,

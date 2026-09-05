@@ -1,5 +1,8 @@
 import { pushRoom } from "./notification-routing";
 
+// The chat socket on screen and whether it is healthy. Read only by the Expo-push fallback below:
+// what this client reports it is reading belongs to the controller, and the `user_notification`
+// delta path asks it directly.
 let visibleRoomSocket: {
   gateway: string;
   roomId: string;
@@ -16,12 +19,6 @@ export function setVisibleRoomSocket(
   return () => {
     if (visibleRoomSocket?.roomId === roomId) visibleRoomSocket = null;
   };
-}
-
-// The conversation on screen, or null. UserNotifications defers a foreground user notification for
-// this room (its chat already shows the message).
-export function activeRoomId(): string | null {
-  return visibleRoomSocket?.roomId ?? null;
 }
 
 export function setSyncConnected(connected: boolean): void {

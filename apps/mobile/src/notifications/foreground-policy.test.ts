@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  activeRoomId,
   resetForegroundNotificationPolicyForTests,
   setSyncConnected,
   setVisibleRoomSocket,
@@ -25,7 +24,6 @@ describe("foreground notification presentation", () => {
 
   it("hides a duplicate only for the visible room with a healthy socket", () => {
     setVisibleRoomSocket("https://first.vesta.run", "dm:alex", true);
-    expect(activeRoomId()).toBe("dm:alex");
     expect(
       shouldPresentForegroundNotification({
         agent: "alex",
@@ -79,7 +77,6 @@ describe("foreground notification presentation", () => {
       true,
     );
     clear();
-    expect(activeRoomId()).toBeNull();
     expect(shouldPresentForegroundNotification({ agent: "alex" })).toBe(true);
   });
 });

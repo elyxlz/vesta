@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UserNotificationDelta } from "@vesta/core";
+import { setVisibleRoomSocket } from "./foreground-policy";
 import { shouldPresentUserNotification } from "./user-notification-presentation";
 
 function chatUserNotification(
@@ -115,4 +116,27 @@ describe("shouldPresentUserNotification", () => {
       expect(shouldPresentUserNotification(delta, activeRoom)).toBe(expected);
     });
   }
+
+  // The viewed room is what this client reported to the node, not the last chat socket that
+  // mounted: a second socket registering over the visible one cannot move the deferral.
+  it("defers by the viewed room whatever socket mounted last", () => {
+    const clear = setVisibleRoomSocket(
+      "https://first.vesta.run",
+      "grp-trip",
+      true,
+    );
+    expect(
+      shouldPresentUserNotification(
+        chatUserNotification("alex", "dm:alex"),
+        "dm:alex",
+      ),
+    ).toBe(false);
+    expect(
+      shouldPresentUserNotification(
+        chatUserNotification("alex", "grp-trip"),
+        "dm:alex",
+      ),
+    ).toBe(true);
+    clear();
+  });
 });
