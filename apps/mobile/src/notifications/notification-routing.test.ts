@@ -37,7 +37,7 @@ describe("notification navigation", () => {
     { name: "a direct chat push", route: "/agent/alex/chat", room: "dm:alex" },
     { name: "an agent news push", route: "/agent/alex", room: "dm:alex" },
     { name: "a group push", route: "/chat/grp-trip", room: "grp-trip" },
-    { name: "an escaped room id", route: "/chat/grp%3Atrip", room: "grp:trip" },
+    { name: "a direct room push", route: "/chat/dm:alex", room: "dm:alex" },
     { name: "a gateway-wide push", route: "/", room: "dm:alex" },
     { name: "a push with no route at all", route: undefined, room: "dm:alex" },
   ])("reads $name as $room", ({ route, room }) => {

@@ -160,12 +160,13 @@ tags:
     timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
-- takeScreenshot: home-chats-list
+- takeScreenshot: home-chats-section
 - runScript:
     file: capture-screenshot.js
     env:
-      SCREENSHOT: home-chats-list.png
-- tapOn: "New group"
+      SCREENSHOT: home-chats-section.png
+- tapOn:
+    text: "New group"
 - extendedWaitUntil:
     visible: ".*every agent you pick reads.*"
     timeout: 10000

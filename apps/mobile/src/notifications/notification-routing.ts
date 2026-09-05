@@ -9,15 +9,16 @@ export interface PendingNotification {
   room: string;
 }
 
-// Where a push belongs, read off the route the gateway stamped: `/chat/<id>` names a room, an
-// `/agent/<name>` route (a reply in that agent's direct chat, or news about the agent itself) that
-// agent's own conversation. A push from a gateway that stamped no route at all answers the same
-// direct room, which is where it used to land.
+// Where a push belongs, read off the route the gateway stamped, which spells the room id exactly
+// as the node holds it: `/chat/<id>` names a room, an `/agent/<name>` route (a reply in that
+// agent's direct chat, or news about the agent itself) that agent's own conversation. A push from
+// a gateway that stamped no route at all answers the same direct room, which is where it used to
+// land.
 export function pushRoom(route: unknown, agent: string): string {
   if (typeof route === "string") {
     const segments = route.split("/").filter((segment) => segment.length > 0);
     const [head, id] = segments;
-    if (head === "chat" && id !== undefined) return decodeURIComponent(id);
+    if (head === "chat" && id !== undefined) return id;
   }
   return directRoomId(agent);
 }

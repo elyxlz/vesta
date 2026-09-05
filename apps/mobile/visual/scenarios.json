@@ -781,9 +781,9 @@
       "group": "Chat"
     },
     {
-      "id": "home-chats-list",
-      "title": "Home, chats list",
-      "description": "Every conversation under the carousel, with the New group row.",
+      "id": "home-chats-section",
+      "title": "Home, chats section",
+      "description": "Every conversation under the carousel, with New group in the heading.",
       "group": "Home"
     },
     {

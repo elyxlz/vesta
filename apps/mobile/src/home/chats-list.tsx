@@ -75,16 +75,11 @@ export function ChatsList() {
 
   return (
     <View style={styles.section}>
-      <Text style={[styles.heading, { color: colors.tertiaryText }]}>
-        Chats
-      </Text>
-      <ScrollView
-        contentContainerStyle={styles.rows}
-        showsVerticalScrollIndicator={false}
-      >
-        {rooms.map((room) => (
-          <ChatRow key={room.id} room={room} />
-        ))}
+      {/* In the heading, not the list: a long room list must never scroll the affordance away. */}
+      <View style={styles.headingRow}>
+        <Text style={[styles.heading, { color: colors.tertiaryText }]}>
+          Chats
+        </Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="New group"
@@ -92,19 +87,23 @@ export function ChatsList() {
             router.push("/new-room");
           }}
           style={({ pressed }) => [
-            styles.row,
-            { backgroundColor: colors.card, opacity: pressed ? 0.6 : 1 },
+            styles.newGroup,
+            { opacity: pressed ? 0.6 : 1 },
           ]}
         >
-          <View style={[styles.rowIcon, { backgroundColor: colors.input }]}>
-            <Ionicons name="add" size={19} color={colors.accent} />
-          </View>
-          <View style={styles.rowText}>
-            <Text style={[styles.rowLabel, { color: colors.accent }]}>
-              New group
-            </Text>
-          </View>
+          <Ionicons name="add" size={15} color={colors.accent} />
+          <Text style={[styles.newGroupLabel, { color: colors.accent }]}>
+            New group
+          </Text>
         </Pressable>
+      </View>
+      <ScrollView
+        contentContainerStyle={styles.rows}
+        showsVerticalScrollIndicator={false}
+      >
+        {rooms.map((room) => (
+          <ChatRow key={room.id} room={room} />
+        ))}
       </ScrollView>
     </View>
   );
@@ -118,7 +117,15 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
   },
-  heading: { fontSize: 13, fontWeight: "600", paddingHorizontal: 4 },
+  headingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+  },
+  heading: { fontSize: 13, fontWeight: "600" },
+  newGroup: { flexDirection: "row", alignItems: "center", gap: 3 },
+  newGroupLabel: { fontSize: 13, fontWeight: "600" },
   rows: { gap: 6, paddingBottom: 4 },
   row: {
     flexDirection: "row",
@@ -139,5 +146,6 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, minWidth: 0, gap: 2 },
   rowLabel: { fontSize: 15, fontWeight: "600" },
   rowDetail: { fontSize: 12 },
-  rowTime: { fontSize: 12 },
+  // Never squeezed by a long room name: the label truncates instead.
+  rowTime: { fontSize: 12, flexShrink: 0 },
 });

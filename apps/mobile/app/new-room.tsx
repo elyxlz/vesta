@@ -10,6 +10,7 @@ import { Field, FormSection, SwitchRow } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { useToast } from "@/components/native-toast";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { newRoomOpens, ROOM_SETTLE_TIMEOUT_MS } from "@/room/new-room-model";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -27,17 +28,27 @@ export default function NewRoomScreen() {
   const [members, setMembers] = useState<string[]>([]);
   const [opening, setOpening] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const canCreate = name.trim().length > 0 && members.length > 0 && !creating;
+  const [settled, setSettled] = useState(false);
+  const opens = newRoomOpens(opening, rooms, settled);
+  // The room opened, so the screen stops waiting whatever the tree carries.
+  const busy = creating && !opens;
+  const canCreate = name.trim().length > 0 && members.length > 0 && !busy;
   const navigated = useRef(false);
+
+  // A silent socket must not trap the screen on its spinner: the settle window ends the wait.
+  useEffect(() => {
+    if (opening === null) return;
+    const timer = setTimeout(() => setSettled(true), ROOM_SETTLE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [opening]);
 
   // The room is on the tree the moment /sync catches up; only then does the room screen resolve
   // it, so the wait is what keeps a fresh group from bouncing straight back Home.
   useEffect(() => {
-    if (opening === null || navigated.current) return;
-    if (!rooms.some((room) => room.id === opening)) return;
+    if (opening === null || !opens || navigated.current) return;
     navigated.current = true;
     router.replace({ pathname: "/chat/[roomId]", params: { roomId: opening } });
-  }, [opening, rooms, router]);
+  }, [opening, opens, router]);
 
   const toggle = (agent: string) => {
     setMembers((current) =>
@@ -91,7 +102,7 @@ export default function NewRoomScreen() {
             />
           ))}
         </FormSection>
-        <Button pill disabled={!canCreate} loading={creating} onPress={create}>
+        <Button pill disabled={!canCreate} loading={busy} onPress={create}>
           Create
         </Button>
       </Screen>

@@ -19,6 +19,7 @@ import { fetchVoiceStatus, prepareSpeech } from "@vesta/core";
 import { useSession } from "@/session/SessionProvider";
 import { setHandsFreeSessionActive } from "@/voice/hands-free-session";
 import { setRecordingHapticsEnabled } from "@/voice/recording-haptics";
+import { voiceTargetName } from "@/voice/voice-target";
 import {
   startVoiceForegroundService,
   stopVoiceForegroundService,
@@ -79,7 +80,10 @@ export function useLiveVoice({
   const [recordingMode, setRecordingMode] = useState<VoiceMode | null>(null);
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [speechConfigured, setSpeechConfigured] = useState(false);
+  // No target, no read and no speech: a room with several members has no agent voice to ask about.
+  const target = voiceTargetName(name);
+  const ttsEnabled = target !== null && speechConfigured;
 
   // Live-updated refs, so the session (created once per agent) always reads the current
   // callbacks and settings.
@@ -123,18 +127,20 @@ export function useLiveVoice({
   });
 
   useEffect(() => {
+    if (target === null) return;
     let live = true;
-    void fetchVoiceStatus(api, name, "tts")
+    void fetchVoiceStatus(api, target, "tts")
       .then((status) => {
-        if (live) setTtsEnabled(status.configured && status.enabled !== false);
+        if (live)
+          setSpeechConfigured(status.configured && status.enabled !== false);
       })
       .catch(() => {
-        if (live) setTtsEnabled(false);
+        if (live) setSpeechConfigured(false);
       });
     return () => {
       live = false;
     };
-  }, [api, name]);
+  }, [api, target]);
 
   useEffect(() => {
     if (!enabled) return;

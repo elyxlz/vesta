@@ -181,6 +181,11 @@ export default function ChatPage() {
   // so its composer stays live whatever the members are doing.
   const canSend =
     socket.connected && (agent === null || agent.status === "alive");
+  // A direct room's composer waits on its own agent. A peer or group message has no agent to wait
+  // for: the node holds it for the members, so only the connection back to the node is missing.
+  const closedPlaceholder = direct
+    ? "Waiting for agent…"
+    : "Reconnecting, your message will queue on the node…";
   const canSendRef = useRef(canSend);
   useEffect(() => {
     canSendRef.current = canSend;
@@ -415,7 +420,7 @@ export default function ChatPage() {
                         recordingMode === "dictation"
                           ? "Listening…"
                           : !canSend
-                            ? "Waiting for agent…"
+                            ? closedPlaceholder
                             : hasChips && input.length === 0
                               ? "Add a caption…"
                               : `Message ${label}`
