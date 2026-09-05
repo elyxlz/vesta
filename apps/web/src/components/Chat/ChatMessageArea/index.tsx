@@ -8,7 +8,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import type { ChatMessage } from "@vesta/core";
+import { senderOf, type ChatMessage } from "@vesta/core";
 import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
@@ -34,7 +34,11 @@ interface ChatMessageAreaProps {
   chatMessages: ChatMessage[];
   connected: boolean;
   historyLoaded: boolean;
-  agentName: string;
+  // What this conversation is called: the agent in a direct room, the members or the group name
+  // otherwise. It titles the empty state.
+  label: string;
+  // True when the room holds several agents, which is when a bubble names who wrote it.
+  showSenders: boolean;
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
@@ -154,13 +158,13 @@ function ChatEmptyState({
   connected,
   historyLoaded,
   notAuthenticated,
-  agentName,
+  label,
   bottomInset,
 }: {
   connected: boolean;
   historyLoaded: boolean;
   notAuthenticated: boolean;
-  agentName: string;
+  label: string;
   bottomInset: number;
 }) {
   if (connected && !historyLoaded) {
@@ -178,8 +182,8 @@ function ChatEmptyState({
         {!connected
           ? "connecting..."
           : notAuthenticated
-            ? `${agentName} needs to sign in`
-            : `${agentName} is setting things up`}
+            ? `${label} needs to sign in`
+            : `${label} is setting things up`}
       </span>
     </div>
   );
@@ -191,7 +195,7 @@ function MessageRow({
   isMobile,
   isNewAppend,
   onRetry,
-  agentName,
+  showSenders,
   onOpenAttachment,
 }: {
   row: DecoratedRow;
@@ -199,17 +203,21 @@ function MessageRow({
   isMobile: boolean;
   isNewAppend: boolean;
   onRetry?: RetryHandler;
-  agentName: string;
+  showSenders: boolean;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
+  // The user is the one member every room shares, so their own bubbles never carry a name.
+  const sender = senderOf(row.event);
   const bubble = (
     <ChatBubble
       event={row.event}
       className={row.gap}
       isMobile={isMobile}
       hasTail={row.isGroupEnd}
+      sender={
+        showSenders && row.isGroupStart && sender !== "user" ? sender : null
+      }
       onRetry={onRetry}
-      agentName={agentName}
       onOpenAttachment={onOpenAttachment}
     />
   );
@@ -275,7 +283,8 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   chatMessages,
   connected,
   historyLoaded,
-  agentName,
+  label,
+  showSenders,
   notAuthenticated,
   isTyping,
   isMobile,
@@ -359,7 +368,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
           connected={connected}
           historyLoaded={historyLoaded}
           notAuthenticated={notAuthenticated}
-          agentName={agentName}
+          label={label}
           bottomInset={bottomInset}
         />
       )}
@@ -427,7 +436,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
                 isMobile={isMobile}
                 isNewAppend={prevLastIndex >= 0 && index > prevLastIndex}
                 onRetry={onRetry}
-                agentName={agentName}
+                showSenders={showSenders}
                 onOpenAttachment={onOpenAttachment}
               />
             ))}

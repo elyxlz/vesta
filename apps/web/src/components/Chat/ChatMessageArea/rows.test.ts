@@ -6,6 +6,10 @@ function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
 }
 
+function chatMsg(sender: string, ts: string): ChatMessage {
+  return { type: "chat", text: "hey", ts, sender };
+}
+
 describe("buildDecorated", () => {
   it("shows a day stamp on the first dated message and on day boundaries", () => {
     // Local-time (no Z) so the day boundary is deterministic regardless of TZ.
@@ -62,6 +66,30 @@ describe("buildDecorated", () => {
       userMsg("2026-06-08T10:03:00"),
     ]);
     expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
+  });
+
+  // A room with several agents alternates senders on one side, so grouping breaks on the name as
+  // well as on the side: each agent's run opens and closes its own bubble group.
+  it("breaks a group when a second agent speaks in the same room", () => {
+    const rows = buildDecorated([
+      chatMsg("ada", "2026-06-08T10:00:00"),
+      chatMsg("ada", "2026-06-08T10:01:00"),
+      chatMsg("nova", "2026-06-08T10:02:00"),
+      chatMsg("ada", "2026-06-08T10:03:00"),
+    ]);
+    expect(rows.map((r) => r.isGroupStart)).toEqual([true, false, true, true]);
+    expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
+    expect(rows.map((r) => r.gap)).toEqual(["mt-2", "mt-1.5", "mt-5", "mt-5"]);
+  });
+
+  it("keeps one agent's run in a single group", () => {
+    const rows = buildDecorated([
+      chatMsg("ada", "2026-06-08T10:00:00"),
+      chatMsg("ada", "2026-06-08T10:01:00"),
+      chatMsg("ada", "2026-06-08T10:02:00"),
+    ]);
+    expect(rows.map((r) => r.isGroupStart)).toEqual([true, false, false]);
+    expect(rows.map((r) => r.isGroupEnd)).toEqual([false, false, true]);
   });
 });
 

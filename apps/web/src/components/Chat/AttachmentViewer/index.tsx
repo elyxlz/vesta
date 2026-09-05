@@ -11,8 +11,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { Download, X } from "lucide-react";
 import {
   attachmentKind,
-  chatAttachmentPath,
   formatBytes,
+  roomAttachmentPath,
   type ChatAttachment,
 } from "@vesta/core";
 import { Button } from "@/components/ui/button";
@@ -173,17 +173,15 @@ function ZoomableImage({
 }
 
 export function AttachmentViewer({
-  agent,
   request,
   onClose,
 }: {
-  agent: string;
   request: OpenViewerRequest | null;
   onClose: () => void;
 }) {
   const attachment = request?.attachment ?? null;
   const src = useAuthedSrc(
-    attachment ? chatAttachmentPath(agent, attachment.id) : null,
+    attachment ? roomAttachmentPath(attachment.id) : null,
   );
   const download = useDownload(attachment?.id ?? "");
   const startDownload = useDownloadsStore((state) => state.start);
@@ -232,7 +230,7 @@ export function AttachmentViewer({
                     aria-label={`download ${attachment.name}`}
                     disabled={download?.phase === "fetching"}
                     onClick={() => {
-                      startDownload(agent, attachment);
+                      startDownload(attachment);
                     }}
                     className="size-8 rounded-full"
                   >

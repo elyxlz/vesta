@@ -33,11 +33,11 @@ export interface Controller {
   getSyncState: () => SyncState;
   subscribeSyncState: (listener: () => void) => () => void;
   reportPresence: (focused: boolean) => void;
-  reportViewing: (agent: string | null) => void;
+  reportViewing: (room: string | null) => void;
   reportDeviceContext: (context: DeviceContext) => void;
-  // What this client last reported about itself: whether its window is focused, and the agent
-  // whose page is open (null on the roster). One owner, so every consumer reads the same fact the
-  // gateway was told; the socket masks viewing to null on the wire while unfocused.
+  // What this client last reported about itself: whether its window is focused, and the room whose
+  // conversation is open (null off any conversation). One owner, so every consumer reads the same
+  // fact the gateway was told; the socket masks viewing to null on the wire while unfocused.
   getFocused: () => boolean;
   subscribeFocused: (listener: () => void) => () => void;
   getViewing: () => string | null;
@@ -136,9 +136,9 @@ export function createController(deps: ControllerDeps): Controller {
       focused.set(next);
       socket.reportPresence(next);
     },
-    reportViewing: (agent) => {
-      viewing.set(agent);
-      socket.reportViewing(agent);
+    reportViewing: (room) => {
+      viewing.set(room);
+      socket.reportViewing(room);
     },
     reportDeviceContext: (context) => {
       socket.reportDeviceContext(context);

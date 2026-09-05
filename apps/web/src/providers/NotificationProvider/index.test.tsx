@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import type { Controller, NotificationEvent, Tree } from "@vesta/core";
+import type { Controller, NotificationEvent, Room, Tree } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider/context";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
@@ -48,8 +48,29 @@ class FakeNotification {
 
 const ASKED_KEY = "vesta-notifications-asked";
 
+// Both conversations the suite needs: ada's own direct room, and a group the reply can land in.
+const ROOMS: Room[] = [
+  {
+    id: "dm:ada",
+    name: null,
+    agents: ["ada"],
+    createdAt: 1,
+    lastMessageAt: null,
+  },
+  {
+    id: "grp-1",
+    name: "trip",
+    agents: ["ada", "nova"],
+    createdAt: 1,
+    lastMessageAt: null,
+  },
+];
+
 function tree(pending: NotificationEvent[] = []): Tree {
-  return fakeTree({ agents: { ada: fakeAgentNode({}, pending) } });
+  return fakeTree({
+    agents: { ada: fakeAgentNode({}, pending) },
+    rooms: ROOMS,
+  });
 }
 
 function toasts(): { title: string; body?: string }[] {
@@ -59,13 +80,20 @@ function toasts(): { title: string; body?: string }[] {
 function mount(
   controller: Controller,
   child: ReactNode = null,
-  onOpenAgent: (agent: string) => void = () => undefined,
+  handlers: {
+    onOpenAgent?: (agent: string) => void;
+    onOpenRoom?: (roomId: string, directAgent: string | null) => void;
+  } = {},
 ) {
   return render(
     createElement(
       ControllerContext.Provider,
       { value: controller },
-      createElement(NotificationProvider, { onOpenAgent, children: child }),
+      createElement(NotificationProvider, {
+        onOpenAgent: handlers.onOpenAgent ?? (() => undefined),
+        onOpenRoom: handlers.onOpenRoom ?? (() => undefined),
+        children: child,
+      }),
     ),
   );
 }
@@ -78,7 +106,7 @@ async function settle() {
   });
 }
 
-// Focus and the viewed agent are facts the controller holds (PresenceReporter writes them in the
+// Focus and the viewed room are facts the controller holds (PresenceReporter writes them in the
 // app); the provider reads them at call time, so a test reports them straight to the controller.
 function setWindowFocus(controller: Controller, focused: boolean) {
   act(() => {
@@ -105,7 +133,12 @@ function pendingNotification(id: number): NotificationEvent {
 
 function userNotification(
   kind: string,
-  fields: { agent?: string; title?: string; body?: string } = {},
+  fields: {
+    agent?: string;
+    title?: string;
+    body?: string;
+    room?: string;
+  } = {},
 ) {
   return {
     type: "user_notification" as const,
@@ -115,6 +148,7 @@ function userNotification(
     kind,
     title: fields.title ?? "ada",
     body: fields.body ?? "hi",
+    room: fields.room,
   };
 }
 
@@ -141,16 +175,19 @@ interface ToastCase {
   kind: string;
   focused: boolean;
   anyFocused?: boolean;
-  chatting?: string;
+  // The room this client reports as open, and the room the reply landed in.
+  viewing?: string;
+  room?: string;
   agent?: string;
   title: string;
   body: string;
   expected: { title: string; body?: string }[];
 }
 
-// The one rule this suite pins: which kinds surface an OS notification, and how the client's own focus
-// (this window, or any client via anyFocused) and an in-view chat suppress it. `rate_limited` is the
-// legacy alias for a needs-user nudge and toasts on the same terms as needs_user.
+// The one rule this suite pins: which kinds surface an OS notification, and how the client's own
+// focus (this window, or any client via anyFocused) and the open conversation suppress it. A reply
+// is suppressed exactly when its room is the room this client reports as viewing. `rate_limited` is
+// the legacy alias for a needs-user nudge and toasts on the same terms as needs_user.
 const toastCases: ToastCase[] = [
   {
     name: "toasts a background chat alert with the server preview when unfocused",
@@ -161,12 +198,33 @@ const toastCases: ToastCase[] = [
     expected: [{ title: "ada", body: "pong" }],
   },
   {
-    name: "defers the actively-chatted agent's chat alert to the chat surface",
+    name: "defers the open room's chat alert to the chat surface",
     kind: "message",
     focused: false,
-    chatting: "ada",
+    viewing: "dm:ada",
+    room: "dm:ada",
     title: "ada",
     body: "hi",
+    expected: [],
+  },
+  {
+    name: "toasts a group reply while a different conversation is open",
+    kind: "message",
+    focused: false,
+    viewing: "dm:ada",
+    room: "grp-1",
+    title: "nova",
+    body: "packed",
+    expected: [{ title: "nova", body: "packed" }],
+  },
+  {
+    name: "defers a group reply to the group the user is reading",
+    kind: "message",
+    focused: false,
+    viewing: "grp-1",
+    room: "grp-1",
+    title: "nova",
+    body: "packed",
     expected: [],
   },
   {
@@ -247,7 +305,7 @@ describe("NotificationProvider", () => {
     });
     mount(controller);
     await settle();
-    controller.reportViewing(row.chatting ?? null);
+    controller.reportViewing(row.viewing ?? null);
     setWindowFocus(controller, row.focused);
 
     act(() => {
@@ -310,15 +368,19 @@ describe("NotificationProvider", () => {
     expect(localStorage.getItem(ASKED_KEY)).toBe(row.marked);
   });
 
-  // A toast is the one way an OS notification reaches its agent: tapping it opens that agent's page.
-  it("opens the agent when its toast is clicked", async () => {
-    const onOpenAgent = vi.fn();
+  // A toast is the one way an OS notification reaches its conversation: tapping it opens the room,
+  // resolved to the agent behind a direct room so the click lands on that agent's own page.
+  it.each([
+    { name: "direct room", room: "dm:ada", opens: ["dm:ada", "ada"] },
+    { name: "group room", room: "grp-1", opens: ["grp-1", null] },
+  ])("opens the $name when its toast is clicked", async (row) => {
+    const onOpenRoom = vi.fn();
     const { controller, emit } = fakeController(tree());
-    mount(controller, null, onOpenAgent);
+    mount(controller, null, { onOpenRoom });
     await settle();
     setWindowFocus(controller, false);
     act(() => {
-      emit(userNotification("message", { agent: "ada", body: "pong" }));
+      emit(userNotification("message", { body: "pong", room: row.room }));
     });
 
     act(() => {
@@ -326,7 +388,7 @@ describe("NotificationProvider", () => {
     });
 
     await waitFor(() => {
-      expect(onOpenAgent).toHaveBeenCalledWith("ada");
+      expect(onOpenRoom).toHaveBeenCalledWith(...row.opens);
     });
   });
 

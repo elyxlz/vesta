@@ -5,25 +5,18 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type {
-  ChatAttachment,
-  ChatSession,
-  InputMethod,
-  Tree,
-} from "@vesta/core";
-import { chatSocketPath, createChatSession } from "@vesta/core";
-import { useChatSession, useReplica, useSyncState } from "@vesta/core/react";
+import type { ChatAttachment, ChatSession, InputMethod } from "@vesta/core";
+import { createChatSession, roomsSocketPath } from "@vesta/core";
+import { useChatSession, useSyncState } from "@vesta/core/react";
 import { useController } from "@/providers/ControllerProvider/context";
 import { naturalPacingFor } from "@/stores/use-preferences";
 import { useVoice } from "@/stores/use-voice";
 
-function idsEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, i) => value === b[i]);
-}
-
-interface UseAgentSocketOptions {
-  name: string | null;
-  active: boolean;
+interface UseRoomSocketOptions {
+  roomId: string;
+  // The pacing preference is per agent, so a direct room reads its own agent's choice; a room
+  // with several members paces naturally.
+  pacingAgent: string | null;
   onAssistantMessage?: (text: string) => void;
   onPrefetch?: (text: string) => void;
 }
@@ -49,12 +42,12 @@ function createSessionSlot() {
 // The web adapter over core's chat session: it injects the platform ports (the session's
 // token-stamped socket URL, the browser id maker, the pacing preference joined to the voice mode)
 // and subscribes. The session owns the socket, the seed, the pacing queue, and the send path.
-export function useAgentSocketState({
-  name,
-  active,
+export function useRoomSocketState({
+  roomId,
+  pacingAgent,
   onAssistantMessage,
   onPrefetch,
-}: UseAgentSocketOptions) {
+}: UseRoomSocketOptions) {
   const controller = useController();
   const onReply = useEffectEvent((text: string) => onAssistantMessage?.(text));
   const prefetch = useEffectEvent((text: string) => onPrefetch?.(text));
@@ -62,17 +55,19 @@ export function useAgentSocketState({
   const session = useSyncExternalStore(slot.subscribe, slot.get);
 
   useEffect(() => {
-    if (!active || !name) return;
-    const agent = name;
     const created = createChatSession(
       {
         http: controller.http,
-        agent,
-        buildUrl: () => controller.session.websocketUrl(chatSocketPath(agent)),
+        roomId,
+        buildUrl: () =>
+          controller.session.websocketUrl(
+            roomsSocketPath(),
+            new URLSearchParams({ room: roomId }),
+          ),
         makeId: () => crypto.randomUUID(),
         // A voice conversation is duplex: the reply is spoken the moment it lands, not typed out.
         naturalPacing: () =>
-          naturalPacingFor(agent) &&
+          (pacingAgent === null || naturalPacingFor(pacingAgent)) &&
           useVoice.getState().recordingMode !== "conversation",
       },
       { onReply, onPrefetch: prefetch },
@@ -82,25 +77,10 @@ export function useAgentSocketState({
       created.close();
       slot.set(null);
     };
-  }, [active, name, controller, slot]);
+  }, [roomId, pacingAgent, controller, slot]);
 
   const state = useChatSession(session);
   const connected = useSyncState(controller) === "open";
-
-  const pendingSelector = useCallback(
-    (tree: Tree | null): string[] =>
-      name
-        ? (tree?.agents[name]?.notifications.pending ?? []).flatMap((n) =>
-            n.notif_id ? [n.notif_id] : [],
-          )
-        : [],
-    [name],
-  );
-  const pendingNotifications = useReplica(
-    controller.replica,
-    pendingSelector,
-    idsEqual,
-  );
 
   const send = useCallback(
     (
@@ -145,7 +125,6 @@ export function useAgentSocketState({
     isTyping: state.typing,
     connected,
     historyLoaded: state.chat.historyLoaded,
-    pendingNotifications,
     hasMore: state.chat.cursor !== null,
     loadingMore: state.loadingMore,
     loadMore,

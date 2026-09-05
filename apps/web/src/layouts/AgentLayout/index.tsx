@@ -4,6 +4,7 @@ import { AgentIslandModals } from "@/components/AgentIslandModals";
 import { AgentNavbar } from "@/components/Navbar/AgentNavbar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAgentVisualStatus } from "@vesta/core/react";
+import { directRoomId } from "@vesta/core";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useSwipeNavigation } from "./use-swipe-navigation";
 import { agentSubpage } from "@/lib/agent-subpage";
@@ -18,7 +19,8 @@ import { Console } from "@/components/Console";
 import { AgentSettings } from "@/components/AgentSettings";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { AgentLogStreamProvider } from "@/providers/AgentLogStreamProvider";
-import { AgentSocketProvider } from "@/providers/AgentSocketProvider";
+import { RoomProvider } from "@/providers/RoomProvider";
+import { RoomSocketProvider } from "@/providers/RoomSocketProvider";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { VoiceStoreEffects } from "@/providers/VoiceProvider";
@@ -57,7 +59,9 @@ export function AgentLayout() {
 
   return (
     <SelectedAgentProvider agent={agent}>
-      <AgentLayoutInner />
+      <RoomProvider roomId={directRoomId(agent.name)}>
+        <AgentLayoutInner />
+      </RoomProvider>
     </SelectedAgentProvider>
   );
 }
@@ -96,7 +100,7 @@ function AgentLayoutInner() {
   // skips painting, so the hidden panel costs only its JS.
   return (
     <VoiceStoreEffects>
-      <AgentSocketProvider>
+      <RoomSocketProvider>
         <AgentNavbar
           chatCollapsed={chatCollapsed}
           setChatCollapsed={setChatCollapsed}
@@ -137,7 +141,7 @@ function AgentLayoutInner() {
           </div>
         </AgentLogStreamProvider>
         <AgentIslandModals />
-      </AgentSocketProvider>
+      </RoomSocketProvider>
     </VoiceStoreEffects>
   );
 }

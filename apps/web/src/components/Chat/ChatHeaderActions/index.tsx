@@ -12,7 +12,9 @@ interface ChatHeaderActionsProps {
   // Recede in perspective with the chat while a conversation runs.
   receded?: boolean;
   onCollapse?: () => void;
-  agentName: string;
+  // The agent behind a direct room, null in any other conversation. Only a direct room has an
+  // agent page to expand into, so the expand button renders with it.
+  agentName: string | null;
 }
 
 export function ChatHeaderActions({
@@ -41,16 +43,18 @@ export function ChatHeaderActions({
         {speechEnabled && <SpeechButton />}
         {!fullscreen && (
           <>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              className="text-muted-foreground"
-              onClick={() => {
-                void navigate(`/agent/${agentName}/chat`);
-              }}
-            >
-              <Maximize2 />
-            </Button>
+            {agentName !== null && (
+              <Button
+                variant="outline"
+                size="icon-sm"
+                className="text-muted-foreground"
+                onClick={() => {
+                  void navigate(`/agent/${encodeURIComponent(agentName)}/chat`);
+                }}
+              >
+                <Maximize2 />
+              </Button>
+            )}
             <Button
               variant="outline"
               size="icon-sm"

@@ -11,6 +11,8 @@ export interface DecoratedRow {
   // Last bubble of its group (next message is a different sender or a new bubble group, or
   // this is the final message). Only this bubble gets the tail corner; the rest are rounded.
   isGroupEnd: boolean;
+  // First bubble of its group. A room with several agents prints who spoke above this one.
+  isGroupStart: boolean;
 }
 
 function rowKey(event: ChatMessage, idxFallback: number): string {
@@ -64,6 +66,9 @@ export function buildDecorated(
     const isGroupEnd = next
       ? next.type !== msg.type || startsNewBubbleGroup(msg, next)
       : true;
+    const isGroupStart = prev
+      ? prev.type !== msg.type || startsNewBubbleGroup(prev, msg)
+      : true;
     const dayKey = calendarDayKey(msg.ts);
     const showDayStamp = Boolean(
       dayKey && (lastDayKey === null || dayKey !== lastDayKey),
@@ -82,6 +87,7 @@ export function buildDecorated(
       showDayStamp,
       dayLabel,
       isGroupEnd,
+      isGroupStart,
     };
   });
 }

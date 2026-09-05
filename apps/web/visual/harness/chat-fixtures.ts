@@ -2,15 +2,9 @@ import type { Page } from "@playwright/test";
 import type { VestaEvent } from "@vesta/core";
 import type { RouteFixture } from "./http-fixtures";
 
-// The chat service as the web client reads it: a minted service key, the
-// newest history page, and the live socket. Chat state comes from history; the
-// socket only streams what the fixture pushes after it opens.
-export const SERVICE_KEY = {
-  id: "visual-key",
-  key: "visual-service-key",
-  expires_at: null,
-};
-
+// The chat node as the web client reads it: the newest history page of one room
+// and the live room socket. Chat state comes from history; the socket only
+// streams what the fixture pushes after it opens.
 export interface ChatHistoryFixture {
   events?: VestaEvent[];
   cursor?: number | null;
@@ -18,17 +12,13 @@ export interface ChatHistoryFixture {
 }
 
 export function chatRoutes(
-  agent: string,
+  roomId: string,
   history: ChatHistoryFixture = {},
 ): RouteFixture[] {
   return [
     {
-      path: `/agents/${agent}/services/chat/keys`,
-      method: "POST",
-      json: SERVICE_KEY,
-    },
-    {
-      path: `/agents/${agent}/chat/history`,
+      // The client percent-encodes the room id, and the matcher compares raw pathnames.
+      path: `/rooms/${encodeURIComponent(roomId)}/history`,
       json: { events: history.events ?? [], cursor: history.cursor ?? null },
       hang: history.hang,
     },
@@ -37,11 +27,9 @@ export function chatRoutes(
 
 export async function installChatSocket(
   page: Page,
-  agent: string,
   events: VestaEvent[],
 ): Promise<void> {
-  const pattern = new RegExp(`/agents/${agent}/chat/ws`);
-  await page.routeWebSocket(pattern, (ws) => {
+  await page.routeWebSocket(/\/rooms\/ws/, (ws) => {
     ws.onMessage(() => undefined);
     for (const event of events) ws.send(JSON.stringify(event));
   });
@@ -56,8 +44,18 @@ export function userMessage(text: string, minutesAgo: number): VestaEvent {
   return { id: nextEventId++, type: "user", text, ts: stamp(minutesAgo) };
 }
 
-export function agentMessage(text: string, minutesAgo: number): VestaEvent {
-  return { id: nextEventId++, type: "chat", text, ts: stamp(minutesAgo) };
+export function agentMessage(
+  text: string,
+  minutesAgo: number,
+  sender?: string,
+): VestaEvent {
+  return {
+    id: nextEventId++,
+    type: "chat",
+    text,
+    ts: stamp(minutesAgo),
+    sender,
+  };
 }
 
 export function errorLine(text: string, minutesAgo: number): VestaEvent {
@@ -144,12 +142,11 @@ export interface AttachmentRoutesFixture {
 }
 
 export function attachmentRoutes(
-  agent: string,
   options: AttachmentRoutesFixture = {},
 ): RouteFixture[] {
   return [
     {
-      path: `/agents/${agent}/chat/attachments`,
+      path: `/rooms/attachments`,
       method: "POST",
       ...(options.failCreate
         ? { status: 400, json: { error: "invalid mime type" } }
@@ -158,13 +155,13 @@ export function attachmentRoutes(
           : { json: { id: ATTACHMENT_ID } }),
     },
     {
-      path: `/agents/${agent}/chat/attachments/${ATTACHMENT_ID}/data`,
+      path: `/rooms/attachments/${ATTACHMENT_ID}/data`,
       method: "PUT",
       json: { ok: true, received: 4 },
       hang: options.stallData,
     },
     {
-      path: `/agents/${agent}/chat/attachments/${ATTACHMENT_ID}/complete`,
+      path: `/rooms/attachments/${ATTACHMENT_ID}/complete`,
       method: "POST",
       json: {
         attachment: {
@@ -231,33 +228,32 @@ export const BUBBLE_ATTACHMENTS = {
 };
 
 function serveRoute(
-  agent: string,
   id: string,
   fixture: Omit<RouteFixture, "path">,
 ): RouteFixture {
-  return { path: `/agents/${agent}/chat/attachments/${id}`, ...fixture };
+  return { path: `/rooms/attachments/${id}`, ...fixture };
 }
 
-export function attachmentServeRoutes(agent: string): RouteFixture[] {
+export function attachmentServeRoutes(): RouteFixture[] {
   return [
-    serveRoute(agent, ID_IMAGE, {
+    serveRoute(ID_IMAGE, {
       bodyBase64: PNG_BLOB,
       contentType: "image/png",
     }),
-    serveRoute(agent, ID_VIDEO, { bodyBase64: "", contentType: "video/mp4" }),
-    serveRoute(agent, ID_AUDIO, {
+    serveRoute(ID_VIDEO, { bodyBase64: "", contentType: "video/mp4" }),
+    serveRoute(ID_AUDIO, {
       bodyBase64: WAV_BLOB,
       contentType: "audio/wav",
     }),
-    serveRoute(agent, ID_FILE, {
+    serveRoute(ID_FILE, {
       bodyBase64: "",
       contentType: "application/pdf",
     }),
-    serveRoute(agent, ID_REMOVED, {
+    serveRoute(ID_REMOVED, {
       status: 410,
       json: { error: "attachment removed" },
     }),
-    serveRoute(agent, ID_BROKEN, { status: 500, json: { error: "boom" } }),
+    serveRoute(ID_BROKEN, { status: 500, json: { error: "boom" } }),
   ];
 }
 

@@ -32,10 +32,10 @@ describe("downloadAttachment", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
 
-    await downloadAttachment("ada", ATTACHMENT);
+    await downloadAttachment(ATTACHMENT);
 
     expect(apiFetchMock).toHaveBeenCalledWith(
-      "/agents/ada/chat/attachments/att1?download=1",
+      "/rooms/attachments/att1?download=1",
     );
     expect(createUrl).toHaveBeenCalledOnce();
     expect(click).toHaveBeenCalledOnce();
@@ -58,7 +58,7 @@ describe("downloadAttachment", () => {
     );
     const progress: [number, number][] = [];
 
-    await downloadAttachment("ada", ATTACHMENT, (received, total) => {
+    await downloadAttachment(ATTACHMENT, (received, total) => {
       progress.push([received, total]);
     });
 
@@ -70,7 +70,7 @@ describe("downloadAttachment", () => {
 
   it("propagates a failed fetch to the caller", async () => {
     apiFetchMock.mockRejectedValue(new Error("410"));
-    await expect(downloadAttachment("ada", ATTACHMENT)).rejects.toThrow("410");
+    await expect(downloadAttachment(ATTACHMENT)).rejects.toThrow("410");
   });
 
   it("writes through the file picker and reports saved", async () => {
@@ -87,7 +87,7 @@ describe("downloadAttachment", () => {
     const picker = vi.fn(() => Promise.resolve(handle));
     window.showSaveFilePicker = picker;
 
-    const outcome = await downloadAttachment("ada", ATTACHMENT);
+    const outcome = await downloadAttachment(ATTACHMENT);
 
     expect(picker).toHaveBeenCalledWith({ suggestedName: "report.pdf" });
     expect(write).toHaveBeenCalledOnce();
@@ -101,8 +101,6 @@ describe("downloadAttachment", () => {
       Promise.reject(new DOMException("cancelled", "AbortError")),
     );
 
-    await expect(downloadAttachment("ada", ATTACHMENT)).resolves.toBe(
-      "cancelled",
-    );
+    await expect(downloadAttachment(ATTACHMENT)).resolves.toBe("cancelled");
   });
 });
