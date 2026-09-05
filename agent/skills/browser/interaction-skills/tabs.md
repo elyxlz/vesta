@@ -26,8 +26,7 @@ from memory of an earlier program: a closed and reopened tab carries a different
 ## Rules that held up in practice
 
 - A tab reporting `w=0 h=0` in `page_info()` has not laid out yet. Call `wait_for_load()` first.
-- `list_tabs()` includes internal `about:` pages, so filter on the `url` field when you want only
-  real pages.
+- `list_tabs()` includes internal `about:` pages. `list_tabs(include_chrome=False)` drops them.
 - Re-read element rects after opening a dropdown or a modal, before clicking by coordinate.
-- Tabs live in the session, so a tab opened by one program is there for the next one. Close what
-  you no longer need: a session that accumulates tabs slows every later program down.
+- Tabs live in the session, so a tab opened by one program is there for the next one. Close each
+  tab you finish with: a session that accumulates tabs slows every later program down.

@@ -14,7 +14,8 @@ Gated on user activation, therefore broken by a JS click:
 - `window.open` and any `target="_blank"` navigation (**popup blocker**)
 - clipboard writes, fullscreen requests, file pickers, notification and media permission prompts
 
-`click_at_xy(x, y)` dispatches real input from the browser's point of view. It works.
+`click_at_xy(x, y)` dispatches real input from the browser's point of view. It works. There is no
+click by selector: read the element's rect with `js`, then click its centre with `click_at_xy`.
 
 **The tell**: a new tab appears and stays `about:blank` forever, or no tab appears at all, while the
 click "succeeds" and the DOM says nothing is wrong. Hooking `window.open`, polling tabs, injecting

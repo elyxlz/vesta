@@ -12,8 +12,9 @@ print(capture_screenshot(max_dim=1200))
 
 Images are costly in context, so take fewer and smaller ones:
 
-- Pass `max_dim` to cap the longest side. A full-resolution capture of a wide page rarely earns its
-  size.
+- Pass `max_dim` to cap the longest side, on a standard session: the Chromium route resizes to it,
+  and a stealth session accepts the argument without resizing. A full-resolution capture of a wide
+  page rarely earns its size.
 - `full=True` captures the whole scrollable page rather than the viewport. Use it to read a long
   page in one shot, not to look at one control.
 - Read the DOM instead when text is what you want: `js("document.body.innerText")` costs a fraction

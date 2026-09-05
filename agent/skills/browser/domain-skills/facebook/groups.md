@@ -186,7 +186,7 @@ GROUP = "riceLakeBoating"          # slug or numeric id
 TARGET = 50                         # how many posts to collect
 MAX_SCROLLS = 30
 
-goto(f"https://www.facebook.com/groups/{GROUP}/?sorting_setting=CHRONOLOGICAL")
+goto_url(f"https://www.facebook.com/groups/{GROUP}/?sorting_setting=CHRONOLOGICAL")
 wait_for_load()
 wait(2)
 

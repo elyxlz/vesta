@@ -9,7 +9,7 @@
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 # Format required: "CompanyName contact@email.com"
 # "Mozilla/5.0" (http_get default) works on efts.sec.gov and data.sec.gov
 # but FAILS on www.sec.gov (company_tickers.json, Archives/, etc.)
@@ -20,7 +20,7 @@ Start with `company_tickers.json` to resolve any ticker → CIK in one call, the
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 tickers = json.loads(http_get("https://www.sec.gov/files/company_tickers.json", headers=UA))
 # 10,391 public companies, ~50KB, always fresh
 # Entry format: {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}
@@ -40,7 +40,7 @@ cik = str(aapl["cik_str"]).zfill(10)  # "0000320193"
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 tickers = json.loads(http_get("https://www.sec.gov/files/company_tickers.json", headers=UA))
 
 # By ticker
@@ -57,7 +57,7 @@ apples = [v for v in tickers.values() if "APPLE" in v["title"].upper()]
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 cik = "0000320193"  # Apple - always zero-pad to 10 digits
 data = json.loads(http_get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=UA))
 
@@ -104,7 +104,7 @@ content = http_get(url, headers=UA)  # UA required on www.sec.gov
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 cik_padded = "0000320193"
 
 # companyconcept: one metric, all reported values (quarterly + annual)
@@ -141,7 +141,7 @@ for e in assets[-5:]:
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 
 # companyfacts: all reported XBRL concepts in one ~5MB call
 data = json.loads(http_get("https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json", headers=UA))
@@ -190,7 +190,7 @@ for concept in ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRev
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 
 # frames: one concept, one period, all companies that reported it
 # Period formats:
@@ -222,7 +222,7 @@ data2 = json.loads(http_get("https://data.sec.gov/api/xbrl/frames/us-gaap/Assets
 ```python
 import json
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 
 # Search for any phrase across filing documents
 # Params: q (quoted phrase), forms (comma-separated), dateRange=custom,
@@ -262,7 +262,7 @@ top_states = aggs["biz_states_filter"]["buckets"]
 ```python
 import json, re
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 
 # Best method: company_tickers.json (fastest, all tickers)
 tickers = json.loads(http_get("https://www.sec.gov/files/company_tickers.json", headers=UA))
@@ -285,7 +285,7 @@ for b in buckets[:3]:
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-UA = {"User-Agent": "browser-harness research@example.com"}
+UA = {"User-Agent": "vesta-browser/1.0 research@example.com"}
 
 
 def get_company_meta(ticker_cik):

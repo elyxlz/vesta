@@ -48,7 +48,7 @@ Idempotent (a running daemon is a no-op). Check it with `browser daemon status`,
 pid record at `~/agent/data/daemons/browser.pid` and reports `"port": null`, because this daemon
 serves a unix socket and registers a port only for the duration of a handover.
 
-Then read the `restart` skill and add this line to your restart daemons:
+Then add this line to `~/agent/skills/restart/daemons.sh`, as the `restart` skill describes:
 
 ```
 browser daemon start

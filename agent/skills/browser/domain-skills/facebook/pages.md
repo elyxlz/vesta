@@ -212,7 +212,7 @@ PAGE = "BoatingOntario.ca"   # vanity slug OR numeric Page ID
 TARGET = 30
 MAX_SCROLLS = 25
 
-goto(f"https://www.facebook.com/{PAGE}/posts")
+goto_url(f"https://www.facebook.com/{PAGE}/posts")
 wait_for_load()
 wait(3)
 

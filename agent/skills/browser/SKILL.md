@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Drive a real browser: interactive sites, pages behind a sign-in, JavaScript-rendered content, filling and submitting forms, and screenshots of a page. Reach for it when an HTTP fetch returns markup without the content, when the page needs clicks or typing, or when the user asks to see a page. Add stealth when the user asks for it, or on concrete evidence that ordinary Chromium automation is rejected: a block page, a challenge that never clears, or a body that stays empty while the screenshot shows the page.
+description: Drive a real browser: interactive sites, pages behind a sign-in, JavaScript-rendered content, filling and submitting forms, and screenshots of a page. Reach for it when an HTTP fetch returns markup without the content, when the page needs clicks or typing, or when the user asks to see a page. Add stealth when the user asks for it, or on concrete evidence that ordinary Chromium automation is rejected: a block page, or a challenge that never clears.
 ---
 
 # Browser (CLI: browser)
@@ -9,8 +9,14 @@ description: Drive a real browser: interactive sites, pages behind a sign-in, Ja
 
 Standard mode runs Chromium. `--stealth` runs Camoufox, an anti-detection Firefox. Start in
 standard mode and keep it there while the site answers. Move to stealth when the user asks for it,
-or on evidence that the site rejects standard automation: a block page, a challenge that never
-clears, or a body that stays empty while the screenshot shows the page.
+or on evidence that the site rejects standard automation: a block page, or a challenge that never
+clears.
+
+Never assume anti-bot. An empty body, a wait that times out, and a control that does nothing are
+almost always late hydration, a cross-origin iframe, or a validation error, and a switch of engine
+throws the session's sign-in away for nothing: read the page first
+([interaction-skills/forms.md](interaction-skills/forms.md)). A genuine wall states a capability the
+machine lacks, such as a camera, a physical document, or a code on the user's own device.
 
 The two engines share nothing: no session, no tab, no cookie, no profile. A session keeps the
 engine of its first call, so `--stealth` on a standard session answers `session_engine_conflict`.
@@ -47,7 +53,7 @@ Both engines bind the same 20 helpers, so a program written to this list runs on
 - Tabs: `list_tabs(include_chrome=True)`, `current_tab()`, `switch_tab(target, activate=False)`, `close_tab(target=None)`, `ensure_real_tab()`
 - Input: `click_at_xy(x, y, button="left", clicks=1)`, `type_text(text)`, `fill_input(selector, text, clear_first=True, timeout=0.0)`, `press_key(key, modifiers=0)`, `scroll(x, y, dy=-300, dx=0)`
 - Read and wait: `page_info()`, `js(expression, target_id=None)`, `wait(seconds=1.0)`, `wait_for_element(selector, timeout=10.0, visible=False)`, `wait_for_network_idle(timeout=10.0, idle_ms=500)`
-- Files: `capture_screenshot(path=None, full=False, max_dim=None)`, `upload_file(selector, path)`
+- Files: `capture_screenshot(path=None, full=False, max_dim=None)` (`max_dim` applies on Chromium), `upload_file(selector, path)`
 
 `js` returns the value of the expression, so read the page with it and print what you need. A tab
 `target` is the `target_id` of a `list_tabs` or `current_tab` entry. `press_key` takes modifiers as
@@ -55,14 +61,16 @@ a bitmask: 1 Alt, 2 Control, 4 Meta, 8 Shift.
 
 ## Engine escape hatches
 
-Chromium adds `cdp(method, **params)` for a raw DevTools call, plus `http_get`, `iframe_target`,
-`activate_tab`, `dispatch_key`, and `drain_events`. Camoufox adds `page` and `context`, the
+Chromium adds `cdp(method, **params)` for a raw DevTools call, plus `http_get(url, headers=None)`,
+`iframe_target(url_substr)`, and `activate_tab(target)`. Camoufox adds `page` and `context`, the
 Playwright objects.
 
-One engine's extension on the other answers `engine_capability_mismatch`. Two ways out: rewrite the
-program with the portable helpers, or start a session under a new name on the engine that carries
-the call. Never rerun the same program in the other engine to escape this error, because that
-engine holds different cookies and a different profile.
+`cdp` on a stealth session answers `engine_capability_mismatch`. Every other engine-specific name
+simply does not exist on the other engine, so the program raises a `NameError` and the result
+carries `execution_failed`. Either way, two ways out: rewrite the program with the portable
+helpers, or start a session under a new name on the engine that carries the call. Never rerun the
+same program in the other engine, because that engine holds different cookies and a different
+profile.
 
 ## Read the result
 
@@ -70,8 +78,8 @@ Read `ok` first. On `ok: false`, read `error`: `code`, `phase`, `message`, `retr
 `suggested_action`. Do what `suggested_action` says. On `ok: true`, read:
 
 - `session`: `name`, `mode`, `engine`, `state`.
-- `page`: where the browser stands after the program, as `url`, `title`, `tab_id`.
-- `output`: `stdout` holds what the program printed, plus `stderr`, `exit_code`, `duration_ms`.
+- `page`: where the browser stands after the program, as `url`, `title`, `tab_id`. A page the daemon could not read reads `{"state": "unavailable"}`.
+- `output`: `stdout` holds what the program printed, plus `stderr`, `exit_code`, `duration_ms`. A timed-out program reports `exit_code` as `null`.
 - `artifacts`: one entry per screenshot the program wrote, with `path`, `mime_type`, `bytes`.
 - `warnings`: anything the daemon repaired or clamped.
 
@@ -81,7 +89,9 @@ look at it. A success prints the line on stdout; a failure prints it on stderr a
 ## Handover
 
 Hand the browser to the user when the wall is account trust: a sign-in the user must complete, a
-locked tenant, a code that only their own device holds.
+locked tenant, a code that only their own device holds. Rule out the cheap causes first
+([interaction-skills/forms.md](interaction-skills/forms.md)), because a handover spends the user's
+time.
 
 ```bash
 browser handover start --session <name> --url "<sign-in URL>" --minutes 30
@@ -93,7 +103,8 @@ port, a local address, or a screenshot of the page helps nobody. The link lives 
 
 Run `browser handover stop` as soon as the user reports they are done, and confirm it answered.
 The sign-in stays in that session's profile, so continue with `browser exec` on the same session
-name. `browser exec` on a handed-over session answers `handover_in_use` until the handover stops.
+name. One handover runs at a time: while one is live, `browser exec` on that session and a second
+`handover start` both answer `handover_in_use`.
 
 ## Recovery
 
@@ -105,16 +116,14 @@ name. `browser exec` on a handed-over session answers `handover_in_use` until th
 
 ## Recipes
 
-Search these before inventing an approach to a site. They are optional references, so read the one
-that matches and skip the rest.
+Search these before inventing an approach to a site, and read only the file that matches:
+`rg "<selector or keyword>" ~/agent/skills/browser/{domain,interaction}-skills/`.
 
-- [interaction-skills/](interaction-skills/): mechanics that repeat across sites (clicking, tabs, dialogs, cross-origin iframes, screenshots, rich-text editors, Cloudflare challenges).
+- [interaction-skills/](interaction-skills/): mechanics that repeat across sites (forms and missing fields, clicking, tabs, dialogs, cross-origin iframes, screenshots, rich-text editors, Cloudflare challenges).
 - [domain-skills/](domain-skills/): one directory per host, holding selectors, private APIs, URL patterns, and the traps found there.
 
-```bash
-ls ~/agent/skills/browser/domain-skills/amazon/
-rg "<selector or keyword>" ~/agent/skills/browser/domain-skills/ ~/agent/skills/browser/interaction-skills/
-```
-
-Many sites answer their own JSON endpoints with everything the page shows, so check for that first:
-one `curl` can replace a session, a navigation, and a read.
+Map a recipe onto `browser exec` while you read it. The helpers are bound as globals already, so
+drop a recipe's `from helpers import ...` line: it names no module here. `http_get` is a
+standard-mode call. Give `capture_screenshot` no path, so the file lands in the session's artifact
+directory; a file written to `/tmp` is left out of `artifacts`. Many sites also answer their own
+JSON endpoints with everything the page shows, so one `curl` can replace a whole session.
