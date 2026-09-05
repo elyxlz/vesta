@@ -44,16 +44,17 @@ print(json.dumps({{k: os.environ[k] for k in sorted(os.environ)}}))
 """
 
 
+def write_script(bin_dir: pl.Path, name: str, body: str) -> pl.Path:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    path = bin_dir / name
+    path.write_text(body)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
 def write_fakes(bin_dir: pl.Path) -> dict[str, str]:
-    bin_dir.mkdir(exist_ok=True)
-    env = {}
     entries = (("chromium", FAKE_CHROMIUM, "VESTA_BROWSER_CHROMIUM"), ("browser-use", FAKE_BROWSER_USE, "VESTA_BROWSER_BROWSER_USE"))
-    for name, body, key in entries:
-        path = bin_dir / name
-        path.write_text(body)
-        path.chmod(path.stat().st_mode | stat.S_IEXEC)
-        env[key] = str(path)
-    return env
+    return {key: str(write_script(bin_dir, name, body)) for name, body, key in entries}
 
 
 # The display stack's four binaries. Each fake bakes the X socket dir in at write time, because the
@@ -102,10 +103,48 @@ http.server.HTTPServer(("127.0.0.1", port), handler).serve_forever()
 
 
 def write_display_fakes(bin_dir: pl.Path, x11_dir: pl.Path) -> None:
-    bin_dir.mkdir(parents=True, exist_ok=True)
     x11_dir.mkdir(parents=True, exist_ok=True)
     entries = (("Xvfb", FAKE_XVFB), ("openbox", FAKE_OPENBOX), ("x11vnc", FAKE_X11VNC), ("websockify", FAKE_WEBSOCKIFY))
     for name, body in entries:
-        path = bin_dir / name
-        path.write_text(body.replace(X11_DIR, str(x11_dir)))
-        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        write_script(bin_dir, name, body.replace(X11_DIR, str(x11_dir)))
+
+
+# The three vestad helpers, recording what they were asked to the files FAKE_KEYS and
+# FAKE_REGISTER_LOG name, so a test reads the gateway calls a run made.
+FAKE_SERVICE_KEY = f"""#!{sys.executable}
+import json, os, sys
+cmd = sys.argv[1]
+service = sys.argv[2]
+state = os.environ["FAKE_KEYS"]
+keys = json.load(open(state)) if os.path.exists(state) else []
+if cmd == "mint":
+    label = sys.argv[sys.argv.index("--label") + 1]
+    ttl = sys.argv[sys.argv.index("--ttl") + 1]
+    keys.append({{"id": f"id{{len(keys) + 1}}", "label": label, "ttl": int(ttl)}})
+    json.dump(keys, open(state, "w"))
+    print(f"secret-{{label}}")
+elif cmd == "list":
+    print(json.dumps({{"keys": [{{"id": k["id"], "label": k["label"]}} for k in keys]}}))
+elif cmd == "revoke":
+    keys = [k for k in keys if k["id"] != sys.argv[3]]
+    json.dump(keys, open(state, "w"))
+else:
+    print("usage", file=sys.stderr); sys.exit(2)
+"""
+
+FAKE_REGISTER = f"""#!{sys.executable}
+import os, sys
+open(os.environ["FAKE_REGISTER_LOG"], "a").write(" ".join(sys.argv[1:]) + "\\n")
+print(os.environ["FAKE_PORT"])
+"""
+
+FAKE_DEREGISTER = f"""#!{sys.executable}
+import os, sys
+open(os.environ["FAKE_REGISTER_LOG"], "a").write("deregister " + sys.argv[1] + "\\n")
+"""
+
+
+def write_gateway_fakes(bin_dir: pl.Path) -> None:
+    write_script(bin_dir, "service-key", FAKE_SERVICE_KEY)
+    write_script(bin_dir, "register-service", FAKE_REGISTER)
+    write_script(bin_dir, "deregister-service", FAKE_DEREGISTER)

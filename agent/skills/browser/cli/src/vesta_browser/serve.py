@@ -19,13 +19,14 @@ import sys
 import time
 import typing as tp
 
-from . import artifacts, camoufox, chromium, doctor
+from . import artifacts, doctor
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths, load_paths
 from .runtimes import ExecOutcome
+from .session_control import ENGINES, _ensure_running, _stop_session
 
 logger = logging.getLogger(__name__)
 IDLE_SWEEP_SECS = 60
@@ -34,8 +35,6 @@ PRUNE_INTERVAL_SECS = 3600
 # `browser daemon stop` SIGKILLs this process two thirds into its own stop budget, so every session
 # teardown shares one budget below that point; whatever the budget catches is killed outright.
 SHUTDOWN_BUDGET_SECS = 6.0
-
-ENGINES = {"chromium": chromium, "camoufox": camoufox}
 
 
 def _invalid(message: str) -> p.Error:
@@ -70,41 +69,6 @@ def _validate_exec(request: dict[str, p.JsonValue]) -> tuple[str, p.Mode | None,
     timeout = min(max(raw_timeout, p.EXEC_TIMEOUT_MIN_SECS), p.EXEC_TIMEOUT_MAX_SECS)
     warnings = ["timeout_clamped"] if timeout != raw_timeout else []
     return session, tp.cast(p.Mode | None, mode), timeout, code, warnings
-
-
-async def _ensure_running(state: State, session: sessions_mod.Session) -> list[str]:
-    """Starts the session's engine when it is not running. Returns warnings (worker_restarted after a kill)."""
-    if session.runtime is not None:
-        return []
-    restarted = session.state == "stopped" and session.name in state.restart_pending
-    state.restart_pending.discard(session.name)
-    sessions_mod.mark(session, "starting")
-    try:
-        session.runtime = await ENGINES[session.engine].start(session, state.paths)
-    except Exception:
-        # Any failure at all, not only a named one: a session left `starting` refuses every later
-        # exec and no command can bring it back.
-        sessions_mod.mark(session, "stopped")
-        session.runtime = None
-        raise
-    sessions_mod.mark(session, "ready")
-    return ["worker_restarted"] if restarted else []
-
-
-async def _stop_session(session: sessions_mod.Session, *, force: bool = False) -> bool:
-    """Stops a session's runtime. The one owner of the decision: refuses (returns False) a busy or
-    starting session unless `force`, so a stop path never tears a runtime out from under an exec.
-    """
-    if not force and session.state in ("busy", "starting"):
-        return False
-    runtime = session.runtime
-    session.runtime = None
-    # Marked before the engine stop is awaited, so an exec arriving during the teardown sees a
-    # stopped session and starts a runtime of its own that this trailing write cannot undo.
-    sessions_mod.mark(session, "stopped")
-    if runtime is not None:
-        await ENGINES[session.engine].stop(runtime, session)
-    return True
 
 
 def _outcome_error(outcome: ExecOutcome, session: sessions_mod.Session) -> p.Error | None:

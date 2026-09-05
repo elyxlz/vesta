@@ -1,59 +1,18 @@
 import asyncio
 import json
 import os
-import pathlib as pl
-import stat
 import sys
 
 import pytest
 from vesta_browser import gateway
 
-FAKE_SERVICE_KEY = f"""#!{sys.executable}
-import json, os, sys
-cmd = sys.argv[1]
-service = sys.argv[2]
-state = os.environ["FAKE_KEYS"]
-keys = json.load(open(state)) if os.path.exists(state) else []
-if cmd == "mint":
-    label = sys.argv[sys.argv.index("--label") + 1]
-    ttl = sys.argv[sys.argv.index("--ttl") + 1]
-    keys.append({{"id": f"id{{len(keys) + 1}}", "label": label, "ttl": int(ttl)}})
-    json.dump(keys, open(state, "w"))
-    print(f"secret-{{label}}")
-elif cmd == "list":
-    print(json.dumps({{"keys": [{{"id": k["id"], "label": k["label"]}} for k in keys]}}))
-elif cmd == "revoke":
-    keys = [k for k in keys if k["id"] != sys.argv[3]]
-    json.dump(keys, open(state, "w"))
-else:
-    print("usage", file=sys.stderr); sys.exit(2)
-"""
-
-FAKE_REGISTER = f"""#!{sys.executable}
-import os, sys
-open(os.environ["FAKE_REGISTER_LOG"], "a").write(" ".join(sys.argv[1:]) + "\\n")
-print(os.environ["FAKE_PORT"])
-"""
-
-FAKE_DEREGISTER = f"""#!{sys.executable}
-import os, sys
-open(os.environ["FAKE_REGISTER_LOG"], "a").write("deregister " + sys.argv[1] + "\\n")
-"""
-
-
-def _script(bin_dir: pl.Path, name: str, body: str) -> None:
-    path = bin_dir / name
-    path.write_text(body)
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+from .fakes import write_gateway_fakes, write_script
 
 
 @pytest.fixture
 def gateway_env(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _script(bin_dir, "service-key", FAKE_SERVICE_KEY)
-    _script(bin_dir, "register-service", FAKE_REGISTER)
-    _script(bin_dir, "deregister-service", FAKE_DEREGISTER)
+    write_gateway_fakes(bin_dir)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_KEYS", str(tmp_path / "keys.json"))
     monkeypatch.setenv("FAKE_REGISTER_LOG", str(tmp_path / "register.log"))
@@ -87,7 +46,8 @@ def test_deregister_is_idempotent(gateway_env):
 
 
 def test_a_failing_script_raises_gateway_error(gateway_env, monkeypatch):
-    _script(gateway_env / "bin", "register-service", f"#!{sys.executable}\nimport sys; print('vestad down', file=sys.stderr); sys.exit(1)\n")
+    body = f"#!{sys.executable}\nimport sys; print('vestad down', file=sys.stderr); sys.exit(1)\n"
+    write_script(gateway_env / "bin", "register-service", body)
     with pytest.raises(gateway.GatewayError, match="vestad down"):
         asyncio.run(gateway.register_service("browser"))
 

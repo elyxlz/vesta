@@ -1,5 +1,4 @@
 import asyncio
-import os
 import pathlib as pl
 import sys
 import time
@@ -10,10 +9,9 @@ from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_fakes
+from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
-POLL_DEADLINE_SECS = 5.0
-POLL_INTERVAL_SECS = 0.02
 
 
 @pytest.fixture
@@ -47,18 +45,6 @@ def _with_daemon(paths, coro_fn):
     return asyncio.run(run())
 
 
-async def _wait_for_state(paths, name, wanted, timeout=POLL_DEADLINE_SECS):
-    """Polls `sessions` until `name` reads `wanted`, instead of sleeping a fixed guess."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        listing = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "poll"})
-        states = {s["name"]: s["state"] for s in listing["data"]["sessions"]}
-        if name in states and states[name] == wanted:
-            return
-        await asyncio.sleep(POLL_INTERVAL_SECS)
-    raise AssertionError(f"session {name!r} never reached state {wanted!r}")
-
-
 async def _wait_for_file(path, timeout=POLL_DEADLINE_SECS):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -66,23 +52,6 @@ async def _wait_for_file(path, timeout=POLL_DEADLINE_SECS):
             return
         await asyncio.sleep(POLL_INTERVAL_SECS)
     raise AssertionError(f"{path} was never created")
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
-async def _wait_until_dead(pid, timeout=POLL_DEADLINE_SECS):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return True
-        await asyncio.sleep(POLL_INTERVAL_SECS)
-    return False
 
 
 def test_exec_on_a_new_session_starts_chromium_and_returns_the_full_envelope(paths):
@@ -160,7 +129,7 @@ def test_camoufox_timeout_restarts_the_worker_on_the_next_exec(paths):
 def test_cancel_ends_an_inflight_exec(paths):
     async def run():
         task = asyncio.create_task(serve.request(paths, _exec("research", "SLEEP", timeout_s=30)))
-        await _wait_for_state(paths, "research", "busy")
+        await wait_for_state(paths, "research", "busy")
         cancel = await serve.request(paths, {"version": 1, "op": "cancel", "request_id": "c1", "target_request_id": "r1"})
         return cancel, await task
 
@@ -172,7 +141,7 @@ def test_cancel_ends_an_inflight_exec(paths):
 def test_busy_session_refuses_a_second_exec(paths):
     async def run():
         task = asyncio.create_task(serve.request(paths, _exec("research", "SLEEP", timeout_s=30)))
-        await _wait_for_state(paths, "research", "busy")
+        await wait_for_state(paths, "research", "busy")
         second = await serve.request(paths, _exec("research", "print(1)", request_id="r2"))
         await serve.request(paths, {"version": 1, "op": "cancel", "request_id": "c1", "target_request_id": "r1"})
         await task
@@ -219,7 +188,7 @@ def test_idle_sweep_stops_a_ready_session(paths, monkeypatch):
 
     async def run():
         await serve.request(paths, _exec("research", "print(1)"))
-        await _wait_for_state(paths, "research", "stopped")
+        await wait_for_state(paths, "research", "stopped")
         return await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
 
     res = _with_daemon(paths, run)
@@ -243,7 +212,7 @@ def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
 
     async def run():
         await serve.request(paths, _exec("research", "print(1)"))
-        await _wait_for_state(paths, "research", "stopped")
+        await wait_for_state(paths, "research", "stopped")
         return len(calls)
 
     assert _with_daemon(paths, run) >= 2
@@ -261,7 +230,7 @@ def test_a_total_start_failure_frees_the_session_and_kills_the_browser(paths, mo
         failed = await serve.request(paths, _exec("research", "print(1)"))
         listing = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
         pid = int((paths.profiles / "chromium" / "research" / "fake.pid").read_text())
-        dead = await _wait_until_dead(pid)
+        dead = await wait_until_dead(pid)
         monkeypatch.setattr(chromium, "_fetch_json", original)
         recovered = await serve.request(paths, _exec("research", "print(1)", request_id="r2"))
         return failed, listing, dead, recovered
@@ -311,7 +280,7 @@ def test_shutdown_kills_a_session_whose_engine_stop_hangs(paths, monkeypatch):
         monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _hang)
         started = time.monotonic()
         await serve.shutdown(state)
-        return time.monotonic() - started, await _wait_until_dead(pid)
+        return time.monotonic() - started, await wait_until_dead(pid)
 
     elapsed, dead = asyncio.run(run())
     assert elapsed < 5
@@ -326,7 +295,7 @@ def test_shutdown_ends_an_inflight_exec_and_kills_its_processes(paths):
                 break
             await asyncio.sleep(0.02)
         exec_task = asyncio.create_task(serve.request(paths, _exec("research", "SLEEP", timeout_s=30)))
-        await _wait_for_state(paths, "research", "busy")
+        await wait_for_state(paths, "research", "busy")
         exec_pid_file = paths.sessions / "research" / "tmp" / "exec.pid"
         await _wait_for_file(exec_pid_file)
         chromium_pid = int((paths.profiles / "chromium" / "research" / "fake.pid").read_text())
@@ -339,8 +308,8 @@ def test_shutdown_ends_an_inflight_exec_and_kills_its_processes(paths):
 
     chromium_pid, exec_pid, exec_result = asyncio.run(run())
     assert exec_result["error"]["code"] == "cancelled"
-    assert _pid_alive(chromium_pid) is False
-    assert _pid_alive(exec_pid) is False
+    assert pid_alive(chromium_pid) is False
+    assert pid_alive(exec_pid) is False
 
 
 def test_two_concurrent_cold_execs_launch_the_browser_once(paths):
@@ -361,10 +330,10 @@ def test_two_concurrent_cold_execs_launch_the_browser_once(paths):
 def test_session_stop_refuses_a_busy_session_and_the_exec_still_completes(paths):
     async def run():
         exec_task = asyncio.create_task(serve.request(paths, _exec("research", "SLEEP", timeout_s=3)))
-        await _wait_for_state(paths, "research", "busy")
+        await wait_for_state(paths, "research", "busy")
         stop = await serve.request(paths, {"version": 1, "op": "session_stop", "request_id": "s1", "session": "research"})
         chromium_pid = int((paths.profiles / "chromium" / "research" / "fake.pid").read_text())
-        alive_right_after_refusal = _pid_alive(chromium_pid)
+        alive_right_after_refusal = pid_alive(chromium_pid)
         exec_result = await exec_task
         after = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
         return stop, alive_right_after_refusal, exec_result, after
@@ -380,7 +349,7 @@ def test_stop_all_excludes_a_busy_session(paths):
     async def run():
         await serve.request(paths, _exec("a", "print(1)"))
         busy_task = asyncio.create_task(serve.request(paths, _exec("a", "SLEEP", timeout_s=3, request_id="r2")))
-        await _wait_for_state(paths, "a", "busy")
+        await wait_for_state(paths, "a", "busy")
         await serve.request(paths, _exec("b", "print(1)", request_id="r3"))
         stop_all = await serve.request(paths, {"version": 1, "op": "stop_all", "request_id": "sa"})
         busy_result = await busy_task
