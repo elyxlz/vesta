@@ -3970,6 +3970,15 @@ mod tests {
                 last_message_at: None,
             },
         ];
+        let sample_attachment = crate::chat::AttachmentMeta {
+            id: "0f1e2d3c4b5a69788796a5b4c3d2e1f0".into(),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            size: 1234,
+            width: Some(640),
+            height: Some(480),
+            duration_secs: None,
+        };
         let chat_messages = vec![
             crate::chat::Message {
                 id: 1,
@@ -3993,7 +4002,7 @@ mod tests {
                 input_method: None,
                 intent_id: None,
                 origin_id: None,
-                attachments: Vec::new(),
+                attachments: vec![sample_attachment.clone()],
             },
         ];
         let rooms = serde_json::json!({ "rooms": chat_rooms });
@@ -4001,6 +4010,11 @@ mod tests {
         let chat_history = serde_json::json!({ "events": chat_messages, "cursor": 1 });
         let chat_post = serde_json::json!({ "ok": true, "id": 2 });
         let chat_import = serde_json::json!({ "imported": 3, "skipped": 1 });
+        let attachment_created = serde_json::json!({ "id": &sample_attachment.id });
+        let attachment_status = serde_json::json!({
+            "received": sample_attachment.size, "size": sample_attachment.size, "finalized": true
+        });
+        let attachment_completed = serde_json::json!({ "attachment": &sample_attachment });
 
         serde_json::json!({
             "agent_statuses": agent_statuses,
@@ -4023,6 +4037,9 @@ mod tests {
             "chat_history": chat_history,
             "chat_post": chat_post,
             "chat_import": chat_import,
+            "attachment_created": attachment_created,
+            "attachment_status": attachment_status,
+            "attachment_completed": attachment_completed,
         })
     }
 

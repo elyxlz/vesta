@@ -47,6 +47,14 @@ const BURST_CAP: usize = 40;
 /// gate that never binds fails as itself rather than as the other guard.
 const GATE_ATTEMPTS: usize = BURST_CAP / 2;
 
+/// The attachment surface, rooted at the gateway like every other room route.
+const ATTACHMENTS_PATH: &str = "/rooms/attachments";
+/// A well-formed id no session ever minted, for the refusal a post gets naming one.
+const UNKNOWN_ATTACHMENT_ID: &str = "00112233445566778899aabbccddeeff";
+/// The eight bytes every PNG opens with. Nothing sniffs the blob, so this is only a body that
+/// reads as what it claims to be.
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+
 // ── fixtures ────────────────────────────────────────────────────
 
 /// Create an agent for a chat scenario: the create answers only once its direct room exists.
@@ -125,6 +133,65 @@ fn post_message(
         .proxy_post_json(&format!("/rooms/{room}/messages"), auth, body)
         .expect("post message");
     (status, parse(&raw))
+}
+
+/// Append one chunk of an upload at an explicit offset, preserving the status and body: the 409
+/// an offset mismatch answers is the contract, not a failure.
+fn put_chunk(client: &Client, id: &str, offset: u64, bytes: &[u8]) -> (u16, String) {
+    client
+        .proxy_put_bytes(
+            &format!("{ATTACHMENTS_PATH}/{id}/data?offset={offset}"),
+            ProxyAuth::ApiKey,
+            bytes,
+        )
+        .expect("append an upload chunk")
+}
+
+fn attachment_status(client: &Client, id: &str) -> serde_json::Value {
+    let (status, raw) = client
+        .proxy_get(
+            &format!("{ATTACHMENTS_PATH}/{id}/status"),
+            ProxyAuth::ApiKey,
+        )
+        .expect("read the upload status");
+    assert_eq!(status, 200, "GET {ATTACHMENTS_PATH}/{id}/status: {raw}");
+    parse(&raw)
+}
+
+/// Stage one finalized attachment in a single chunk, answering its id. The chunked path is
+/// scenario (10)'s subject; every other scenario only needs a blob that exists.
+fn upload_attachment(client: &Client, name: &str, mime: &str, bytes: &[u8]) -> String {
+    let (status, raw) = client
+        .proxy_post_json(
+            ATTACHMENTS_PATH,
+            ProxyAuth::ApiKey,
+            &serde_json::json!({ "name": name, "mime": mime, "size": bytes.len() }),
+        )
+        .expect("create the upload session");
+    assert_eq!(status, 200, "POST {ATTACHMENTS_PATH}: {raw}");
+    let id = parse(&raw)["id"]
+        .as_str()
+        .expect("the create answers an id")
+        .to_string();
+    let (status, raw) = put_chunk(client, &id, 0, bytes);
+    assert_eq!(status, 200, "the whole blob lands in one chunk: {raw}");
+    let (status, raw) = client
+        .proxy_post_json(
+            &format!("{ATTACHMENTS_PATH}/{id}/complete"),
+            ProxyAuth::ApiKey,
+            &serde_json::json!({}),
+        )
+        .expect("complete the upload");
+    assert_eq!(status, 200, "the upload finalizes: {raw}");
+    id
+}
+
+/// One response header as text, or `None` when it is absent or not text.
+fn header(headers: &ureq::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
 }
 
 fn history(client: &Client, room: &str, query: &str) -> serde_json::Value {
@@ -747,4 +814,194 @@ fn a_stranger_agent_is_refused_and_no_credential_is_401() {
         .proxy_get("/rooms", ProxyAuth::None)
         .expect("list rooms with no credential");
     assert_eq!(status, 401, "the room list needs a credential: {raw}");
+}
+
+/// (10) An upload lands in chunks over its own session, refuses a chunk at the wrong offset with
+/// the size to resync to, and the finalized attachment rides a message onto the socket and into
+/// history by id alone.
+#[tokio::test]
+async fn an_upload_lands_in_chunks_and_rides_a_message() {
+    let client = SERVER.client();
+    let agent = chat_agent(&client, "rooms-upload");
+    let room = direct_room(&agent.name);
+    let mut sock = client
+        .open_rooms_socket(Some(&room))
+        .await
+        .expect("open the room socket");
+    drive_until_echo(&client, &mut sock, &room, "before-the-upload").await;
+
+    let (status, raw) = client
+        .proxy_post_json(
+            ATTACHMENTS_PATH,
+            ProxyAuth::ApiKey,
+            &serde_json::json!({ "name": "note.txt", "mime": "text/plain", "size": 3 }),
+        )
+        .expect("create the upload session");
+    assert_eq!(status, 200, "POST {ATTACHMENTS_PATH}: {raw}");
+    let id = parse(&raw)["id"]
+        .as_str()
+        .expect("the create answers an id")
+        .to_string();
+
+    let (status, raw) = put_chunk(&client, &id, 0, b"ab");
+    assert_eq!(status, 200, "the first chunk lands: {raw}");
+    assert_eq!(parse(&raw)["received"].as_u64(), Some(2));
+
+    // The same chunk again: the offset the client believes in is behind the staged size, so the
+    // refusal carries the truth rather than duplicating the bytes.
+    let (status, raw) = put_chunk(&client, &id, 0, b"ab");
+    assert_eq!(status, 409, "a replayed offset is refused: {raw}");
+    let refusal = parse(&raw);
+    assert_eq!(refusal["error"].as_str(), Some("offset mismatch"));
+    assert_eq!(
+        refusal["received"].as_u64(),
+        Some(2),
+        "the refusal names the offset to resume from: {raw}"
+    );
+
+    let staged = attachment_status(&client, &id);
+    assert_eq!(staged["received"].as_u64(), Some(2));
+    assert_eq!(staged["size"].as_u64(), Some(3));
+    assert_eq!(staged["finalized"].as_bool(), Some(false));
+
+    let (status, raw) = put_chunk(&client, &id, 2, b"c");
+    assert_eq!(status, 200, "the last chunk lands: {raw}");
+    assert_eq!(parse(&raw)["received"].as_u64(), Some(3));
+
+    let (status, raw) = client
+        .proxy_post_json(
+            &format!("{ATTACHMENTS_PATH}/{id}/complete"),
+            ProxyAuth::ApiKey,
+            &serde_json::json!({}),
+        )
+        .expect("complete the upload");
+    assert_eq!(status, 200, "the upload finalizes: {raw}");
+    let meta = parse(&raw)["attachment"].clone();
+    assert_eq!(meta["id"].as_str(), Some(id.as_str()));
+    assert_eq!(meta["name"].as_str(), Some("note.txt"));
+    assert_eq!(meta["mime"].as_str(), Some("text/plain"));
+    assert_eq!(meta["size"].as_u64(), Some(3));
+    assert_eq!(
+        attachment_status(&client, &id)["finalized"].as_bool(),
+        Some(true),
+        "a finalized id reports itself as done"
+    );
+
+    let intent = "i-upload-carries";
+    let (status, answer) = post_message(
+        &client,
+        &room,
+        ProxyAuth::ApiKey,
+        &serde_json::json!({ "text": "here it is", "intent_id": intent, "attachments": [&id] }),
+    );
+    assert_eq!(status, 200, "the post carrying the id lands: {answer}");
+
+    let echo = sock
+        .expect_frame_matching(
+            |frame| frame["intent_id"].as_str() == Some(intent),
+            FRAME_TIMEOUT,
+        )
+        .await
+        .expect("the attachment message on the room socket");
+    assert_eq!(
+        echo["attachments"],
+        serde_json::json!([meta]),
+        "the echo carries the whole metadata, not merely the id"
+    );
+
+    let carried = history_events(&history(&client, &room, "limit=50"))
+        .into_iter()
+        .find(|event| event["intent_id"].as_str() == Some(intent))
+        .expect("the attachment message pages back");
+    assert_eq!(carried["attachments"], serde_json::json!([meta]));
+}
+
+/// (11) What a browser is told about a blob: media renders inline, a download is asked for on
+/// request, and anything else is an opaque stream it can only save.
+#[test]
+fn a_blob_serves_inline_for_media_and_downloads_otherwise() {
+    let client = SERVER.client();
+    let image = upload_attachment(&client, "photo.png", "image/png", PNG_MAGIC);
+    let page = upload_attachment(&client, "page.html", "text/html", b"<b>hi</b>");
+
+    let (status, headers) = client
+        .proxy_get_headers(&format!("{ATTACHMENTS_PATH}/{image}"), ProxyAuth::ApiKey)
+        .expect("serve the image");
+    assert_eq!(status, 200, "the image serves");
+    assert_eq!(
+        header(&headers, "content-type").as_deref(),
+        Some("image/png")
+    );
+    assert!(
+        header(&headers, "content-disposition")
+            .is_some_and(|value| value.starts_with("inline; filename=\"photo.png\"")),
+        "media renders inline: {:?}",
+        header(&headers, "content-disposition")
+    );
+    assert_eq!(
+        header(&headers, "x-content-type-options").as_deref(),
+        Some("nosniff")
+    );
+
+    let (status, headers) = client
+        .proxy_get_headers(
+            &format!("{ATTACHMENTS_PATH}/{image}?download=1"),
+            ProxyAuth::ApiKey,
+        )
+        .expect("serve the image as a download");
+    assert_eq!(status, 200, "the download serves");
+    assert_eq!(
+        header(&headers, "content-type").as_deref(),
+        Some("image/png"),
+        "a download keeps the real type it declared"
+    );
+    assert!(
+        header(&headers, "content-disposition")
+            .is_some_and(|value| value.starts_with("attachment; filename=\"photo.png\"")),
+        "a download is saved, never rendered: {:?}",
+        header(&headers, "content-disposition")
+    );
+
+    let (status, headers) = client
+        .proxy_get_headers(&format!("{ATTACHMENTS_PATH}/{page}"), ProxyAuth::ApiKey)
+        .expect("serve the html blob");
+    assert_eq!(status, 200, "the html blob serves");
+    assert_eq!(
+        header(&headers, "content-type").as_deref(),
+        Some("application/octet-stream"),
+        "a declared mime that is not media is served opaquely"
+    );
+    assert!(
+        header(&headers, "content-disposition")
+            .is_some_and(|value| value.starts_with("attachment; filename=\"page.html\"")),
+        "a non-media blob is never rendered: {:?}",
+        header(&headers, "content-disposition")
+    );
+}
+
+/// (12) A post naming an attachment this node never finalized is refused by id, and the message
+/// it carried lands nowhere.
+#[test]
+fn an_unknown_attachment_id_is_a_400_on_post() {
+    let client = SERVER.client();
+    let agent = chat_agent(&client, "rooms-unknown-attachment");
+    let room = direct_room(&agent.name);
+
+    let (status, body) = post_message(
+        &client,
+        &room,
+        ProxyAuth::ApiKey,
+        &serde_json::json!({ "text": "with a ghost", "attachments": [UNKNOWN_ATTACHMENT_ID] }),
+    );
+    assert_eq!(status, 400, "an unknown id is refused: {body}");
+    assert_eq!(
+        body["error"].as_str(),
+        Some(format!("unknown attachment: {UNKNOWN_ATTACHMENT_ID}").as_str()),
+        "the refusal names the id it could not resolve"
+    );
+
+    let landed = history_events(&history(&client, &room, "limit=50"))
+        .into_iter()
+        .any(|event| event["text"].as_str() == Some("with a ghost"));
+    assert!(!landed, "a refused post persists nothing");
 }

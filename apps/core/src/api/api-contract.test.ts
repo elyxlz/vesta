@@ -9,6 +9,9 @@ import type { FileReadResponse, FileTreeEntry } from "./files";
 import type { GatewayEndpointInfo, GatewaySettings } from "./gateway";
 import type { HostMount } from "./mounts";
 import type {
+  AttachmentCompleted,
+  AttachmentCreated,
+  AttachmentStatus,
   ChatImportAck,
   ChatPostAck,
   RoomOpened,
@@ -115,5 +118,23 @@ describe("vestad API contract", () => {
     const imported =
       vestadApiFixtures.chat_import satisfies DeepReadonly<ChatImportAck>;
     expect(imported.skipped).toBe(1);
+  });
+
+  it("the attachment acks satisfy their shapes and history carries the metadata", () => {
+    const created =
+      vestadApiFixtures.attachment_created satisfies DeepReadonly<AttachmentCreated>;
+    expect(created.id).toBe("0f1e2d3c4b5a69788796a5b4c3d2e1f0");
+    const status =
+      vestadApiFixtures.attachment_status satisfies DeepReadonly<AttachmentStatus>;
+    expect(status.received).toBe(status.size);
+    expect(status.finalized).toBe(true);
+    const completed =
+      vestadApiFixtures.attachment_completed satisfies DeepReadonly<AttachmentCompleted>;
+    expect(completed.attachment.mime).toBe("image/png");
+    expect(completed.attachment.width).toBe(640);
+    const history =
+      vestadApiFixtures.chat_history satisfies DeepReadonly<HistoryPage>;
+    const [, reply] = history.events;
+    expect(reply.attachments).toEqual([completed.attachment]);
   });
 });
