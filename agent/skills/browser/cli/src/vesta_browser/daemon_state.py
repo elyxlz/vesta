@@ -11,6 +11,7 @@ import dataclasses
 
 from . import protocol as p
 from . import sessions as sessions_mod
+from .handover_state import Handover
 from .runtime_paths import Paths
 from .runtimes import ExecOutcome
 
@@ -22,6 +23,7 @@ class State:
     inflight: dict[str, asyncio.Task[ExecOutcome]] = dataclasses.field(default_factory=dict)
     tasks: set[asyncio.Task[None]] = dataclasses.field(default_factory=set)
     restart_pending: set[str] = dataclasses.field(default_factory=set)
+    handover: Handover | None = None
     last_error: p.Error | None = None
     asked_to_stop: bool = False
 

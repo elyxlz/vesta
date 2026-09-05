@@ -19,7 +19,7 @@ import sys
 import time
 import typing as tp
 
-from . import artifacts, doctor
+from . import artifacts, doctor, handover
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
@@ -35,10 +35,9 @@ PRUNE_INTERVAL_SECS = 3600
 # `browser daemon stop` SIGKILLs this process two thirds into its own stop budget, so every session
 # teardown shares one budget below that point; whatever the budget catches is killed outright.
 SHUTDOWN_BUDGET_SECS = 6.0
-
-
-def _invalid(message: str) -> p.Error:
-    return p.error("invalid_request", "validation", message, retryable=False, suggested_action="fix the request and retry")
+# A shutdown still asks vestad to revoke the key and drop the service, but a slow vestad must not
+# eat the SIGKILL window the whole teardown shares.
+HANDOVER_GATEWAY_TIMEOUT_SECS = 3.0
 
 
 async def op_status(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
@@ -54,18 +53,18 @@ def _validate_exec(request: dict[str, p.JsonValue]) -> tuple[str, p.Mode | None,
     """Returns (session, mode, timeout_s, code, warnings) or raises BrowserError(invalid_request)."""
     code = request["code"] if "code" in request else ""
     if not isinstance(code, str) or not code.strip():
-        raise p.BrowserError(_invalid("code is empty"))
+        raise p.BrowserError(p.invalid("code is empty"))
     if len(code.encode()) > p.CODE_MAX_BYTES:
-        raise p.BrowserError(_invalid(f"code exceeds {p.CODE_MAX_BYTES} bytes"))
+        raise p.BrowserError(p.invalid(f"code exceeds {p.CODE_MAX_BYTES} bytes"))
     session = request["session"] if "session" in request else p.DEFAULT_SESSION
     if not isinstance(session, str):
-        raise p.BrowserError(_invalid("session must be a string"))
+        raise p.BrowserError(p.invalid("session must be a string"))
     mode = request["mode"] if "mode" in request else None
     if mode not in (None, "standard", "stealth"):
-        raise p.BrowserError(_invalid("mode must be standard, stealth, or null"))
+        raise p.BrowserError(p.invalid("mode must be standard, stealth, or null"))
     raw_timeout = request["timeout_s"] if "timeout_s" in request else p.EXEC_TIMEOUT_DEFAULT_SECS
     if not isinstance(raw_timeout, int):
-        raise p.BrowserError(_invalid("timeout_s must be an integer"))
+        raise p.BrowserError(p.invalid("timeout_s must be an integer"))
     timeout = min(max(raw_timeout, p.EXEC_TIMEOUT_MIN_SECS), p.EXEC_TIMEOUT_MAX_SECS)
     warnings = ["timeout_clamped"] if timeout != raw_timeout else []
     return session, tp.cast(p.Mode | None, mode), timeout, code, warnings
@@ -171,7 +170,7 @@ async def op_exec(state: State, request_id: str, request: dict[str, p.JsonValue]
             )
         )
     if session.state in ("busy", "starting"):
-        raise p.BrowserError(_invalid(f"session {name!r} is {session.state}; retry once the current request finishes"))
+        raise p.BrowserError(p.invalid(f"session {name!r} is {session.state}; retry once the current request finishes"))
     warnings += await _ensure_running(state, session)
     sessions_mod.mark(session, "busy")
     session.request_id = request_id
@@ -196,10 +195,10 @@ async def op_sessions(state: State, request_id: str, _request: dict[str, p.JsonV
 async def op_session_stop(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:
     name = str(request["session"]) if "session" in request else ""
     if name not in state.table.sessions:
-        raise p.BrowserError(_invalid(f"unknown session {name!r}"))
+        raise p.BrowserError(p.invalid(f"unknown session {name!r}"))
     session = state.table.sessions[name]
     if not await _stop_session(session):
-        raise p.BrowserError(_invalid(f"session {name!r} is {session.state}; refusing to stop"))
+        raise p.BrowserError(p.invalid(f"session {name!r} is {session.state}; refusing to stop"))
     return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
 
 
@@ -239,12 +238,12 @@ async def handle_request(state: State, request: dict[str, p.JsonValue]) -> p.Res
     request_id = ""
     try:
         if "request_id" not in request or not isinstance(request["request_id"], str) or not request["request_id"]:
-            raise p.BrowserError(_invalid("request_id must be a non-empty string"))
+            raise p.BrowserError(p.invalid("request_id must be a non-empty string"))
         request_id = request["request_id"]
         if "version" not in request or request["version"] != p.PROTOCOL_VERSION:
-            raise p.BrowserError(_invalid(f"unsupported protocol version; this daemon speaks {p.PROTOCOL_VERSION}"))
+            raise p.BrowserError(p.invalid(f"unsupported protocol version; this daemon speaks {p.PROTOCOL_VERSION}"))
         if op not in HANDLERS:
-            raise p.BrowserError(_invalid(f"unknown op {op!r}"))
+            raise p.BrowserError(p.invalid(f"unknown op {op!r}"))
         return await HANDLERS[op](state, request_id, request)
     except p.BrowserError as exc:
         state.last_error = exc.err
@@ -267,7 +266,7 @@ async def _handle_connection(state: State, reader: asyncio.StreamReader, writer:
             raise ValueError("request must be an object")
         response = await handle_request(state, request)
     except (ValueError, KeyError) as exc:
-        response = p.result(request_id="", op="", ok=False, err=_invalid(f"unreadable request: {exc}"))
+        response = p.result(request_id="", op="", ok=False, err=p.invalid(f"unreadable request: {exc}"))
     writer.write((json.dumps(response) + "\n").encode())
     with contextlib.suppress(ConnectionError):
         await writer.drain()
@@ -342,7 +341,8 @@ async def _stop_every_session(state: State) -> None:
 
 
 async def shutdown(state: State) -> None:
-    """Cancels the idle sweep, cancels and awaits every inflight exec, then force-stops every session."""
+    """Cancels the idle sweep, cancels and awaits every inflight exec, gives back a live handover
+    inside half the budget, then force-stops every session."""
     for task in list(state.tasks):
         task.cancel()
     for task in list(state.tasks):
@@ -353,6 +353,10 @@ async def shutdown(state: State) -> None:
         task.cancel()
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
+    if state.handover is not None and state.handover.state in ("starting", "live"):
+        stopping = handover.stop(state, reason="stopped", gateway_timeout=HANDOVER_GATEWAY_TIMEOUT_SECS)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stopping, SHUTDOWN_BUDGET_SECS / 2)
     await _stop_every_session(state)
 
 
@@ -392,6 +396,9 @@ HANDLERS: dict[str, Handler] = {
     "session_stop": op_session_stop,
     "stop_all": op_stop_all,
     "doctor": doctor.op_doctor,
+    "handover_start": handover.op_handover_start,
+    "handover_status": handover.op_handover_status,
+    "handover_stop": handover.op_handover_stop,
 }
 
 

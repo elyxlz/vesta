@@ -1,13 +1,34 @@
-"""Deadline polls the daemon suites wait on, so no test ever sleeps a fixed guess."""
+"""The in-process daemon the suites drive, and the deadline polls they wait on: no fixed sleeps."""
 
 import asyncio
 import os
 import time
 
+import pytest
 from vesta_browser import serve
 
 POLL_DEADLINE_SECS = 5.0
 POLL_INTERVAL_SECS = 0.02
+SOCKET_WAIT_POLLS = 100
+
+
+def with_daemon(paths, coro_fn):
+    """Runs `coro_fn` against a daemon serving `paths`, torn down through its own shutdown path."""
+
+    async def run():
+        server = asyncio.create_task(serve.serve(paths))
+        for _ in range(SOCKET_WAIT_POLLS):
+            if paths.socket.exists():
+                break
+            await asyncio.sleep(POLL_INTERVAL_SECS)
+        try:
+            return await coro_fn()
+        finally:
+            server.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await server
+
+    return asyncio.run(run())
 
 
 async def wait_for_state(paths, name, wanted, timeout=POLL_DEADLINE_SECS):

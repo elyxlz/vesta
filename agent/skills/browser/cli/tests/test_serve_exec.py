@@ -9,7 +9,7 @@ from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_fakes
-from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead
+from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead, with_daemon
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
 
@@ -28,23 +28,6 @@ def _exec(session, code, mode=None, timeout_s=10, request_id="r1"):
     return {"version": 1, "op": "exec", "request_id": request_id, "session": session, "mode": mode, "timeout_s": timeout_s, "code": code}
 
 
-def _with_daemon(paths, coro_fn):
-    async def run():
-        server = asyncio.create_task(serve.serve(paths))
-        for _ in range(100):
-            if paths.socket.exists():
-                break
-            await asyncio.sleep(0.02)
-        try:
-            return await coro_fn()
-        finally:
-            server.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await server
-
-    return asyncio.run(run())
-
-
 async def _wait_for_file(path, timeout=POLL_DEADLINE_SECS):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -58,7 +41,7 @@ def test_exec_on_a_new_session_starts_chromium_and_returns_the_full_envelope(pat
     async def run():
         return await serve.request(paths, _exec("research", "print('hi')"))
 
-    res = _with_daemon(paths, run)
+    res = with_daemon(paths, run)
     assert res["ok"] is True and res["session"]["engine"] == "chromium" and res["session"]["state"] == "ready"
     assert res["page"]["url"] == "https://example.com/" and res["output"]["exit_code"] == 0
     assert res["artifacts"] == [] and res["warnings"] == []
@@ -71,7 +54,7 @@ def test_stealth_exec_runs_camoufox_and_pins_the_session(paths):
         inherit = await serve.request(paths, _exec("s", "print(2)", request_id="r3"))
         return first, conflict, inherit
 
-    first, conflict, inherit = _with_daemon(paths, run)
+    first, conflict, inherit = with_daemon(paths, run)
     assert first["session"]["engine"] == "camoufox" and first["output"]["stdout"] == "1\n"
     assert conflict["ok"] is False and conflict["error"]["code"] == "session_engine_conflict"
     assert inherit["session"]["engine"] == "camoufox"
@@ -81,7 +64,7 @@ def test_a_screenshot_becomes_an_artifact(paths):
     async def run():
         return await serve.request(paths, _exec("research", "SHOT"))
 
-    res = _with_daemon(paths, run)
+    res = with_daemon(paths, run)
     assert len(res["artifacts"]) == 1 and res["artifacts"][0]["mime_type"] == "image/png"
     assert res["artifacts"][0]["path"].startswith(str(paths.artifacts / "research"))
 
@@ -90,7 +73,7 @@ def test_failed_code_is_execution_failed_with_stderr_kept(paths):
     async def run():
         return await serve.request(paths, _exec("research", "FAIL"))
 
-    res = _with_daemon(paths, run)
+    res = with_daemon(paths, run)
     assert res["ok"] is False and res["error"]["code"] == "execution_failed" and res["error"]["phase"] == "execution"
     assert "boom" in res["output"]["stderr"] and res["session"]["state"] == "ready" and res["page"]["state"] == "ready"
 
@@ -99,7 +82,7 @@ def test_cdp_on_camoufox_is_a_capability_mismatch(paths):
     async def run():
         return await serve.request(paths, _exec("s", "cdp('x')", mode="stealth"))
 
-    res = _with_daemon(paths, run)
+    res = with_daemon(paths, run)
     assert res["error"]["code"] == "engine_capability_mismatch" and "camoufox" in res["error"]["message"]
     assert res["error"]["retryable"] is False and "new" in res["error"]["suggested_action"]
 
@@ -110,7 +93,7 @@ def test_timeout_is_clamped_and_reported(paths):
         timed_out = await serve.request(paths, _exec("research", "SLEEP", timeout_s=5, request_id="r2"))
         return clamped, timed_out
 
-    clamped, timed_out = _with_daemon(paths, run)
+    clamped, timed_out = with_daemon(paths, run)
     assert "timeout_clamped" in clamped["warnings"]
     assert timed_out["error"]["code"] == "timed_out" and timed_out["error"]["retryable"] is True
 
@@ -121,7 +104,7 @@ def test_camoufox_timeout_restarts_the_worker_on_the_next_exec(paths):
         second = await serve.request(paths, _exec("s", "print('back')", request_id="r2"))
         return first, second
 
-    first, second = _with_daemon(paths, run)
+    first, second = with_daemon(paths, run)
     assert first["error"]["code"] == "timed_out" and first["session"]["state"] == "stopped"
     assert second["ok"] is True and "worker_restarted" in second["warnings"]
 
@@ -133,7 +116,7 @@ def test_cancel_ends_an_inflight_exec(paths):
         cancel = await serve.request(paths, {"version": 1, "op": "cancel", "request_id": "c1", "target_request_id": "r1"})
         return cancel, await task
 
-    cancel, res = _with_daemon(paths, run)
+    cancel, res = with_daemon(paths, run)
     assert cancel["ok"] is True
     assert res["error"]["code"] == "cancelled" and res["session"]["state"] == "ready"
 
@@ -147,7 +130,7 @@ def test_busy_session_refuses_a_second_exec(paths):
         await task
         return second
 
-    second = _with_daemon(paths, run)
+    second = with_daemon(paths, run)
     assert second["error"]["code"] == "invalid_request" and "busy" in second["error"]["message"]
 
 
@@ -162,7 +145,7 @@ def test_sessions_and_session_stop_and_stop_all(paths):
         final = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l3"})
         return listing, stopped, after, stop_all, final
 
-    listing, stopped, after, stop_all, final = _with_daemon(paths, run)
+    listing, stopped, after, stop_all, final = with_daemon(paths, run)
     engines_and_states = {s["name"]: (s["engine"], s["state"]) for s in listing["data"]["sessions"]}
     assert engines_and_states == {"a": ("chromium", "ready"), "b": ("camoufox", "ready")}
     assert stopped["ok"] is True
@@ -178,7 +161,7 @@ def test_bad_exec_requests_are_invalid(paths):
         mode = await serve.request(paths, _exec("research", "print(1)", mode="ninja", request_id="r3"))
         return empty, huge, mode
 
-    for res in _with_daemon(paths, run):
+    for res in with_daemon(paths, run):
         assert res["ok"] is False and res["error"]["code"] == "invalid_request"
 
 
@@ -191,7 +174,7 @@ def test_idle_sweep_stops_a_ready_session(paths, monkeypatch):
         await wait_for_state(paths, "research", "stopped")
         return await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
 
-    res = _with_daemon(paths, run)
+    res = with_daemon(paths, run)
     assert res["data"]["sessions"][0]["state"] == "stopped"
 
 
@@ -215,7 +198,7 @@ def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
         await wait_for_state(paths, "research", "stopped")
         return len(calls)
 
-    assert _with_daemon(paths, run) >= 2
+    assert with_daemon(paths, run) >= 2
 
 
 def test_a_total_start_failure_frees_the_session_and_kills_the_browser(paths, monkeypatch):
@@ -235,7 +218,7 @@ def test_a_total_start_failure_frees_the_session_and_kills_the_browser(paths, mo
         recovered = await serve.request(paths, _exec("research", "print(1)", request_id="r2"))
         return failed, listing, dead, recovered
 
-    failed, listing, dead, recovered = _with_daemon(paths, run)
+    failed, listing, dead, recovered = with_daemon(paths, run)
     assert failed["ok"] is False and failed["error"]["code"] == "engine_unavailable"
     assert listing["data"]["sessions"][0]["state"] == "stopped"
     assert dead is True
@@ -318,7 +301,7 @@ def test_two_concurrent_cold_execs_launch_the_browser_once(paths):
         second = asyncio.create_task(serve.request(paths, _exec("cold", "print(1)", request_id="r2")))
         return await asyncio.gather(first, second)
 
-    results = _with_daemon(paths, run)
+    results = with_daemon(paths, run)
     oks = [r for r in results if r["ok"]]
     refused = [r for r in results if not r["ok"]]
     assert len(oks) == 1 and len(refused) == 1
@@ -338,7 +321,7 @@ def test_session_stop_refuses_a_busy_session_and_the_exec_still_completes(paths)
         after = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
         return stop, alive_right_after_refusal, exec_result, after
 
-    stop, alive_right_after_refusal, exec_result, after = _with_daemon(paths, run)
+    stop, alive_right_after_refusal, exec_result, after = with_daemon(paths, run)
     assert stop["ok"] is False and stop["error"]["code"] == "invalid_request" and "busy" in stop["error"]["message"]
     assert alive_right_after_refusal is True
     assert exec_result["error"]["code"] == "timed_out"
@@ -355,7 +338,7 @@ def test_stop_all_excludes_a_busy_session(paths):
         busy_result = await busy_task
         return stop_all, busy_result
 
-    stop_all, busy_result = _with_daemon(paths, run)
+    stop_all, busy_result = with_daemon(paths, run)
     assert stop_all["data"]["stopped"] == ["b"]
     assert busy_result["error"]["code"] == "timed_out"
 
@@ -372,7 +355,7 @@ def test_an_engine_exception_answers_execution_failed_and_the_session_recovers(p
         second = await serve.request(paths, _exec("research", "print(1)", request_id="r2"))
         return first, second
 
-    first, second = _with_daemon(paths, run)
+    first, second = with_daemon(paths, run)
     assert first["ok"] is False and first["error"]["code"] == "execution_failed" and "boom" in first["error"]["message"]
     assert len(first["error"]["message"].splitlines()) == 1
     assert second["ok"] is True

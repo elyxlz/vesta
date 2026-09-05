@@ -62,8 +62,18 @@ def write_fakes(bin_dir: pl.Path) -> dict[str, str]:
 # test variable can ride into. X11_DIR is that hole.
 X11_DIR = "@@X11_DIR@@"
 
+# Both socket fakes accept and drop what connects, exactly as the servers they stand in for do: a
+# listener that never accepts fills its backlog and then hangs the probes a live handover runs.
+ACCEPT_LOOP = """
+import threading
+def _accept(listener):
+    while True:
+        conn, _ = listener.accept()
+        conn.close()
+"""
+
 FAKE_XVFB = f"""#!{sys.executable}
-import os, pathlib, socket, sys, time
+import os, pathlib, socket, sys, time{ACCEPT_LOOP}
 number = next(a[1:] for a in sys.argv[1:] if a.startswith(":")).split(".")[0]
 x11 = pathlib.Path("{X11_DIR}")
 x11.mkdir(parents=True, exist_ok=True)
@@ -71,17 +81,21 @@ sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.bind(str(x11 / ("X" + number)))
 sock.listen(8)
 (x11 / ("xvfb-" + number + ".pid")).write_text(str(os.getpid()))
+open(str(x11 / "pids"), "a").write(str(os.getpid()) + "\\n")
+threading.Thread(target=_accept, args=(sock,), daemon=True).start()
 time.sleep(3600)
 """
 
 FAKE_OPENBOX = f"""#!{sys.executable}
-import time
+import os, time
+open("{X11_DIR}/pids", "a").write(str(os.getpid()) + "\\n")
 time.sleep(3600)
 """
 
 FAKE_X11VNC = f"""#!{sys.executable}
-import pathlib, socket, sys, time
+import os, pathlib, socket, sys, time{ACCEPT_LOOP}
 port = int(sys.argv[sys.argv.index("-rfbport") + 1])
+open("{X11_DIR}/pids", "a").write(str(os.getpid()) + "\\n")
 if pathlib.Path("{X11_DIR}", "fail-always").exists():
     sys.exit(1)
 if pathlib.Path("{X11_DIR}", "fail-shm").exists() and "-noshm" not in sys.argv:
@@ -90,11 +104,13 @@ sock = socket.socket()
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 sock.bind(("127.0.0.1", port))
 sock.listen(8)
+threading.Thread(target=_accept, args=(sock,), daemon=True).start()
 time.sleep(3600)
 """
 
 FAKE_WEBSOCKIFY = f"""#!{sys.executable}
-import functools, http.server, sys
+import functools, http.server, os, sys
+open("{X11_DIR}/pids", "a").write(str(os.getpid()) + "\\n")
 web = sys.argv[sys.argv.index("--web") + 1]
 port = int(sys.argv[-2].rsplit(":", 1)[1])
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=web)

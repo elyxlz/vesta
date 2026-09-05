@@ -160,6 +160,11 @@ def error(code: str, phase: str, message: str, *, retryable: bool, suggested_act
     return {"code": code, "phase": phase, "message": message, "retryable": retryable, "suggested_action": suggested_action}
 
 
+def invalid(message: str) -> Error:
+    """The one shape for a request the daemon refuses to act on."""
+    return error("invalid_request", "validation", message, retryable=False, suggested_action="fix the request and retry")
+
+
 def session_info(name: str, mode: Mode, engine: Engine, state: SessionState) -> SessionInfo:
     return {"name": name, "mode": mode, "engine": engine, "protocol": PROTOCOL_FOR_ENGINE[engine], "state": state}
 
