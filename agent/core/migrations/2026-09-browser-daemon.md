@@ -28,15 +28,18 @@ uv sync --frozen --project ~/agent/skills/browser/engines/camoufox
 
 A process whose command line contains `vesta_browser.daemon`, or a Camoufox binary launched from
 `~/.cache/camoufox`, predates the daemon and holds files the daemon does not read. Find and stop
-each one by scanning `/proc` rather than `pkill`, which the image does not carry. The scan skips
-the shell running it, since that shell's own command line carries the same literals as the
-patterns it searches for:
+each one by scanning `/proc` rather than `pkill`, which the image does not carry. The scan reads
+only processes whose executable is a python or a camoufox binary, so a process that merely carries
+one of these patterns in an argument is left alone, and it skips the shell running it, whose own
+command line carries the same literals as the patterns it searches for:
 
 ```bash
 for cmdline in /proc/[0-9]*/cmdline; do
   pid="$(basename "$(dirname "$cmdline")")"
   if [ "$pid" = "$$" ]; then continue; fi
   args="$(tr '\0' ' ' < "$cmdline" 2>/dev/null)" || continue
+  exe="${args%% *}"
+  case "$exe" in *python*|*camoufox*) ;; *) continue ;; esac
   case "$args" in
     *vesta_browser.daemon*|*.cache/camoufox*)
       kill "$pid" 2>/dev/null || true
@@ -48,6 +51,8 @@ for cmdline in /proc/[0-9]*/cmdline; do
   pid="$(basename "$(dirname "$cmdline")")"
   if [ "$pid" = "$$" ]; then continue; fi
   args="$(tr '\0' ' ' < "$cmdline" 2>/dev/null)" || continue
+  exe="${args%% *}"
+  case "$exe" in *python*|*camoufox*) ;; *) continue ;; esac
   case "$args" in
     *vesta_browser.daemon*|*.cache/camoufox*)
       kill -9 "$pid" 2>/dev/null || true
@@ -102,9 +107,9 @@ browser daemon start
 browser doctor
 ```
 
-Read `engines.routes.standard.ready` and `engines.routes.stealth.ready` in the `doctor` output.
-Both must read `true`. If `doctor` answers an error instead of a report, or either route reads
-`false`, STOP, leave this migration unmarked, and report it to the user with what the answer
+Read `data.engines.routes.standard.ready` and `data.engines.routes.stealth.ready` in the `doctor`
+output. Both must read `true`. If `doctor` answers an error instead of a report, or either route
+reads `false`, STOP, leave this migration unmarked, and report it to the user with what the answer
 names.
 
 ### 7. Carry Microsoft accounts forward
