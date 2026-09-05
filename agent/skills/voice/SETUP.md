@@ -69,10 +69,15 @@ whisper.cpp build when no provider is enabled or the provider call fails. The fa
 # Build deps and ffmpeg
 apt-get update && apt-get install -y build-essential cmake ffmpeg
 
-# whisper.cpp
-git clone https://github.com/ggerganov/whisper.cpp.git /opt/whisper.cpp
-cd /opt/whisper.cpp && cmake -B build && cmake --build build --config Release -j"$(nproc)"
-cp build/bin/whisper-cli /usr/local/bin/
+# whisper.cpp. Build from a dedicated source directory rather than /opt/whisper.cpp:
+# some images already ship that path holding only prebuilt static libs and headers, with
+# no .git and no CMakeLists.txt. Cloning into it is refused for being non-empty, and the
+# cmake that follows then fails with a misleading "does not appear to contain
+# CMakeLists.txt", so the cp never runs and the fallback is silently left unbuilt.
+SRC=/opt/whisper.cpp-src
+[ -d "$SRC/.git" ] || git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$SRC"
+cmake -S "$SRC" -B "$SRC/build" && cmake --build "$SRC/build" --config Release -j"$(nproc)"
+cp "$SRC/build/bin/whisper-cli" /usr/local/bin/
 
 # Model: multilingual ggml-small (488 MB), the default the fallback looks for
 curl -L -o /usr/local/share/ggml-small.bin \
