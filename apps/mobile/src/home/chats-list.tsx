@@ -1,12 +1,11 @@
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { roomKind, roomLabel, type Room } from "@vesta/core";
+import { relativeTime, roomKind, roomLabel, type Room } from "@vesta/core";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
 import { radii } from "@/theme/layout";
-import { relativeTime } from "./relative-time";
 
 // Every conversation on the node, busiest first, under the carousel. A direct room is that agent's
 // own page, so its row goes there; every other room has its own screen.

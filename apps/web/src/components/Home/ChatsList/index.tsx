@@ -1,10 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { MessageSquare, Plus, Users } from "lucide-react";
-import { roomKind, roomLabel, type Room } from "@vesta/core";
+import { relativeTime, roomKind, roomLabel, type Room } from "@vesta/core";
 import { Button } from "@/components/ui/button";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
-import { relativeTime } from "./relative-time";
 
 // Every conversation on the node, busiest first. A direct room is that agent's own page, so its
 // row goes there; every other room has its own route.

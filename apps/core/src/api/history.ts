@@ -9,11 +9,6 @@ function cursorQuery(cursor: number | undefined): URLSearchParams {
   return params;
 }
 
-// The replay-free live chat socket (GET .../chat/ws); dialed with the token in the query.
-export function chatSocketPath(name: string): string {
-  return agentPath(name, "/chat/ws");
-}
-
 // One page of received notifications, newest first (GET /history?channel=notifications). Pass the
 // returned `cursor` to fetch the next older page; a null cursor means there are no older ones.
 // Pending state is not derived here: the connect snapshot seeds it and deltas keep it live.

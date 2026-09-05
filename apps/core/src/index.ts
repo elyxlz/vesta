@@ -12,6 +12,8 @@ export type { ReleaseNote } from "./release-notes/release-notes";
 export { parseAnsi, resolveAnsiColor } from "./ansi/ansi";
 export type { AnsiColor, AnsiStyle } from "./ansi/ansi";
 
+export { relativeTime } from "./time/relative-time";
+
 export type {
   AgentActivityState,
   AgentInfo,
@@ -207,7 +209,7 @@ export type {
   FieldPredicate,
   NotificationInterruptRule,
 } from "./api/config-rules";
-export { chatSocketPath, getNotificationHistory } from "./api/history";
+export { getNotificationHistory } from "./api/history";
 export { createRoom, roomAttachmentPath, roomsSocketPath } from "./api/rooms";
 export { fetchFileTree, readFile, writeFile } from "./api/files";
 export type { FileReadResponse, FileTreeEntry } from "./api/files";
@@ -267,7 +269,6 @@ export { rosterFromTree, rostersEqual } from "./tree/roster";
 export type { AgentRow } from "./tree/roster";
 
 export {
-  agentIsConnectable,
   agentIsDown,
   agentNeedsUser,
   agentStatusKind,
