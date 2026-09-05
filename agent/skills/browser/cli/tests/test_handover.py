@@ -14,7 +14,7 @@ import time
 import urllib.request
 
 import pytest
-from vesta_browser import display, handover, serve
+from vesta_browser import chromium, display, handover, serve
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_display_fakes, write_fakes, write_script
@@ -343,6 +343,39 @@ def test_two_starts_at_once_leave_exactly_one_handover(rig):
     assert refused["error"]["code"] == "handover_in_use"
     assert len(pids) == 4 and gone is True
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
+def test_a_stop_while_the_engine_starts_is_refused_and_the_start_still_lands(rig, monkeypatch):
+    """A handover still claiming its browser has nothing to tear down, so the stop waits its turn."""
+    launching = asyncio.Event()
+    release = asyncio.Event()
+    engine_start = chromium.start
+
+    async def _held_start(session, paths, *, headed):
+        launching.set()
+        await release.wait()
+        return await engine_start(session, paths, headed=headed)
+
+    monkeypatch.setattr(chromium, "start", _held_start)
+
+    async def run():
+        pending = asyncio.create_task(serve.request(rig.paths, _start()))
+        await asyncio.wait_for(launching.wait(), POLL_DEADLINE_SECS)
+        refused = await serve.request(rig.paths, _op("handover_stop"))
+        release.set()
+        started = await pending
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        stopped = await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
+        await wait_for_state(rig.paths, "research", "ready")
+        gone = await wait_until_all_dead(pids[2:])
+        return refused, started, stopped, pids, gone, all(pid_alive(pid) for pid in pids[:2])
+
+    refused, started, stopped, pids, gone, held = with_daemon(rig.paths, run)
+    assert refused["ok"] is False and refused["error"]["code"] == "handover_in_use"
+    assert started["ok"] is True and started["data"]["state"] == "live", started
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert len(pids) == 4 and gone is True and held is True
 
 
 def test_an_engine_that_cannot_start_refuses_the_handover(rig):

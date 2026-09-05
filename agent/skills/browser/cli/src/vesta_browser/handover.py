@@ -265,9 +265,17 @@ async def _teardown(state: State, handover: Handover, reason: StopReason, gatewa
 
 async def stop(state: State, handover: Handover, *, reason: StopReason, gateway_timeout: float = gateway.GATEWAY_TIMEOUT_SECS) -> list[str]:
     """Gives `handover` back, once. A caller holding a handover the daemon has already replaced or
-    torn down gets a no-op, so a timer firing late can never touch the handover that came after it."""
+    torn down gets a no-op, so a timer firing late can never touch the handover that came after it.
+
+    A handover still claiming its browser holds no task and no stream, and the engine is launching
+    onto the session's display: a stop arriving there is refused rather than served, because the
+    teardown would take that display away mid-launch and leave the session marked for the handover
+    that never came up.
+    """
     if state.handover is not handover or handover.state in ("inactive", "stopping"):
         return []
+    if handover.state == "starting" and handover.task is None:
+        raise _in_use("the handover is still starting its browser; retry in a moment")
     handover.state = "stopping"
     return await _teardown(state, handover, reason, gateway_timeout)
 
