@@ -16,6 +16,8 @@ PID_POLL_SECS = 0.05
 PID_GONE_TIMEOUT_SECS = 10.0
 HTTP_TIMEOUT_SECS = 5
 WEB_PORT_FIRST = 6080
+# Above DISPLAY_LAST, so no real claim and no other test can be holding this abstract name.
+ABSTRACT_ONLY_DISPLAY = 1234
 
 
 @pytest.fixture
@@ -104,6 +106,21 @@ def test_readiness_reports_every_missing_piece(tmp_path, monkeypatch):
 
 def test_readiness_is_ready_once_the_binaries_and_novnc_are_there(rig):
     assert display.readiness(rig) == {"ready": True, "missing": []}
+
+
+def test_display_reachable_sees_a_server_holding_only_the_abstract_socket(rig):
+    number = ABSTRACT_ONLY_DISPLAY
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        try:
+            sock.bind(f"{display.ABSTRACT_X11_PREFIX}{number}")
+        except PermissionError:
+            pytest.skip("this kernel refuses a bind in the abstract namespace")
+        sock.listen(8)
+        assert display.display_reachable(rig, number)
+        assert not display.own_display_serving(rig, number)
+    finally:
+        sock.close()
 
 
 def test_claim_display_returns_a_display_this_container_serves(rig):

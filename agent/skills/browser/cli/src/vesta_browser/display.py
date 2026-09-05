@@ -176,7 +176,7 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
     """
     number = DISPLAY_FIRST
     for _ in range(DISPLAY_CLAIM_ATTEMPTS):
-        number = _free_display_number(paths, number)
+        number = await asyncio.to_thread(_free_display_number, paths, number)
         display = f":{number}"
         _clear_stale_records(paths, number)
         process = await asyncio.create_subprocess_exec(
@@ -201,7 +201,7 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
 
 
 async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Process:
-    rc_path = paths.handover_web / "openbox-rc.xml"
+    rc_path = paths.root / "openbox-rc.xml"
     rc_path.parent.mkdir(parents=True, exist_ok=True)
     rc_path.write_text(OPENBOX_RC)
     return await asyncio.create_subprocess_exec(
