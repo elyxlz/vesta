@@ -245,13 +245,16 @@ async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Proces
 
 async def start_session_display(paths: Paths) -> SessionDisplay:
     """The display a session claims from its first exec: Xvfb plus openbox, torn down together
-    if openbox never starts."""
+    if openbox never starts or this call is cancelled while it waits on openbox."""
     display_name, xvfb = await claim_display(paths)
     try:
         openbox = await start_openbox(paths, display_name)
-    except OSError as exc:
+    except BaseException as exc:
         await kill_group(xvfb, KILL_GRACE_SECS)
-        raise DisplayError(f"openbox could not start: {exc}") from exc
+        _clear_stale_records(paths, display_number(display_name))
+        if isinstance(exc, OSError):
+            raise DisplayError(f"openbox could not start: {exc}") from exc
+        raise
     return SessionDisplay(display=display_name, xvfb=xvfb, openbox=openbox)
 
 

@@ -259,6 +259,62 @@ def test_start_session_display_returns_a_display_this_container_serves(rig):
     assert _await_gone(pids)
 
 
+def _capturing_claim_display(captured: dict[str, object], ready: asyncio.Event | None = None):
+    """Wraps the real `claim_display` so a test can read the display name and Xvfb pid it started
+    even when the call that follows never returns one, and can wait on `ready` for that moment."""
+    real_claim_display = display.claim_display
+
+    async def claim(paths):
+        name, xvfb = await real_claim_display(paths)
+        captured["display"] = name
+        captured["pid"] = xvfb.pid
+        if ready is not None:
+            ready.set()
+        return name, xvfb
+
+    return claim
+
+
+def test_start_session_display_kills_xvfb_when_openbox_cannot_spawn(rig, monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _openbox_raises(_paths, _display_name):
+        raise OSError("no openbox binary")
+
+    monkeypatch.setattr(display, "claim_display", _capturing_claim_display(captured))
+    monkeypatch.setattr(display, "start_openbox", _openbox_raises)
+
+    async def run():
+        with pytest.raises(display.DisplayError, match="openbox"):
+            await display.start_session_display(rig)
+
+    asyncio.run(run())
+    assert _await_gone([captured["pid"]])
+    assert not (rig.x11_socket_dir / f"X{captured['display'].lstrip(':')}").exists()
+
+
+def test_start_session_display_kills_xvfb_when_cancelled_before_openbox_starts(rig, monkeypatch):
+    captured: dict[str, object] = {}
+    xvfb_claimed = asyncio.Event()
+
+    async def _openbox_hangs(_paths, _display_name):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(display, "claim_display", _capturing_claim_display(captured, xvfb_claimed))
+    monkeypatch.setattr(display, "start_openbox", _openbox_hangs)
+
+    async def run():
+        task = asyncio.create_task(display.start_session_display(rig))
+        await asyncio.wait_for(xvfb_claimed.wait(), PID_GONE_TIMEOUT_SECS)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    assert _await_gone([captured["pid"]])
+    assert not (rig.x11_socket_dir / f"X{captured['display'].lstrip(':')}").exists()
+
+
 def test_stop_session_display_ends_both_and_clears_the_socket(rig):
     async def run():
         session_display = await display.start_session_display(rig)
