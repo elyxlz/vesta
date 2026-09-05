@@ -26,10 +26,30 @@ describe("parseServerFrame", () => {
   });
 
   it("parses a snapshot frame and preserves the tree", () => {
-    const tree = { gateway: {}, agents: {} };
+    const tree = {
+      gateway: {},
+      agents: {},
+      rooms: [
+        {
+          id: "dm:scout",
+          name: null,
+          agents: ["scout"],
+          createdAt: 1,
+          lastMessageAt: null,
+        },
+      ],
+    };
     const parsed = parseServerFrame(JSON.stringify({ type: "snapshot", tree }));
     expect(parsed.kind).toBe("snapshot");
     if (parsed.kind === "snapshot") expect(parsed.frame.tree).toEqual(tree);
+  });
+
+  it("reads a snapshot from a gateway with no room list as an empty one", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({ type: "snapshot", tree: { gateway: {}, agents: {} } }),
+    );
+    expect(parsed.kind).toBe("snapshot");
+    if (parsed.kind === "snapshot") expect(parsed.frame.tree.rooms).toEqual([]);
   });
 
   it("classifies each delta type", () => {
@@ -272,6 +292,58 @@ describe("parseServerFrame", () => {
     expect(
       parseServerFrame(JSON.stringify({ type: "devices", devices: [bad] })),
     ).toEqual({
+      kind: "unknown",
+    });
+  });
+
+  it("parses a rooms delta", () => {
+    const rooms = [
+      {
+        id: "dm:scout",
+        name: null,
+        agents: ["scout"],
+        createdAt: 1_756_900_000,
+        lastMessageAt: 1_756_903_000,
+      },
+      {
+        id: "grp-0011223344556677",
+        name: "trip planning",
+        agents: ["scout", "axel"],
+        createdAt: 1_756_900_100,
+        lastMessageAt: null,
+      },
+    ];
+    const parsed = parseServerFrame(JSON.stringify({ type: "rooms", rooms }));
+    expect(parsed).toEqual({ kind: "delta", delta: { type: "rooms", rooms } });
+  });
+
+  it("parses an empty rooms delta", () => {
+    expect(
+      parseServerFrame(JSON.stringify({ type: "rooms", rooms: [] })),
+    ).toEqual({ kind: "delta", delta: { type: "rooms", rooms: [] } });
+  });
+
+  it("treats a rooms delta with a malformed room as unknown", () => {
+    const base = {
+      id: "dm:scout",
+      name: null,
+      agents: ["scout"],
+      createdAt: 1_756_900_000,
+      lastMessageAt: null,
+    };
+    for (const bad of [
+      { ...base, id: 7 },
+      { ...base, name: 7 },
+      { ...base, agents: "scout" },
+      { ...base, agents: ["scout", 7] },
+      { ...base, createdAt: "yesterday" },
+      { ...base, lastMessageAt: "yesterday" },
+    ]) {
+      expect(
+        parseServerFrame(JSON.stringify({ type: "rooms", rooms: [bad] })),
+      ).toEqual({ kind: "unknown" });
+    }
+    expect(parseServerFrame(JSON.stringify({ type: "rooms" }))).toEqual({
       kind: "unknown",
     });
   });

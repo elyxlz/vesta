@@ -42,6 +42,7 @@ function baseTree(): Tree {
       },
     },
     devices: [],
+    rooms: [],
   };
 }
 
@@ -65,6 +66,23 @@ describe("reduceDelta", () => {
     });
     expect(next.devices).toHaveLength(1);
     expect(next.devices[0]?.id).toBe("dev-1");
+  });
+
+  it("replaces the rooms list on a rooms delta", () => {
+    const next = reduceDelta(baseTree(), {
+      type: "rooms",
+      rooms: [
+        {
+          id: "dm:scout",
+          name: null,
+          agents: ["scout"],
+          createdAt: 1_756_900_000,
+          lastMessageAt: null,
+        },
+      ],
+    });
+    expect(next.rooms).toHaveLength(1);
+    expect(next.rooms[0]?.id).toBe("dm:scout");
   });
 
   it("replaces the gateway branch on a state delta", () => {

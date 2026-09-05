@@ -32,7 +32,7 @@ export const GATEWAY: GatewayInfo = {
 };
 
 export function baseTree(agents: Record<string, AgentNode> = {}): Tree {
-  return { gateway: GATEWAY, agents, devices: [] };
+  return { gateway: GATEWAY, agents, devices: [], rooms: [] };
 }
 
 export function snapshotFrame(tree: Tree): { type: "snapshot"; tree: Tree } {
@@ -111,6 +111,7 @@ export async function installSyncSocket(
     gateway: { ...GATEWAY, ...fixture.gateway },
     agents: fixture.agents ?? {},
     devices: fixture.devices ?? [],
+    rooms: [],
   };
   await page.routeWebSocket(/\/sync/, (ws) => {
     ws.onMessage(() => undefined);

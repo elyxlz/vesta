@@ -47,8 +47,10 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
     const attachments = parseAttachments(frame.attachments);
     const inputMethod = parseInputMethod(frame.input_method);
     const intentId = optionalStr(frame.intent_id);
+    const addressing = parseAddressing(frame);
     if (text === null || attachments === undefined) return null;
     if (inputMethod === undefined || intentId === undefined) return null;
+    if (addressing === null) return null;
     return {
       ...base,
       type: "user",
@@ -56,17 +58,21 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
       ...(inputMethod === null ? {} : { input_method: inputMethod }),
       ...(attachments === null ? {} : { attachments }),
       ...(intentId === null ? {} : { intent_id: intentId }),
+      ...addressing,
     };
   },
   chat: (frame, base) => {
     const text = str(frame.text);
     const attachments = parseAttachments(frame.attachments);
+    const addressing = parseAddressing(frame);
     if (text === null || attachments === undefined) return null;
+    if (addressing === null) return null;
     return {
       ...base,
       type: "chat",
       text,
       ...(attachments === null ? {} : { attachments }),
+      ...addressing,
     };
   },
   assistant: (frame, base) => {
@@ -140,6 +146,21 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
   subagent_start: (frame, base) => subagentEvent("subagent_start", frame, base),
   subagent_stop: (frame, base) => subagentEvent("subagent_stop", frame, base),
 };
+
+// The room a message belongs to and the member who wrote it, stamped by the gateway's chat node
+// and absent from a per-agent chat service's rows. A present value of the wrong type drops the
+// frame, matching every other optional field here.
+function parseAddressing(
+  frame: Frame,
+): { room?: string; sender?: string } | null {
+  const room = optionalStr(frame.room);
+  const sender = optionalStr(frame.sender);
+  if (room === undefined || sender === undefined) return null;
+  return {
+    ...(room === null ? {} : { room }),
+    ...(sender === null ? {} : { sender }),
+  };
+}
 
 function subagentEvent(
   type: "subagent_start" | "subagent_stop",

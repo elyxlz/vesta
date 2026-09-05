@@ -8,6 +8,7 @@ import type {
   DevicePlace,
   DevicePosition,
   GatewayInfo,
+  Room,
   Tree,
 } from "./tree";
 
@@ -64,6 +65,7 @@ export function parseServerFrame(raw: string): ParsedFrame {
     case "user_notification":
     case "presence":
     case "devices":
+    case "rooms":
       return parseDelta(type, frame);
     default:
       return UNKNOWN;
@@ -78,10 +80,14 @@ function parseHello(frame: Record<string, unknown>): ParsedFrame {
 }
 
 function parseSnapshot(frame: Record<string, unknown>): ParsedFrame {
-  if (record(frame.tree) === null) return UNKNOWN;
+  const tree = record(frame.tree);
+  if (tree === null) return UNKNOWN;
+  // A gateway older than the room list sends a tree without one, and the replica always reads
+  // rooms as an array.
+  const rooms = arr(tree.rooms) ?? [];
   return {
     kind: "snapshot",
-    frame: { type: "snapshot", tree: frame.tree as Tree },
+    frame: { type: "snapshot", tree: { ...tree, rooms } as Tree },
   };
 }
 
@@ -142,9 +148,43 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
         delta: { type: "devices", devices: devices.filter(isPresent) },
       };
     }
+    case "rooms": {
+      const raw = arr(frame.rooms);
+      if (raw === null) return UNKNOWN;
+      const rooms = raw.map(parseRoom);
+      if (rooms.some((room) => room === null)) return UNKNOWN;
+      return {
+        kind: "delta",
+        delta: { type: "rooms", rooms: rooms.filter(isPresent) },
+      };
+    }
     default:
       return UNKNOWN;
   }
+}
+
+function parseRoom(value: unknown): Room | null {
+  const room = record(value);
+  if (room === null) return null;
+  const id = str(room.id);
+  const createdAt = num(room.createdAt);
+  if (id === null || createdAt === null) return null;
+  const name = nullableStr(room.name);
+  const lastMessageAt =
+    room.lastMessageAt == null ? null : num(room.lastMessageAt);
+  if (name === undefined) return null;
+  if (lastMessageAt === null && room.lastMessageAt != null) return null;
+  const raw = arr(room.agents);
+  if (raw === null) return null;
+  const agents = raw.map(str);
+  if (agents.some((agent) => agent === null)) return null;
+  return {
+    id,
+    name,
+    agents: agents.filter(isPresent),
+    createdAt,
+    lastMessageAt,
+  };
 }
 
 function isPresent<T>(value: T | null): value is T {

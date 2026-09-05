@@ -638,6 +638,8 @@ async fn create_agent_handler(
     }
     state.agent_status_cache.clear_build_phase(&name);
     let name = result?;
+    // A new agent gets its direct room now, so its first message already has a room to land in.
+    state.chat.ensure_direct_room(&name, crate::time_utils::now_epoch_secs());
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
 }
@@ -892,6 +894,8 @@ async fn destroy_agent_handler(
     // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
     // the same name seeds fresh instead of diffing against its predecessor.
     state.agent_status_cache.forget_agent(&name);
+    // Its rooms and messages stay readable; only its membership goes.
+    state.chat.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -971,6 +975,8 @@ async fn rename_agent_handler(
         }
         save_settings(&settings);
     }
+    // Rooms are keyed by agent name too: carry the chat history across the rename.
+    state.chat.rename_agent(&name, &new_name);
 
     if let Err(e) = crate::agent_notification::drop(&state.docker, &new_name, &crate::agent_notification::rename(&name, &new_name)).await {
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
@@ -2728,6 +2734,26 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
+    // Chat: the user and every agent share these routes, so the gate resolves the caller into a
+    // ChatPrincipal and each handler checks membership. No timeout layer: the live socket joins
+    // this group, and a finite deadline would cut it.
+    let chat_routes = Router::new()
+        .route(
+            "/rooms",
+            get(crate::chat::routes::list_rooms_handler)
+                .post(crate::chat::routes::open_room_handler),
+        )
+        .route("/rooms/{id}", axum::routing::delete(crate::chat::routes::delete_room_handler))
+        .route("/rooms/{id}/history", get(crate::chat::routes::history_handler))
+        .route("/rooms/{id}/messages", post(crate::chat::routes::post_message_handler))
+        .route("/rooms/{id}/messages/import", post(crate::chat::routes::import_handler))
+        .route("/rooms/ws", get(crate::chat::socket::rooms_ws_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_chat,
+        ))
+        .with_state(state.clone());
+
     // Agent proxy: auth is checked inside the handler — service requests
     // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
     let agents_proxy = Router::new()
@@ -2753,6 +2779,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route("/agents/{name}/user-notification", post(user_notification_handler))
         .route("/agents/{name}/devices", get(crate::user_context::agent_devices_handler))
+        .route("/agents/{name}/peers", get(crate::chat::routes::peers_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -2861,6 +2888,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(agents_service_keys)
         .merge(agents_services_read)
         .merge(gateway_logs)
+        .merge(chat_routes)
         .merge(agents_proxy)
         .merge(crate::app_static::router())
         .layer(
@@ -3144,6 +3172,12 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
+    // Every agent on this host has its direct room before the first client or agent connects, and
+    // the node learns the names membership checks are made of.
+    state.chat.reconcile_agents(
+        &docker::env_file_names(&state.env_config.agents_dir),
+        crate::time_utils::now_epoch_secs(),
+    );
     recover_interrupted_update(&state);
     // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
     // a reboot mid-export) leaves the same throwaway container behind and nothing else collects it.
@@ -3857,6 +3891,54 @@ mod tests {
         let renamed = serde_json::json!({ "name": "sample-agent-2" });
         let host_folders = serde_json::json!({ "folders": ["/home/sample/Documents"] });
 
+        // The chat node's client surface: the room list, the open-room answer, one history page,
+        // and the two intake acks. Built from the production structs so a renamed field fails here.
+        let chat_rooms = vec![
+            crate::chat::Room {
+                id: "dm:sample-agent".into(),
+                name: None,
+                agents: vec!["sample-agent".into()],
+                created_at: 1_756_900_000,
+                last_message_at: Some(1_756_903_000),
+            },
+            crate::chat::Room {
+                id: "grp-0011223344556677".into(),
+                name: Some("trip planning".into()),
+                agents: vec!["sample-agent".into(), "scout".into()],
+                created_at: 1_756_900_100,
+                last_message_at: None,
+            },
+        ];
+        let chat_messages = vec![
+            crate::chat::Message {
+                id: 1,
+                ts: crate::chat::format_ts(1_788_512_400_000),
+                room: "dm:sample-agent".into(),
+                kind: crate::chat::MessageKind::User,
+                sender: crate::chat::USER_SENDER.into(),
+                text: "are we still on for friday?".into(),
+                input_method: Some(crate::chat::InputMethod::Typed),
+                intent_id: Some("c-sample-1".into()),
+                origin_id: None,
+            },
+            crate::chat::Message {
+                id: 2,
+                ts: crate::chat::format_ts(1_788_512_404_123),
+                room: "dm:sample-agent".into(),
+                kind: crate::chat::MessageKind::Chat,
+                sender: "sample-agent".into(),
+                text: "yes, 19:00 at the usual place".into(),
+                input_method: None,
+                intent_id: None,
+                origin_id: None,
+            },
+        ];
+        let rooms = serde_json::json!({ "rooms": chat_rooms });
+        let room_opened = serde_json::json!({ "room": chat_rooms[0] });
+        let chat_history = serde_json::json!({ "events": chat_messages, "cursor": 1 });
+        let chat_post = serde_json::json!({ "ok": true, "id": 2 });
+        let chat_import = serde_json::json!({ "imported": 3, "skipped": 1 });
+
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
@@ -3873,6 +3955,11 @@ mod tests {
             "file_read": file_read,
             "renamed": renamed,
             "host_folders": host_folders,
+            "rooms": rooms,
+            "room_opened": room_opened,
+            "chat_history": chat_history,
+            "chat_post": chat_post,
+            "chat_import": chat_import,
         })
     }
 

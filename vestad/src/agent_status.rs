@@ -821,6 +821,15 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
+            // The roster is the one place every agent shows up: an agent created outside
+            // `POST /agents` (a `vestad import`, which runs in its own process) reaches the chat
+            // node here and nowhere else. A name set the node already holds is a no-op.
+            let chat_agents: Vec<String> =
+                agents.iter().map(|entry| entry.name.clone()).collect();
+            state
+                .chat
+                .reconcile_agents(&chat_agents, crate::time_utils::now_epoch_secs());
+
             // Lifecycle notifications come from vestad's authoritative agent list, never the
             // agent EventBus's thinking/idle activity. Each observed transition is routed into
             // exactly one user notification: `needs_user` when only the user can fix it,

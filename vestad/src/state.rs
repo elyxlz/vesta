@@ -108,6 +108,9 @@ pub struct AppState {
     /// The durable, uncapped log of user-facing notifications, appended by every
     /// `UserNotifier::notify` and paged by `GET /notifications`.
     pub(crate) user_notification_log: Arc<crate::user_notification_log::UserNotificationLog>,
+    /// The one owner of chat state: the rooms, the append-only message log, the room-list watch
+    /// `/sync` projects, and the live edge the chat sockets read.
+    pub(crate) chat: Arc<crate::chat::ChatNode>,
     /// Which agents have been told which device zone or place, so each change is delivered once.
     pub(crate) user_context: crate::user_context::UserContext,
     pub(crate) dev_mode: bool,
@@ -161,6 +164,7 @@ impl AppState {
         let user_notification_log = Arc::new(
             crate::user_notification_log::UserNotificationLog::load(&env_config.config_dir),
         );
+        let chat = Arc::new(crate::chat::ChatNode::load(&env_config.config_dir));
         let (mobile_app, mobile_app_worker) =
             mobile_app::MobileApp::new(device_registry.clone(), http_client.clone(), presence.clone());
         (
@@ -182,6 +186,7 @@ impl AppState {
                 device_registry,
                 presence,
                 user_notification_log,
+                chat,
                 user_context: crate::user_context::UserContext::default(),
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),

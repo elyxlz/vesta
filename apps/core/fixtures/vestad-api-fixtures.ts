@@ -77,6 +77,37 @@ export const vestadApiFixtures = {
       "vestad_version": "0.1.0"
     }
   ],
+  "chat_history": {
+    "cursor": 1,
+    "events": [
+      {
+        "id": 1,
+        "input_method": "typed",
+        "intent_id": "c-sample-1",
+        "room": "dm:sample-agent",
+        "sender": "user",
+        "text": "are we still on for friday?",
+        "ts": "2026-09-04T09:00:00Z",
+        "type": "user"
+      },
+      {
+        "id": 2,
+        "room": "dm:sample-agent",
+        "sender": "sample-agent",
+        "text": "yes, 19:00 at the usual place",
+        "ts": "2026-09-04T09:00:04.123Z",
+        "type": "chat"
+      }
+    ]
+  },
+  "chat_import": {
+    "imported": 3,
+    "skipped": 1
+  },
+  "chat_post": {
+    "id": 2,
+    "ok": true
+  },
   "file_read": {
     "content": "hello",
     "encoding": "utf-8",
@@ -141,6 +172,40 @@ export const vestadApiFixtures = {
   },
   "renamed": {
     "name": "sample-agent-2"
+  },
+  "room_opened": {
+    "room": {
+      "agents": [
+        "sample-agent"
+      ],
+      "createdAt": 1756900000,
+      "id": "dm:sample-agent",
+      "lastMessageAt": 1756903000,
+      "name": null
+    }
+  },
+  "rooms": {
+    "rooms": [
+      {
+        "agents": [
+          "sample-agent"
+        ],
+        "createdAt": 1756900000,
+        "id": "dm:sample-agent",
+        "lastMessageAt": 1756903000,
+        "name": null
+      },
+      {
+        "agents": [
+          "sample-agent",
+          "scout"
+        ],
+        "createdAt": 1756900100,
+        "id": "grp-0011223344556677",
+        "lastMessageAt": null,
+        "name": "trip planning"
+      }
+    ]
   },
   "start_all": {
     "results": [

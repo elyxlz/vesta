@@ -64,22 +64,27 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
     Some(tokio::time::Instant::now() + Duration::from_secs(remaining))
 }
 
-/// Wait the settle window, then drop the presence notification into the one agent whose page was
-/// opened, unless `confirm_return` reports the user navigated away (a glance) or the agent has
-/// opted out of presence notifications. Runs detached so the sleep never stalls the session loop's
-/// keepalive and deltas.
-async fn settle_and_notify(state: SharedState, agent: String) {
+/// Wait the settle window, then drop the presence notification into every agent of the room whose
+/// page was opened, unless `confirm_return` reports the user navigated away (a glance) or the agent
+/// has opted out of presence notifications. A viewed id naming no room notifies nobody. Runs
+/// detached so the sleep never stalls the session loop's keepalive and deltas.
+async fn settle_and_notify(state: SharedState, room_id: String) {
     tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
-    let Some(client) = state.presence.confirm_return(&agent, tokio::time::Instant::now()) else {
+    let Some(client) = state.presence.confirm_return(&room_id, tokio::time::Instant::now()) else {
         return;
     };
-    if !state.agent_status_cache.presence_notification_target(&agent) {
+    let Some(room) = state.chat.room(&room_id) else {
         return;
-    }
-    // Best-effort: a stopped agent or write failure logs itself, never fatal.
-    let notification = crate::agent_notification::user_presence(client);
-    if let Err(error) = crate::agent_notification::drop(&state.docker, &agent, &notification).await {
-        tracing::warn!(%agent, %error, "could not drop presence notification");
+    };
+    for agent in room.agents {
+        if !state.agent_status_cache.presence_notification_target(&agent) {
+            continue;
+        }
+        // Best-effort: a stopped agent or write failure logs itself, never fatal.
+        let notification = crate::agent_notification::user_presence(client);
+        if let Err(error) = crate::agent_notification::drop(&state.docker, &agent, &notification).await {
+            tracing::warn!(%agent, %error, "could not drop presence notification");
+        }
     }
 }
 
@@ -118,6 +123,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     // just avoids missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
     let mut user_notifications_rx = state.sync_hub.subscribe_user_notifications();
     let mut devices_rx = state.device_registry.subscribe_devices();
+    let mut rooms_rx = state.chat.subscribe_rooms();
     // Update phases move on their own clock, so they get their own wake: without it a "backing up
     // axel 2/4" would sit unsent until the next roster poll or keepalive.
     let mut operation_rx = state.operation.subscribe();
@@ -129,12 +135,19 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     notifications_rx.borrow_and_update();
     user_feed_rx.borrow_and_update();
     devices_rx.borrow_and_update();
+    rooms_rx.borrow_and_update();
 
     // 2. immediate snapshot: gateway + agents (info + pending sets) + known devices, no tails.
     let mut last_roster = current_roster(&state);
     let mut last_gateway = build_gateway_info(&state).await;
     let mut last_pending = state.sync_hub.pending_all();
-    let tree = build_tree(&last_gateway, &last_roster, &last_pending, state.device_registry.snapshot());
+    let tree = build_tree(
+        &last_gateway,
+        &last_roster,
+        &last_pending,
+        state.device_registry.snapshot(),
+        state.chat.rooms_snapshot(),
+    );
     if send_frame(&mut tx, &Frame::Snapshot { tree }).await.is_err() {
         return;
     }
@@ -164,6 +177,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = user_feed_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = presence_rx.changed() => { if r.is_err() { break } Wake::Presence }
             r = devices_rx.changed() => { if r.is_err() { break } Wake::Devices }
+            r = rooms_rx.changed() => { if r.is_err() { break } Wake::Rooms }
             r = operation_rx.changed() => { if r.is_err() { break } Wake::Roster }
             user_notification = user_notifications_rx.recv() => Wake::UserNotification(user_notification),
             client = rx.next() => Wake::Client(client),
@@ -199,6 +213,12 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Devices => {
                 let devices = devices_rx.borrow_and_update().clone();
                 if send_frame(&mut tx, &Frame::Devices { devices }).await.is_err() {
+                    break;
+                }
+            }
+            Wake::Rooms => {
+                let rooms = rooms_rx.borrow_and_update().clone();
+                if send_frame(&mut tx, &Frame::Rooms { rooms }).await.is_err() {
                     break;
                 }
             }
@@ -238,8 +258,8 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                                 });
                             }
                         }
-                        if let Some(agent) = state.presence.record(conn, ctx, tokio::time::Instant::now()) {
-                            tokio::spawn(settle_and_notify(state.clone(), agent));
+                        if let Some(room_id) = state.presence.record(conn, ctx, tokio::time::Instant::now()) {
+                            tokio::spawn(settle_and_notify(state.clone(), room_id));
                         }
                     }
                     Ok(ClientFrame::Reauth { token }) => {
@@ -270,6 +290,7 @@ enum Wake {
     Notifications,
     Presence,
     Devices,
+    Rooms,
     UserNotification(Result<std::sync::Arc<UserNotification>, broadcast::error::RecvError>),
     Client(Option<Result<Message, axum::Error>>),
     Keepalive,
@@ -527,6 +548,7 @@ fn build_tree(
     roster: &BTreeMap<String, AgentInfo>,
     pending: &HashMap<String, Vec<serde_json::Value>>,
     devices: Vec<DeviceInfo>,
+    rooms: Vec<crate::chat::Room>,
 ) -> Tree {
     let agents = roster
         .iter()
@@ -535,7 +557,7 @@ fn build_tree(
             (name.clone(), AgentNode { info: info.clone(), notifications: NotificationsBranch { pending } })
         })
         .collect();
-    Tree { gateway: gateway.clone(), agents, devices }
+    Tree { gateway: gateway.clone(), agents, devices, rooms }
 }
 
 async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
@@ -616,6 +638,34 @@ mod tests {
 
     fn info_of(status: AgentStatus) -> AgentInfo {
         AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, booting: false, rate_limited: None, started_at: None, services: BTreeMap::new() }
+    }
+
+    #[test]
+    fn the_snapshot_tree_carries_the_room_list() {
+        let room = crate::chat::Room {
+            id: "dm:scout".into(),
+            name: None,
+            agents: vec!["scout".into()],
+            created_at: 1_756_900_000,
+            last_message_at: None,
+        };
+        let roster = BTreeMap::from([("scout".to_string(), info_of(AgentStatus::Alive))]);
+        let gateway = GatewayInfo {
+            version: "0.1.0".into(),
+            channel: "stable".into(),
+            auto_update: true,
+            port: 4111,
+            lan: GatewayLan { exposed: false, url: None },
+            tunnel_url: None,
+            update_available: false,
+            latest_version: None,
+            managed: false,
+            operation: None,
+            user_notifications_seen_at: 0,
+            last_user_notification_at: None,
+        };
+        let tree = build_tree(&gateway, &roster, &HashMap::new(), Vec::new(), vec![room.clone()]);
+        assert_eq!(tree.rooms, vec![room]);
     }
 
     #[test]

@@ -188,6 +188,10 @@ pub(crate) struct Tree {
     pub agents: BTreeMap<String, AgentNode>,
     #[serde(default)]
     pub devices: Vec<DeviceInfo>,
+    /// Every chat room this gateway holds, the user being a member of all of them. Defaulted so a
+    /// tree written by an older gateway (before the chat node) still parses.
+    #[serde(default)]
+    pub rooms: Vec<crate::chat::Room>,
 }
 
 /// The `state` delta's scope: the gateway branch is the only one, replaced whole.
@@ -212,6 +216,7 @@ pub(crate) enum Frame {
     UserNotification { id: u64, at: u64, agent: String, kind: String, title: String, body: String },
     Presence { any_focused: bool },
     Devices { devices: Vec<DeviceInfo> },
+    Rooms { rooms: Vec<crate::chat::Room> },
 }
 
 impl Frame {
@@ -334,7 +339,28 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         }),
         position_at: Some("2026-01-01T00:00:00Z".into()),
     }];
-    let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
+    let rooms = vec![
+        crate::chat::Room {
+            id: "dm:sample".into(),
+            name: None,
+            agents: vec!["sample".into()],
+            created_at: 1_756_900_000,
+            last_message_at: Some(1_756_903_000),
+        },
+        crate::chat::Room {
+            id: "grp-0011223344556677".into(),
+            name: Some("trip planning".into()),
+            agents: vec!["sample".into(), "scout".into()],
+            created_at: 1_756_900_100,
+            last_message_at: None,
+        },
+    ];
+    let tree = Tree {
+        gateway: gateway.clone(),
+        agents,
+        devices: devices.clone(),
+        rooms: rooms.clone(),
+    };
 
     serde_json::json!({
         "hello": to_value(Frame::Hello {
@@ -352,6 +378,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             }).expect("serialize user_notification"),
             "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
             "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
+            "rooms": to_value(Frame::Rooms { rooms }).expect("serialize rooms"),
         }
     })
 }
@@ -486,22 +513,44 @@ mod tests {
         }
     }
 
+    fn sample_room() -> crate::chat::Room {
+        crate::chat::Room {
+            id: "dm:scout".into(),
+            name: None,
+            agents: vec!["scout".into()],
+            created_at: 1_756_900_000,
+            last_message_at: None,
+        }
+    }
+
     #[test]
     fn every_frame_variant_uses_its_wire_tag() {
         let cases = [
             (Frame::Hello { version: "0.1.0".into(), min_supported: "0.0.0".into() }, "hello"),
-            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default(), devices: Default::default() } }, "snapshot"),
+            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default(), devices: Default::default(), rooms: Default::default() } }, "snapshot"),
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::AgentNotifications { agent: "scout".into(), pending: vec![] }, "agent_notifications"),
             (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
             (Frame::Presence { any_focused: true }, "presence"),
+            (Frame::Rooms { rooms: vec![sample_room()] }, "rooms"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");
             assert_eq!(value["type"], serde_json::json!(tag));
         }
+    }
+
+    #[test]
+    fn the_rooms_delta_round_trips_through_its_wire_tag() {
+        let frame = Frame::Rooms { rooms: vec![sample_room()] };
+        let encoded = frame.encode().expect("encode rooms");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse rooms json");
+        assert_eq!(value["type"], serde_json::json!("rooms"));
+        assert_eq!(value["rooms"][0]["lastMessageAt"], serde_json::Value::Null);
+        let parsed: Frame = serde_json::from_str(&encoded).expect("parse rooms frame");
+        assert_eq!(parsed, frame);
     }
 
     #[test]

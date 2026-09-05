@@ -42,6 +42,7 @@ function tree(
       ]),
     ),
     devices: [],
+    rooms: [],
   };
 }
 

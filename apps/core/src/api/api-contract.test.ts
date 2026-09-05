@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { vestadApiFixtures } from "../../fixtures/vestad-api-fixtures";
+import type { HistoryPage } from "../chat/chat-stream-model";
 import type { AgentStatus } from "../protocol/tree";
 import type { AgentStatusResponse } from "./agents";
 import type { AgentBackupSettings, BackupInfo } from "./backups";
 import type { FileReadResponse, FileTreeEntry } from "./files";
 import type { GatewayEndpointInfo, GatewaySettings } from "./gateway";
 import type { HostMount } from "./mounts";
+import type {
+  ChatImportAck,
+  ChatPostAck,
+  RoomOpened,
+  RoomsResponse,
+} from "./rooms";
 
 type DeepReadonly<T> = T extends (infer U)[]
   ? readonly DeepReadonly<U>[]
@@ -87,5 +94,26 @@ describe("vestad API contract", () => {
       folders: string[];
     }>;
     expect(folders.folders).toHaveLength(1);
+  });
+
+  it("the chat node's room, history, and intake bodies satisfy their shapes", () => {
+    const rooms = vestadApiFixtures.rooms satisfies DeepReadonly<RoomsResponse>;
+    expect(rooms.rooms.map((room) => room.id)).toEqual([
+      "dm:sample-agent",
+      "grp-0011223344556677",
+    ]);
+    const opened =
+      vestadApiFixtures.room_opened satisfies DeepReadonly<RoomOpened>;
+    expect(opened.room.name).toBeNull();
+    const history =
+      vestadApiFixtures.chat_history satisfies DeepReadonly<HistoryPage>;
+    expect(history.cursor).toBe(1);
+    expect(history.events.map((event) => event.type)).toEqual(["user", "chat"]);
+    const post =
+      vestadApiFixtures.chat_post satisfies DeepReadonly<ChatPostAck>;
+    expect(post.id).toBe(2);
+    const imported =
+      vestadApiFixtures.chat_import satisfies DeepReadonly<ChatImportAck>;
+    expect(imported.skipped).toBe(1);
   });
 });
