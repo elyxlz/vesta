@@ -32,14 +32,17 @@ logger = logging.getLogger(__name__)
 IDLE_SWEEP_SECS = 60
 IDLE_STOP_SECS = p.SESSION_IDLE_STOP_SECS
 PRUNE_INTERVAL_SECS = 3600
-# `browser daemon stop` SIGKILLs this process two thirds into its own stop budget, so every session
-# teardown shares one budget below that point; whatever the budget catches is killed outright.
+# `browser daemon stop` SIGKILLs this process two thirds into its own 15s budget, so every teardown
+# below shares one budget under that 10s point. The handover takes 2.0 (three vestad calls at 0.6
+# fit inside it), the display kill it always ends with up to 2.0 more (three parallel kill_group at
+# 1s, then Xvfb), the sessions the 4.0 that remain, and their SIGKILL escalation 1.0 past that:
+# 2.0 + 2.0 + 4.0 + 1.0 = 9.0 < 10. Two paths can still overrun and are accepted: a hung headed
+# chromium launch unwinds through its own kill_group(process, 5), and a handed-over camoufox's stop
+# can add another 5 in its finally.
 SHUTDOWN_BUDGET_SECS = 6.0
-# The handover's slice of that budget, and the vestad timeout inside it. A shutdown still asks
-# vestad to revoke the key and drop the service, but three sequential calls at 0.6s fit the slice,
-# so a vestad that never answers cannot eat the sessions' 4s or the SIGKILL window past it.
 HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
+MIN_SESSION_BUDGET_SECS = 1.0
 
 
 async def op_status(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
@@ -324,7 +327,7 @@ async def serve(paths: Paths) -> int:
     return 0
 
 
-async def _stop_every_session(state: State) -> None:
+async def _stop_every_session(state: State, budget: float) -> None:
     """Every session torn down at once inside one budget, not one after another: a stop that is
     still running when the budget expires has its process group killed, because the alternative is
     a browser orphaned by the SIGKILL that ends this daemon, still holding its profile lock."""
@@ -333,7 +336,7 @@ async def _stop_every_session(state: State) -> None:
         return
     runtimes = [session.runtime for session in sessions]
     stops = [asyncio.ensure_future(stop_session(session, force=True)) for session in sessions]
-    _, pending = await asyncio.wait(stops, timeout=SHUTDOWN_BUDGET_SECS - HANDOVER_SHUTDOWN_SECS)
+    _, pending = await asyncio.wait(stops, timeout=budget)
     if not pending:
         return
     for task in pending:
@@ -347,10 +350,10 @@ async def shutdown(state: State) -> None:
     force-stops every session.
 
     The handover goes first because it owns the task that is still building a display stack and a
-    browser: cancelling it as part of the sweep would strand both. Its slice plus the sessions'
-    is the whole budget, and every kill inside them is itself bounded, so the daemon is always
-    gone well before `browser daemon stop` SIGKILLs it.
+    browser: cancelling it as part of the sweep would strand both. It takes its slice out of the
+    sessions' budget only when there is a handover to give back, and never all of it.
     """
+    reserved = HANDOVER_SHUTDOWN_SECS if state.handover is not None else 0.0
     await handover.shutdown(state, budget=HANDOVER_SHUTDOWN_SECS, gateway_timeout=SHUTDOWN_GATEWAY_TIMEOUT_SECS)
     for task in list(state.tasks):
         task.cancel()
@@ -362,7 +365,7 @@ async def shutdown(state: State) -> None:
         task.cancel()
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
-    await _stop_every_session(state)
+    await _stop_every_session(state, max(SHUTDOWN_BUDGET_SECS - reserved, MIN_SESSION_BUDGET_SECS))
 
 
 def ping(paths: Paths, timeout: float) -> bool:

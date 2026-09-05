@@ -12,6 +12,7 @@ from .fakes import write_fakes
 from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead, with_daemon
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
+BUDGET_SECS = 1.5
 
 
 @pytest.fixture
@@ -259,14 +260,15 @@ def test_shutdown_kills_a_session_whose_engine_stop_hangs(paths, monkeypatch):
         session.runtime = await chromium.start(session, paths)
         sessions.mark(session, "ready")
         pid = int((session.profile_dir / "fake.pid").read_text())
-        monkeypatch.setattr(serve, "SHUTDOWN_BUDGET_SECS", 0.2)
+        monkeypatch.setattr(serve, "SHUTDOWN_BUDGET_SECS", BUDGET_SECS)
         monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _hang)
         started = time.monotonic()
         await serve.shutdown(state)
         return time.monotonic() - started, await wait_until_dead(pid)
 
     elapsed, dead = asyncio.run(run())
-    assert elapsed < 5
+    # Above the floor a budget is clamped to, so the wait really is the patched budget and not it.
+    assert BUDGET_SECS <= elapsed < 5
     assert dead is True
 
 

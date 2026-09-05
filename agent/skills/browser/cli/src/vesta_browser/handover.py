@@ -36,6 +36,9 @@ LIFETIME_DEFAULT_MINUTES = 30
 LIFETIME_MIN_MINUTES = 1
 LIFETIME_MAX_MINUTES = 240
 NAVIGATE_TIMEOUT_SECS = 60
+# A rollback runs while a SIGTERM may already be in flight, so it never waits on vestad as long as
+# a foreground call does: the daemon must be gone before `browser daemon stop` SIGKILLs it.
+ROLLBACK_GATEWAY_TIMEOUT_SECS = 5.0
 # A shutdown slice this short still lets a step start; it exists so a spent budget never passes
 # `asyncio.wait_for` a zero or negative timeout, which would cancel the step before it runs.
 MIN_SHUTDOWN_SLICE_SECS = 0.05
@@ -107,8 +110,14 @@ async def _navigate(paths: Paths, session: sessions_mod.Session, runtime: Engine
     return [] if outcome.exit_code == 0 else ["navigation_failed"]
 
 
-async def _bring_up(state: State, handover: Handover, *, public_url: str, agent: str, url: str | None, minutes: int) -> list[str]:
-    """Everything between a marked session and a live handover, in the one order that works."""
+async def _bring_up(
+    state: State, handover: Handover, *, public_url: str, agent: str, url: str | None, minutes: int, warnings: list[str]
+) -> None:
+    """Everything between a marked session and a live handover, in the one order that works.
+
+    Warnings land in the list the caller owns, because this runs as a task: a cancelled bring-up has
+    no return value to carry them home.
+    """
     paths = state.paths
     session = handover.session
     web_port = await gateway.register_service(SERVICE)
@@ -116,7 +125,8 @@ async def _bring_up(state: State, handover: Handover, *, public_url: str, agent:
     headed = HeadedDisplay(handover.stack.display, display.SCREEN_W, display.SCREEN_H)
     runtime = await ENGINES[session.engine].start(session, paths, headed=headed)
     session.runtime = runtime
-    warnings = await _navigate(paths, session, runtime, url) if url is not None else []
+    if url is not None:
+        warnings.extend(await _navigate(paths, session, runtime, url))
     secret = await gateway.mint_key(SERVICE, handover.key_label, int(minutes * MINUTE_SECS))
     handover.expires_at = _expiry_iso(minutes)
     handover.key_id = await gateway.find_key_id(SERVICE, handover.key_label)
@@ -125,7 +135,6 @@ async def _bring_up(state: State, handover: Handover, *, public_url: str, agent:
         raise _failed("the display stack came up but is not serving")
     handover.state = "live"
     handover.task = _own(state, _expire(state, handover, minutes))
-    return warnings
 
 
 async def start(state: State, *, session_name: str, mode: p.Mode | None, url: str | None, minutes: int) -> tuple[Handover, list[str]]:
@@ -148,13 +157,14 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     state.handover = handover
     # The bring-up runs as a task the daemon owns, because it holds the display stack and the
     # browser for as long as it runs: a shutdown must be able to cancel it and take them back.
-    bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes))
+    warnings: list[str] = []
+    bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes, warnings=warnings))
     handover.task = bring_up
     try:
         await asyncio.wait({bring_up})
-        warnings = bring_up.result()
+        bring_up.result()
     except BaseException as exc:
-        await stop(state, handover, reason="failed")
+        await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
         raise _failed(str(exc) or type(exc).__name__) from exc
     return handover, warnings
 
@@ -203,14 +213,24 @@ async def _tear_display(paths: Paths, handover: Handover) -> None:
         await display.stop_stack(paths, stack)
 
 
-async def _teardown(state: State, handover: Handover, reason: StopReason, gateway_timeout: float) -> list[str]:
+async def _teardown(
+    state: State, handover: Handover, reason: StopReason, gateway_timeout: float, *, stop_session_too: bool = True
+) -> list[str]:
     """Every step attempted, whatever the one before it did, so a failed revoke never skips the
-    deregister. Each step owns whether it has anything to undo, so a half-started handover is fine."""
+    deregister. Each step owns whether it has anything to undo, so a half-started handover is fine.
+
+    A shutdown passes `stop_session_too=False` and keeps the browser: `stop_session` clears the
+    runtime before it awaits the engine, so a teardown cut short inside that step would hide the
+    process from the session sweep that owns the SIGKILL escalation.
+    """
     done = [
         await _guarded(_cancel_task(handover), "drop the task it owns"),
         await _guarded(_release_key(handover, gateway_timeout), "revoke the handover key"),
         await _guarded(gateway.deregister_service(SERVICE, timeout=gateway_timeout), "deregister the service"),
-        await _guarded(stop_session(handover.session, force=True), "stop the headed browser"),
+    ]
+    if stop_session_too:
+        done.append(await _guarded(stop_session(handover.session, force=True), "stop the headed browser"))
+    done += [
         await _guarded(_tear_display(state.paths, handover), "stop the display stack"),
         await _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),
     ]
@@ -246,7 +266,8 @@ async def shutdown(state: State, *, budget: float, gateway_timeout: float) -> No
 
     The state is claimed before the bring-up is cancelled, so the `start` waiting on that task rolls
     nothing back itself and this is the one teardown. Whatever the budget cuts short, the display
-    stack is still killed here, and the browser by the session teardown that follows.
+    stack is still killed here. The browser is left whole for the session teardown that follows,
+    which is the one budget with a SIGKILL behind it.
     """
     handover = state.handover
     if handover is None or handover.state == "inactive":
@@ -257,7 +278,7 @@ async def shutdown(state: State, *, budget: float, gateway_timeout: float) -> No
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(_cancel_task(handover), _slice(deadline))
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(_teardown(state, handover, "stopped", gateway_timeout), _slice(deadline))
+            await asyncio.wait_for(_teardown(state, handover, "stopped", gateway_timeout, stop_session_too=False), _slice(deadline))
     else:
         await _settle(handover, deadline)
     await _guarded(_tear_display(state.paths, handover), "stop the display stack")

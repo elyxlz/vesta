@@ -43,9 +43,6 @@ HANDOVER_APT_LINE = "apt-get install -y xvfb novnc x11vnc openbox"
 DEFAULT_X11_SOCKET_DIR = pl.Path("/tmp/.X11-unix")
 ABSTRACT_X11_PREFIX = "\0/tmp/.X11-unix/X"
 
-# A start that is cancelled must leave nothing behind, so each starter kills the process it holds
-# before the cancellation travels on: the daemon shuts down mid-handover and these are its children.
-
 # The handover display shows exactly one window. Left to itself openbox smart-places it a few pixels
 # off origin and adds a titlebar, so the stream sits misaligned in the page's screen cut-out.
 OPENBOX_RC = """<?xml version="1.0"?>

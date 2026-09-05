@@ -298,9 +298,10 @@ def test_daemon_shutdown_stops_a_live_handover(rig):
     async def run():
         started = await serve.request(rig.paths, _start())
         assert started["ok"] is True, started
-        return rig.display_pids()
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        return rig.display_pids(), browser
 
-    pids = with_daemon(rig.paths, run)
-    assert len(pids) == 4 and _await_all_dead(pids)
+    pids, browser = with_daemon(rig.paths, run)
+    assert len(pids) == 4 and _await_all_dead([*pids, browser])
     assert rig.keys() == []
     assert "deregister browser\n" in rig.register_log()
