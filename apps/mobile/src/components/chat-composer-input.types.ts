@@ -3,7 +3,7 @@ import type { Ref } from "react";
 export const CHAT_COMPOSER_MAX_LINES = 7;
 // Height of the single-line input and of the action button, so the collapsed
 // row is one control tall with its text centered.
-export const CHAT_COMPOSER_CONTROL_HEIGHT = 30;
+export const CHAT_COMPOSER_CONTROL_HEIGHT = 32;
 // Horizontal padding inside the input; the composer row subtracts it to know the width the text
 // wraps against.
 export const CHAT_COMPOSER_INPUT_HORIZONTAL_PADDING = 9;
