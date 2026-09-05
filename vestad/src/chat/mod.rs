@@ -9,7 +9,7 @@ pub(crate) mod store;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) use node::{ChatError, ChatNode, ImportItem, ImportOutcome, OpenRoom};
+pub(crate) use node::{ChatError, ChatNode, ImportItem, OpenRoom};
 
 /// The longest message text intake accepts, in characters.
 pub(crate) const MAX_TEXT_CHARS: usize = 64 * 1024;
