@@ -2,6 +2,7 @@
 //! agents share. `ChatNode` is the one owner of chat state on `AppState`; the store below it is
 //! two files under `<config_dir>/chat/`, held in memory.
 
+pub(crate) mod attachments;
 pub(crate) mod node;
 pub(crate) mod routes;
 pub(crate) mod socket;
@@ -9,6 +10,7 @@ pub(crate) mod store;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use attachments::AttachmentMeta;
 pub(crate) use node::{ChatError, ChatNode, ImportItem, OpenRoom};
 
 /// The longest message text intake accepts, in characters.
