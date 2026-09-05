@@ -84,6 +84,12 @@ def default_notifications_dir() -> pl.Path:
     return pl.Path.home() / "agent" / "notifications"
 
 
+def agent_name() -> str:
+    """This agent's name, which vestad writes into the container's environment. It names the direct
+    room, so the store takes it and never reads the environment itself."""
+    return os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
+
+
 def _sock_path(data_dir: pl.Path) -> pl.Path:
     return data_dir / "chat.sock"
 
@@ -125,7 +131,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     if port is None:
         sys.exit(_fail(f"could not register {NAME} with vestad"))
 
-    store = Store(store_path(data_dir))
+    store = Store(store_path(data_dir), agent_name())
     service = ServiceState(store, default_notifications_dir(), attachments.attachments_root(data_dir))
     state = DaemonState(
         sock_path=_sock_path(data_dir),

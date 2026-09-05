@@ -13,7 +13,7 @@ from chat_cli.store import Store, store_path
 def _seed(tmp_path):
     """Three finalized attachments: a large received one, a small sent one, and an unreferenced one."""
     root = tmp_path / "attachments"
-    store = Store(store_path(tmp_path))
+    store = Store(store_path(tmp_path), "vesta")
     big = attachments.ingest_file(root, _file(tmp_path, "video.mp4", 9000), "video/mp4")
     small = attachments.ingest_file(root, _file(tmp_path, "note.txt", 10), "text/plain")
     orphan = attachments.ingest_file(root, _file(tmp_path, "orphan.bin", 500), None)

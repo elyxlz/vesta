@@ -12,7 +12,7 @@ from chat_cli.store import Store, StoredEvent, store_path
 
 
 def _service_state(tmp_path):
-    store = Store(store_path(tmp_path / "data"))
+    store = Store(store_path(tmp_path / "data"), "vesta")
     notif_dir = tmp_path / "notifications"
     return ServiceState(store, notif_dir, tmp_path / "attachments"), notif_dir
 

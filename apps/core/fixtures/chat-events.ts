@@ -4,6 +4,7 @@ export const chatFixtures = {
     "id": 1,
     "input_method": "typed",
     "intent_id": "intent-1",
+    "room": "dm:vesta",
     "text": "here is the photo",
     "ts": "2026-01-01T00:00:00+00:00",
     "type": "user"
@@ -15,6 +16,7 @@ export const chatFixtures = {
         "id": 1,
         "input_method": "typed",
         "intent_id": "intent-1",
+        "room": "dm:vesta",
         "text": "here is the photo",
         "ts": "2026-01-01T00:00:00+00:00",
         "type": "user"
@@ -31,6 +33,7 @@ export const chatFixtures = {
           }
         ],
         "id": 2,
+        "room": "dm:vesta",
         "text": "nice shot",
         "ts": "2026-01-01T00:00:00+00:00",
         "type": "chat"

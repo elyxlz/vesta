@@ -9,7 +9,7 @@ from chat_cli.store import Store, store_path
 
 
 def _seed(tmp_path) -> None:
-    store = Store(store_path(tmp_path))
+    store = Store(store_path(tmp_path), "vesta")
     store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "hello world"})
     store.append({"type": "chat", "ts": "2026-01-01T00:00:01", "text": "goodbye moon"})
     store.close()

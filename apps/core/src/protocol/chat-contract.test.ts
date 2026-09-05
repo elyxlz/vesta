@@ -30,6 +30,7 @@ describe("chat event contract (service fixtures)", () => {
       type: "user",
       id: 1,
       ts: "2026-01-01T00:00:00+00:00",
+      room: "dm:vesta",
       text: "here is the photo",
       input_method: "typed",
       intent_id: "intent-1",

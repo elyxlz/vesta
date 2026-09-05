@@ -1,7 +1,8 @@
-"""The chat skill's own durability: user messages and the agent's replies, the conversation the
-app shows. A private sqlite db (~/.chat/chat.db) the daemon owns, and the one source of chat
-history + search. Ids are skill-assigned (AUTOINCREMENT) and passed through to the live echo
-verbatim, so a client cursor stays coherent across the live edge and paged history."""
+"""The chat skill's own durability: every room's messages, the conversation the app shows and the
+rooms the agent replicates from the node. A private sqlite db (~/.chat/chat.db) the daemon owns, and
+the one source of chat history + search. Ids are skill-assigned (AUTOINCREMENT) and passed through to
+the live echo verbatim, so a client cursor stays coherent across the live edge and paged history. A
+message the node also holds carries that node id, which is what makes replication idempotent."""
 
 import json
 import pathlib as pl
@@ -19,15 +20,29 @@ _CONVERSATION_TYPES: tuple[str, ...] = ("user", "chat")
 # Relevance decays toward recent so `--search` favors newer matches, mirroring events.py.
 _RECENCY_DECAY_RATE = 0.01
 
+# Room and node id are indexed columns, so they never live in the JSON blob as well.
+_COLUMN_FIELDS = ("room", "node_id")
+
 
 class StoredEvent(tp.TypedDict, total=False):
     id: int
     ts: str
     type: str
     text: str
+    room: str
+    node_id: int | None
+    sender: str | None
     input_method: str
     intent_id: str
     attachments: list[AttachmentMeta]
+
+
+class RoomRecord(tp.TypedDict):
+    """One room as the node describes it: its id, the name a group carries, and every agent in it."""
+
+    id: str
+    name: str | None
+    agents: list[str]
 
 
 def store_path(data_dir: pl.Path) -> pl.Path:
@@ -35,9 +50,14 @@ def store_path(data_dir: pl.Path) -> pl.Path:
     return data_dir / "chat.db"
 
 
+def direct_room_id(agent_name: str) -> str:
+    """The room holding the conversation between the user and this agent."""
+    return f"dm:{agent_name}"
+
+
 # FTS5 external-content index over the conversation text, kept in sync by insert/delete triggers, so a
 # re-import (INSERT OR IGNORE, no real insert) never double-indexes. Same shape as core's events_fts.
-_SCHEMA = """
+_SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -63,15 +83,65 @@ CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
 END;
 """
 
+# Rooms: every message names the room it belongs to, and one carrying a node id is a message the node
+# also holds. The unique index is what makes replication idempotent (sqlite allows many NULLs in it, so
+# a message the node has never seen stays writable).
+_SCHEMA_V2 = """
+ALTER TABLE events ADD COLUMN room TEXT NOT NULL DEFAULT '';
 
-def _open(db_path: pl.Path) -> sqlite3.Connection:
+ALTER TABLE events ADD COLUMN node_id INTEGER;
+
+CREATE UNIQUE INDEX IF NOT EXISTS events_node_id ON events(node_id);
+
+CREATE TABLE IF NOT EXISTS rooms (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    agents TEXT NOT NULL
+);
+"""
+
+
+def _migrate_v1(conn: sqlite3.Connection, _agent_name: str) -> None:
+    conn.executescript(_SCHEMA_V1)
+
+
+def _migrate_v2(conn: sqlite3.Connection, agent_name: str) -> None:
+    """Rooms and node ids. Every row already stored is the conversation between the user and this
+    agent, so the whole history is filed under the direct room and paging, search and replication read
+    one coherent conversation."""
+    conn.executescript(_SCHEMA_V2)
+    conn.execute("UPDATE events SET room = ?", (direct_room_id(agent_name),))
+
+
+# `PRAGMA user_version` is the on-disk version; a step's position in this list is the version it
+# stamps, and each runs exactly once. Version 1 is the baseline (all `CREATE ... IF NOT EXISTS`), so a
+# fresh db and a db written before versioning both converge on it with no data loss. Add a schema
+# change as a version 3 step; never edit a released step, since existing dbs have already run it.
+_MIGRATIONS: tuple[tp.Callable[[sqlite3.Connection, str], None], ...] = (_migrate_v1, _migrate_v2)
+
+
+def _migrate(conn: sqlite3.Connection, agent_name: str) -> None:
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    for index, step in enumerate(_MIGRATIONS):
+        version = index + 1
+        if current >= version:
+            continue
+        step(conn, agent_name)
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+
+
+def _open(db_path: pl.Path, agent_name: str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript(_SCHEMA)
+    _migrate(conn, agent_name)
     return conn
 
 
-def _rows_to_events(rows: list[tuple[int, str, str]]) -> list[StoredEvent]:
+_ROW_COLUMNS = "id, ts, data, room, node_id"
+
+
+def _rows_to_events(rows: list[tuple[int, str, str, str, int | None]]) -> list[StoredEvent]:
     events: list[StoredEvent] = []
     for row in rows:
         event: StoredEvent = json.loads(row[2])
@@ -79,42 +149,100 @@ def _rows_to_events(rows: list[tuple[int, str, str]]) -> list[StoredEvent]:
         # Legacy imports stored the timestamp in the indexed SQLite column but not inside the JSON
         # payload. Hydrate it on every read so clients can bucket those messages by their real date.
         event.setdefault("ts", row[1])
+        event["room"] = row[3]
+        if row[4] is not None:
+            event["node_id"] = row[4]
         events.append(event)
     return events
 
 
+def _row_to_room(row: tuple[str, str | None, str]) -> RoomRecord:
+    return {"id": row[0], "name": row[1], "agents": json.loads(row[2])}
+
+
 class Store:
     """Single-writer store owned by the serve process; readers (the CLI, the paged read) open their own
-    short-lived WAL connections. `append` stamps the next AUTOINCREMENT id; `page` reads oldest-to-newest
-    with an id cursor; `search` runs FTS5 relevance ranking decayed toward recent."""
+    short-lived WAL connections. `append` stamps the next AUTOINCREMENT id and files the message under a
+    room (the direct room when the caller names none); `page` reads oldest-to-newest with an id cursor;
+    `search` runs FTS5 relevance ranking decayed toward recent."""
 
-    def __init__(self, db_path: pl.Path) -> None:
+    def __init__(self, db_path: pl.Path, agent_name: str) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = _open(db_path)
+        self._direct_room = direct_room_id(agent_name)
+        self._conn = _open(db_path, agent_name)
         self._db_path = db_path
 
+    def _read(self) -> sqlite3.Connection:
+        """A short-lived read connection, so a scan never interleaves with the writer's transaction."""
+        return sqlite3.connect(str(self._db_path), timeout=30)
+
     def append(self, event: StoredEvent) -> int:
-        cursor = self._conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", (event["ts"], json.dumps(event)))
+        room = event["room"] if "room" in event else self._direct_room
+        node_id = event["node_id"] if "node_id" in event else None
+        blob = {key: value for key, value in event.items() if key not in _COLUMN_FIELDS}
+        cursor = self._conn.execute(
+            "INSERT INTO events (ts, data, room, node_id) VALUES (?, ?, ?, ?)",
+            (event["ts"], json.dumps(blob), room, node_id),
+        )
         self._conn.commit()
         rowid = cursor.lastrowid
         if rowid is None:
             raise sqlite3.Error("insert returned no rowid")
         event["id"] = rowid
+        event["room"] = room
         return rowid
 
-    def page(self, limit: int = PAGE_SIZE, before_cursor: int | None = None) -> tuple[list[StoredEvent], int | None]:
+    def mark_node_id(self, local_id: int, node_id: int) -> None:
+        """Record that the node also holds this row, so replicating it back is a no-op."""
+        self._conn.execute("UPDATE events SET node_id = ? WHERE id = ?", (node_id, local_id))
+        self._conn.commit()
+
+    def has_node_id(self, node_id: int) -> bool:
+        conn = self._read()
+        try:
+            return conn.execute("SELECT 1 FROM events WHERE node_id = ? LIMIT 1", (node_id,)).fetchone() is not None
+        finally:
+            conn.close()
+
+    def max_node_id(self, room: str) -> int:
+        """The newest node id stored for a room, 0 when the room holds none. The pull asks the node for
+        everything after it, so a replica that fell behind resumes where it stopped."""
+        conn = self._read()
+        try:
+            highest = conn.execute("SELECT MAX(node_id) FROM events WHERE room = ?", (room,)).fetchone()[0]
+        finally:
+            conn.close()
+        return 0 if highest is None else int(highest)
+
+    def local_id_for_origin(self, room: str, origin_id: int) -> int | None:
+        """The local row an imported message came from: the node echoes back the id the import carried,
+        which is this store's own row id, so the row it names is stamped instead of duplicated."""
+        conn = self._read()
+        try:
+            row = conn.execute("SELECT id FROM events WHERE id = ? AND room = ?", (origin_id, room)).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else int(row[0])
+
+    def page(self, limit: int = PAGE_SIZE, before_cursor: int | None = None, room: str | None = None) -> tuple[list[StoredEvent], int | None]:
         """The last `limit` conversation events before `before_cursor` (exclusive), oldest-to-newest,
-        with the next-older cursor (None when no older page). Short-lived read connection so it never
-        interleaves with the writer's transaction."""
+        with the next-older cursor (None when no older page). A room reads that room alone; no room
+        reads every one."""
         if limit <= 0:
             return [], None
-        upper = "AND id < ? " if before_cursor is not None else ""
-        params: tuple[object, ...] = (before_cursor,) if before_cursor is not None else ()
+        clauses = ""
+        params: list[str | int] = []
+        if room is not None:
+            clauses += "AND room = ? "
+            params.append(room)
+        if before_cursor is not None:
+            clauses += "AND id < ? "
+            params.append(before_cursor)
         placeholders = ",".join("?" for _ in _CONVERSATION_TYPES)
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        conn = self._read()
         try:
             rows = conn.execute(
-                f"SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ({placeholders}) {upper}ORDER BY id DESC LIMIT ?",
+                f"SELECT {_ROW_COLUMNS} FROM events WHERE json_extract(data, '$.type') IN ({placeholders}) {clauses}ORDER BY id DESC LIMIT ?",
                 (*_CONVERSATION_TYPES, *params, limit + 1),
             ).fetchall()
         finally:
@@ -125,33 +253,79 @@ class Store:
         rows = rows[:limit]
         return _rows_to_events(list(reversed(rows))), rows[-1][0] if has_older else None
 
-    def search(self, query: str, *, limit: int = 20) -> list[StoredEvent]:
+    def search(self, query: str, *, limit: int = 20, room: str | None = None) -> list[StoredEvent]:
         """Full-text search over the conversation, ranked by FTS relevance decayed toward recent (mirrors
-        events.db). Short-lived read connection so a big scan never blocks the writer. A malformed MATCH
-        raises sqlite3.OperationalError, which the caller maps to a client error."""
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        events.db), across every room or one named room. A malformed MATCH raises
+        sqlite3.OperationalError, which the caller maps to a client error."""
+        room_clause = "AND e.room = ? " if room is not None else ""
+        room_params: tuple[str, ...] = (room,) if room is not None else ()
+        conn = self._read()
         try:
             rows = conn.execute(
-                """
-                SELECT e.id, e.ts, e.data,
+                f"""
+                SELECT e.id, e.ts, e.data, e.room, e.node_id,
                        f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
                 FROM events_fts f
                 JOIN events e ON e.id = f.rowid
-                WHERE events_fts MATCH ?
+                WHERE events_fts MATCH ? {room_clause}
                 ORDER BY score ASC
                 LIMIT ?
                 """,
-                (_RECENCY_DECAY_RATE, query, limit),
+                (_RECENCY_DECAY_RATE, query, *room_params, limit),
             ).fetchall()
         finally:
             conn.close()
-        return _rows_to_events([(row[0], row[1], row[2]) for row in rows])
+        return _rows_to_events([(row[0], row[1], row[2], row[3], row[4]) for row in rows])
+
+    def unsynced_direct_rows(self) -> list[StoredEvent]:
+        """Every conversation row of the direct room the node does not hold yet, oldest first: what
+        `chat import-to-node` hands the node so the shared history starts complete."""
+        placeholders = ",".join("?" for _ in _CONVERSATION_TYPES)
+        conn = self._read()
+        try:
+            rows = conn.execute(
+                f"SELECT {_ROW_COLUMNS} FROM events "
+                f"WHERE room = ? AND node_id IS NULL AND json_extract(data, '$.type') IN ({placeholders}) ORDER BY id ASC",
+                (self._direct_room, *_CONVERSATION_TYPES),
+            ).fetchall()
+        finally:
+            conn.close()
+        return _rows_to_events(rows)
+
+    def upsert_room(self, room: RoomRecord) -> None:
+        """Store a room as the node describes it now, name and membership included."""
+        self._conn.execute(
+            "INSERT INTO rooms (id, name, agents) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, agents = excluded.agents",
+            (room["id"], room["name"], json.dumps(room["agents"])),
+        )
+        self._conn.commit()
+
+    def rooms(self) -> list[RoomRecord]:
+        conn = self._read()
+        try:
+            rows = conn.execute("SELECT id, name, agents FROM rooms ORDER BY id ASC").fetchall()
+        finally:
+            conn.close()
+        return [_row_to_room(row) for row in rows]
+
+    def room(self, room_id: str) -> RoomRecord | None:
+        conn = self._read()
+        try:
+            row = conn.execute("SELECT id, name, agents FROM rooms WHERE id = ?", (room_id,)).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else _row_to_room(row)
+
+    def delete_room(self, room_id: str) -> None:
+        self._conn.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+        self._conn.commit()
 
     def attachment_references(self) -> dict[str, tuple[str, str]]:
         """Every attachment id any event references, mapped to that event's (ts, type). One structured
         scan of the `$.attachments` arrays (never a substring probe, so chat text quoting an id can not
         pin a blob), first event wins. Backs both the GC sweep and `attachments list`."""
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        conn = self._read()
         try:
             rows = conn.execute(
                 """
@@ -170,12 +344,15 @@ class Store:
 
     def import_rows(self, rows: list[tuple[int, str, str]]) -> tuple[int, int]:
         """Copy (id, ts, data) triples from events.db preserving ids, idempotently (INSERT OR IGNORE).
-        The AFTER INSERT trigger indexes each real insert into FTS, so imported history is searchable.
+        They are the conversation between the user and this agent, so they land in the direct room. The
+        AFTER INSERT trigger indexes each real insert into FTS, so imported history is searchable.
         Returns (count_written, max_id_seen) so the caller can bump the sequence above it (see D3)."""
         count = 0
         max_id = 0
         for row_id, ts, data in rows:
-            cursor = self._conn.execute("INSERT OR IGNORE INTO events (id, ts, data) VALUES (?, ?, ?)", (row_id, ts, data))
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO events (id, ts, data, room) VALUES (?, ?, ?, ?)", (row_id, ts, data, self._direct_room)
+            )
             count += cursor.rowcount
             max_id = max(max_id, row_id)
         self._conn.commit()

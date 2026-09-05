@@ -12,6 +12,7 @@ import typing as tp
 
 from chat_cli import attachments
 from chat_cli.bubblelint import bubble_lint_reason
+from chat_cli.daemon import agent_name
 from chat_cli.store import Store, store_path
 
 
@@ -99,7 +100,7 @@ async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str]) 
 
 def cmd_history(args: argparse.Namespace) -> None:
     data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".chat"))
-    store = Store(store_path(data_dir))
+    store = Store(store_path(data_dir), agent_name())
     try:
         if args.search:
             events = store.search(args.search, limit=args.limit)
@@ -132,7 +133,7 @@ def cmd_attachments_list(args: argparse.Namespace) -> None:
     was received from the user or sent by the agent). Largest first by default; count and total_bytes
     describe the filtered set even when --limit trims the printed array."""
     root = _attachments_root(args)
-    store = Store(store_path(root.parent))
+    store = Store(store_path(root.parent), agent_name())
     rows: list[_ListedAttachment] = []
     try:
         references = store.attachment_references()
@@ -200,7 +201,7 @@ def cmd_import(args: argparse.Namespace) -> None:
         rows = src.execute("SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ('user', 'chat') ORDER BY id ASC").fetchall()
     finally:
         src.close()
-    store = Store(store_path(data_dir))
+    store = Store(store_path(data_dir), agent_name())
     try:
         count, max_id = store.import_rows(rows)
         if max_id:

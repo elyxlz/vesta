@@ -176,7 +176,7 @@ def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
 
 
 def _daemon_state(tmp_path) -> daemon.DaemonState:
-    service = ServiceState(Store(store_path(tmp_path)), tmp_path / "notifications", tmp_path / "attachments")
+    service = ServiceState(Store(store_path(tmp_path), "vesta"), tmp_path / "notifications", tmp_path / "attachments")
     return daemon.DaemonState(
         sock_path=tmp_path / "chat.sock",
         data_dir=tmp_path,
