@@ -56,7 +56,10 @@ pub(crate) fn wants(
 /// speaking flag would refuse every agent post in that room until the OS dropped the socket.
 async fn send_bounded(tx: &mut Sender, message: WsMessage) -> bool {
     let deadline = Duration::from_secs(WS_SEND_TIMEOUT_SECS);
-    matches!(tokio::time::timeout(deadline, tx.send(message)).await, Ok(Ok(())))
+    matches!(
+        tokio::time::timeout(deadline, tx.send(message)).await,
+        Ok(Ok(()))
+    )
 }
 
 /// The one inbound frame: `{"type":"speaking","active":bool}`; anything else is ignored.
@@ -161,8 +164,18 @@ mod tests {
     fn a_scoped_session_sees_only_its_room() {
         let scope = Scope::Room("dm:alice".into());
         let lookup = |id: &str| (id == "dm:alice").then(|| room("dm:alice", &["alice"]));
-        assert!(wants(&scope, &ChatPrincipal::User, &message("dm:alice"), lookup));
-        assert!(!wants(&scope, &ChatPrincipal::User, &message("dm:bob"), lookup));
+        assert!(wants(
+            &scope,
+            &ChatPrincipal::User,
+            &message("dm:alice"),
+            lookup
+        ));
+        assert!(!wants(
+            &scope,
+            &ChatPrincipal::User,
+            &message("dm:bob"),
+            lookup
+        ));
     }
 
     #[test]
@@ -175,24 +188,45 @@ mod tests {
         };
         let alice = ChatPrincipal::Agent("alice".into());
         assert!(wants(&scope, &alice, &message("dm:alice:bob"), lookup));
-        assert!(!wants(&scope, &ChatPrincipal::Agent("cy".into()), &message("dm:alice:bob"), lookup));
+        assert!(!wants(
+            &scope,
+            &ChatPrincipal::Agent("cy".into()),
+            &message("dm:alice:bob"),
+            lookup
+        ));
         assert!(!wants(&scope, &alice, &message("gone"), lookup));
-        assert!(wants(&scope, &ChatPrincipal::User, &message("dm:alice"), lookup));
+        assert!(wants(
+            &scope,
+            &ChatPrincipal::User,
+            &message("dm:alice"),
+            lookup
+        ));
     }
 
     #[test]
     fn an_unscoped_session_hears_a_deletion_of_a_room_that_is_already_gone() {
         let alice = ChatPrincipal::Agent("alice".into());
-        let deleted = ChatEvent::RoomDeleted { room: "gone".into() };
+        let deleted = ChatEvent::RoomDeleted {
+            room: "gone".into(),
+        };
         assert!(wants(&Scope::All, &alice, &deleted, |_| None));
         assert!(!wants(&Scope::All, &alice, &message("gone"), |_| None));
     }
 
     #[test]
     fn only_a_well_formed_speaking_frame_is_read() {
-        assert_eq!(parse_client_frame(r#"{"type":"speaking","active":true}"#), Some(true));
-        assert_eq!(parse_client_frame(r#"{"type":"speaking","active":false}"#), Some(false));
-        assert_eq!(parse_client_frame(r#"{"type":"speaking","active":"yes"}"#), None);
+        assert_eq!(
+            parse_client_frame(r#"{"type":"speaking","active":true}"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_client_frame(r#"{"type":"speaking","active":false}"#),
+            Some(false)
+        );
+        assert_eq!(
+            parse_client_frame(r#"{"type":"speaking","active":"yes"}"#),
+            None
+        );
         assert_eq!(parse_client_frame(r#"{"type":"other"}"#), None);
         assert_eq!(parse_client_frame("not json"), None);
     }

@@ -132,9 +132,13 @@ impl ChatEvent {
 
     pub(crate) fn to_frame(&self) -> serde_json::Value {
         match self {
-            Self::Message(message) => serde_json::to_value(message).unwrap_or(serde_json::Value::Null),
+            Self::Message(message) => {
+                serde_json::to_value(message).unwrap_or(serde_json::Value::Null)
+            }
             Self::RoomCreated(room) => serde_json::json!({ "type": "room_created", "room": room }),
-            Self::RoomDeleted { room } => serde_json::json!({ "type": "room_deleted", "room": room }),
+            Self::RoomDeleted { room } => {
+                serde_json::json!({ "type": "room_deleted", "room": room })
+            }
             Self::UserFinishedTalking { room } => {
                 serde_json::json!({ "type": "user_finished_talking", "room": room })
             }
@@ -147,13 +151,18 @@ pub(crate) fn format_ts(at_ms: u64) -> String {
     let nanos = i128::from(at_ms) * 1_000_000;
     time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
         .ok()
-        .and_then(|stamp| stamp.format(&time::format_description::well_known::Rfc3339).ok())
+        .and_then(|stamp| {
+            stamp
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
         .unwrap_or_default()
 }
 
 /// The inverse of `format_ts`, accepting any RFC 3339 stamp (an agent's local store writes
 /// microseconds and a `+00:00` offset).
 pub(crate) fn parse_ts(ts: &str) -> Option<u64> {
-    let stamp = time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339).ok()?;
+    let stamp =
+        time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339).ok()?;
     u64::try_from(stamp.unix_timestamp_nanos() / 1_000_000).ok()
 }

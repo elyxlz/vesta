@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, watch};
 
 use crate::chat::store::ChatStore;
 use crate::chat::{
-    parse_ts, ChatEvent, InputMethod, Message, MessageDraft, MessageKind, Room, BURST_REFUSAL,
+    ChatEvent, InputMethod, Message, MessageDraft, MessageKind, Room, BURST_REFUSAL,
     CHAT_EVENT_BROADCAST_CAPACITY, ROOM_AGENT_POSTS_WITHOUT_USER, ROOM_NAME_MAX_CHARS,
     SEEN_INTENT_IDS_CAP, SPEAKING_REFUSAL, USER_SENDER,
 };
@@ -52,7 +52,8 @@ pub(crate) struct OpenRoom {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImportItem {
     pub origin_id: u64,
-    pub ts: String,
+    /// Unix milliseconds; the route parses the agent's stamp before the node sees it.
+    pub at_ms: u64,
     pub kind: MessageKind,
     pub text: String,
     pub input_method: Option<InputMethod>,
@@ -117,27 +118,47 @@ impl ChatNode {
     }
 
     pub(crate) fn room(&self, id: &str) -> Option<Room> {
-        self.store.lock().unwrap_or_else(PoisonError::into_inner).room(id).cloned()
+        self.store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .room(id)
+            .cloned()
     }
 
     /// The rooms `agent` is in, or every room for the user.
     pub(crate) fn rooms_for_agent(&self, agent: &str) -> Vec<Room> {
-        self.rooms_snapshot().into_iter().filter(|room| room.has_agent(agent)).collect()
+        self.rooms_snapshot()
+            .into_iter()
+            .filter(|room| room.has_agent(agent))
+            .collect()
     }
 
     pub(crate) fn known_agents(&self) -> Vec<String> {
-        let mut names: Vec<String> =
-            self.known_agents.lock().unwrap_or_else(PoisonError::into_inner).iter().cloned().collect();
+        let mut names: Vec<String> = self
+            .known_agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect();
         names.sort_unstable();
         names
     }
 
     /// Every agent vestad knows gets its direct room; names are remembered for membership checks.
+    /// The roster poll calls this every tick, so a name set matching the one already known is a
+    /// no-op: nothing is claimed and the room list is not republished.
     pub(crate) fn reconcile_agents(&self, names: &[String], now_secs: u64) {
         {
-            let mut known = self.known_agents.lock().unwrap_or_else(PoisonError::into_inner);
-            known.clear();
-            known.extend(names.iter().cloned());
+            let mut known = self
+                .known_agents
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let incoming: HashSet<String> = names.iter().cloned().collect();
+            if *known == incoming {
+                return;
+            }
+            *known = incoming;
         }
         for name in names {
             self.ensure_direct_room(name, now_secs);
@@ -145,27 +166,34 @@ impl ChatNode {
     }
 
     pub(crate) fn ensure_direct_room(&self, agent: &str, now_secs: u64) -> Room {
-        self.known_agents.lock().unwrap_or_else(PoisonError::into_inner).insert(agent.to_string());
-        let id = Room::direct_id(agent);
-        let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(existing) = store.room(&id) {
-            return existing.clone();
-        }
-        let room = Room {
-            id,
+        self.known_agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(agent.to_string());
+        let claim = Room {
+            id: Room::direct_id(agent),
             name: None,
             agents: vec![agent.to_string()],
             created_at: now_secs,
             last_message_at: None,
         };
-        store.put_room(room.clone());
-        self.publish_rooms(&store, Some(ChatEvent::RoomCreated(room.clone())));
+        let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+        let created = store.claim_room(claim.clone());
+        let room = store.room(&claim.id).cloned().unwrap_or(claim);
+        self.publish_rooms(
+            &store,
+            created.then(|| ChatEvent::RoomCreated(room.clone())),
+        );
         room
     }
 
     /// Create-or-get: no name and one agent is that agent's direct room, no name and two agents
     /// is their peer room, a name makes a group. Returns whether the room was created.
-    pub(crate) fn open_room(&self, request: OpenRoom, now_secs: u64) -> Result<(Room, bool), ChatError> {
+    pub(crate) fn open_room(
+        &self,
+        request: OpenRoom,
+        now_secs: u64,
+    ) -> Result<(Room, bool), ChatError> {
         let mut agents = request.agents;
         if agents.is_empty() {
             return Err(ChatError::Invalid("a room needs at least one agent".into()));
@@ -175,7 +203,10 @@ impl ChatNode {
             return Err(ChatError::Invalid("agents must be distinct".into()));
         }
         {
-            let known = self.known_agents.lock().unwrap_or_else(PoisonError::into_inner);
+            let known = self
+                .known_agents
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             if let Some(unknown) = agents.iter().find(|agent| !known.contains(*agent)) {
                 return Err(ChatError::Invalid(format!("unknown agent: {unknown}")));
             }
@@ -197,16 +228,26 @@ impl ChatNode {
                     "a room with three or more agents needs a name".into(),
                 ))
             }
-            (Some(_), _) => format!("grp-{}", hex::encode(rand::random::<[u8; GROUP_ID_BYTES]>())),
+            (Some(_), _) => format!(
+                "grp-{}",
+                hex::encode(rand::random::<[u8; GROUP_ID_BYTES]>())
+            ),
+        };
+        let claim = Room {
+            id,
+            name,
+            agents,
+            created_at: now_secs,
+            last_message_at: None,
         };
         let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(existing) = store.room(&id) {
-            return Ok((existing.clone(), false));
-        }
-        let room = Room { id, name, agents, created_at: now_secs, last_message_at: None };
-        store.put_room(room.clone());
-        self.publish_rooms(&store, Some(ChatEvent::RoomCreated(room.clone())));
-        Ok((room, true))
+        let created = store.claim_room(claim.clone());
+        let room = store.room(&claim.id).cloned().unwrap_or(claim);
+        self.publish_rooms(
+            &store,
+            created.then(|| ChatEvent::RoomCreated(room.clone())),
+        );
+        Ok((room, created))
     }
 
     /// The user deletes a room. A direct room goes only once its agent is gone from `live_agents`.
@@ -214,10 +255,17 @@ impl ChatNode {
         let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         let room = store.room(id).cloned().ok_or(ChatError::NotFound)?;
         if room.is_direct() && live_agents.iter().any(|agent| room.has_agent(agent)) {
-            return Err(ChatError::Invalid("a direct room lives as long as its agent".into()));
+            return Err(ChatError::Invalid(
+                "a direct room lives as long as its agent".into(),
+            ));
         }
         store.remove_room(id);
-        self.publish_rooms(&store, Some(ChatEvent::RoomDeleted { room: id.to_string() }));
+        self.publish_rooms(
+            &store,
+            Some(ChatEvent::RoomDeleted {
+                room: id.to_string(),
+            }),
+        );
         Ok(())
     }
 
@@ -229,17 +277,36 @@ impl ChatNode {
         message
     }
 
-    pub(crate) fn page(&self, room: &str, before: Option<u64>, limit: usize) -> (Vec<Message>, Option<u64>) {
-        self.store.lock().unwrap_or_else(PoisonError::into_inner).page(room, before, limit)
+    pub(crate) fn page(
+        &self,
+        room: &str,
+        before: Option<u64>,
+        limit: usize,
+    ) -> (Vec<Message>, Option<u64>) {
+        self.store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .page(room, before, limit)
     }
 
-    pub(crate) fn after(&self, room: &str, after: u64, limit: usize) -> (Vec<Message>, Option<u64>) {
-        self.store.lock().unwrap_or_else(PoisonError::into_inner).after(room, after, limit)
+    pub(crate) fn after(
+        &self,
+        room: &str,
+        after: u64,
+        limit: usize,
+    ) -> (Vec<Message>, Option<u64>) {
+        self.store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .after(room, after, limit)
     }
 
     /// True when `intent_id` belongs to a message that already landed. The one dedup decision.
     pub(crate) fn intent_seen(&self, intent_id: &str) -> bool {
-        let seen = self.seen_intents.lock().unwrap_or_else(PoisonError::into_inner);
+        let seen = self
+            .seen_intents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         seen.iter().any(|known| known == intent_id)
     }
 
@@ -247,7 +314,10 @@ impl ChatNode {
     /// the append, never before: a post refused by the gate or the guard never landed, and its
     /// retry must reach the room.
     pub(crate) fn remember_intent(&self, intent_id: &str) {
-        let mut seen = self.seen_intents.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut seen = self
+            .seen_intents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         seen.push_back(intent_id.to_string());
         while seen.len() > SEEN_INTENT_IDS_CAP {
             seen.pop_front();
@@ -257,8 +327,11 @@ impl ChatNode {
     /// The burst guard: agent posts stop once the room's tail holds the cap of agent messages
     /// since the user last spoke.
     pub(crate) fn check_burst(&self, room: &str) -> Result<(), ChatError> {
-        let tail =
-            self.store.lock().unwrap_or_else(PoisonError::into_inner).agent_messages_since_user(room);
+        let tail = self
+            .store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .agent_messages_since_user(room);
         if tail >= ROOM_AGENT_POSTS_WITHOUT_USER {
             return Err(ChatError::Burst(BURST_REFUSAL.into()));
         }
@@ -303,7 +376,9 @@ impl ChatNode {
         if emit {
             let _ = self
                 .events_tx
-                .send(Arc::new(ChatEvent::UserFinishedTalking { room: room.to_string() }));
+                .send(Arc::new(ChatEvent::UserFinishedTalking {
+                    room: room.to_string(),
+                }));
         }
     }
 
@@ -327,13 +402,19 @@ impl ChatNode {
     pub(crate) fn import(&self, room: &str, items: Vec<ImportItem>) -> ImportOutcome {
         let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(target) = store.room(room).cloned() else {
-            return ImportOutcome { imported: 0, skipped: items.len() };
+            return ImportOutcome {
+                imported: 0,
+                skipped: items.len(),
+            };
         };
         let agent = target.agents.first().cloned().unwrap_or_default();
-        let known = store.origin_ids(room);
-        let mut outcome = ImportOutcome { imported: 0, skipped: 0 };
+        let mut known = store.origin_ids(room);
+        let mut outcome = ImportOutcome {
+            imported: 0,
+            skipped: 0,
+        };
         for item in items {
-            if known.contains(&item.origin_id) {
+            if !known.insert(item.origin_id) {
                 outcome.skipped += 1;
                 continue;
             }
@@ -349,7 +430,7 @@ impl ChatNode {
                 input_method: item.input_method,
                 intent_id: None,
                 origin_id: Some(item.origin_id),
-                at_ms: parse_ts(&item.ts).unwrap_or(0),
+                at_ms: item.at_ms,
             });
             outcome.imported += 1;
         }
@@ -359,7 +440,10 @@ impl ChatNode {
 
     pub(crate) fn rename_agent(&self, old: &str, new: &str) {
         {
-            let mut known = self.known_agents.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut known = self
+                .known_agents
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             if known.remove(old) {
                 known.insert(new.to_string());
             }
@@ -371,7 +455,10 @@ impl ChatNode {
 
     /// A deleted agent leaves every member set; its rooms and messages stay readable.
     pub(crate) fn forget_agent(&self, name: &str) {
-        self.known_agents.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
+        self.known_agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(name);
         let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         for mut room in store.rooms() {
             if room.has_agent(name) {
@@ -444,10 +531,22 @@ mod tests {
         let (_tmp, node) = node();
         node.reconcile_agents(&["alice".into(), "bob".into()], 1);
         let (group, _) = node
-            .open_room(OpenRoom { name: Some("trip".into()), agents: vec!["alice".into(), "bob".into()] }, 2)
+            .open_room(
+                OpenRoom {
+                    name: Some("trip".into()),
+                    agents: vec!["alice".into(), "bob".into()],
+                },
+                2,
+            )
             .expect("open the group room");
-        assert_eq!(node.room(&group.id).expect("the group room").agents, vec!["alice", "bob"]);
-        assert_eq!(node.room("dm:alice").expect("the direct room").agents, vec!["alice"]);
+        assert_eq!(
+            node.room(&group.id).expect("the group room").agents,
+            vec!["alice", "bob"]
+        );
+        assert_eq!(
+            node.room("dm:alice").expect("the direct room").agents,
+            vec!["alice"]
+        );
         assert_eq!(node.room("dm:nobody"), None);
     }
 
@@ -456,28 +555,52 @@ mod tests {
         let (_tmp, node) = node();
         node.reconcile_agents(&["alice".into(), "bob".into(), "cy".into()], 1);
         let (peer, created) = node
-            .open_room(OpenRoom { name: None, agents: vec!["bob".into(), "alice".into()] }, 2)
+            .open_room(
+                OpenRoom {
+                    name: None,
+                    agents: vec!["bob".into(), "alice".into()],
+                },
+                2,
+            )
             .expect("peer");
         assert!(created);
         assert_eq!(peer.id, "dm:alice:bob");
         assert_eq!(peer.agents, vec!["alice".to_string(), "bob".to_string()]);
         let (again, created) = node
-            .open_room(OpenRoom { name: None, agents: vec!["alice".into(), "bob".into()] }, 3)
+            .open_room(
+                OpenRoom {
+                    name: None,
+                    agents: vec!["alice".into(), "bob".into()],
+                },
+                3,
+            )
             .expect("peer again");
         assert!(!created);
         assert_eq!(again, peer);
         let (direct, created) = node
-            .open_room(OpenRoom { name: None, agents: vec!["cy".into()] }, 4)
+            .open_room(
+                OpenRoom {
+                    name: None,
+                    agents: vec!["cy".into()],
+                },
+                4,
+            )
             .expect("direct");
         assert!(!created);
         assert_eq!(direct.id, "dm:cy");
         let error = node
             .open_room(
-                OpenRoom { name: None, agents: vec!["alice".into(), "bob".into(), "cy".into()] },
+                OpenRoom {
+                    name: None,
+                    agents: vec!["alice".into(), "bob".into(), "cy".into()],
+                },
                 5,
             )
             .expect_err("needs a name");
-        assert_eq!(error.to_string(), "a room with three or more agents needs a name");
+        assert_eq!(
+            error.to_string(),
+            "a room with three or more agents needs a name"
+        );
         let (group, created) = node
             .open_room(
                 OpenRoom {
@@ -498,22 +621,43 @@ mod tests {
         let (_tmp, node) = node();
         node.reconcile_agents(&["alice".into()], 1);
         let unknown = node
-            .open_room(OpenRoom { name: None, agents: vec!["nobody".into()] }, 1)
+            .open_room(
+                OpenRoom {
+                    name: None,
+                    agents: vec!["nobody".into()],
+                },
+                1,
+            )
             .expect_err("unknown");
         assert_eq!(unknown.to_string(), "unknown agent: nobody");
         let duplicate = node
             .open_room(
-                OpenRoom { name: Some("x".into()), agents: vec!["alice".into(), "alice".into()] },
+                OpenRoom {
+                    name: Some("x".into()),
+                    agents: vec!["alice".into(), "alice".into()],
+                },
                 1,
             )
             .expect_err("duplicate");
         assert_eq!(duplicate.to_string(), "agents must be distinct");
         let empty = node
-            .open_room(OpenRoom { name: Some("x".into()), agents: vec![] }, 1)
+            .open_room(
+                OpenRoom {
+                    name: Some("x".into()),
+                    agents: vec![],
+                },
+                1,
+            )
             .expect_err("empty");
         assert_eq!(empty.to_string(), "a room needs at least one agent");
         let long = node
-            .open_room(OpenRoom { name: Some("n".repeat(81)), agents: vec!["alice".into()] }, 1)
+            .open_room(
+                OpenRoom {
+                    name: Some("n".repeat(81)),
+                    agents: vec!["alice".into()],
+                },
+                1,
+            )
             .expect_err("long");
         assert_eq!(long.to_string(), "a room name is at most 80 characters");
     }
@@ -525,12 +669,23 @@ mod tests {
         let mut events = node.subscribe_events();
         let live = vec!["alice".to_string()];
         let refused = node.delete_room("dm:alice", &live).expect_err("alive");
-        assert_eq!(refused.to_string(), "a direct room lives as long as its agent");
+        assert_eq!(
+            refused.to_string(),
+            "a direct room lives as long as its agent"
+        );
         node.delete_room("dm:alice", &[]).expect("agent gone");
         assert!(node.room("dm:alice").is_none());
         let event = events.try_recv().expect("event");
-        assert_eq!(*event, ChatEvent::RoomDeleted { room: "dm:alice".into() });
-        assert!(matches!(node.delete_room("dm:alice", &[]), Err(ChatError::NotFound)));
+        assert_eq!(
+            *event,
+            ChatEvent::RoomDeleted {
+                room: "dm:alice".into()
+            }
+        );
+        assert!(matches!(
+            node.delete_room("dm:alice", &[]),
+            Err(ChatError::NotFound)
+        ));
     }
 
     #[test]
@@ -540,8 +695,14 @@ mod tests {
         let mut events = node.subscribe_events();
         let message = node.append(draft("dm:alice", MessageKind::User, "user", "hello"));
         assert_eq!(message.id, 1);
-        assert_eq!(*events.try_recv().expect("event"), ChatEvent::Message(message));
-        assert_eq!(node.room("dm:alice").expect("room").last_message_at, Some(1));
+        assert_eq!(
+            *events.try_recv().expect("event"),
+            ChatEvent::Message(message)
+        );
+        assert_eq!(
+            node.room("dm:alice").expect("room").last_message_at,
+            Some(1)
+        );
     }
 
     #[test]
@@ -551,28 +712,55 @@ mod tests {
         let items = vec![
             ImportItem {
                 origin_id: 7,
-                ts: "2026-09-04T10:12:03.123456+00:00".into(),
+                at_ms: 1_788_516_723_123,
                 kind: MessageKind::User,
                 text: "old".into(),
                 input_method: None,
             },
             ImportItem {
                 origin_id: 8,
-                ts: "2026-09-04T10:12:04+00:00".into(),
+                at_ms: 1_788_516_724_000,
                 kind: MessageKind::Chat,
                 text: "reply".into(),
                 input_method: None,
             },
         ];
         let first = node.import("dm:alice", items.clone());
-        assert_eq!(first, ImportOutcome { imported: 2, skipped: 0 });
-        let second = node.import("dm:alice", items);
-        assert_eq!(second, ImportOutcome { imported: 0, skipped: 2 });
+        assert_eq!(
+            first,
+            ImportOutcome {
+                imported: 2,
+                skipped: 0
+            }
+        );
+        let second = node.import("dm:alice", items.clone());
+        assert_eq!(
+            second,
+            ImportOutcome {
+                imported: 0,
+                skipped: 2
+            }
+        );
         let (page, _) = node.page("dm:alice", None, 10);
         assert_eq!(page[0].ts, "2026-09-04T10:12:03.123Z");
         assert_eq!(page[0].origin_id, Some(7));
         assert_eq!(page[1].sender, "alice");
         assert_eq!(page[0].sender, "user");
+        let mut twice = items;
+        twice.truncate(1);
+        let repeated = ImportItem {
+            origin_id: 9,
+            ..twice[0].clone()
+        };
+        let batch = node.import("dm:alice", vec![repeated.clone(), repeated]);
+        assert_eq!(
+            batch,
+            ImportOutcome {
+                imported: 1,
+                skipped: 1
+            },
+            "an origin id repeated inside one batch imports once"
+        );
     }
 
     #[test]
@@ -589,11 +777,68 @@ mod tests {
     }
 
     #[test]
+    fn forget_then_ensure_restores_the_direct_rooms_membership() {
+        let (_tmp, node) = node();
+        node.reconcile_agents(&["alice".into()], 1);
+        node.forget_agent("alice");
+        let restored = node.ensure_direct_room("alice", 9);
+        assert_eq!(restored.agents, vec!["alice".to_string()]);
+        assert_eq!(restored.created_at, 1, "the room is claimed, not recreated");
+    }
+
+    #[test]
+    fn forget_then_open_peer_restores_membership() {
+        let (_tmp, node) = node();
+        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        node.open_room(
+            OpenRoom {
+                name: None,
+                agents: vec!["alice".into(), "bob".into()],
+            },
+            2,
+        )
+        .expect("peer");
+        node.forget_agent("alice");
+        node.reconcile_agents(&["alice".into(), "bob".into()], 3);
+        let (peer, created) = node
+            .open_room(
+                OpenRoom {
+                    name: None,
+                    agents: vec!["alice".into(), "bob".into()],
+                },
+                4,
+            )
+            .expect("peer again");
+        assert!(!created, "the peer id is claimed, not recreated");
+        assert_eq!(peer.agents, vec!["alice".to_string(), "bob".to_string()]);
+    }
+
+    #[test]
+    fn reconciling_the_same_names_publishes_nothing() {
+        let (_tmp, node) = node();
+        let mut rooms_rx = node.subscribe_rooms();
+        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        assert!(rooms_rx.has_changed().expect("watch alive"));
+        assert_eq!(rooms_rx.borrow_and_update().len(), 2);
+        node.reconcile_agents(&["alice".into(), "bob".into()], 2);
+        assert!(
+            !rooms_rx.has_changed().expect("watch alive"),
+            "an unchanged roster is a no-op"
+        );
+    }
+
+    #[test]
     fn forget_agent_drops_it_from_member_sets_and_keeps_the_rooms() {
         let (_tmp, node) = node();
         node.reconcile_agents(&["alice".into(), "bob".into()], 1);
-        node.open_room(OpenRoom { name: None, agents: vec!["alice".into(), "bob".into()] }, 2)
-            .expect("peer");
+        node.open_room(
+            OpenRoom {
+                name: None,
+                agents: vec!["alice".into(), "bob".into()],
+            },
+            2,
+        )
+        .expect("peer");
         node.forget_agent("alice");
         let peer = node.room("dm:alice:bob").expect("peer stays");
         assert_eq!(peer.agents, vec!["bob".to_string()]);
