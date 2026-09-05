@@ -26,8 +26,10 @@ export function ChatHeaderActions({
   const navigate = useNavigate();
   const speechEnabled = useVoice((s) => s.speechEnabled);
   const navbarHeight = useLayout((s) => s.navbarHeight);
+  // Voice is the direct agent's own service, so the speaker rides a direct room alone.
+  const showSpeech = speechEnabled && agentName !== null;
 
-  if (fullscreen && !speechEnabled) return null;
+  if (fullscreen && !showSpeech) return null;
 
   // The fullscreen chat sits under the absolute navbar, so the actions start below it.
   return (
@@ -40,7 +42,7 @@ export function ChatHeaderActions({
       style={{ top: fullscreen ? navbarHeight + 12 : 12 }}
     >
       <ButtonGroup>
-        {speechEnabled && <SpeechButton />}
+        {showSpeech && <SpeechButton />}
         {!fullscreen && (
           <>
             {agentName !== null && (

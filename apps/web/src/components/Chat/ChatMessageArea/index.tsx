@@ -8,7 +8,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import { senderOf, type ChatMessage } from "@vesta/core";
+import { type ChatMessage } from "@vesta/core";
 import { recedeTransition, stepTransition } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useScrollFade, type ScrollEdges } from "@/hooks/use-scroll-fade";
@@ -16,7 +16,12 @@ import { bubbleRadiusStyle } from "../bubble-radius";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
 import { CHAT_CONTENT_COLUMN } from "../content-column";
-import { buildDecorated, lastSeenIndex, type DecoratedRow } from "./rows";
+import {
+  buildDecorated,
+  lastSeenIndex,
+  senderCaption,
+  type DecoratedRow,
+} from "./rows";
 import { useChatScroll } from "./use-chat-scroll";
 
 export interface ChatScrollHandle {
@@ -206,17 +211,13 @@ function MessageRow({
   showSenders: boolean;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
-  // The user is the one member every room shares, so their own bubbles never carry a name.
-  const sender = senderOf(row.event);
   const bubble = (
     <ChatBubble
       event={row.event}
       className={row.gap}
       isMobile={isMobile}
       hasTail={row.isGroupEnd}
-      sender={
-        showSenders && row.isGroupStart && sender !== "user" ? sender : null
-      }
+      sender={senderCaption(row, showSenders)}
       onRetry={onRetry}
       onOpenAttachment={onOpenAttachment}
     />

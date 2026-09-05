@@ -15,14 +15,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/utils";
+import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
 import { useToast } from "@/stores/use-toast";
+import { waitForRoom } from "./wait-for-room";
 
 // Opening a group: a name and the agents that answer in it. The node returns the room, and the
-// conversation opens on its own route; the room list arrives on /sync a moment later.
+// conversation opens on its own route once the room list on /sync carries it.
 function NewRoomBody({ onClose }: { onClose: () => void }) {
   const { agents } = useGateway();
+  const controller = useOptionalController();
   const navigate = useNavigate();
   const toast = useToast();
   const [name, setName] = useState("");
@@ -42,6 +45,8 @@ function NewRoomBody({ onClose }: { onClose: () => void }) {
     setCreating(true);
     try {
       const opened = await createRoom(httpClient, name.trim(), members);
+      // The room route reads the tree, so hold the dialog until the delta lands.
+      if (controller) await waitForRoom(controller.replica, opened.room.id);
       onClose();
       await navigate(`/chat/${encodeURIComponent(opened.room.id)}`);
     } catch (error) {

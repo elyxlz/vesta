@@ -59,7 +59,18 @@ export function AgentLayout() {
 
   return (
     <SelectedAgentProvider agent={agent}>
-      <RoomProvider roomId={directRoomId(agent.name)}>
+      {/* The node mints an agent's direct room after the build, so the page serves that room
+          itself until the tree carries it and never bounces a fresh agent home. */}
+      <RoomProvider
+        roomId={directRoomId(agent.name)}
+        fallback={{
+          id: directRoomId(agent.name),
+          name: null,
+          agents: [agent.name],
+          createdAt: 0,
+          lastMessageAt: null,
+        }}
+      >
         <AgentLayoutInner />
       </RoomProvider>
     </SelectedAgentProvider>

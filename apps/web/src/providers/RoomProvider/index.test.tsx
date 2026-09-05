@@ -41,7 +41,11 @@ function Probe() {
   );
 }
 
-function mount(roomId: string, gateway: Partial<GatewayContextValue> = {}) {
+function mount(
+  roomId: string,
+  gateway: Partial<GatewayContextValue> = {},
+  fallback?: Room,
+) {
   return render(
     <GatewayContext.Provider
       value={{
@@ -52,7 +56,7 @@ function mount(roomId: string, gateway: Partial<GatewayContextValue> = {}) {
         ...gateway,
       }}
     >
-      <RoomProvider roomId={roomId}>
+      <RoomProvider roomId={roomId} fallback={fallback}>
         <Probe />
       </RoomProvider>
     </GatewayContext.Provider>,
@@ -85,5 +89,39 @@ describe("RoomProvider", () => {
     });
     expect(queryByTestId("redirect")).toBeNull();
     expect(queryByTestId("room")).toBeNull();
+  });
+
+  // A just-built agent has a page before the node mints its direct room; the caller hands the room
+  // that page chats in, so the screen is reachable instead of bouncing home.
+  it("serves the fallback room the tree does not carry yet", () => {
+    const { queryByTestId, getByTestId } = mount(
+      "dm:sol",
+      { rooms: [] },
+      {
+        id: "dm:sol",
+        name: null,
+        agents: ["sol"],
+        createdAt: 0,
+        lastMessageAt: null,
+      },
+    );
+    expect(queryByTestId("redirect")).toBeNull();
+    expect(getByTestId("room").textContent).toBe("direct | sol | sol | none");
+  });
+
+  it("prefers the tree's own room over the fallback", () => {
+    expect(
+      mount(
+        "dm:ada",
+        {},
+        {
+          id: "dm:ada",
+          name: null,
+          agents: ["ada"],
+          createdAt: 0,
+          lastMessageAt: null,
+        },
+      ).getByTestId("room").textContent,
+    ).toBe("direct | ada | ada | ada");
   });
 });

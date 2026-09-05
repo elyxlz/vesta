@@ -1,4 +1,4 @@
-import { startsNewBubbleGroup } from "@vesta/core";
+import { senderOf, startsNewBubbleGroup } from "@vesta/core";
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import type { ChatMessage } from "@vesta/core";
 
@@ -13,6 +13,19 @@ export interface DecoratedRow {
   isGroupEnd: boolean;
   // First bubble of its group. A room with several agents prints who spoke above this one.
   isGroupStart: boolean;
+}
+
+// Who a bubble prints above itself, null for none. Only a room with several agents names anyone,
+// only the first bubble of a group carries it, and only a reply names a member: the user is the one
+// member every room shares, and an error or rate-limit row is the client speaking, not an agent.
+export function senderCaption(
+  row: DecoratedRow,
+  showSenders: boolean,
+): string | null {
+  if (!showSenders || !row.isGroupStart) return null;
+  if (row.event.type !== "chat") return null;
+  const sender = senderOf(row.event);
+  return sender === "user" ? null : sender;
 }
 
 function rowKey(event: ChatMessage, idxFallback: number): string {

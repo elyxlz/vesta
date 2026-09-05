@@ -286,6 +286,18 @@ describe("recording modes", () => {
     expect(socket).toBeDefined();
   });
 
+  // A room with several members has no voice, so the chat that leaves takes its binding with it:
+  // nothing typed or spoken can reach the conversation the user just left.
+  it("stops reaching the chat once its binding is cleared", async () => {
+    useVoice.getState().clearChat();
+    useVoice.getState().startVoice("dictation");
+    expect(clearInput).not.toHaveBeenCalled();
+    const socket = await startRecording("dictation");
+    socket.emit("EndOfTurn", "hello there");
+    useVoice.getState().stopVoice();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("marks the mode at press time, drops typed text, and clears on stop", async () => {
     useVoice.getState().startVoice("dictation");
     expect(useVoice.getState().recordingMode).toBe("dictation");

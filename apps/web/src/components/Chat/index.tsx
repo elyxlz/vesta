@@ -75,6 +75,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     cancelVoice,
     voiceError,
     registerChat,
+    clearChat,
   } = useVoice();
 
   const {
@@ -135,10 +136,22 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (ta) ta.style.height = "auto";
   }, [setInput]);
 
+  // Voice speaks into the direct agent's own chat alone: a room with several members leaves the
+  // binding cleared rather than pointing at the chat the user just left.
   useEffect(() => {
-    if (!direct) return;
+    if (!direct) {
+      clearChat();
+      return;
+    }
     registerChat(sendWithDrafts, clearComposer, reportSpeaking);
-  }, [direct, registerChat, sendWithDrafts, clearComposer, reportSpeaking]);
+  }, [
+    direct,
+    clearChat,
+    registerChat,
+    sendWithDrafts,
+    clearComposer,
+    reportSpeaking,
+  ]);
 
   // Focus the composer whenever the chat becomes the visible surface: on mount,
   // and again when a logs/settings subpage closes (the pane stays mounted, so a
