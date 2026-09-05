@@ -411,12 +411,14 @@ Idempotent steps, each safe to rerun:
 
 1. Run `~/agent/skills/browser/install-engines.sh` (apt chromium; Camoufox to `/opt`).
 2. `uv tool install --editable --force ~/agent/skills/browser/cli`; `uv sync --frozen` on both engine projects.
-3. Stop any old runtime: kill processes whose argv matches `vesta_browser.daemon` or the old Camoufox launch shape; remove `/tmp/vesta-browser-*` and `~/.cache/camoufox`.
-4. Move `~/.microsoft/browser-profiles/<email>` to `~/agent/data/browser/profiles/camoufox/microsoft-<slug>/` (same engine, same profile format), when present.
-5. Replace any `browser` line in `daemons.sh` with `browser daemon start`; add it when absent.
-6. `browser daemon start`, `browser doctor`; `mark_migration_applied`.
+3. Stop the legacy runtime: scan `/proc/[0-9]*/cmdline` (never `pkill`, removed from the image) for `vesta_browser.daemon` or a Camoufox binary under `~/.cache/camoufox`, `kill` each match, `kill -9` any survivor after a short wait; remove `/tmp/vesta-browser-*`, `~/.cache/camoufox`, `~/.browser`.
+4. `deregister-service browser`: the legacy runtime registered that service public, and only a registration or a deregistration flips exposure, so this step clears it directly; the daemon deregisters the same name for itself on every start.
+5. Replace any `browser` line in `daemons.sh` with `browser daemon start`; add it when absent; create the file with the restart skill's header when missing.
+6. `browser daemon start`, `browser doctor`; both engine routes must read `ready: true`, else stop, leave the migration unmarked, and report it.
+7. For each account directory under `~/.microsoft/browser-profiles/`, tell the user that account needs `microsoft auth setup --account <email> --browser` run again, since a Firefox profile cannot become a Chromium one; then remove `~/.microsoft/browser-profiles`.
+8. `mark_migration_applied`.
 
-Fresh agents pre-mark it. Tracked file changes (skill docs, CLI code) reach the fleet through upstream sync; the migration exists only for the system packages, the venvs, the moved profiles, and the old processes.
+Fresh agents pre-mark it. Tracked file changes (skill docs, CLI code) reach the fleet through upstream sync; the migration exists only for the system packages, the venvs, the service's exposure, the Microsoft accounts, and the legacy processes.
 
 ## Repo integration
 
