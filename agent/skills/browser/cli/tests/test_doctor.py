@@ -109,4 +109,4 @@ def test_doctor_lists_every_missing_handover_binary_with_an_empty_path(tmp_path,
 
     data = asyncio.run(_doctor(paths))["data"]
     assert data["handover"]["ready"] is False
-    assert sorted(data["handover"]["missing"]) == sorted([*display.HANDOVER_BINARIES, "novnc"])
+    assert sorted(data["handover"]["missing"]) == sorted([*display.DISPLAY_BINARIES, *display.STREAM_BINARIES, "novnc"])

@@ -75,33 +75,37 @@ def _own(state: State, coro: tp.Coroutine[None, None, None]) -> asyncio.Task[Non
     return task
 
 
-async def _start_display(paths: Paths, web_port: int) -> display.DisplayStack:
-    """The four processes the page needs, torn back down together if any of them never comes up."""
+async def _start_display(paths: Paths, web_port: int) -> tuple[display.SessionDisplay, display.StreamStack]:
+    """The session's own display plus the stream on it, torn back down together if any piece fails.
+
+    Task 4 gives sessions their own display through `session_control.py` and folds this bring-up
+    into it; until then the handover claims and releases the display itself.
+    """
+    session_display = await display.start_session_display(paths)
     started: list[asyncio.subprocess.Process] = []
     try:
-        name, xvfb = await display.claim_display(paths)
-        started.append(xvfb)
         webroot = await asyncio.to_thread(display.build_webroot, paths)
-        openbox = await display.start_openbox(paths, name)
-        started.append(openbox)
         vnc_port = await asyncio.to_thread(display.free_port, display.VNC_PORT_FIRST)
-        x11vnc = await display.start_x11vnc(name, vnc_port)
+        x11vnc = await display.start_x11vnc(session_display.display, vnc_port)
         started.append(x11vnc)
         websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
     except BaseException:
         await asyncio.gather(*[kill_group(process, KILL_GRACE_SECS) for process in reversed(started)], return_exceptions=True)
+        await display.stop_session_display(paths, session_display)
         raise
-    return display.DisplayStack(name, xvfb, openbox, x11vnc, websockify, vnc_port, web_port, webroot)
+    stack = display.StreamStack(x11vnc, websockify, vnc_port, web_port, webroot)
+    return session_display, stack
 
 
 def _healthy(paths: Paths, handover: Handover) -> bool:
     """The four facts a live handover rests on: our display, the VNC port, the web port, the browser."""
+    session_display = handover.session_display
     stack = handover.stack
     runtime = handover.session.runtime
-    if stack is None or runtime is None:
+    if session_display is None or stack is None or runtime is None:
         return False
     return (
-        display.own_display_serving(paths, display.display_number(stack.display))
+        display.own_display_serving(paths, display.display_number(session_display.display))
         and display.port_serving(stack.vnc_port)
         and display.port_serving(stack.web_port)
         and runtime.process.returncode is None
@@ -126,8 +130,8 @@ async def _bring_up(
     paths = state.paths
     session = handover.session
     web_port = await gateway.register_service(SERVICE)
-    handover.stack = await _start_display(paths, web_port)
-    headed = HeadedDisplay(handover.stack.display, display.SCREEN_W, display.SCREEN_H)
+    handover.session_display, handover.stack = await _start_display(paths, web_port)
+    headed = HeadedDisplay(handover.session_display.display, display.SCREEN_W, display.SCREEN_H)
     runtime = await ENGINES[session.engine].start(session, paths, headed=headed)
     session.runtime = runtime
     if url is not None:
@@ -149,9 +153,9 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
         raise _in_use(f"a handover is already {live.state} on session {live.session.name!r}")
     public_url = _env("VESTAD_PUBLIC_URL")
     agent = _env("AGENT_NAME")
-    missing = display.missing_binaries(state.paths)
+    missing = [*display.missing_display_binaries(state.paths), *display.missing_stream_binaries(state.paths)]
     if missing:
-        raise _failed(f"the handover display needs {', '.join(missing)}. Install it: {display.HANDOVER_APT_LINE}")
+        raise _failed(f"the handover display needs {', '.join(missing)}. Install it: {display.DISPLAY_APT_LINE}")
     session = sessions_mod.resolve_session(state.table, session_name, mode)
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))
@@ -222,8 +226,11 @@ async def _release_key(handover: Handover, timeout: float) -> None:
 
 async def _tear_display(paths: Paths, handover: Handover) -> None:
     stack, handover.stack = handover.stack, None
+    session_display, handover.session_display = handover.session_display, None
     if stack is not None:
-        await display.stop_stack(paths, stack)
+        await display.stop_stack(stack)
+    if session_display is not None:
+        await display.stop_session_display(paths, session_display)
 
 
 async def _teardown(

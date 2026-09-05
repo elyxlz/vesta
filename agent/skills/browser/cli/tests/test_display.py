@@ -71,16 +71,13 @@ def _fetch(url: str) -> tuple[int, str]:
         return answer.status, answer.read().decode()
 
 
-async def _full_stack(paths) -> display.DisplayStack:
-    """Every piece of a live handover display, torn back down if any later piece fails."""
+async def _full_stack(paths) -> tuple[display.SessionDisplay, display.StreamStack]:
+    """A live session display plus the stream on it, torn back down if any later piece fails."""
+    session_display = await display.start_session_display(paths)
     started: list[asyncio.subprocess.Process] = []
     try:
-        display_name, xvfb = await display.claim_display(paths)
-        started.append(xvfb)
-        openbox = await display.start_openbox(paths, display_name)
-        started.append(openbox)
         vnc_port = display.free_port(display.VNC_PORT_FIRST)
-        x11vnc = await display.start_x11vnc(display_name, vnc_port)
+        x11vnc = await display.start_x11vnc(session_display.display, vnc_port)
         started.append(x11vnc)
         webroot = display.build_webroot(paths)
         web_port = display.free_port(WEB_PORT_FIRST)
@@ -88,28 +85,32 @@ async def _full_stack(paths) -> display.DisplayStack:
     except Exception:
         for process in reversed(started):
             await kill_group(process, KILL_GRACE_SECS)
+        await display.stop_session_display(paths, session_display)
         raise
-    return display.DisplayStack(
-        display=display_name,
-        xvfb=xvfb,
-        openbox=openbox,
-        x11vnc=x11vnc,
-        websockify=websockify,
-        vnc_port=vnc_port,
-        web_port=web_port,
-        webroot=webroot,
-    )
+    stack = display.StreamStack(x11vnc=x11vnc, websockify=websockify, vnc_port=vnc_port, web_port=web_port, webroot=webroot)
+    return session_display, stack
 
 
-def test_readiness_reports_every_missing_piece(tmp_path, monkeypatch):
+def test_display_readiness_reports_missing_binaries(tmp_path, monkeypatch):
     (tmp_path / "empty").mkdir()
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     paths = load_paths({"VESTA_BROWSER_NOVNC_DIR": str(tmp_path / "novnc")}, tmp_path)
-    assert display.readiness(paths) == {"ready": False, "missing": ["Xvfb", "x11vnc", "websockify", "openbox", "novnc"]}
+    assert display.display_readiness(paths) == {"ready": False, "missing": ["Xvfb", "openbox"]}
 
 
-def test_readiness_is_ready_once_the_binaries_and_novnc_are_there(rig):
-    assert display.readiness(rig) == {"ready": True, "missing": []}
+def test_stream_readiness_reports_missing_binaries_and_novnc(tmp_path, monkeypatch):
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    paths = load_paths({"VESTA_BROWSER_NOVNC_DIR": str(tmp_path / "novnc")}, tmp_path)
+    assert display.stream_readiness(paths) == {"ready": False, "missing": ["x11vnc", "websockify", "novnc"]}
+
+
+def test_display_readiness_is_ready_with_the_fakes(rig):
+    assert display.display_readiness(rig) == {"ready": True, "missing": []}
+
+
+def test_stream_readiness_is_ready_with_the_fakes_and_novnc(rig):
+    assert display.stream_readiness(rig) == {"ready": True, "missing": []}
 
 
 def test_display_reachable_sees_a_server_holding_only_the_abstract_socket(rig):
@@ -230,20 +231,58 @@ def test_websockify_serves_the_page_on_its_port(rig):
     assert _await_gone([pid])
 
 
-def test_stop_stack_ends_every_process_and_clears_the_socket(rig):
-    async def run():
-        stack = await _full_stack(rig)
-        pids = [stack.xvfb.pid, stack.openbox.pid, stack.x11vnc.pid, stack.websockify.pid]
-        try:
-            serving = display.port_serving(stack.web_port) and display.port_serving(stack.vnc_port)
-            await display.stop_stack(rig, stack)
-        finally:
-            for process in (stack.websockify, stack.x11vnc, stack.openbox, stack.xvfb):
-                if process.returncode is None:
-                    await kill_group(process, KILL_GRACE_SECS)
-        return stack.display, pids, serving
+def _wait_for_recorded_pids(pids_file: pl.Path, wanted: int) -> None:
+    deadline = time.monotonic() + PID_GONE_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        if pids_file.exists() and len(pids_file.read_text().split()) >= wanted:
+            return
+        time.sleep(PID_POLL_SECS)
+    raise AssertionError(f"{pids_file} never recorded {wanted} pids")
 
-    name, pids, serving = asyncio.run(run())
-    assert serving
+
+def test_start_session_display_returns_a_display_this_container_serves(rig):
+    pids_file = rig.x11_socket_dir / "pids"
+
+    async def run():
+        session_display = await display.start_session_display(rig)
+        try:
+            serving = display.own_display_serving(rig, display.display_number(session_display.display))
+            await asyncio.to_thread(_wait_for_recorded_pids, pids_file, 2)
+            return session_display, serving
+        finally:
+            await display.stop_session_display(rig, session_display)
+
+    session_display, serving = asyncio.run(run())
+    assert session_display.display == f":{display.DISPLAY_FIRST}" and serving
+    pids = sorted(int(line) for line in pids_file.read_text().split())
+    assert pids == sorted([session_display.xvfb.pid, session_display.openbox.pid])
+    assert _await_gone(pids)
+
+
+def test_stop_session_display_ends_both_and_clears_the_socket(rig):
+    async def run():
+        session_display = await display.start_session_display(rig)
+        pids = [session_display.xvfb.pid, session_display.openbox.pid]
+        await display.stop_session_display(rig, session_display)
+        return session_display.display, pids
+
+    name, pids = asyncio.run(run())
     assert _await_gone(pids)
     assert not (rig.x11_socket_dir / f"X{name.lstrip(':')}").exists()
+
+
+def test_stop_stack_ends_the_stream_and_leaves_the_display_alive(rig):
+    async def run():
+        session_display, stack = await _full_stack(rig)
+        stream_pids = [stack.x11vnc.pid, stack.websockify.pid]
+        display_pids = [session_display.xvfb.pid, session_display.openbox.pid]
+        serving = display.port_serving(stack.web_port) and display.port_serving(stack.vnc_port)
+        await display.stop_stack(stack)
+        stream_gone = _await_gone(stream_pids)
+        display_still_alive = all(_alive(pid) for pid in display_pids)
+        await display.stop_session_display(rig, session_display)
+        return serving, stream_gone, display_still_alive, display_pids
+
+    serving, stream_gone, display_still_alive, display_pids = asyncio.run(run())
+    assert serving and stream_gone and display_still_alive
+    assert _await_gone(display_pids)

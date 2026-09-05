@@ -1,5 +1,5 @@
-"""The X display a handover streams from: an Xvfb this container owns, a window manager, x11vnc, and
-websockify serving the noVNC page.
+"""Every browser session's own X display, an Xvfb plus a window manager, and the stream a handover
+serves it through: x11vnc plus websockify serving the noVNC page.
 
 The display is always a fresh Xvfb, never the ambient one: x11vnc cannot X_GetImage a live desktop
 seat (it fails BadMatch and the page then spins forever), and a desktop's own DISPLAY would render
@@ -37,8 +37,9 @@ X11VNC_SETTLE_SECS = 0.4
 WEB_READY_TIMEOUT_SECS = 10.0
 READY_POLL_SECS = 0.2
 SOCKET_PROBE_TIMEOUT_SECS = 2.0
-HANDOVER_BINARIES = ("Xvfb", "x11vnc", "websockify", "openbox")
-HANDOVER_APT_LINE = "apt-get install -y xvfb novnc x11vnc openbox"
+DISPLAY_BINARIES = ("Xvfb", "openbox")
+STREAM_BINARIES = ("x11vnc", "websockify")
+DISPLAY_APT_LINE = "apt-get install -y xvfb openbox x11vnc novnc"
 DEFAULT_X11_SOCKET_DIR = pl.Path("/tmp/.X11-unix")
 ABSTRACT_X11_PREFIX = "\0/tmp/.X11-unix/X"
 
@@ -58,14 +59,23 @@ OPENBOX_RC = """<?xml version="1.0"?>
 
 
 class DisplayError(Exception):
-    """A piece of the display stack is missing, lost its race, or never came up."""
+    """A piece of the display or the stream is missing, lost its race, or never came up."""
 
 
 @dataclasses.dataclass
-class DisplayStack:
+class SessionDisplay:
+    """One session's own X display: an Xvfb this container owns and the window manager on it."""
+
     display: str
     xvfb: asyncio.subprocess.Process
     openbox: asyncio.subprocess.Process
+
+
+@dataclasses.dataclass
+class StreamStack:
+    """The stream a handover serves a session's display through. No display in it: the display is
+    the session's own, claimed before the stream and outliving any one handover of it."""
+
     x11vnc: asyncio.subprocess.Process
     websockify: asyncio.subprocess.Process
     vnc_port: int
@@ -82,17 +92,28 @@ def child_env(display: str) -> dict[str, str]:
     return {**base_env(), "DISPLAY": display, "MOZ_ENABLE_WAYLAND": "0"}
 
 
-def missing_binaries(paths: Paths) -> list[str]:
-    """Every handover prerequisite this box does not have, named as the apt line names it."""
-    missing = [name for name in HANDOVER_BINARIES if shutil.which(name) is None]
+def missing_display_binaries(_paths: Paths) -> list[str]:
+    """Every display prerequisite this box does not have: Xvfb and its window manager."""
+    return [name for name in DISPLAY_BINARIES if shutil.which(name) is None]
+
+
+def missing_stream_binaries(paths: Paths) -> list[str]:
+    """Every stream prerequisite this box does not have, named as the apt line names it."""
+    missing = [name for name in STREAM_BINARIES if shutil.which(name) is None]
     if not (paths.novnc_dir / "core" / "rfb.js").is_file():
         missing.append("novnc")
     return missing
 
 
-def readiness(paths: Paths) -> dict[str, p.JsonValue]:
-    """Whether every handover prerequisite is installed, so `doctor` names the gap up front."""
-    missing = missing_binaries(paths)
+def display_readiness(paths: Paths) -> dict[str, p.JsonValue]:
+    """Whether every display prerequisite is installed, so `doctor` names the gap up front."""
+    missing = missing_display_binaries(paths)
+    return {"ready": not missing, "missing": list(missing)}
+
+
+def stream_readiness(paths: Paths) -> dict[str, p.JsonValue]:
+    """Whether every stream prerequisite is installed, so `doctor` names the gap up front."""
+    missing = missing_stream_binaries(paths)
     return {"ready": not missing, "missing": list(missing)}
 
 
@@ -222,6 +243,25 @@ async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Proces
     )
 
 
+async def start_session_display(paths: Paths) -> SessionDisplay:
+    """The display a session claims from its first exec: Xvfb plus openbox, torn down together
+    if openbox never starts."""
+    display_name, xvfb = await claim_display(paths)
+    try:
+        openbox = await start_openbox(paths, display_name)
+    except OSError as exc:
+        await kill_group(xvfb, KILL_GRACE_SECS)
+        raise DisplayError(f"openbox could not start: {exc}") from exc
+    return SessionDisplay(display=display_name, xvfb=xvfb, openbox=openbox)
+
+
+async def stop_session_display(paths: Paths, session_display: SessionDisplay) -> None:
+    """Ends a session's own display, openbox first since it is Xvfb's client."""
+    await kill_group(session_display.openbox, KILL_GRACE_SECS)
+    await kill_group(session_display.xvfb, KILL_GRACE_SECS)
+    _clear_stale_records(paths, display_number(session_display.display))
+
+
 def x11vnc_argv(display: str, vnc_port: int, *, noshm: bool) -> list[str]:
     """-cursor most and -cursorpos send the real X cursor shape and position, not a static dot;
     XDAMAGE (left on) re-encodes only changed regions and -threads parallelises the encoding."""
@@ -283,7 +323,7 @@ async def start_x11vnc(display: str, vnc_port: int) -> asyncio.subprocess.Proces
 def build_webroot(paths: Paths) -> pl.Path:
     """The web root websockify serves: the branded page, its fonts and frame, and noVNC's own code."""
     if not (paths.novnc_dir / "core" / "rfb.js").is_file():
-        raise DisplayError(f"noVNC has no core/rfb.js under {paths.novnc_dir}. Install it: {HANDOVER_APT_LINE}")
+        raise DisplayError(f"noVNC has no core/rfb.js under {paths.novnc_dir}. Install it: {DISPLAY_APT_LINE}")
     webroot = paths.handover_web
     if webroot.exists():
         shutil.rmtree(webroot)
@@ -324,12 +364,9 @@ async def start_websockify(webroot: pl.Path, web_port: int, vnc_port: int, log: 
     raise DisplayError(f"websockify never served port {web_port}. See {log}")
 
 
-async def stop_stack(paths: Paths, stack: DisplayStack) -> None:
-    """Tear the stack down, Xvfb last: the other three are its clients and would thrash without it."""
+async def stop_stack(stack: StreamStack) -> None:
+    """Ends the stream alone; the display underneath it is the session's own and outlives it."""
     await asyncio.gather(
         kill_group(stack.websockify, KILL_GRACE_SECS),
         kill_group(stack.x11vnc, KILL_GRACE_SECS),
-        kill_group(stack.openbox, KILL_GRACE_SECS),
     )
-    await kill_group(stack.xvfb, KILL_GRACE_SECS)
-    _clear_stale_records(paths, display_number(stack.display))
