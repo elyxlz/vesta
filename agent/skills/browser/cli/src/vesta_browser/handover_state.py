@@ -39,15 +39,23 @@ class Handover:
     task: asyncio.Task[None] | None = None
 
 
-def payload(handover: Handover | None) -> dict[str, p.JsonValue]:
-    """What `handover start|status|stop` answers with; a field it has no answer for yet is null."""
+def diagnostic(handover: Handover | None) -> dict[str, p.JsonValue]:
+    """The handover's shape, with no URL in it: what a report the agent prints may carry.
+
+    The keyed URL is added by `payload` alone, so a field added here can never carry the secret.
+    """
     if handover is None or handover.state == "inactive":
-        return {"state": "inactive", "handover_id": None, "session": None, "engine": None, "user_url": None, "expires_at": None}
+        return {"state": "inactive", "handover_id": None, "session": None, "engine": None, "expires_at": None}
     return {
         "state": handover.state,
         "handover_id": handover.id,
         "session": handover.session.name,
         "engine": handover.session.engine,
-        "user_url": handover.user_url or None,
         "expires_at": handover.expires_at or None,
     }
+
+
+def payload(handover: Handover | None) -> dict[str, p.JsonValue]:
+    """What `handover start|status|stop` answers with; a field it has no answer for yet is null."""
+    user_url = handover.user_url if handover is not None and handover.state != "inactive" else ""
+    return {**diagnostic(handover), "user_url": user_url or None}

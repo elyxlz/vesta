@@ -96,7 +96,7 @@ def test_doctor_reports_a_ready_handover_and_no_live_handover(tmp_path, monkeypa
 
     data = asyncio.run(_doctor(paths))["data"]
     assert data["handover"]["ready"] is True and data["handover"]["missing"] == []
-    assert data["handover"]["state"] == "inactive" and data["handover"]["user_url"] is None
+    assert data["handover"]["state"] == "inactive" and "user_url" not in data["handover"]
 
 
 def test_doctor_lists_every_missing_handover_binary_with_an_empty_path(tmp_path, monkeypatch):

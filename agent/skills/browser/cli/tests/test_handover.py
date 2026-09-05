@@ -191,6 +191,22 @@ def test_a_handed_over_session_refuses_exec_stop_and_a_second_handover(rig):
     assert again["ok"] is False and again["error"]["code"] == "handover_in_use"
 
 
+def test_doctor_never_reports_the_handover_key(rig):
+    async def run():
+        started = await serve.request(rig.paths, _start())
+        try:
+            return started, await serve.request(rig.paths, _op("doctor", request_id="h8"))
+        finally:
+            await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
+
+    started, reported = with_daemon(rig.paths, run)
+    assert started["ok"] is True and "/k/" in started["data"]["user_url"]
+    block = reported["data"]["handover"]
+    assert block["state"] == "live" and block["handover_id"] == started["data"]["handover_id"]
+    assert "user_url" not in block
+    assert "/k/" not in json.dumps(reported)
+
+
 def test_handover_stop_releases_the_key_the_service_and_the_display(rig):
     async def run():
         await serve.request(rig.paths, _start())
