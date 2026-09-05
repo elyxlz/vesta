@@ -1,6 +1,7 @@
 """A recording stand-in for camoufox.sync_api.Camoufox: enough Playwright surface for the worker's helpers."""
 
 import json
+import os
 import pathlib as pl
 
 
@@ -114,7 +115,10 @@ class Camoufox:
         self.options = options
 
     def __enter__(self):
-        pl.Path(self.options["user_data_dir"], "launch.json").write_text(json.dumps({k: str(v) for k, v in self.options.items()}))
+        payload = {k: str(v) for k, v in self.options.items()}
+        payload["env_DISPLAY"] = os.environ["DISPLAY"] if "DISPLAY" in os.environ else ""
+        payload["env_LIBGL_ALWAYS_SOFTWARE"] = os.environ["LIBGL_ALWAYS_SOFTWARE"] if "LIBGL_ALWAYS_SOFTWARE" in os.environ else ""
+        pl.Path(self.options["user_data_dir"], "launch.json").write_text(json.dumps(payload))
         return FakeContext()
 
     def __exit__(self, *exc):

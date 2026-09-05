@@ -20,7 +20,7 @@ import urllib.request
 from . import protocol as p
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
-from .runtimes import ChromiumRuntime, ExecOutcome
+from .runtimes import ChromiumRuntime, ExecOutcome, HeadedDisplay
 from .sessions import Session
 
 CHROMIUM_READY_TIMEOUT_SECS = 30
@@ -34,10 +34,11 @@ BROWSER_STOP_GRACE_SECS = 5
 HARNESS_MARKER = b"browser_harness"
 
 
-def launch_argv(paths: Paths, session: Session) -> list[str]:
+def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay | None = None) -> list[str]:
+    display_flags = [f"--window-size={headed.width},{headed.height}", "--window-position=0,0"] if headed is not None else ["--headless=new"]
     return [
         str(paths.chromium_exe),
-        "--headless=new",
+        *display_flags,
         "--no-sandbox",
         "--remote-debugging-port=0",
         f"--user-data-dir={session.profile_dir}",
@@ -70,6 +71,13 @@ def child_env(session: Session, port: int) -> dict[str, str]:
     }
 
 
+def _browser_env(headed: HeadedDisplay | None) -> dict[str, str]:
+    env = {"PATH": _path(), "HOME": str(pl.Path.home())}
+    if headed is not None:
+        env["DISPLAY"] = headed.display
+    return env
+
+
 def _unavailable(message: str) -> p.BrowserError:
     return p.BrowserError(p.error("engine_unavailable", "launch", message, retryable=True, suggested_action="run: browser doctor"))
 
@@ -79,7 +87,7 @@ def _fetch_json(url: str) -> p.JsonValue:
         return json.loads(response.read())
 
 
-async def start(session: Session, paths: Paths) -> ChromiumRuntime:
+async def start(session: Session, paths: Paths, *, headed: HeadedDisplay | None = None) -> ChromiumRuntime:
     if not paths.chromium_exe.is_file():
         raise _unavailable(f"chromium binary missing at {paths.chromium_exe}")
     if not paths.browser_use_bin.is_file():
@@ -89,8 +97,8 @@ async def start(session: Session, paths: Paths) -> ChromiumRuntime:
     port_file = session.profile_dir / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
     process = await asyncio.create_subprocess_exec(
-        *launch_argv(paths, session),
-        env={"PATH": _path(), "HOME": str(pl.Path.home())},
+        *launch_argv(paths, session, headed),
+        env=_browser_env(headed),
         start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
@@ -225,3 +233,5 @@ async def stop(runtime: ChromiumRuntime, session: Session) -> None:
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
     (session.scratch_dir / "runtime" / "bu.pid").unlink(missing_ok=True)
+    # A stale headed profile's software-render prefs must never leak into the next headless launch.
+    (session.profile_dir / "user.js").unlink(missing_ok=True)

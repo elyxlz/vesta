@@ -25,6 +25,15 @@ class CamoufoxRuntime:
 EngineRuntime = ChromiumRuntime | CamoufoxRuntime
 
 
+@dataclasses.dataclass(frozen=True)
+class HeadedDisplay:
+    """The X display and window size a handover launches an engine onto (Task 4's Xvfb)."""
+
+    display: str
+    width: int
+    height: int
+
+
 @dataclasses.dataclass
 class ExecOutcome:
     stdout: str

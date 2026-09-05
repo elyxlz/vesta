@@ -9,15 +9,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import pathlib as pl
 import time
 import typing as tp
 
 from . import protocol as p
-from .presets import select_preset
+from .presets import fit_to_screen, select_preset
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
-from .runtimes import CamoufoxRuntime, ExecOutcome
+from .runtimes import CamoufoxRuntime, ExecOutcome, HeadedDisplay
 from .sessions import Session
 
 CAMOUFOX_READY_TIMEOUT_SECS = 90
@@ -39,7 +40,7 @@ def _page_info(raw: p.JsonValue) -> p.PageInfo:
     return {"state": "ready", "tab_id": str(raw["tab_id"]), "url": str(raw["url"]), "title": str(raw["title"]), "observed_at": p.now_iso()}
 
 
-def worker_argv(paths: Paths, session: Session, config_path: pl.Path, headed: bool) -> list[str]:
+def worker_argv(paths: Paths, session: Session, config_path: pl.Path, headed: HeadedDisplay | None) -> list[str]:
     argv = [
         str(paths.camoufox_python),
         str(paths.worker_script),
@@ -52,10 +53,10 @@ def worker_argv(paths: Paths, session: Session, config_path: pl.Path, headed: bo
         "--artifacts",
         str(session.artifact_dir),
     ]
-    return [*argv, "--headed"] if headed else argv
+    return [*argv, "--headed", "--window", f"{headed.width}x{headed.height}"] if headed is not None else argv
 
 
-async def start(session: Session, paths: Paths, *, headed: bool = False) -> CamoufoxRuntime:
+async def start(session: Session, paths: Paths, *, headed: HeadedDisplay | None = None) -> CamoufoxRuntime:
     binaries = (
         (paths.camoufox_python, "camoufox venv python"),
         (paths.camoufox_exe, "camoufox browser"),
@@ -65,15 +66,23 @@ async def start(session: Session, paths: Paths, *, headed: bool = False) -> Camo
         if not binary.is_file():
             raise _unavailable(f"{label} missing at {binary}")
     config_path = session.scratch_dir / "camou-config.json"
-    preset = {key: value for key, value in select_preset(session.profile_dir).items() if not key.startswith("_")}
+    preset = select_preset(session.profile_dir)
+    if headed is not None:
+        preset = fit_to_screen(preset, headed.width, headed.height)
+        # Camoufox's WebRender falls back to software rendering on Xvfb's dummy driver; without
+        # these prefs the worker never paints a frame and the handover's stream stays blank.
+        (session.profile_dir / "user.js").write_text('user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n')
+    preset = {key: value for key, value in preset.items() if not key.startswith("_")}
     config_path.write_text(json.dumps(preset))
     paths.log.parent.mkdir(parents=True, exist_ok=True)
+    worker_env = {**os.environ, "DISPLAY": headed.display, "LIBGL_ALWAYS_SOFTWARE": "1"} if headed is not None else None
     # The worker's stderr is its whole diagnosis of a browser that would not come up; it belongs in
     # the daemon log beside everything else, never in /dev/null.
     with paths.log.open("ab") as log:
         process = await asyncio.create_subprocess_exec(
             *worker_argv(paths, session, config_path, headed),
             start_new_session=True,
+            env=worker_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=log,
@@ -150,7 +159,7 @@ async def observe(runtime: CamoufoxRuntime) -> p.PageInfo:
     return runtime.last_page
 
 
-async def stop(runtime: CamoufoxRuntime, _session: Session) -> None:
+async def stop(runtime: CamoufoxRuntime, session: Session) -> None:
     """The graceful ask is skipped for a worker that has already exited; the group kill is not,
     because a browser child can outlive the worker that owned it."""
     try:
@@ -159,3 +168,5 @@ async def stop(runtime: CamoufoxRuntime, _session: Session) -> None:
                 await _ask(runtime, {"op": "stop"}, WORKER_STOP_GRACE_SECS)
     finally:
         await kill_group(runtime.process, WORKER_STOP_GRACE_SECS)
+    # A stale headed profile's software-render prefs must never leak into the next headless launch.
+    (session.profile_dir / "user.js").unlink(missing_ok=True)

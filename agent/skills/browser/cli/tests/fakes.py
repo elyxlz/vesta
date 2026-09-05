@@ -9,6 +9,7 @@ import http.server, json, os, pathlib, sys, threading
 args = sys.argv[1:]
 profile = next(a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir="))
 pathlib.Path(profile, "fake.pid").write_text(str(os.getpid()))
+pathlib.Path(profile, "env.json").write_text(json.dumps(dict(os.environ)))
 with open(os.path.join(profile, "launches"), "a") as f:
     f.write(str(os.getpid()) + "\\n")
 class H(http.server.BaseHTTPRequestHandler):
