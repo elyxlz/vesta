@@ -2748,6 +2748,32 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/rooms/{id}/messages", post(crate::chat::routes::post_message_handler))
         .route("/rooms/{id}/messages/import", post(crate::chat::routes::import_handler))
         .route("/rooms/ws", get(crate::chat::socket::rooms_ws_handler))
+        .route(
+            "/rooms/attachments",
+            post(crate::chat::attachment_routes::create_attachment_handler),
+        )
+        .route(
+            "/rooms/attachments/{id}",
+            get(crate::chat::attachment_routes::serve_attachment_handler),
+        )
+        // One chunk plus its framing: the only route that carries bytes, and the only one whose
+        // body limit is raised off the default.
+        .route(
+            "/rooms/attachments/{id}/data",
+            put(crate::chat::attachment_routes::attachment_data_handler).route_layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::chat::attachments::MAX_CHUNK_BYTES + 1024 * 1024,
+                ),
+            ),
+        )
+        .route(
+            "/rooms/attachments/{id}/status",
+            get(crate::chat::attachment_routes::attachment_status_handler),
+        )
+        .route(
+            "/rooms/attachments/{id}/complete",
+            post(crate::chat::attachment_routes::complete_attachment_handler),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_chat,
@@ -3100,6 +3126,10 @@ pub struct ServerConfig {
     pub force_update: bool,
 }
 
+/// The chat attachment GC waits this long after boot, so a large first pass never delays serving.
+const SWEEP_STARTUP_DELAY_SECS: u64 = 60;
+const SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
+
 pub async fn run_server(cfg: ServerConfig) {
     let ServerConfig {
         port,
@@ -3189,6 +3219,37 @@ pub async fn run_server(cfg: ServerConfig) {
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
     tokio::spawn(async move { flush_registry.run_flusher().await });
+    // Attachment GC: abandoned upload sessions, and finalized blobs no message ever referenced.
+    // The first pass waits out startup so a big rmtree never delays serving, and each pass walks
+    // the disk on a blocking thread.
+    let sweep_chat = state.chat.clone();
+    tokio::spawn(async move {
+        let mut delay = SWEEP_STARTUP_DELAY_SECS;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            delay = SWEEP_INTERVAL_SECS;
+            // An unknown reference set must never read as "nothing is referenced".
+            let Some(referenced) = sweep_chat.referenced_attachment_ids() else {
+                tracing::warn!("chat message log unreadable: skipping the attachment sweep");
+                continue;
+            };
+            let node = sweep_chat.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                node.attachments()
+                    .sweep(crate::time_utils::now_epoch_secs(), &|id| {
+                        referenced.contains(id)
+                    })
+            })
+            .await;
+            match pass {
+                Ok(swept) if !swept.is_empty() => {
+                    tracing::info!(count = swept.len(), "swept abandoned chat attachments");
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "chat attachment sweep failed"),
+            }
+        }
+    });
     // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
     // supervisor reports its exit so run_server's select never waits on it, because a branch that
     // resolved would end the select and stop the shutdown handler from stopping the agents.

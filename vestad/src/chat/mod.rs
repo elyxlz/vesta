@@ -2,6 +2,7 @@
 //! agents share. `ChatNode` is the one owner of chat state on `AppState`; the store below it is
 //! two files under `<config_dir>/chat/`, held in memory.
 
+pub(crate) mod attachment_routes;
 pub(crate) mod attachments;
 pub(crate) mod node;
 pub(crate) mod routes;

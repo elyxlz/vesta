@@ -20,7 +20,7 @@ use crate::time_utils::{now_epoch_millis, now_epoch_secs};
 
 pub(crate) type ApiError = (StatusCode, Json<serde_json::Value>);
 
-fn error(status: StatusCode, message: impl Into<String>) -> ApiError {
+pub(crate) fn error(status: StatusCode, message: impl Into<String>) -> ApiError {
     (status, Json(serde_json::json!({ "error": message.into() })))
 }
 
