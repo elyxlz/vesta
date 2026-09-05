@@ -32,6 +32,9 @@ BROWSER_STOP_GRACE_SECS = 5
 # The harness daemon runs as `python -m browser_harness.daemon`, so its own argv is what proves the
 # recorded pid is still that daemon.
 HARNESS_MARKER = b"browser_harness"
+# Chromium reads a SIGTERM exit as the OS ending its session and restores every tab on the next
+# launch; pinning the startup pref to "open the new tab page" is what keeps a profile's tab count flat.
+STARTUP_OPEN_NEW_TAB_PAGE = 5
 
 
 def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay | None = None) -> list[str]:
@@ -62,6 +65,7 @@ def child_env(session: Session, port: int) -> dict[str, str]:
         "BU_CDP_URL": f"http://127.0.0.1:{port}",
         "BH_UPDATE_CHECK": "0",
         "BH_TELEMETRY": "0",
+        "BH_TAB_MARKER": "0",
         "PYTHONUNBUFFERED": "1",
     }
 
@@ -82,6 +86,15 @@ def _fetch_json(url: str) -> p.JsonValue:
         return json.loads(response.read())
 
 
+def pin_startup_pref(profile_dir: pl.Path) -> None:
+    prefs_path = profile_dir / "Default/Preferences"
+    prefs: dict[str, p.JsonValue] = json.loads(prefs_path.read_text()) if prefs_path.is_file() else {}
+    current = prefs["session"] if "session" in prefs else None
+    prefs["session"] = {**(current if isinstance(current, dict) else {}), "restore_on_startup": STARTUP_OPEN_NEW_TAB_PAGE}
+    prefs_path.parent.mkdir(parents=True, exist_ok=True)
+    prefs_path.write_text(json.dumps(prefs))
+
+
 async def start(session: Session, paths: Paths, *, headed: HeadedDisplay | None = None) -> ChromiumRuntime:
     if not paths.chromium_exe.is_file():
         raise _unavailable(f"chromium binary missing at {paths.chromium_exe}")
@@ -91,6 +104,7 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay | None 
         (session.scratch_dir / sub).mkdir(exist_ok=True)
     port_file = session.profile_dir / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
+    await asyncio.to_thread(pin_startup_pref, session.profile_dir)
     process = await asyncio.create_subprocess_exec(
         *launch_argv(paths, session, headed),
         env=_browser_env(headed),

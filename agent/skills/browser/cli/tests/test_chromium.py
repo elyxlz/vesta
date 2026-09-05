@@ -50,11 +50,27 @@ def test_child_env_is_minimal_and_points_the_harness_at_the_session(rig, monkeyp
         "BU_CDP_URL",
         "BH_UPDATE_CHECK",
         "BH_TELEMETRY",
+        "BH_TAB_MARKER",
         "PYTHONUNBUFFERED",
     }
     assert env["BU_NAME"] == "research" and env["BU_CDP_URL"] == "http://127.0.0.1:4321"
     assert env["BH_RUNTIME_DIR"] == str(session.scratch_dir / "runtime") and env["BH_TMP_DIR"] == str(session.scratch_dir / "tmp")
-    assert env["BH_UPDATE_CHECK"] == "0" and env["BH_TELEMETRY"] == "0"
+    assert env["BH_UPDATE_CHECK"] == "0" and env["BH_TELEMETRY"] == "0" and env["BH_TAB_MARKER"] == "0"
+
+
+def test_start_pins_the_profile_to_open_a_new_tab_page_and_keeps_its_other_prefs(rig):
+    paths, session = rig
+    prefs = session.profile_dir / "Default/Preferences"
+    prefs.parent.mkdir(parents=True)
+    prefs.write_text(json.dumps({"profile": {"exit_type": "SessionEnded"}, "session": {"other": 1}}))
+
+    async def run():
+        runtime = await chromium.start(session, paths)
+        await chromium.stop(runtime, session)
+
+    _run(run())
+    written = json.loads(prefs.read_text())
+    assert written["session"] == {"other": 1, "restore_on_startup": 5} and written["profile"] == {"exit_type": "SessionEnded"}
 
 
 def test_start_discovers_the_devtools_port_and_exec_runs_the_child(rig):
