@@ -299,19 +299,16 @@ function SessionNavigation() {
               />
               <Stack.Screen
                 name="gateway-logs"
-                // The same shell as an agent's Logs sheet: iOS inherits the settings sheet's
-                // modal context, Android spells the sheet out.
-                options={
-                  IS_ANDROID
-                    ? {
-                        presentation: "formSheet",
-                        ...formSheetCorners,
-                        sheetAllowedDetents: [1],
-                        sheetGrabberVisible: false,
-                        sheetExpandsWhenScrolledToEdge: false,
-                      }
-                    : {}
-                }
+                // Its own full-height sheet: pushed inside the settings sheet it would inherit
+                // that sheet's half-height detent and lay its tail out under the edge.
+                options={{
+                  presentation: "formSheet",
+                  ...formSheetCorners,
+                  sheetAllowedDetents: [1],
+                  sheetGrabberVisible: false,
+                  sheetExpandsWhenScrolledToEdge: false,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
               />
               <Stack.Screen
                 name="debug"
