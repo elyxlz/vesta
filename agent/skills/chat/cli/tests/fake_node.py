@@ -7,7 +7,8 @@ Test hooks: `emit` pushes one frame to every connected socket, `refuse_speaking`
 turn a post into the node's two refusals, `drop_answers_at` lands the chunk at that offset and then
 kills the connection (an answer lost on the way back), `rewind_stage_to` refuses one chunk whole and
 names a staged size behind it, `stall_chunks` refuses every chunk naming the offset it was handed,
-and `requests` records every (method, path with its query, json body)."""
+`refuse_downloads` answers 500 to every blob read, and `requests` records every (method, path with its
+query, json body)."""
 
 import contextlib
 import dataclasses
@@ -95,6 +96,7 @@ class FakeNode:
         self.drop_answers_at: int | None = None
         self.rewind_stage_to: int | None = None
         self.stall_chunks = False
+        self.refuse_downloads = False
         self._next_id = 0
         self.app = web.Application(middlewares=[self._gate()])
         self.app.router.add_get("/rooms", self._list_rooms)
@@ -308,6 +310,8 @@ class FakeNode:
         return web.json_response({"attachment": upload.meta})
 
     async def _serve_attachment(self, request: web.Request) -> web.StreamResponse:
+        if self.refuse_downloads:
+            return web.json_response({"error": "the blob store is unavailable"}, status=500)
         upload = self._upload(request)
         if upload is None or not upload.finalized:
             return web.json_response({"error": "unknown attachment"}, status=404)

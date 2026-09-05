@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import pathlib as pl
 import time
+import typing as tp
 
 from .attachments import AttachmentMeta, human_size
 from .node_client import JsonValue
@@ -16,16 +17,21 @@ SOURCE = "chat"
 # The reply the direct room takes: it is the conversation `chat send` writes into by default.
 DIRECT_REPLY_COMMAND = "chat send --message -"
 REPLY_HINT = "think about how you can best show your personality"
+FETCH_FAILURE = "could not be fetched from the node"
 TURN_END_MESSAGE = "the user finished talking; a reply of yours was refused mid-turn and dropped. Answer their whole thought fresh now"
 
 
-def render_attachment_line(attachments_root: pl.Path, metas: list[AttachmentMeta]) -> str:
+def render_attachment_line(attachments_root: pl.Path, metas: list[AttachmentMeta], unfetched: tp.AbstractSet[str] | None = None) -> str:
     """One scalar the notification renderer shows as an attribute: name, type, human size, and the
-    absolute path the agent opens directly. Paths derive from the metas in hand: no disk reads here."""
+    absolute path the agent opens directly. A file named in `unfetched` never reached this store, so it
+    is named with the reason instead of a path the agent would find empty. Paths derive from the metas
+    in hand: no disk reads here."""
+    missing = unfetched if unfetched is not None else frozenset()
     parts = []
     for meta in metas:
+        described = f"{meta['name']} ({meta['mime']}, {human_size(meta['size'])})"
         blob = attachments_root / meta["id"] / meta["name"]
-        parts.append(f"{meta['name']} ({meta['mime']}, {human_size(meta['size'])}) at {blob}")
+        parts.append(f"{described} {FETCH_FAILURE}" if meta["id"] in missing else f"{described} at {blob}")
     return "; ".join(parts)
 
 
@@ -47,9 +53,10 @@ def emit_notification(notifications_dir: pl.Path, type_: str, fields: dict[str, 
     tmp.replace(path)
 
 
-def room_reply_command(room: str) -> str:
-    """How to answer into a room that is not the agent's own direct conversation."""
-    return f"chat send --room {room} --message -"
+def reply_command(room: str, agent: str) -> str:
+    """How to answer in a room: the direct conversation takes the bare send, every other room is
+    addressed by its id. Every notification this skill writes takes its command from here."""
+    return DIRECT_REPLY_COMMAND if room == direct_room_id(agent) else f"chat send --room {room} --message -"
 
 
 def _room_name(store_room: RoomRecord | None, agent: str, direct: bool) -> str | None:
@@ -82,11 +89,11 @@ def message_notification(
         fields["attachments"] = attachment_line
     if direct:
         fields["reply_hint"] = REPLY_HINT
-    return fields, sender == "user", DIRECT_REPLY_COMMAND if direct else room_reply_command(room)
+    return fields, sender == "user", reply_command(room, agent)
 
 
-def turn_end_notification(room: str) -> tuple[dict[str, JsonValue], bool, str]:
+def turn_end_notification(room: str, agent: str) -> tuple[dict[str, JsonValue], bool, str]:
     """The re-wake behind the send gate: a refused reply was dropped by the model on the promise that a
     notification follows the turn, so the floor clearing delivers one even when the turn itself produced
     no message. It names the room to answer in, whichever room the user was talking into."""
-    return {"room": room, "message": TURN_END_MESSAGE}, True, room_reply_command(room)
+    return {"room": room, "message": TURN_END_MESSAGE}, True, reply_command(room, agent)

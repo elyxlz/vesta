@@ -197,7 +197,9 @@ async def _replica_loop(state: DaemonState) -> None:
         )
         await run_replica(state.replica, state.shutdown)
     finally:
-        await session.close()
+        # Shielded, because this cleanup runs on the cancellation that stops the daemon: the session
+        # must close whether or not the task is cancelled again while it does.
+        await asyncio.shield(session.close())
 
 
 def _run_sweep(service: ServiceState) -> int:

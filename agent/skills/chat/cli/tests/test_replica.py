@@ -263,6 +263,48 @@ def test_an_attachment_is_stored_under_a_safe_name_and_the_notification_names_th
     assert written["attachments"] == f"report.pdf (application/pdf, 3 B) at {blob}"
 
 
+def test_an_attachment_the_node_will_not_serve_stays_on_the_message(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    meta = seed_attachment(fake)
+    fake.refuse_downloads = True
+
+    def scenario(state):
+        async def main():
+            await fake.emit(fake.seed_message(DIRECT, "user", "user", "look at this", attachments=[meta]))
+            await wait_for(lambda: notifications_of(state))
+            events, _ = state.store.page(room=DIRECT)
+            return events[0], notifications_of(state)[0]
+
+        return main()
+
+    event, written = run_live(fake, tmp_path, scenario)
+    assert [one["id"] for one in event["attachments"]] == [meta["id"]]
+    assert written["attachments"] == "photo.jpg (image/jpeg, 12 B) could not be fetched from the node"
+
+
+def test_an_unreadable_attachment_id_leaves_the_loop_running(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    broken = {"id": "not-hex", "name": "photo.jpg", "mime": "image/jpeg", "size": 3}
+
+    def scenario(state):
+        async def main():
+            await fake.emit(fake.seed_message(DIRECT, "user", "user", "look at this", attachments=[broken]))
+            await wait_for(lambda: notifications_of(state))
+            await fake.emit(fake.seed_message(DIRECT, "user", "user", "and this"))
+            await wait_for(lambda: len(notifications_of(state)) == 2)
+            events, _ = state.store.page(room=DIRECT)
+            return [event["text"] for event in events], [one["id"] for one in events[0]["attachments"]], notifications_of(state)[0]
+
+        return main()
+
+    texts_stored, carried, written = run_live(fake, tmp_path, scenario)
+    assert texts_stored == ["look at this", "and this"]
+    assert carried == ["not-hex"]
+    assert "could not be fetched from the node" in written["attachments"]
+
+
 def test_a_room_created_event_lands_in_the_store_and_a_deletion_removes_it(tmp_path):
     fake = FakeNode()
     fake.seed_room([AGENT])

@@ -64,7 +64,7 @@ def test_an_agent_message_in_a_group_waits_for_idle_and_names_the_room(tmp_path)
 
 
 def test_the_turn_end_notification_names_the_room_the_user_was_talking_in(tmp_path):
-    fields, interrupt, reply_command = notifications.turn_end_notification("dm:vesta")
+    fields, interrupt, reply_command = notifications.turn_end_notification("dm:vesta", AGENT)
     notifications.emit_notification(tmp_path, "user_finished_talking", fields, interrupt=interrupt, reply_command=reply_command)
 
     written = _written(tmp_path, "user_finished_talking")
@@ -73,10 +73,16 @@ def test_the_turn_end_notification_names_the_room_the_user_was_talking_in(tmp_pa
         "source": "chat",
         "type": "user_finished_talking",
         "interrupt": True,
-        "reply_command": "chat send --room dm:vesta --message -",
+        "reply_command": "chat send --message -",
         "room": "dm:vesta",
         "message": "the user finished talking; a reply of yours was refused mid-turn and dropped. Answer their whole thought fresh now",
     }
+
+
+def test_a_turn_end_outside_the_direct_room_is_answered_by_room(tmp_path):
+    _, _, reply_command = notifications.turn_end_notification("grp-7", AGENT)
+
+    assert reply_command == "chat send --room grp-7 --message -"
 
 
 def test_a_peer_room_carries_the_peer_as_its_name(tmp_path):
@@ -102,6 +108,14 @@ def test_an_attachment_line_rides_the_notification(tmp_path):
     fields, _, _ = notifications.message_notification(DIRECT_ROOM, AGENT, _message("dm:vesta", "user", "look"), line)
 
     assert fields["attachments"] == f"photo.jpg (image/jpeg, 13 B) at {tmp_path / 'attachments' / ('a' * 32) / 'photo.jpg'}"
+
+
+def test_a_file_this_store_never_received_is_named_with_the_reason(tmp_path):
+    meta = {"id": "a" * 32, "name": "photo.jpg", "mime": "image/jpeg", "size": 13}
+
+    line = notifications.render_attachment_line(tmp_path / "attachments", [meta], {meta["id"]})
+
+    assert line == "photo.jpg (image/jpeg, 13 B) could not be fetched from the node"
 
 
 def test_the_writer_publishes_the_file_atomically(tmp_path):

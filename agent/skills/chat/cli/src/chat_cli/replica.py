@@ -77,7 +77,7 @@ async def ingest_message(state: ReplicaState, message: NodeMessage) -> bool:
         if local_id is not None:
             await asyncio.to_thread(state.store.mark_node_id, local_id, node_id)
             return False
-    metas = await _pull_attachments(state, message)
+    metas, unfetched = await _pull_attachments(state, message)
     event: StoredEvent = {
         "type": message["type"],
         "ts": message["ts"],
@@ -92,7 +92,7 @@ async def ingest_message(state: ReplicaState, message: NodeMessage) -> bool:
         event["attachments"] = metas
     await asyncio.to_thread(state.store.append, event)
     if message["sender"] != state.agent:
-        await _notify(state, event, metas)
+        await _notify(state, event, metas, unfetched)
     return True
 
 
@@ -111,7 +111,7 @@ async def apply_room_event(state: ReplicaState, frame: dict[str, JsonValue]) -> 
     if kind == _ROOM_DELETED:
         await asyncio.to_thread(state.store.delete_room, room)
         return
-    fields, interrupt, reply_command = notifications.turn_end_notification(room)
+    fields, interrupt, reply_command = notifications.turn_end_notification(room, state.agent)
     await _emit(state, _USER_FINISHED_TALKING, fields, interrupt, reply_command)
 
 
@@ -131,6 +131,12 @@ async def run_replica(state: ReplicaState, shutdown: asyncio.Event) -> None:
                 await _read_frames(state, socket, shutdown)
         except (NodeError, aiohttp.ClientError, OSError, sqlite3.Error) as exc:
             logger.warning("replica connection ended: %s", exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The daemon's shutdown gather swallows what a task raises, so an unforeseen failure here
+            # would take replication down in silence. It reconnects on the same backoff instead.
+            logger.exception("replica loop failed; reconnecting")
         finally:
             state.connected = False
         if settled:
@@ -173,27 +179,31 @@ async def _wait_out(shutdown: asyncio.Event, seconds: float) -> None:
         await asyncio.wait_for(shutdown.wait(), timeout=seconds)
 
 
-async def _pull_attachments(state: ReplicaState, message: NodeMessage) -> list[AttachmentMeta]:
+async def _pull_attachments(state: ReplicaState, message: NodeMessage) -> tuple[list[AttachmentMeta], set[str]]:
     """Bring every attachment the message carries into the local store under the node's own id, so the
-    notification names a path the agent opens and `chat attachments list` sees the file. One that
-    cannot be fetched is logged and left off the message rather than stored as a broken reference."""
+    notification names a path the agent opens and `chat attachments list` sees the file. A file this
+    replica could not fetch stays on the message and is named as unfetched, so the agent reads that
+    something was sent instead of nothing at all."""
     if "attachments" not in message:
-        return []
-    landed: list[AttachmentMeta] = []
+        return [], set()
+    carried: list[AttachmentMeta] = []
+    unfetched: set[str] = set()
     for meta in message["attachments"]:
-        blob = await asyncio.to_thread(attachments.blob_destination, state.attachments_root, meta)
         try:
+            blob = await asyncio.to_thread(attachments.blob_destination, state.attachments_root, meta)
             await state.client.download(meta["id"], blob)
-        except (NodeError, OSError) as exc:
+        except (NodeError, OSError, attachments.UnknownAttachmentError) as exc:
             logger.error("could not fetch attachment %s: %s", meta["id"], exc)
+            carried.append(meta)
+            unfetched.add(meta["id"])
             continue
-        landed.append(await asyncio.to_thread(attachments.record_meta, state.attachments_root, meta))
-    return landed
+        carried.append(await asyncio.to_thread(attachments.record_meta, state.attachments_root, meta))
+    return carried, unfetched
 
 
-async def _notify(state: ReplicaState, event: StoredEvent, metas: list[AttachmentMeta]) -> None:
+async def _notify(state: ReplicaState, event: StoredEvent, metas: list[AttachmentMeta], unfetched: set[str]) -> None:
     room = await asyncio.to_thread(state.store.room, event["room"])
-    line = notifications.render_attachment_line(state.attachments_root, metas) if metas else None
+    line = notifications.render_attachment_line(state.attachments_root, metas, unfetched) if metas else None
     fields, interrupt, reply_command = notifications.message_notification(room, state.agent, event, line)
     await _emit(state, _MESSAGE_NOTIFICATION, fields, interrupt, reply_command)
 

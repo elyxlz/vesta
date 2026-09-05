@@ -187,6 +187,7 @@ class Store:
 
     def __init__(self, db_path: pl.Path, agent_name: str) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.agent_name = agent_name
         self.direct_room = direct_room_id(agent_name)
         self._lock = threading.RLock()
         self._conn = _open(db_path, agent_name)

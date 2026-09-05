@@ -124,7 +124,7 @@ def _write_notification(state: ServiceState, text: str, metas: list[attachments.
 
 def _write_turn_end_notification(state: ServiceState) -> None:
     """The re-wake behind the send gate, written for the room the app talks into."""
-    fields, interrupt, reply_command = turn_end_notification(state.store.direct_room)
+    fields, interrupt, reply_command = turn_end_notification(state.store.direct_room, state.store.agent_name)
     emit_notification(state.notifications_dir, "user_finished_talking", fields, interrupt=interrupt, reply_command=reply_command)
 
 
