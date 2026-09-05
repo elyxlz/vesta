@@ -13,6 +13,7 @@ import httpx
 from . import auth, folders, graph, pending_send
 from .config import Config
 from .payloads import MailDraft
+from .slug import slug
 
 EMAIL_SAVE_SUBDIR = "emails"
 LARGE_ATTACHMENT_THRESHOLD = 3 * 1024 * 1024
@@ -162,15 +163,9 @@ def _remove_attachment_bytes(result: dict[str, Any]) -> None:
                 del attachment["contentBytes"]
 
 
-def _sanitize_filename(value: str) -> str:
-    sanitized = "".join(char if char.isalnum() else "_" for char in value or "")
-    sanitized = sanitized.strip("_")
-    return sanitized or "email"
-
-
 def email_save_dir(config: Config, account_email: str) -> pl.Path:
     """One directory per account, so removing an account can delete exactly its saved bodies."""
-    return config.cache_file.parent / EMAIL_SAVE_SUBDIR / _sanitize_filename(account_email.lower())
+    return config.cache_file.parent / EMAIL_SAVE_SUBDIR / slug(account_email.lower())
 
 
 def _prepare_email_output_path(
@@ -189,8 +184,8 @@ def _prepare_email_output_path(
     base_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S")
-    subject_fragment = _sanitize_filename(subject or "")
-    id_fragment = _sanitize_filename(email_id)[:32]
+    subject_fragment = slug(subject or "")
+    id_fragment = slug(email_id)[:32]
     filename = f"{timestamp}_{subject_fragment[:40]}_{id_fragment}.txt".strip("_")
 
     return base_dir / filename
