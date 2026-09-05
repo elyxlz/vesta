@@ -11,13 +11,14 @@ import datetime as dt
 import json
 import logging
 import pathlib as pl
-import time
 import typing as tp
 import urllib.parse
 
 from aiohttp import web
 
 from . import attachments
+from .node_client import JsonValue
+from .notifications import DIRECT_REPLY_COMMAND, REPLY_HINT, emit_notification, render_attachment_line, turn_end_notification
 from .store import Store, StoredEvent
 
 logger = logging.getLogger("chat.service")
@@ -111,58 +112,20 @@ class ServiceState:
 _STATE_KEY: web.AppKey[ServiceState] = web.AppKey("state", ServiceState)
 
 
-def _attachment_line(state: ServiceState, metas: list[attachments.AttachmentMeta]) -> str:
-    """One scalar the notification renderer shows as an attribute: name, type, human size, and the
-    absolute path the agent opens directly. Paths derive from the metas in hand: no disk reads here,
-    the intake sequence stays synchronous."""
-    parts = []
-    for meta in metas:
-        blob = state.attachments_root / meta["id"] / meta["name"]
-        parts.append(f"{meta['name']} ({meta['mime']}, {attachments.human_size(meta['size'])}) at {blob}")
-    return "; ".join(parts)
-
-
-def _emit_notification(state: ServiceState, type_: str, fields: dict[str, object]) -> None:
-    """The one writer of the monitor-loop file contract for this service: envelope basics, the
-    time-ns filename, and the atomic tmp+replace, shared by every notification type it emits."""
-    directory = state.notifications_dir
-    directory.mkdir(parents=True, exist_ok=True)
-    payload: dict[str, object] = {
-        "timestamp": dt.datetime.now().isoformat(),
-        "source": "chat",
-        "type": type_,
-        "interrupt": True,
-        "reply_command": "chat send --message -",
-        **fields,
-    }
-    path = directory / f"{time.time_ns()}-chat-{type_}.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload))
-    tmp.replace(path)
-
-
 def _write_notification(state: ServiceState, text: str, metas: list[attachments.AttachmentMeta]) -> None:
     """Persist an inbound app message as the source=chat notification the monitor loop turns into a
     model turn. The structured reply command and behavioral hint ride along so the model receives the
     producer-owned response guidance. The client-only intent ID stays on the chat event."""
-    fields: dict[str, object] = {
-        "message": text,
-        "reply_hint": "think about how you can best show your personality",
-    }
+    fields: dict[str, JsonValue] = {"message": text, "reply_hint": REPLY_HINT}
     if metas:
-        fields["attachments"] = _attachment_line(state, metas)
-    _emit_notification(state, "message", fields)
+        fields["attachments"] = render_attachment_line(state.attachments_root, metas)
+    emit_notification(state.notifications_dir, "message", fields, interrupt=True, reply_command=DIRECT_REPLY_COMMAND)
 
 
 def _write_turn_end_notification(state: ServiceState) -> None:
-    """The re-wake behind the send gate: a refused reply was dropped by the model on the promise
-    that a notification follows the turn, so the floor clearing delivers one even when the turn
-    itself produced no message."""
-    _emit_notification(
-        state,
-        "user_finished_talking",
-        {"message": "the user finished talking; a reply of yours was refused mid-turn and dropped. Answer their whole thought fresh now"},
-    )
+    """The re-wake behind the send gate, written for the room the app talks into."""
+    fields, interrupt, reply_command = turn_end_notification(state.store.direct_room, state.store.agent_name)
+    emit_notification(state.notifications_dir, "user_finished_talking", fields, interrupt=interrupt, reply_command=reply_command)
 
 
 def _build_message_event(body: dict[str, object]) -> tuple[StoredEvent, list[str]] | str:
@@ -255,7 +218,7 @@ async def history_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid cursor"}, status=400)
     kwargs = {"limit": limit} if limit is not None else {}
     # The sqlite read runs off the event loop, so a large page never stalls the live WS fan-out.
-    events, next_cursor = await asyncio.to_thread(state.store.page, before_cursor=cursor, **kwargs)
+    events, next_cursor = await asyncio.to_thread(state.store.page, before_cursor=cursor, room=state.store.direct_room, **kwargs)
     return web.json_response({"events": events, "cursor": next_cursor})
 
 

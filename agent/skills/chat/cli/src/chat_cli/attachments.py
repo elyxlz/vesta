@@ -1,12 +1,12 @@
 """The attachment blob store: files the user sends from the app and files the agent sends back, each
 under one id directory at <root>/<id>/. Uploads stage into an offset-addressed .part file described by
 session.json; finalize verifies the declared size and renames the blob to its sanitized filename beside
-meta.json, which from then on is the single truth the serve route and the CLI read. A removed blob
+meta.json, which from then on is the single truth the serve route and the CLI read. A file that landed
+elsewhere first is copied in whole under the id it already carries. A removed blob
 keeps its meta.json (the app renders "no longer available" off the resulting 410), so removal never
 breaks chat history. Everything is a pure function over the root path; no daemon state is involved."""
 
 import json
-import mimetypes
 import os
 import pathlib as pl
 import re
@@ -25,7 +25,7 @@ _SESSION_FILE = ".session.json"
 _META_FILE = ".meta.json"
 _PART_FILE = ".part"
 _FILENAME_MAX_CHARS = 120
-_FALLBACK_MIME = "application/octet-stream"
+FALLBACK_MIME = "application/octet-stream"
 
 
 class AttachmentMeta(tp.TypedDict, total=False):
@@ -189,6 +189,30 @@ def finalize(root: pl.Path, attachment_id: str) -> AttachmentMeta:
     return session
 
 
+def blob_destination(root: pl.Path, meta: AttachmentMeta) -> pl.Path:
+    """Where a blob copied from elsewhere lands, its id directory created. The name is sanitized here
+    too, so a file named by another node cannot reach outside the id directory."""
+    directory = _dir(root, meta["id"])
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / sanitize_filename(meta["name"])
+
+
+def record_meta(root: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
+    """Publish the metadata beside a blob that already landed, which is what makes it finalized: from
+    here on `read_meta`, the serve route and `attachments list` all see the attachment. Answers the
+    record as stored, so the caller names the file this store really holds."""
+    stored: AttachmentMeta = {**meta, "name": sanitize_filename(meta["name"])}
+    _write_json(_dir(root, meta["id"]) / _META_FILE, stored)
+    return stored
+
+
+def store_copy(root: pl.Path, source: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
+    """Copy a file that already reached another store into this one, finalized, under the id it carries
+    there. The sender's own history then renders the same blob the room holds."""
+    shutil.copyfile(source, blob_destination(root, meta))
+    return record_meta(root, meta)
+
+
 def read_meta(root: pl.Path, attachment_id: str) -> AttachmentMeta | None:
     """The finalized metadata, or None while the id is malformed, unknown, or still staging."""
     if not is_valid_id(attachment_id):
@@ -229,26 +253,6 @@ def remove_blob(root: pl.Path, attachment_id: str) -> int:
     freed = blob.stat().st_size
     blob.unlink()
     return freed
-
-
-def ingest_file(root: pl.Path, source: pl.Path, mime: str | None, *, max_bytes: int = MAX_ATTACHMENT_BYTES) -> AttachmentMeta:
-    """Copy a file on disk straight into the store as a finalized attachment (the agent-send path).
-    The copy stands alone, so the caller may delete a temp source right after."""
-    size = source.stat().st_size
-    if size > max_bytes:
-        raise SizeError(f"{source} is {size} bytes, over the {max_bytes} byte limit")
-    guessed = mime if mime is not None else mimetypes.guess_type(source.name)[0]
-    meta: AttachmentMeta = {
-        "id": uuid.uuid4().hex,
-        "name": sanitize_filename(source.name),
-        "mime": guessed if guessed is not None else _FALLBACK_MIME,
-        "size": size,
-    }
-    directory = _dir(root, meta["id"])
-    directory.mkdir(parents=True)
-    shutil.copyfile(source, directory / meta["name"])
-    _write_json(directory / _META_FILE, meta)
-    return meta
 
 
 def _last_activity(directory: pl.Path) -> float:

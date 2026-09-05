@@ -12,7 +12,7 @@ from chat_cli.store import Store, StoredEvent, store_path
 
 
 def _service_state(tmp_path):
-    store = Store(store_path(tmp_path / "data"))
+    store = Store(store_path(tmp_path / "data"), "vesta")
     notif_dir = tmp_path / "notifications"
     return ServiceState(store, notif_dir, tmp_path / "attachments"), notif_dir
 
@@ -193,6 +193,21 @@ def test_history_returns_events_and_cursor(tmp_path):
     assert status == 200
     assert [e["text"] for e in body["events"]] == ["m1", "m2"]
     assert body["cursor"] == 2
+    state.store.close()
+
+
+def test_history_serves_the_direct_room_alone(tmp_path):
+    state, _ = _service_state(tmp_path)
+    state.store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "to me"})
+    state.store.append({"type": "chat", "ts": "2026-01-01T00:00:01", "text": "to the group", "room": "grp-7"})
+
+    async def scenario(client):
+        resp = await client.get("/history")
+        return await resp.json()
+
+    body = asyncio.run(_with_client(state, scenario))
+
+    assert [e["text"] for e in body["events"]] == ["to me"]
     state.store.close()
 
 

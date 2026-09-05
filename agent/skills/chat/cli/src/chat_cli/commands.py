@@ -1,4 +1,5 @@
-"""CLI commands: send, history, import, and the attachments disk-management verbs."""
+"""CLI commands: send, the room and peer verbs the node answers, history, import, and the attachments
+disk-management verbs."""
 
 import argparse
 import asyncio
@@ -11,14 +12,176 @@ import sys
 import typing as tp
 
 from chat_cli import attachments
+from chat_cli.attachments import AttachmentMeta
 from chat_cli.bubblelint import bubble_lint_reason
-from chat_cli.store import Store, store_path
+from chat_cli.daemon import agent_name
+from chat_cli.node_client import (
+    NODE_UNREACHABLE,
+    ImportItem,
+    ImportOutcome,
+    NodeClient,
+    NodeConfig,
+    NodeError,
+    UploadExtra,
+    new_session,
+    node_config_from_env,
+)
+from chat_cli.store import RoomRecord, Store, StoredEvent, direct_room_id, store_path
+
+# How many messages one `import-to-node` request carries. Large, since the whole conversation goes over
+# in as few round trips as the node accepts.
+IMPORT_BATCH_SIZE = 500
+
+# How long `send` waits for the daemon's answer. Wide, because the daemon answers only once the node
+# has the whole message, and an attachment of up to the store's limit uploads first.
+SEND_REPLY_TIMEOUT_SECS = 900.0
 
 
-def _fail(payload: dict[str, object]) -> None:
+def _fail(payload: dict[str, object]) -> tp.NoReturn:
     """The one failure printer: the payload goes to stderr so stdout carries only success output."""
     print(json.dumps(payload), file=sys.stderr)
     sys.exit(1)
+
+
+def _node_config() -> NodeConfig:
+    """Where the node is, or the one error a verb that needs it answers with."""
+    config = node_config_from_env(os.environ)
+    if config is None:
+        _fail({"error": NODE_UNREACHABLE})
+    return config
+
+
+def _on_node[T](config: NodeConfig, work: tp.Callable[[NodeClient], tp.Coroutine[None, None, T]]) -> T:
+    """One-shot node call: open a session, do the work, close it. A node failure is this command's
+    failure, printed as the one error line."""
+
+    async def main() -> T:
+        session = new_session(config)
+        try:
+            return await work(NodeClient(config, session))
+        finally:
+            await session.close()
+
+    try:
+        return asyncio.run(main())
+    except (NodeError, OSError) as exc:
+        _fail({"error": str(exc)})
+
+
+def _room_label(room: RoomRecord) -> str:
+    """What a room is called in a listing: its name, or the agents it holds."""
+    return room["name"] if room["name"] is not None else ", ".join(room["agents"])
+
+
+def cmd_rooms(args: argparse.Namespace) -> None:
+    """Every room the node has this agent in, one line each."""
+    rooms = _on_node(_node_config(), lambda client: client.rooms())
+    if args.json:
+        print(json.dumps(rooms))
+        return
+    for room in rooms:
+        print(f"{room['id']}  {_room_label(room)}")
+
+
+def cmd_rooms_create(args: argparse.Namespace) -> None:
+    """Open a named room holding this agent and the agents named, and print it."""
+    config = _node_config()
+    members = sorted({config["agent"], *(name.strip() for name in args.agents.split(",") if name.strip())})
+    room = _on_node(config, lambda client: client.open_room(members, args.name))
+    print(json.dumps(room))
+
+
+def cmd_peers(args: argparse.Namespace) -> None:
+    """The other agents on this gateway, one name per line."""
+    peers = _on_node(_node_config(), lambda client: client.peers())
+    if args.json:
+        print(json.dumps(peers))
+        return
+    for peer in peers:
+        print(peer)
+
+
+def _upload_extra(meta: AttachmentMeta) -> UploadExtra | None:
+    """The media facts a stored attachment carries, as the node's upload declares them."""
+    extra: UploadExtra = {}
+    if "width" in meta:
+        extra["width"] = meta["width"]
+    if "height" in meta:
+        extra["height"] = meta["height"]
+    if "duration_secs" in meta:
+        extra["duration_secs"] = meta["duration_secs"]
+    return extra or None
+
+
+def _local_blob(root: pl.Path, meta: AttachmentMeta) -> pl.Path | None:
+    """The file this store still holds for a stored attachment, or None once its bytes are gone."""
+    try:
+        blob = attachments.blob_path(root, meta["id"])
+    except attachments.UnknownAttachmentError:
+        return None
+    return blob if blob.exists() else None
+
+
+async def _import_attachments(client: NodeClient, root: pl.Path, metas: list[AttachmentMeta]) -> list[str]:
+    """Move the blobs of one stored message to the node, as the ids the imported copy references. A
+    blob this store no longer holds is named on stderr and left out, so the message still lands."""
+    ids: list[str] = []
+    for meta in metas:
+        blob = await asyncio.to_thread(_local_blob, root, meta)
+        if blob is None:
+            gone = f"attachment {meta['id']} ({meta['name']}) is no longer on disk: importing the message without it"
+            print(json.dumps({"warning": gone}), file=sys.stderr)
+            continue
+        uploaded = await client.upload(blob, meta["mime"], _upload_extra(meta))
+        ids.append(uploaded["id"])
+    return ids
+
+
+async def _import_item(client: NodeClient, root: pl.Path, row: StoredEvent) -> ImportItem:
+    """One stored row as the node's import takes it. `origin_id` is this store's own row id, which the
+    node echoes on the replicated copy, so the replica stamps the row instead of duplicating it."""
+    item: ImportItem = {"origin_id": row["id"], "ts": row["ts"], "type": row["type"], "text": row["text"]}
+    if "input_method" in row:
+        item["input_method"] = row["input_method"]
+    if "attachments" in row:
+        ids = await _import_attachments(client, root, row["attachments"])
+        if ids:
+            item["attachments"] = ids
+    return item
+
+
+async def _import_rows(client: NodeClient, root: pl.Path, room: str, rows: list[StoredEvent]) -> ImportOutcome:
+    """Hand the node every row it does not hold, IMPORT_BATCH_SIZE at a time."""
+    outcome: ImportOutcome = {"imported": 0, "skipped": 0}
+    batch: list[ImportItem] = []
+    for row in rows:
+        batch.append(await _import_item(client, root, row))
+        if len(batch) == IMPORT_BATCH_SIZE:
+            outcome = _summed(outcome, await client.import_messages(room, batch))
+            batch = []
+    if batch:
+        outcome = _summed(outcome, await client.import_messages(room, batch))
+    return outcome
+
+
+def _summed(total: ImportOutcome, batch: ImportOutcome) -> ImportOutcome:
+    return {"imported": total["imported"] + batch["imported"], "skipped": total["skipped"] + batch["skipped"]}
+
+
+def cmd_import_to_node(args: argparse.Namespace) -> None:
+    """Give the node the conversation this store already holds, so the shared history starts complete.
+    Re-running imports only what is missing: the node skips an origin id it has seen."""
+    config = _node_config()
+    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".chat"))
+    store = Store(store_path(data_dir), config["agent"])
+    try:
+        rows = store.unsynced_direct_rows()
+    finally:
+        store.close()
+    root = attachments.attachments_root(data_dir)
+    room = direct_room_id(config["agent"])
+    outcome = _on_node(config, lambda client: _import_rows(client, root, room, rows))
+    print(json.dumps({"status": "imported", **outcome}))
 
 
 _DEFAULT_GAP_SECS = 2.5
@@ -58,13 +221,15 @@ def cmd_send(args: argparse.Namespace) -> None:
         _fail({"error": f"daemon not running (no socket at {sock_path})"})
 
     gap = _DEFAULT_GAP_SECS if args.gap is None else args.gap
-    result = asyncio.run(_send_bubbles(sock_path, bubbles, attach, gap))
+    result = asyncio.run(_send_bubbles(sock_path, bubbles, attach, gap, args.room, args.to))
     if "error" in result:
         _fail(result)
     print(json.dumps(result))
 
 
-async def _send_bubbles(sock_path: pl.Path, bubbles: list[str], attach: list[str], gap: float) -> dict[str, object]:
+async def _send_bubbles(
+    sock_path: pl.Path, bubbles: list[str], attach: list[str], gap: float, room: str | None, to: str | None
+) -> dict[str, object]:
     """Send a reply as one paced, interruptible stream: bubbles go out in order with `gap` seconds
     between them, the attachments ride the last one, and the first refusal while the user is talking
     stops the rest (the daemon re-wakes the agent once the floor clears)."""
@@ -72,7 +237,7 @@ async def _send_bubbles(sock_path: pl.Path, bubbles: list[str], attach: list[str
     sent: list[dict[str, object]] = []
     for index, bubble in enumerate(outbound):
         last = index == len(outbound) - 1
-        result = await _send_via_socket(sock_path, bubble, attach if last else [])
+        result = await _send_via_socket(sock_path, bubble, attach if last else [], room, to)
         if "user_speaking" in result:
             return {"ok": True, "sent": sent, "stopped_for_user": True}
         if "error" in result:
@@ -83,13 +248,18 @@ async def _send_bubbles(sock_path: pl.Path, bubbles: list[str], attach: list[str
     return {"ok": True, "sent": sent, "stopped_for_user": False}
 
 
-async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str]) -> dict[str, object]:
+async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str], room: str | None, to: str | None) -> dict[str, object]:
     try:
         reader, writer = await asyncio.open_unix_connection(str(sock_path))
-        request = json.dumps({"command": "send", "message": message, "attach": attach})
+        body: dict[str, object] = {"command": "send", "message": message, "attach": attach}
+        if room is not None:
+            body["room"] = room
+        if to is not None:
+            body["to"] = to
+        request = json.dumps(body)
         writer.write(request.encode())
         writer.write_eof()
-        data = await asyncio.wait_for(reader.read(65536), timeout=10.0)
+        data = await asyncio.wait_for(reader.read(65536), timeout=SEND_REPLY_TIMEOUT_SECS)
         writer.close()
         await writer.wait_closed()
         return json.loads(data.decode())
@@ -99,12 +269,13 @@ async def _send_via_socket(sock_path: pl.Path, message: str, attach: list[str]) 
 
 def cmd_history(args: argparse.Namespace) -> None:
     data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".chat"))
-    store = Store(store_path(data_dir))
+    store = Store(store_path(data_dir), agent_name())
     try:
+        room = args.room if args.room is not None else store.direct_room
         if args.search:
-            events = store.search(args.search, limit=args.limit)
+            events = store.search(args.search, limit=args.limit, room=room)
         else:
-            events, _ = store.page(limit=args.limit)
+            events, _ = store.page(limit=args.limit, room=room)
     except sqlite3.OperationalError as exc:
         _fail({"error": f"invalid search query: {exc}"})
     finally:
@@ -132,7 +303,7 @@ def cmd_attachments_list(args: argparse.Namespace) -> None:
     was received from the user or sent by the agent). Largest first by default; count and total_bytes
     describe the filtered set even when --limit trims the printed array."""
     root = _attachments_root(args)
-    store = Store(store_path(root.parent))
+    store = Store(store_path(root.parent), agent_name())
     rows: list[_ListedAttachment] = []
     try:
         references = store.attachment_references()
@@ -200,7 +371,7 @@ def cmd_import(args: argparse.Namespace) -> None:
         rows = src.execute("SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ('user', 'chat') ORDER BY id ASC").fetchall()
     finally:
         src.close()
-    store = Store(store_path(data_dir))
+    store = Store(store_path(data_dir), agent_name())
     try:
         count, max_id = store.import_rows(rows)
         if max_id:

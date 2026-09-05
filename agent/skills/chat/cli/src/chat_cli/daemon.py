@@ -1,10 +1,10 @@
 """Chat daemon.
 
 Owns the chat channel: it runs the skill's HTTP service (POST /message intake, GET /history, and
-GET /ws, the replay-free live chat stream), and accepts CLI commands via a Unix socket to send replies
-(`chat send` -> persist a `chat` event, fan it to the /ws subscribers, send a user notification to
-vestad so a backgrounded client gets one). Durability is the skill's own store, so a reply succeeds even
-with no client connected; the live echo fans out in-process to whoever is on /ws.
+GET /ws, the replay-free live chat stream), replicates every room vestad's chat node holds this agent
+in, and accepts CLI commands via a Unix socket to send replies (`chat send` -> upload each attachment
+to the node, post the message, answer the node's id). The local row and the live echo of a reply belong
+to the replica, which persists the frame the node sends back, so a reply is written exactly once.
 
 `chat daemon start|stop|restart|status` owns the process lifecycle: start registers the port with
 vestad and records it beside the pid, stop is a SIGTERM the serve path reads as deliberate, and status
@@ -17,6 +17,7 @@ import contextlib
 import functools
 import io
 import json
+import mimetypes
 import os
 import pathlib as pl
 import signal
@@ -30,8 +31,10 @@ from datetime import UTC, datetime
 from aiohttp import web
 
 from . import attachments
+from .node_client import NODE_UNREACHABLE, BurstRefusedError, NodeClient, NodeError, SpeakingRefusedError, new_session, node_config_from_env
+from .replica import ReplicaState, run_replica
 from .service import ServiceState, create_app
-from .store import Store, StoredEvent, store_path
+from .store import Store, direct_room_id, store_path
 
 NAME = "chat"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
@@ -46,9 +49,6 @@ POLL_SECS = 0.5
 CLAIM_WAIT_SECS = 3
 # One hung connection must not eat the whole readiness budget.
 PROBE_TIMEOUT_SECS = 2
-USER_NOTIFICATION_TIMEOUT = 10.0
-
-USER_NOTIFICATION = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "user-notification"
 
 
 def _budget(name: str, default: int) -> int:
@@ -84,6 +84,16 @@ def default_notifications_dir() -> pl.Path:
     return pl.Path.home() / "agent" / "notifications"
 
 
+def agent_name() -> str:
+    """This agent's name, which vestad writes into the container's environment. It names the direct
+    room, so the store takes it and never reads the environment itself. Without it every room id would
+    read `dm:`, so the command ends here with the one error line instead."""
+    name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
+    if not name:
+        sys.exit(_fail("AGENT_NAME is not set"))
+    return name
+
+
 def _sock_path(data_dir: pl.Path) -> pl.Path:
     return data_dir / "chat.sock"
 
@@ -97,25 +107,8 @@ class DaemonState:
     service: ServiceState
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
     asked_to_stop: bool = False
-
-
-def _send_user_notification(text: str) -> None:
-    """Best-effort: tell vestad an app reply went out so it toasts + pushes. A failure here never fails
-    the reply (durability + the live echo already happened); it only skips the toast/push, so swallow a
-    spawn error and cap a hung script."""
-    agent = os.environ.get("AGENT_NAME")
-    if agent is None or not USER_NOTIFICATION.exists():
-        return
-    preview = text[:180]
-    try:
-        subprocess.run(
-            [str(USER_NOTIFICATION), "message", agent, preview],
-            check=False,
-            capture_output=True,
-            timeout=USER_NOTIFICATION_TIMEOUT,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        _log(f"user notification failed: {exc}")
+    # The node replica, from the moment the loop builds it. None while the environment names no node.
+    replica: ReplicaState | None = None
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -125,7 +118,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     if port is None:
         sys.exit(_fail(f"could not register {NAME} with vestad"))
 
-    store = Store(store_path(data_dir))
+    store = Store(store_path(data_dir), agent_name())
     service = ServiceState(store, default_notifications_dir(), attachments.attachments_root(data_dir))
     state = DaemonState(
         sock_path=_sock_path(data_dir),
@@ -154,19 +147,43 @@ async def _run(state: DaemonState) -> None:
     site = web.TCPSite(runner, host="0.0.0.0", port=state.port)
     await site.start()
     _log(f"service on port {state.port}")
-    socket_task = asyncio.create_task(_socket_server(state))
-    sweep_task = asyncio.create_task(_sweep_loop(state))
+    tasks = [asyncio.create_task(_socket_server(state)), asyncio.create_task(_sweep_loop(state)), asyncio.create_task(_replica_loop(state))]
     try:
         await state.shutdown.wait()
-        socket_task.cancel()
-        sweep_task.cancel()
-        await asyncio.gather(socket_task, sweep_task, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         await runner.cleanup()
         state.service.store.close()
         state.sock_path.unlink(missing_ok=True)
         if not state.asked_to_stop:
             write_death_notification(state.notifications_dir)
+
+
+async def _replica_loop(state: DaemonState) -> None:
+    """Replicate every room the node holds this agent in, for as long as the daemon runs. With no node
+    identity in the environment the loop says so once and stays off, and the rest of the daemon works
+    as it does with a node."""
+    config = node_config_from_env(os.environ)
+    if config is None:
+        _log("no node identity in the environment (AGENT_NAME, AGENT_TOKEN, BOX_HOST, VESTAD_PORT): not replicating")
+        return
+    session = new_session(config)
+    try:
+        state.replica = ReplicaState(
+            store=state.service.store,
+            client=NodeClient(config, session),
+            attachments_root=state.service.attachments_root,
+            notifications_dir=state.notifications_dir,
+            agent=config["agent"],
+            echo=state.service.emit,
+        )
+        await run_replica(state.replica, state.shutdown)
+    finally:
+        # Shielded, because this cleanup runs on the cancellation that stops the daemon: the session
+        # must close whether or not the task is cancelled again while it does.
+        await asyncio.shield(session.close())
 
 
 def _run_sweep(service: ServiceState) -> int:
@@ -219,51 +236,95 @@ async def _socket_server(state: DaemonState) -> None:
         await server.wait_closed()
 
 
-def _ingest_one(root: pl.Path, path: str) -> attachments.AttachmentMeta:
+def _declared(path: str) -> tuple[pl.Path, str]:
+    """The file to send and what the node is told it is, after the checks a local file must pass. Runs
+    off the loop, since it reaches disk."""
     source = pl.Path(path).expanduser()
     if not source.is_file():
-        raise FileNotFoundError(path)
-    return attachments.ingest_file(root, source, None)
+        raise FileNotFoundError(str(source))
+    size = source.stat().st_size
+    if size > attachments.MAX_ATTACHMENT_BYTES:
+        raise attachments.SizeError(f"{source} is {size} bytes, over the {attachments.MAX_ATTACHMENT_BYTES} byte limit")
+    guessed = mimetypes.guess_type(source.name)[0]
+    return source, guessed if guessed is not None else attachments.FALLBACK_MIME
 
 
-async def _ingest_attachments(state: DaemonState, attach: list[str]) -> tuple[list[attachments.AttachmentMeta], str | None]:
-    """Copy each source file into the attachment store. Any failure fails the whole send with a clear
-    error and nothing persisted to chat; ingested copies of a partly failed batch age out to the sweep."""
+async def _upload_one(replica: ReplicaState, root: pl.Path, path: str) -> attachments.AttachmentMeta:
+    """Move one file to the node and keep a copy under the id the node minted for it, so this agent's
+    own history renders the same blob the room holds."""
+    source, mime = await asyncio.to_thread(_declared, path)
+    meta = await replica.client.upload(source, mime)
+    return await asyncio.to_thread(attachments.store_copy, root, source, meta)
+
+
+async def _upload_attachments(replica: ReplicaState, root: pl.Path, attach: list[str]) -> tuple[list[str], str | None]:
+    """Every attachment of one send, uploaded in order, as the ids the message references. A local
+    failure fails the whole send with a clear error; copies of a partly failed batch age out to the
+    sweep, and the node collects the uploads nothing referenced."""
     if len(attach) > attachments.MAX_ATTACHMENTS_PER_MESSAGE:
         return [], f"at most {attachments.MAX_ATTACHMENTS_PER_MESSAGE} attachments per message"
-    metas: list[attachments.AttachmentMeta] = []
+    ids: list[str] = []
     for path in attach:
         try:
-            metas.append(await asyncio.to_thread(_ingest_one, state.service.attachments_root, path))
+            meta = await _upload_one(replica, root, path)
         except FileNotFoundError:
             return [], f"no such file: {path}"
         except attachments.SizeError as exc:
             return [], str(exc)
+        except attachments.UnknownAttachmentError as exc:
+            return [], f"the node answered an attachment id this store cannot hold: {exc}"
         except OSError as exc:
             return [], f"cannot read {path}: {exc}"
-    return metas, None
+        ids.append(meta["id"])
+    return ids, None
 
 
-async def _handle_send(state: DaemonState, message: str, attach: list[str]) -> tuple[dict[str, object], str | None]:
-    """One validated send: gate on the user's live turn, ingest attachments, persist + emit.
-    Returns the response envelope (ok or error) and the toast text (None when nothing went out)."""
+async def _target_room(replica: ReplicaState, room: str | None, to: str | None) -> str:
+    """The room a send lands in: the one it names, the peer room with the agent it names (opened when
+    the node does not hold it yet), or the conversation with the user."""
+    if room is not None:
+        return room
+    if to is None:
+        return direct_room_id(replica.agent)
+    opened = await replica.client.open_room([replica.agent, to], None)
+    return opened["id"]
+
+
+def _send_refusal(service: ServiceState, message: str, attach: list[str], room: str | None, to: str | None) -> dict[str, object] | None:
+    """What refuses a send before the node is dialed: nothing to send, two rooms named at once, or the
+    user's live turn."""
     if not message and not attach:
-        return {"error": "empty message"}, None
-    refusal = state.service.refuse_send_while_speaking()
-    if refusal is not None:
-        # `user_speaking` marks the one refusal the sender must treat as "floor yielded", not an
-        # error: `send` stops the rest of a paced reply on it and exits clean.
-        return {"error": refusal, "user_speaking": True}, None
-    metas, ingest_error = await _ingest_attachments(state, attach)
-    if ingest_error is not None:
-        return {"error": ingest_error}, None
-    event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
-    if metas:
-        event["attachments"] = metas
-    state.service.store.append(event)
-    state.service.emit(event)
-    # An attachment-only reply still deserves its toast: fall back to the filenames.
-    return {"ok": True, "message": message, "id": event["id"]}, message or ", ".join(meta["name"] for meta in metas)
+        return {"error": "empty message"}
+    if room is not None and to is not None:
+        return {"error": "name one room: --room or --to, not both"}
+    refusal = service.refuse_send_while_speaking()
+    if refusal is None:
+        return None
+    # `user_speaking` marks the one refusal the sender must treat as "floor yielded", not an error:
+    # `send` stops the rest of a paced reply on it and exits clean.
+    return {"error": refusal, "user_speaking": True}
+
+
+async def _handle_send(state: DaemonState, message: str, attach: list[str], room: str | None, to: str | None) -> dict[str, object]:
+    """One validated send: gate on the user's live turn, upload the attachments, post to the node. The
+    local row and the live echo are the replica's, which persists the frame the node sends back, so the
+    reply is written once however it arrives."""
+    refused = _send_refusal(state.service, message, attach, room, to)
+    if refused is not None:
+        return refused
+    if state.replica is None:
+        return {"error": NODE_UNREACHABLE}
+    try:
+        target = await _target_room(state.replica, room, to)
+        ids, upload_error = await _upload_attachments(state.replica, state.service.attachments_root, attach)
+        if upload_error is not None:
+            return {"error": upload_error}
+        node_id = await state.replica.client.post(target, message, ids)
+    except SpeakingRefusedError as exc:
+        return {"error": str(exc), "user_speaking": True}
+    except (BurstRefusedError, NodeError) as exc:
+        return {"error": str(exc)}
+    return {"ok": True, "message": message, "id": node_id}
 
 
 async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -272,7 +333,6 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
         request = json.loads(data.decode())
         command = request["command"]
 
-        notify_message: str | None = None
         response: dict[str, object]
         if command == "send":
             message = request["message"].strip()
@@ -281,20 +341,17 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
             if attach is None:
                 response = {"error": "attach must be a list of paths"}
             else:
-                response, notify_message = await _handle_send(state, message, attach)
+                room = request["room"] if "room" in request else None
+                to = request["to"] if "to" in request else None
+                response = await _handle_send(state, message, attach, room, to)
         elif command == "status":
-            response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers)}
+            connected = state.replica is not None and state.replica.connected
+            response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers), "node_connected": connected}
         else:
             response = {"error": f"unknown command: {command}"}
 
         writer.write(json.dumps(response).encode())
-        # The notification runs after the ack so it never delays it, but a durable reply must
-        # still notify even if the caller died before reading the ack, so a broken pipe on the
-        # ack must not skip it.
-        with contextlib.suppress(OSError):
-            await writer.drain()
-        if notify_message is not None:
-            await asyncio.to_thread(_send_user_notification, notify_message)
+        await writer.drain()
     except (json.JSONDecodeError, KeyError, TimeoutError, OSError) as exc:
         _log(f"socket error: {exc}")
     finally:

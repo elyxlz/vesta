@@ -1,20 +1,29 @@
-"""Tests for the chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, and the
-start/stop/restart/status verbs against the pid and port records."""
+"""Tests for the chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, the
+start/stop/restart/status verbs against the pid and port records, and the send path that posts through
+the node and leaves the local row to the replica."""
 
 import argparse
 import asyncio
+import contextlib
 import functools
 import io
 import json
 import os
 import signal
-import threading
 import types
 
 import pytest
 from chat_cli import attachments, commands, daemon
+from chat_cli.node_client import NODE_UNREACHABLE
+from chat_cli.replica import ReplicaState, run_replica
 from chat_cli.service import ServiceState
-from chat_cli.store import Store, StoredEvent, store_path
+from chat_cli.store import Store, StoredEvent, direct_room_id, store_path
+
+from .attachment_fixture import stored_attachment
+from .fake_node import FakeNode, connected_client
+
+AGENT = "vesta"
+DIRECT = direct_room_id(AGENT)
 
 
 @pytest.fixture
@@ -68,6 +77,16 @@ def test_any_other_signal_leaves_the_death_report_armed(tmp_path):
 
     assert state.asked_to_stop is False
     assert state.shutdown.is_set()
+    state.service.store.close()
+
+
+def test_the_replica_stays_off_without_a_node_in_the_environment(tmp_path, monkeypatch):
+    state = _daemon_state(tmp_path)
+    monkeypatch.delenv("AGENT_TOKEN", raising=False)
+
+    asyncio.run(daemon._replica_loop(state))
+
+    assert state.replica is None
     state.service.store.close()
 
 
@@ -176,7 +195,7 @@ def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
 
 
 def _daemon_state(tmp_path) -> daemon.DaemonState:
-    service = ServiceState(Store(store_path(tmp_path)), tmp_path / "notifications", tmp_path / "attachments")
+    service = ServiceState(Store(store_path(tmp_path), AGENT), tmp_path / "notifications", tmp_path / "attachments")
     return daemon.DaemonState(
         sock_path=tmp_path / "chat.sock",
         data_dir=tmp_path,
@@ -186,7 +205,46 @@ def _daemon_state(tmp_path) -> daemon.DaemonState:
     )
 
 
-async def _socket_command(state: daemon.DaemonState, request: dict[str, str]) -> dict[str, object]:
+@contextlib.asynccontextmanager
+async def _node_daemon(fake, tmp_path):
+    """A daemon whose replica is wired to the running fake, exactly as `_replica_loop` builds it."""
+    async with connected_client(fake) as client:
+        state = _daemon_state(tmp_path)
+        state.replica = ReplicaState(
+            store=state.service.store,
+            client=client,
+            attachments_root=state.service.attachments_root,
+            notifications_dir=state.notifications_dir,
+            agent=fake.agent,
+            echo=state.service.emit,
+        )
+        try:
+            yield state
+        finally:
+            state.service.store.close()
+
+
+def _with_node(fake, tmp_path, scenario):
+    """Run one scenario against a daemon that has a node, and answer what the scenario answered."""
+
+    async def main():
+        async with _node_daemon(fake, tmp_path) as state:
+            return await scenario(state)
+
+    return asyncio.run(main())
+
+
+async def _wait_for(predicate) -> None:
+    """Poll a condition to a bounded deadline: the replica persists from worker threads, so an
+    assertion waits for the effect instead of sleeping a guessed amount."""
+    for _ in range(1000):
+        if predicate():
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("condition not met before the deadline")
+
+
+async def _socket_command(state: daemon.DaemonState, request: dict[str, object]) -> dict[str, object]:
     server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
     async with server:
         reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
@@ -198,25 +256,142 @@ async def _socket_command(state: daemon.DaemonState, request: dict[str, str]) ->
         return json.loads(data.decode())
 
 
-def test_send_command_persists_chat_event_and_fans_it_to_subscribers(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    state = _daemon_state(tmp_path)
-    queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
-    state.service.subscribers.add(queue)
+def test_send_posts_to_the_direct_room_and_leaves_the_local_row_to_the_replica(tmp_path):
+    # The send owns the node post alone. The row and the echo belong to the replica's ingest of the
+    # frame that comes back, so a reply is never written twice and the unique node-id index never fires.
+    fake = FakeNode()
+    fake.seed_room([AGENT])
 
-    response = asyncio.run(_socket_command(state, {"command": "send", "message": "hey there"}))
+    async def scenario(state):
+        response = await _socket_command(state, {"command": "send", "message": "hey there"})
+        return response, state.service.store.page()[0]
+
+    response, stored = _with_node(fake, tmp_path, scenario)
 
     assert response == {"ok": True, "message": "hey there", "id": 1}
-    events, _ = state.service.store.page()
-    assert [(e["type"], e["text"]) for e in events] == [("chat", "hey there")]
-    assert queue.qsize() == 1
-    fanned = queue.get_nowait()
-    assert fanned["id"] == 1 and fanned["type"] == "chat"
+    assert [(message["room"], message["text"], message["sender"]) for message in fake.messages] == [(DIRECT, "hey there", AGENT)]
+    assert stored == []
+
+
+def test_send_to_a_peer_opens_the_room_before_posting(tmp_path):
+    fake = FakeNode()
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "got a minute?", "to": "bob"})
+
+    response = _with_node(fake, tmp_path, scenario)
+
+    assert response["ok"] is True
+    assert [(method, path) for method, path, _ in fake.requests] == [("POST", "/rooms"), ("POST", "/rooms/dm:bob:vesta/messages")]
+    assert fake.messages[0]["room"] == "dm:bob:vesta"
+
+
+def test_send_into_a_named_room_posts_there(tmp_path):
+    fake = FakeNode()
+    room = fake.seed_room([AGENT, "bob"], name="standup")
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "morning", "room": room.id})
+
+    assert _with_node(fake, tmp_path, scenario)["ok"] is True
+    assert fake.messages[0]["room"] == room.id
+
+
+def test_send_takes_one_room_at_a_time(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "hi", "room": "grp-7", "to": "bob"})
+
+    assert "error" in _with_node(fake, tmp_path, scenario)
+    assert fake.messages == []
+
+
+def test_a_speaking_refusal_from_the_node_reaches_the_sender(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    fake.refuse_speaking = True
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "mid-turn reply"})
+
+    response = _with_node(fake, tmp_path, scenario)
+
+    assert response["user_speaking"] is True
+    assert "the user is talking" in str(response["error"])
+
+
+def test_a_burst_refusal_is_an_error_the_sender_does_not_read_as_the_floor(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    fake.refuse_burst = True
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "and another thing"})
+
+    response = _with_node(fake, tmp_path, scenario)
+
+    assert "burst guard" in str(response["error"])
+    assert "user_speaking" not in response
+
+
+def test_a_node_failure_is_reported_and_nothing_is_stored(tmp_path):
+    fake = FakeNode()  # nothing seeded, so the direct room is a 404
+
+    async def scenario(state):
+        response = await _socket_command(state, {"command": "send", "message": "hello?"})
+        return response, state.service.store.page()[0]
+
+    response, stored = _with_node(fake, tmp_path, scenario)
+
+    assert "error" in response and "user_speaking" not in response
+    assert stored == []
+
+
+def test_send_without_a_node_names_the_environment_it_needs(tmp_path):
+    state = _daemon_state(tmp_path)
+
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "hey"}))
+
+    assert response == {"error": "the chat node is unreachable: AGENT_NAME, AGENT_TOKEN, BOX_HOST, VESTAD_PORT must be set"}
+    assert response["error"] == NODE_UNREACHABLE
     state.service.store.close()
 
 
-def test_send_is_refused_while_the_user_is_talking(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
+def test_the_replica_writes_the_row_the_send_did_not_and_echoes_it_to_the_old_socket(tmp_path):
+    # The ownership rule end to end: the reply comes back on the node's socket, the replica persists it
+    # with its node id, the old service's subscribers still see it, and no notification is written for
+    # this agent's own message.
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+
+    async def scenario(state):
+        queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
+        state.service.subscribers.add(queue)
+        shutdown = asyncio.Event()
+        task = asyncio.create_task(run_replica(state.replica, shutdown))
+        try:
+            await _wait_for(lambda: state.replica.connected)
+            response = await _socket_command(state, {"command": "send", "message": "on my way"})
+            await _wait_for(lambda: queue.qsize() == 1)
+            return response, state.service.store.page()[0], queue.get_nowait()
+        finally:
+            shutdown.set()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    response, stored, fanned = _with_node(fake, tmp_path, scenario)
+
+    assert response["id"] == 1
+    assert [(event["type"], event["text"], event["node_id"]) for event in stored] == [("chat", "on my way", 1)]
+    assert fanned["node_id"] == 1 and fanned["sender"] == AGENT
+    assert list((tmp_path / "notifications").glob("*-chat-message.json")) == []
+
+
+def test_send_is_refused_while_the_user_is_talking(tmp_path):
+    # The live-voice gate answers before the node is dialed at all.
     state = _daemon_state(tmp_path)
     speaking_conn: asyncio.Queue[StoredEvent] = asyncio.Queue()
     state.service.speaking.add(speaking_conn)
@@ -228,11 +403,6 @@ def test_send_is_refused_while_the_user_is_talking(tmp_path, monkeypatch):
         "user_speaking": True,
     }
     assert state.service.store.page()[0] == []
-
-    state.service.speaking.discard(speaking_conn)
-    accepted = asyncio.run(_socket_command(state, {"command": "send", "message": "after the turn"}))
-
-    assert accepted == {"ok": True, "message": "after the turn", "id": 1}
     state.service.store.close()
 
 
@@ -259,69 +429,6 @@ def test_refused_send_rewakes_the_agent_when_the_floor_clears(tmp_path, monkeypa
     state.service.store.close()
 
 
-def test_send_acks_the_client_before_the_user_notification_finishes(tmp_path, monkeypatch):
-    # The user notification can block up to its timeout. The durable ack must reach the client
-    # first, so a blocking notification must not stall the send response. A read that waited on
-    # the notification (the pre-ack order) would time out here instead of returning the ack.
-    state = _daemon_state(tmp_path)
-    started = threading.Event()
-    release = threading.Event()
-
-    def blocking_notification(text: str) -> None:
-        started.set()
-        release.wait(timeout=5.0)
-
-    monkeypatch.setattr(daemon, "_send_user_notification", blocking_notification)
-
-    async def run() -> dict[str, object]:
-        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
-        async with server:
-            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
-            writer.write(json.dumps({"command": "send", "message": "hey there"}).encode())
-            writer.write_eof()
-            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
-            release.set()  # ack received; let the notification thread finish so shutdown is clean
-            writer.close()
-            await writer.wait_closed()
-            return json.loads(data.decode())
-
-    response = asyncio.run(run())
-
-    assert response == {"ok": True, "message": "hey there", "id": 1}
-    assert started.is_set()  # the notification still runs, just after the ack
-    events, _ = state.service.store.page()
-    assert [(e["type"], e["text"]) for e in events] == [("chat", "hey there")]
-    state.service.store.close()
-
-
-def test_send_notifies_even_when_the_ack_write_fails(tmp_path, monkeypatch):
-    # A durable reply must still toast/push even if the caller vanished before reading the ack,
-    # so a broken pipe on the ack write must not skip the notification.
-    state = _daemon_state(tmp_path)
-    fired = threading.Event()
-    monkeypatch.setattr(daemon, "_send_user_notification", lambda text: fired.set())
-
-    async def failing_drain(self) -> None:
-        raise BrokenPipeError("client gone before reading the ack")
-
-    monkeypatch.setattr(asyncio.StreamWriter, "drain", failing_drain)
-
-    async def run() -> bool:
-        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
-        async with server:
-            _, writer = await asyncio.open_unix_connection(str(state.sock_path))
-            writer.write(json.dumps({"command": "send", "message": "hey"}).encode())
-            writer.write_eof()
-            fired_ok = await asyncio.to_thread(fired.wait, 5.0)
-            writer.close()
-            return fired_ok
-
-    assert asyncio.run(run()) is True
-    events, _ = state.service.store.page()
-    assert [(e["type"], e["text"]) for e in events] == [("chat", "hey")]
-    state.service.store.close()
-
-
 def test_send_command_rejects_empty_message(tmp_path):
     state = _daemon_state(tmp_path)
     queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
@@ -335,149 +442,132 @@ def test_send_command_rejects_empty_message(tmp_path):
     state.service.store.close()
 
 
-def test_status_command_reports_port_and_connected_client_count(tmp_path):
+def test_status_command_reports_port_clients_and_the_node(tmp_path):
     state = _daemon_state(tmp_path)
     state.service.subscribers.add(asyncio.Queue())
     state.service.subscribers.add(asyncio.Queue())
 
     response = asyncio.run(_socket_command(state, {"command": "status"}))
 
-    assert response == {"ok": True, "port": 1, "clients": 2}
+    assert response == {"ok": True, "port": 1, "clients": 2, "node_connected": False}
     state.service.store.close()
 
 
-def test_send_user_notification_shells_the_script_with_kind_agent_and_preview(tmp_path, monkeypatch):
-    script = tmp_path / "user-notification"
-    script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
-    monkeypatch.setenv("AGENT_NAME", "aria")
-    calls = []
-    monkeypatch.setattr(daemon.subprocess, "run", lambda cmd, **kwargs: calls.append(cmd))
+def test_status_reports_a_replica_that_holds_the_node(tmp_path):
+    fake = FakeNode()
 
-    daemon._send_user_notification("a long reply " * 40)
+    async def scenario(state):
+        state.replica.connected = True
+        return await _socket_command(state, {"command": "status"})
 
-    assert len(calls) == 1
-    argv = calls[0]
-    assert argv[:3] == [str(script), "message", "aria"]
-    assert len(argv[3]) == 180  # the body preview is truncated
-
-
-def test_send_user_notification_swallows_a_spawn_error(tmp_path, monkeypatch):
-    script = tmp_path / "user-notification"
-    script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
-    monkeypatch.setenv("AGENT_NAME", "aria")
-
-    def raising_run(cmd, **kwargs):
-        raise OSError("exec format error")
-
-    monkeypatch.setattr(daemon.subprocess, "run", raising_run)
-
-    # a spawn failure must never propagate: persist + emit already happened, so the send response
-    # must still be written
-    daemon._send_user_notification("hello")
-
-
-def test_send_user_notification_swallows_a_timeout(tmp_path, monkeypatch):
-    script = tmp_path / "user-notification"
-    script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
-    monkeypatch.setenv("AGENT_NAME", "aria")
-
-    def timing_out_run(cmd, **kwargs):
-        raise daemon.subprocess.TimeoutExpired(cmd, daemon.USER_NOTIFICATION_TIMEOUT)
-
-    monkeypatch.setattr(daemon.subprocess, "run", timing_out_run)
-
-    daemon._send_user_notification("hello")
-
-
-def test_send_user_notification_is_a_noop_when_agent_name_or_script_is_absent(tmp_path, monkeypatch):
-    monkeypatch.setattr(daemon.subprocess, "run", lambda *a, **k: pytest.fail("must not shell when a guard fails"))
-
-    # script missing, AGENT_NAME set
-    monkeypatch.setattr(daemon, "USER_NOTIFICATION", tmp_path / "missing-user-notification")
-    monkeypatch.setenv("AGENT_NAME", "aria")
-    daemon._send_user_notification("hello")
-
-    # script present, AGENT_NAME unset
-    script = tmp_path / "user-notification"
-    script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    daemon._send_user_notification("hello")
+    assert _with_node(fake, tmp_path, scenario)["node_connected"] is True
 
 
 # --- send --attach ---
 
 
-def test_send_with_attach_ingests_and_carries_metadata(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    state = _daemon_state(tmp_path)
+def test_send_with_attach_uploads_it_and_keeps_the_blob_under_the_node_id(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
     source = tmp_path / "chart.png"
     source.write_bytes(b"pngbytes")
 
-    response = asyncio.run(_socket_command(state, {"command": "send", "message": "here you go", "attach": [str(source)]}))
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "here you go", "attach": [str(source)]})
 
-    assert response["ok"] is True and response["id"] == 1
-    events, _ = state.service.store.page()
-    stored = events[0]["attachments"]
-    assert stored[0]["name"] == "chart.png"
-    assert stored[0]["mime"] == "image/png"
-    assert stored[0]["size"] == len(b"pngbytes")
-    assert attachments.blob_path(tmp_path / "attachments", stored[0]["id"]).read_bytes() == b"pngbytes"
-    source.unlink()  # the ingested copy stands alone
-    assert attachments.blob_path(tmp_path / "attachments", stored[0]["id"]).exists()
-    state.service.store.close()
+    response = _with_node(fake, tmp_path, scenario)
 
-
-def test_send_with_missing_attach_path_errors_and_persists_nothing(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    state = _daemon_state(tmp_path)
-
-    response = asyncio.run(_socket_command(state, {"command": "send", "message": "hi", "attach": [str(tmp_path / "absent.bin")]}))
-
-    assert "error" in response
-    assert state.service.store.page()[0] == []
-    state.service.store.close()
+    assert response["ok"] is True
+    [upload] = list(fake.attachments.values())
+    assert upload.finalized and bytes(upload.data) == b"pngbytes"
+    assert upload.meta["name"] == "chart.png" and upload.meta["mime"] == "image/png"
+    assert ("POST", f"/rooms/{DIRECT}/messages", {"text": "here you go", "attachments": [upload.meta["id"]]}) in fake.requests
+    assert [meta["id"] for meta in fake.messages[0]["attachments"]] == [upload.meta["id"]]
+    root = tmp_path / "attachments"
+    assert attachments.blob_path(root, upload.meta["id"]).read_bytes() == b"pngbytes"
+    source.unlink()  # the local copy stands alone
+    assert attachments.blob_path(root, upload.meta["id"]).exists()
 
 
-def test_send_attach_only_is_valid_and_notifies_with_the_filename(tmp_path, monkeypatch):
-    captured: list[str] = []
-    monkeypatch.setattr(daemon, "_send_user_notification", captured.append)
-    state = _daemon_state(tmp_path)
+def test_the_replica_does_not_fetch_back_a_blob_this_agent_just_sent(tmp_path):
+    # The send already put the file in the store under the node's id, so the own-sender frame's ingest
+    # keeps it rather than moving the same bytes a second time.
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"pngbytes")
+
+    async def scenario(state):
+        shutdown = asyncio.Event()
+        task = asyncio.create_task(run_replica(state.replica, shutdown))
+        try:
+            await _wait_for(lambda: state.replica.connected)
+            await _socket_command(state, {"command": "send", "message": "here", "attach": [str(source)]})
+            await _wait_for(lambda: state.service.store.page()[0] != [])
+            return state.service.store.page()[0]
+        finally:
+            shutdown.set()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    stored = _with_node(fake, tmp_path, scenario)
+
+    [upload] = list(fake.attachments.values())
+    assert [(method, path) for method, path, _ in fake.requests if path == f"/rooms/attachments/{upload.meta['id']}"] == []
+    assert [meta["id"] for meta in stored[0]["attachments"]] == [upload.meta["id"]]
+    assert attachments.blob_path(tmp_path / "attachments", upload.meta["id"]).read_bytes() == b"pngbytes"
+
+
+def test_an_attachment_id_this_store_cannot_hold_is_an_error_not_a_crash(tmp_path, monkeypatch):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    source = tmp_path / "chart.png"
+    source.write_bytes(b"pngbytes")
+
+    def refuse(root, copied, meta):
+        raise attachments.UnknownAttachmentError(meta["id"])
+
+    monkeypatch.setattr(attachments, "store_copy", refuse)
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "here", "attach": [str(source)]})
+
+    response = _with_node(fake, tmp_path, scenario)
+
+    assert "cannot hold" in str(response["error"])
+    assert fake.messages == []
+
+
+def test_send_with_missing_attach_path_errors_and_posts_nothing(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "hi", "attach": [str(tmp_path / "absent.bin")]})
+
+    assert "error" in _with_node(fake, tmp_path, scenario)
+    assert fake.messages == []
+
+
+def test_send_attach_only_posts_an_empty_text_carrying_the_file(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
     source = tmp_path / "report.pdf"
     source.write_bytes(b"%PDF")
 
-    async def scenario() -> dict[str, object]:
-        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
-        async with server:
-            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
-            writer.write(json.dumps({"command": "send", "message": "", "attach": [str(source)]}).encode())
-            writer.write_eof()
-            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
-            writer.close()
-            await writer.wait_closed()
-            for _ in range(500):
-                if captured:
-                    break
-                await asyncio.sleep(0.005)
-            return json.loads(data.decode())
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "", "attach": [str(source)]})
 
-    response = asyncio.run(scenario())
-
-    assert response["ok"] is True
-    assert captured == ["report.pdf"]
-    events, _ = state.service.store.page()
-    assert events[0]["text"] == ""
-    assert events[0]["attachments"][0]["name"] == "report.pdf"
-    state.service.store.close()
+    assert _with_node(fake, tmp_path, scenario)["ok"] is True
+    assert fake.messages[0]["text"] == ""
+    assert [meta["name"] for meta in fake.messages[0]["attachments"]] == ["report.pdf"]
 
 
 def _send_args(tmp_path, **overrides):
     sock = tmp_path / "chat.sock"
     sock.touch()
-    defaults = {"message": None, "socket": str(sock), "longform": False, "attach": [], "gap": None}
+    defaults = {"message": None, "socket": str(sock), "longform": False, "attach": [], "gap": None, "room": None, "to": None}
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -485,7 +575,7 @@ def _send_args(tmp_path, **overrides):
 def _capture_socket_request(monkeypatch):
     sent: list[tuple[str, list[str]]] = []
 
-    async def fake_send(sock_path, message, attach):
+    async def fake_send(sock_path, message, attach, room, to):
         sent.append((message, attach))
         return {"ok": True, "message": message, "id": 1}
 
@@ -500,6 +590,23 @@ def test_cmd_send_attach_only_skips_the_bubble_lint(tmp_path, monkeypatch, capsy
 
     assert sent == [("", ["/tmp/chart.png"])]
     assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_cmd_send_carries_the_room_it_was_told_to_answer_in(tmp_path, monkeypatch, capsys):
+    addressed: list[tuple[str | None, str | None]] = []
+
+    async def fake_send(sock_path, message, attach, room, to):
+        addressed.append((room, to))
+        return {"ok": True, "message": message, "id": 1}
+
+    monkeypatch.setattr(commands, "_send_via_socket", fake_send)
+
+    commands.cmd_send(_send_args(tmp_path, message=["morning"], room="grp-7"))
+    commands.cmd_send(_send_args(tmp_path, message=["morning"], to="bob"))
+    commands.cmd_send(_send_args(tmp_path, message=["morning"]))
+
+    assert addressed == [("grp-7", None), (None, "bob"), (None, None)]
+    assert capsys.readouterr().out.count("\n") == 3
 
 
 def test_cmd_send_still_lints_text_when_attaching(tmp_path, monkeypatch, capsys):
@@ -522,7 +629,7 @@ def test_cmd_send_requires_text_or_attach(tmp_path, monkeypatch, capsys):
 def test_cmd_send_paces_bubbles_in_order_and_honors_the_gap(tmp_path, monkeypatch, capsys):
     sent: list[str] = []
 
-    async def fake_send(sock_path, message, attach):
+    async def fake_send(sock_path, message, attach, room, to):
         sent.append(message)
         return {"ok": True, "message": message, "id": len(sent)}
 
@@ -564,7 +671,7 @@ def test_cmd_send_reads_a_stdin_reply_as_one_bubble_per_paragraph(tmp_path, monk
 def test_cmd_send_stops_the_waterfall_when_the_user_starts_talking(tmp_path, monkeypatch, capsys):
     sent: list[str] = []
 
-    async def fake_send(sock_path, message, attach):
+    async def fake_send(sock_path, message, attach, room, to):
         sent.append(message)
         if message == "two":
             return {"error": "the user is talking right now: ...", "user_speaking": True}
@@ -589,34 +696,35 @@ def test_cmd_send_pre_lints_every_bubble_and_sends_nothing_on_a_wall(tmp_path, m
     assert "error" in json.loads(capsys.readouterr().err)
 
 
-def test_send_attach_count_is_capped(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    state = _daemon_state(tmp_path)
+def test_send_attach_count_is_capped(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
     source = tmp_path / "one.txt"
     source.write_bytes(b"x")
 
-    response = asyncio.run(_socket_command(state, {"command": "send", "message": "", "attach": [str(source)] * 11}))
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "", "attach": [str(source)] * 11})
 
-    assert "error" in response
-    assert state.service.store.page()[0] == []
-    state.service.store.close()
+    assert "error" in _with_node(fake, tmp_path, scenario)
+    assert fake.attachments == {}
 
 
-def test_send_attach_directory_errors_cleanly(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    state = _daemon_state(tmp_path)
+def test_send_attach_directory_errors_cleanly(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
     directory = tmp_path / "shots"
     directory.mkdir()
 
-    response = asyncio.run(_socket_command(state, {"command": "send", "message": "here", "attach": [str(directory)]}))
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "here", "attach": [str(directory)]})
+
+    response = _with_node(fake, tmp_path, scenario)
 
     assert "error" in response and "no such file" in str(response["error"])
-    assert state.service.store.page()[0] == []
-    state.service.store.close()
+    assert fake.messages == []
 
 
-def test_send_attach_must_be_a_list_of_paths(tmp_path, monkeypatch):
-    monkeypatch.delenv("AGENT_NAME", raising=False)
+def test_send_attach_must_be_a_list_of_paths(tmp_path):
     state = _daemon_state(tmp_path)
 
     response = asyncio.run(_socket_command(state, {"command": "send", "message": "hi", "attach": "/tmp/x"}))
@@ -628,8 +736,8 @@ def test_send_attach_must_be_a_list_of_paths(tmp_path, monkeypatch):
 def test_run_sweep_uses_structured_references(tmp_path, monkeypatch):
     state = _daemon_state(tmp_path)
     root = state.service.attachments_root
-    referenced = attachments.ingest_file(root, _seed_file(tmp_path, "keep.bin"), None)
-    orphan = attachments.ingest_file(root, _seed_file(tmp_path, "orphan.bin"), None)
+    referenced = stored_attachment(root, _seed_file(tmp_path, "keep.bin"), None)
+    orphan = stored_attachment(root, _seed_file(tmp_path, "orphan.bin"), None)
     state.service.store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "", "attachments": [referenced]})
     ancient = 1000
     for directory in (root / referenced["id"], root / orphan["id"]):

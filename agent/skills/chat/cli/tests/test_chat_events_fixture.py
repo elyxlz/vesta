@@ -65,7 +65,7 @@ def _reply() -> StoredEvent:
 
 
 def _fixture_content(tmp_path: pl.Path) -> str:
-    store = Store(store_path(tmp_path / "data"))
+    store = Store(store_path(tmp_path / "data"), "vesta")
     state = ServiceState(store, tmp_path / "notifications", tmp_path / "attachments")
     echo = asyncio.run(_intake(state))
     echo["ts"] = _FIXED_TS
@@ -102,7 +102,7 @@ def test_chat_events_fixture_up_to_date(tmp_path: pl.Path) -> None:
 def test_echo_carries_the_intent_id_and_store_id(tmp_path: pl.Path) -> None:
     """The echo is what confirms a client's optimistic bubble: it must carry the client's intent_id and the
     store-assigned id the history page will serve for the same row."""
-    store = Store(store_path(tmp_path / "data"))
+    store = Store(store_path(tmp_path / "data"), "vesta")
     state = ServiceState(store, tmp_path / "notifications", tmp_path / "attachments")
     echo = asyncio.run(_intake(state))
     events, _ = store.page()
