@@ -1,3 +1,4 @@
+import type { ChatAttachment } from "../attachments/attachment-model";
 import type { HistoryPage } from "../chat/chat-stream-model";
 import { parseHistoryPage } from "../protocol/parse-chat";
 import type { Room } from "../protocol/tree";
@@ -26,6 +27,22 @@ export interface ChatImportAck {
   skipped: number;
 }
 
+// The three upload-session acks. `create` mints the id every later call addresses, `status` is the
+// resume probe, and `complete` answers the finalized metadata a post then carries by id.
+export interface AttachmentCreated {
+  id: string;
+}
+
+export interface AttachmentStatus {
+  received: number;
+  size: number;
+  finalized: boolean;
+}
+
+export interface AttachmentCompleted {
+  attachment: ChatAttachment;
+}
+
 export function roomsPath(): string {
   return "/rooms";
 }
@@ -37,6 +54,19 @@ export function roomHistoryPath(id: string, cursor?: number): string {
 
 export function roomMessagesPath(id: string): string {
   return `/rooms/${encodeURIComponent(id)}/messages`;
+}
+
+// The upload surface: POST here to open a session, then address the id it answers. The data,
+// status, and complete subpaths hang off that id, and this same path serves the finalized blob.
+export function roomAttachmentsPath(): string {
+  return "/rooms/attachments";
+}
+
+// The blob read, which doubles as the base of the upload subpaths. Query-free like the socket
+// path: a download surface passes `new URLSearchParams({ download: "1" })` to `authedUrl` or the
+// http client, since a `?` baked in here would meet the token's own `?` and strand the request.
+export function roomAttachmentPath(id: string): string {
+  return `/rooms/attachments/${encodeURIComponent(id)}`;
 }
 
 // The replay-free live room socket; dialed with the token in the query. Query-free like every

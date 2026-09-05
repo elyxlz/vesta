@@ -157,6 +157,7 @@ mod tests {
             input_method: None,
             intent_id: None,
             origin_id: None,
+            attachments: Vec::new(),
         })
     }
 

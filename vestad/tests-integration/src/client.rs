@@ -6,7 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::tungstenite::Message;
-use ureq::http::Response;
+use ureq::http::{HeaderMap, Response};
 use ureq::Body;
 
 use crate::types::{
@@ -666,6 +666,43 @@ impl Client {
             .read_to_string()
             .map_err(|e| format!("read body: {e}"))?;
         Ok((status, body))
+    }
+
+    /// PUT raw bytes to a proxied path with a chosen credential, preserving the upstream
+    /// status/body. The attachment chunk upload carries no JSON, and its 409 body is the
+    /// resync answer a scenario asserts, so neither may be mapped away.
+    pub fn proxy_put_bytes(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+        body: &[u8],
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.put(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.send(body).map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// GET a proxied path, keeping the response headers. A served blob states its whole policy in
+    /// its headers, so the body alone says nothing about it.
+    pub fn proxy_get_headers(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+    ) -> Result<(u16, HeaderMap), String> {
+        let mut request = self.agent.get(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
+        Ok((response.status().as_u16(), response.headers().clone()))
     }
 
     /// DELETE a path with a chosen credential, preserving the upstream status/body. The chat

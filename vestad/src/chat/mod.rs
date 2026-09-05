@@ -2,6 +2,8 @@
 //! agents share. `ChatNode` is the one owner of chat state on `AppState`; the store below it is
 //! two files under `<config_dir>/chat/`, held in memory.
 
+pub(crate) mod attachment_routes;
+pub(crate) mod attachments;
 pub(crate) mod node;
 pub(crate) mod routes;
 pub(crate) mod socket;
@@ -9,6 +11,7 @@ pub(crate) mod store;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use attachments::AttachmentMeta;
 pub(crate) use node::{ChatError, ChatNode, ImportItem, OpenRoom};
 
 /// The longest message text intake accepts, in characters.
@@ -79,7 +82,7 @@ pub(crate) enum InputMethod {
 
 /// One message as the history page and the socket carry it. Field names mirror the chat skill's
 /// event wire, which is why this struct is `snake_case` while `Room` is camelCase like the tree.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub(crate) struct Message {
     pub id: u64,
     /// RFC 3339 UTC with millisecond precision.
@@ -96,6 +99,9 @@ pub(crate) struct Message {
     /// The agent's local id of an imported message, so a re-import skips what already landed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_id: Option<u64>,
+    /// The finalized attachments this message carries, resolved before it was appended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 /// What `ChatNode::append` takes: everything but the id and the formatted stamp.
@@ -108,12 +114,13 @@ pub(crate) struct MessageDraft {
     pub input_method: Option<InputMethod>,
     pub intent_id: Option<String>,
     pub origin_id: Option<u64>,
+    pub attachments: Vec<AttachmentMeta>,
     /// Unix milliseconds.
     pub at_ms: u64,
 }
 
 /// One live-edge event. A message serializes as itself; the room events carry a `type` tag.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ChatEvent {
     Message(Message),
     RoomCreated(Room),

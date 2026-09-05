@@ -10,16 +10,17 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::auth::ChatPrincipal;
+use crate::chat::attachments::MAX_ATTACHMENTS_PER_MESSAGE;
 use crate::chat::{
-    ChatError, ImportItem, InputMethod, MessageDraft, MessageKind, OpenRoom, DEFAULT_PAGE_SIZE,
-    MAX_PAGE_SIZE, MAX_TEXT_CHARS, USER_NOTIFICATION_PREVIEW_CHARS, USER_SENDER,
+    AttachmentMeta, ChatError, ImportItem, InputMethod, MessageDraft, MessageKind, OpenRoom,
+    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_TEXT_CHARS, USER_NOTIFICATION_PREVIEW_CHARS, USER_SENDER,
 };
 use crate::state::SharedState;
 use crate::time_utils::{now_epoch_millis, now_epoch_secs};
 
 pub(crate) type ApiError = (StatusCode, Json<serde_json::Value>);
 
-fn error(status: StatusCode, message: impl Into<String>) -> ApiError {
+pub(crate) fn error(status: StatusCode, message: impl Into<String>) -> ApiError {
     (status, Json(serde_json::json!({ "error": message.into() })))
 }
 
@@ -187,11 +188,14 @@ pub(crate) struct ValidPost {
     pub(crate) text: String,
     pub(crate) input_method: Option<InputMethod>,
     pub(crate) intent_id: Option<String>,
+    /// Ids the caller uploaded; the handler resolves them to metadata before anything lands.
+    pub(crate) attachment_ids: Vec<String>,
 }
 
 /// Pure shape work over the raw body, mirroring the chat skill's intake rules.
 pub(crate) fn validate_post(body: &serde_json::Value) -> Result<ValidPost, String> {
-    let shape = "body must be {text: string, input_method?, intent_id?}";
+    let shape = "body must be {text?: string, attachments?: [id], input_method?, intent_id?}";
+    let attachment_shape = "attachments must be a list of ids";
     let Some(object) = body.as_object() else {
         return Err(shape.into());
     };
@@ -205,7 +209,28 @@ pub(crate) fn validate_post(body: &serde_json::Value) -> Result<ValidPost, Strin
             "message text is capped at {MAX_TEXT_CHARS} characters"
         ));
     }
-    if text.is_empty() {
+    let attachment_ids = match object.get("attachments") {
+        None => Vec::new(),
+        Some(serde_json::Value::Array(items)) => {
+            let ids: Vec<String> = items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect();
+            if ids.len() != items.len() {
+                return Err(attachment_shape.into());
+            }
+            ids
+        }
+        Some(_) => return Err(attachment_shape.into()),
+    };
+    if attachment_ids.len() > MAX_ATTACHMENTS_PER_MESSAGE {
+        return Err(format!(
+            "at most {MAX_ATTACHMENTS_PER_MESSAGE} attachments per message"
+        ));
+    }
+    // Attachments alone are a message: the text is what may be missing, not both.
+    if text.is_empty() && attachment_ids.is_empty() {
         return Err("empty message".into());
     }
     let input_method = match object
@@ -224,6 +249,7 @@ pub(crate) fn validate_post(body: &serde_json::Value) -> Result<ValidPost, Strin
         text,
         input_method,
         intent_id,
+        attachment_ids,
     })
 }
 
@@ -237,6 +263,24 @@ pub(crate) async fn post_message_handler(
         return Err(error(StatusCode::BAD_REQUEST, "invalid json body"));
     };
     let post = validate_post(&body).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))?;
+    // Resolved before any side effect, so a body naming an attachment this node never finalized
+    // persists nothing.
+    let attachments = post
+        .attachment_ids
+        .iter()
+        .map(|attachment_id| {
+            state
+                .chat
+                .attachments()
+                .read_meta(attachment_id)
+                .ok_or_else(|| {
+                    error(
+                        StatusCode::BAD_REQUEST,
+                        format!("unknown attachment: {attachment_id}"),
+                    )
+                })
+        })
+        .collect::<Result<Vec<AttachmentMeta>, ApiError>>()?;
     member_room(&state, &principal, &id)?;
     if let Some(intent_id) = &post.intent_id {
         if state.chat.intent_seen(intent_id) {
@@ -259,6 +303,7 @@ pub(crate) async fn post_message_handler(
         input_method: post.input_method,
         intent_id: post.intent_id.clone(),
         origin_id: None,
+        attachments,
         at_ms: now_millis(),
     });
     // Last, so only a message that landed deduplicates its retry.
@@ -266,8 +311,18 @@ pub(crate) async fn post_message_handler(
         state.chat.remember_intent(intent_id);
     }
     if kind == MessageKind::Chat {
-        let preview: String = message
-            .text
+        // An attachment-only reply still deserves its notification: fall back to the file names.
+        let announced = if message.text.is_empty() {
+            let names: Vec<&str> = message
+                .attachments
+                .iter()
+                .map(|meta| meta.name.as_str())
+                .collect();
+            names.join(", ")
+        } else {
+            message.text.clone()
+        };
+        let preview: String = announced
             .chars()
             .take(USER_NOTIFICATION_PREVIEW_CHARS)
             .collect();
@@ -295,6 +350,8 @@ pub(crate) struct ImportBodyItem {
     text: String,
     #[serde(default)]
     input_method: Option<InputMethod>,
+    #[serde(default)]
+    attachments: Option<Vec<String>>,
 }
 
 pub(crate) async fn import_handler(
@@ -334,6 +391,7 @@ pub(crate) async fn import_handler(
                 kind: item.kind,
                 text: item.text,
                 input_method: item.input_method,
+                attachments: item.attachments.unwrap_or_default(),
             })
         })
         .collect::<Result<Vec<ImportItem>, u64>>()
@@ -382,7 +440,7 @@ mod tests {
         );
         assert_eq!(
             validate_post(&serde_json::json!({ "text": 5 })).expect_err("shape"),
-            "body must be {text: string, input_method?, intent_id?}"
+            "body must be {text?: string, attachments?: [id], input_method?, intent_id?}"
         );
         let long = serde_json::json!({ "text": "x".repeat(crate::chat::MAX_TEXT_CHARS + 1) });
         assert_eq!(
@@ -395,6 +453,31 @@ mod tests {
                 .expect("odd method is dropped")
                 .input_method,
             None
+        );
+        let attachment_only = serde_json::json!({ "attachments": ["a", "b"] });
+        let post = validate_post(&attachment_only).expect("attachments carry an empty text");
+        assert_eq!(post.text, "");
+        assert_eq!(post.attachment_ids, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            validate_post(&serde_json::json!({ "text": "", "attachments": [] }))
+                .expect_err("nothing at all"),
+            "empty message"
+        );
+        assert_eq!(
+            validate_post(&serde_json::json!({ "attachments": "x" })).expect_err("not a list"),
+            "attachments must be a list of ids"
+        );
+        assert_eq!(
+            validate_post(&serde_json::json!({ "attachments": ["a", 2] })).expect_err("not ids"),
+            "attachments must be a list of ids"
+        );
+        let ids: Vec<String> = (0..=MAX_ATTACHMENTS_PER_MESSAGE)
+            .map(|index| index.to_string())
+            .collect();
+        assert_eq!(
+            validate_post(&serde_json::json!({ "text": "hi", "attachments": ids }))
+                .expect_err("too many"),
+            "at most 10 attachments per message"
         );
     }
 

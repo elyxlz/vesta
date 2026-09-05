@@ -2748,6 +2748,32 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/rooms/{id}/messages", post(crate::chat::routes::post_message_handler))
         .route("/rooms/{id}/messages/import", post(crate::chat::routes::import_handler))
         .route("/rooms/ws", get(crate::chat::socket::rooms_ws_handler))
+        .route(
+            "/rooms/attachments",
+            post(crate::chat::attachment_routes::create_attachment_handler),
+        )
+        .route(
+            "/rooms/attachments/{id}",
+            get(crate::chat::attachment_routes::serve_attachment_handler),
+        )
+        // One chunk plus its framing: the only route that carries bytes, and the only one whose
+        // body limit is raised off the default.
+        .route(
+            "/rooms/attachments/{id}/data",
+            put(crate::chat::attachment_routes::attachment_data_handler).route_layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::chat::attachments::MAX_CHUNK_BYTES + CHUNK_FRAMING_BYTES,
+                ),
+            ),
+        )
+        .route(
+            "/rooms/attachments/{id}/status",
+            get(crate::chat::attachment_routes::attachment_status_handler),
+        )
+        .route(
+            "/rooms/attachments/{id}/complete",
+            post(crate::chat::attachment_routes::complete_attachment_handler),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_chat,
@@ -3100,6 +3126,12 @@ pub struct ServerConfig {
     pub force_update: bool,
 }
 
+/// The chat attachment GC waits this long after boot, so a large first pass never delays serving.
+const SWEEP_STARTUP_DELAY_SECS: u64 = 60;
+const SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
+/// Headroom over one chunk for the request framing the body limit counts with it.
+const CHUNK_FRAMING_BYTES: usize = 1024 * 1024;
+
 pub async fn run_server(cfg: ServerConfig) {
     let ServerConfig {
         port,
@@ -3189,6 +3221,37 @@ pub async fn run_server(cfg: ServerConfig) {
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
     tokio::spawn(async move { flush_registry.run_flusher().await });
+    // Attachment GC: abandoned upload sessions, and finalized blobs no message ever referenced.
+    // The first pass waits out startup so a big rmtree never delays serving, and each pass walks
+    // the disk on a blocking thread.
+    let sweep_chat = state.chat.clone();
+    tokio::spawn(async move {
+        let mut delay = SWEEP_STARTUP_DELAY_SECS;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            delay = SWEEP_INTERVAL_SECS;
+            // An unknown reference set must never read as "nothing is referenced".
+            let Some(referenced) = sweep_chat.referenced_attachment_ids() else {
+                tracing::warn!("chat message log unreadable: skipping the attachment sweep");
+                continue;
+            };
+            let node = sweep_chat.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                node.attachments()
+                    .sweep(crate::time_utils::now_epoch_secs(), &|id| {
+                        referenced.contains(id)
+                    })
+            })
+            .await;
+            match pass {
+                Ok(swept) if !swept.is_empty() => {
+                    tracing::info!(count = swept.len(), "swept abandoned chat attachments");
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "chat attachment sweep failed"),
+            }
+        }
+    });
     // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
     // supervisor reports its exit so run_server's select never waits on it, because a branch that
     // resolved would end the select and stop the shutdown handler from stopping the agents.
@@ -3909,6 +3972,15 @@ mod tests {
                 last_message_at: None,
             },
         ];
+        let sample_attachment = crate::chat::AttachmentMeta {
+            id: "0f1e2d3c4b5a69788796a5b4c3d2e1f0".into(),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            size: 1234,
+            width: Some(640),
+            height: Some(480),
+            duration_secs: None,
+        };
         let chat_messages = vec![
             crate::chat::Message {
                 id: 1,
@@ -3920,6 +3992,7 @@ mod tests {
                 input_method: Some(crate::chat::InputMethod::Typed),
                 intent_id: Some("c-sample-1".into()),
                 origin_id: None,
+                attachments: Vec::new(),
             },
             crate::chat::Message {
                 id: 2,
@@ -3931,6 +4004,7 @@ mod tests {
                 input_method: None,
                 intent_id: None,
                 origin_id: None,
+                attachments: vec![sample_attachment.clone()],
             },
         ];
         let rooms = serde_json::json!({ "rooms": chat_rooms });
@@ -3938,6 +4012,11 @@ mod tests {
         let chat_history = serde_json::json!({ "events": chat_messages, "cursor": 1 });
         let chat_post = serde_json::json!({ "ok": true, "id": 2 });
         let chat_import = serde_json::json!({ "imported": 3, "skipped": 1 });
+        let attachment_created = serde_json::json!({ "id": &sample_attachment.id });
+        let attachment_status = serde_json::json!({
+            "received": sample_attachment.size, "size": sample_attachment.size, "finalized": true
+        });
+        let attachment_completed = serde_json::json!({ "attachment": &sample_attachment });
 
         serde_json::json!({
             "agent_statuses": agent_statuses,
@@ -3960,6 +4039,9 @@ mod tests {
             "chat_history": chat_history,
             "chat_post": chat_post,
             "chat_import": chat_import,
+            "attachment_created": attachment_created,
+            "attachment_status": attachment_status,
+            "attachment_completed": attachment_completed,
         })
     }
 

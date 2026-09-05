@@ -43,6 +43,24 @@ export const vestadApiFixtures = {
       "ws_port": 4201
     }
   ],
+  "attachment_completed": {
+    "attachment": {
+      "height": 480,
+      "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "mime": "image/png",
+      "name": "photo.png",
+      "size": 1234,
+      "width": 640
+    }
+  },
+  "attachment_created": {
+    "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  },
+  "attachment_status": {
+    "finalized": true,
+    "received": 1234,
+    "size": 1234
+  },
   "backups": [
     {
       "agent_name": "sample-agent",
@@ -91,6 +109,16 @@ export const vestadApiFixtures = {
         "type": "user"
       },
       {
+        "attachments": [
+          {
+            "height": 480,
+            "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "mime": "image/png",
+            "name": "photo.png",
+            "size": 1234,
+            "width": 640
+          }
+        ],
         "id": 2,
         "room": "dm:sample-agent",
         "sender": "sample-agent",

@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { HttpClient } from "../transport/http";
 import {
   fetchRoomHistory,
+  roomAttachmentPath,
+  roomAttachmentsPath,
   roomHistoryPath,
   roomMessagesPath,
   roomsPath,
@@ -17,6 +19,12 @@ describe("room paths", () => {
       "/rooms/dm%3Ascout/history?cursor=42",
     );
     expect(roomMessagesPath("dm:scout")).toBe("/rooms/dm%3Ascout/messages");
+  });
+
+  it("addresses the upload surface and one blob, leaving both query-free", () => {
+    expect(roomAttachmentsPath()).toBe("/rooms/attachments");
+    expect(roomAttachmentPath("a1b2c3")).toBe("/rooms/attachments/a1b2c3");
+    expect(roomAttachmentPath("a1b2/c3")).toBe("/rooms/attachments/a1b2%2Fc3");
   });
 
   it("leaves the socket path query-free, since the session URL builder appends its own", () => {
