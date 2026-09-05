@@ -14,7 +14,7 @@ from .daemon_state import State
 ENGINES = {"chromium": chromium, "camoufox": camoufox}
 
 
-async def _ensure_running(state: State, session: sessions_mod.Session) -> list[str]:
+async def ensure_running(state: State, session: sessions_mod.Session) -> list[str]:
     """Starts the session's engine when it is not running. Returns warnings (worker_restarted after a kill)."""
     if session.runtime is not None:
         return []
@@ -33,7 +33,7 @@ async def _ensure_running(state: State, session: sessions_mod.Session) -> list[s
     return ["worker_restarted"] if restarted else []
 
 
-async def _stop_session(session: sessions_mod.Session, *, force: bool = False) -> bool:
+async def stop_session(session: sessions_mod.Session, *, force: bool = False) -> bool:
     """Stops a session's runtime. The one owner of the decision: refuses (returns False) a busy,
     starting, or handed-over session unless `force`, so a stop path never tears a runtime out from
     under an exec or out of the user's own hands.

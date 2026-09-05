@@ -182,7 +182,7 @@ def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
     """One raised exception must not end the loop that stops every idle browser for this daemon's life."""
     monkeypatch.setattr(serve, "IDLE_SWEEP_SECS", 0.05)
     monkeypatch.setattr(serve, "IDLE_STOP_SECS", 0)
-    original = serve._stop_session
+    original = serve.stop_session
     calls = []
 
     async def flaky(session, *, force=False):
@@ -191,7 +191,7 @@ def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
             raise RuntimeError("sweep boom")
         return await original(session, force=force)
 
-    monkeypatch.setattr(serve, "_stop_session", flaky)
+    monkeypatch.setattr(serve, "stop_session", flaky)
 
     async def run():
         await serve.request(paths, _exec("research", "print(1)"))
@@ -241,7 +241,7 @@ def test_a_stop_marks_the_session_before_it_awaits_the_engine(paths, monkeypatch
         session.runtime = await chromium.start(session, paths)
         sessions.mark(session, "ready")
         monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _record_then_stop)
-        await serve._stop_session(session, force=True)
+        await serve.stop_session(session, force=True)
         return seen
 
     assert asyncio.run(run()) == {"state": "stopped", "runtime": None}

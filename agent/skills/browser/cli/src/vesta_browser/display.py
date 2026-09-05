@@ -43,6 +43,9 @@ HANDOVER_APT_LINE = "apt-get install -y xvfb novnc x11vnc openbox"
 DEFAULT_X11_SOCKET_DIR = pl.Path("/tmp/.X11-unix")
 ABSTRACT_X11_PREFIX = "\0/tmp/.X11-unix/X"
 
+# A start that is cancelled must leave nothing behind, so each starter kills the process it holds
+# before the cancellation travels on: the daemon shuts down mid-handover and these are its children.
+
 # The handover display shows exactly one window. Left to itself openbox smart-places it a few pixels
 # off origin and adds a titlebar, so the stream sits misaligned in the page's screen cut-out.
 OPENBOX_RC = """<?xml version="1.0"?>
@@ -122,6 +125,11 @@ def display_reachable(paths: Paths, number: int) -> bool:
     return _unix_socket_serving(f"{ABSTRACT_X11_PREFIX}{number}") or own_display_serving(paths, number)
 
 
+def display_number(display: str) -> int:
+    """The number in a display name: `:101` and `:101.0` are both display 101."""
+    return int(display.lstrip(":").split(".")[0])
+
+
 def port_serving(port: int) -> bool:
     with socket.socket() as probe:
         probe.settimeout(SOCKET_PROBE_TIMEOUT_SECS)
@@ -192,7 +200,12 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        if await _xvfb_ready(paths, process, number):
+        try:
+            ready = await _xvfb_ready(paths, process, number)
+        except BaseException:
+            await kill_group(process, KILL_GRACE_SECS)
+            raise
+        if ready:
             return display, process
         if process.returncode is None:
             await kill_group(process, KILL_GRACE_SECS)
@@ -261,7 +274,12 @@ async def start_x11vnc(display: str, vnc_port: int) -> asyncio.subprocess.Proces
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        if await _x11vnc_settles(process, vnc_port):
+        try:
+            settled = await _x11vnc_settles(process, vnc_port)
+        except BaseException:
+            await kill_group(process, KILL_GRACE_SECS)
+            raise
+        if settled:
             return process
         if process.returncode is None:
             await kill_group(process, KILL_GRACE_SECS)
@@ -301,7 +319,12 @@ async def start_websockify(webroot: pl.Path, web_port: int, vnc_port: int, log: 
             stdout=handle,
             stderr=asyncio.subprocess.STDOUT,
         )
-    if await _await_port(process, web_port, WEB_READY_TIMEOUT_SECS):
+    try:
+        serving = await _await_port(process, web_port, WEB_READY_TIMEOUT_SECS)
+    except BaseException:
+        await kill_group(process, KILL_GRACE_SECS)
+        raise
+    if serving:
         return process
     await kill_group(process, KILL_GRACE_SECS)
     raise DisplayError(f"websockify never served port {web_port}. See {log}")
@@ -315,4 +338,4 @@ async def stop_stack(paths: Paths, stack: DisplayStack) -> None:
         kill_group(stack.openbox, KILL_GRACE_SECS),
     )
     await kill_group(stack.xvfb, KILL_GRACE_SECS)
-    _clear_stale_records(paths, int(stack.display.lstrip(":").split(".")[0]))
+    _clear_stale_records(paths, display_number(stack.display))

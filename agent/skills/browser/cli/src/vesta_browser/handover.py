@@ -15,6 +15,7 @@ import datetime as dt
 import logging
 import os
 import shutil
+import time
 import typing as tp
 import uuid
 
@@ -26,7 +27,7 @@ from .handover_state import Handover, StopReason, payload
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
 from .runtimes import EngineRuntime, HeadedDisplay
-from .session_control import ENGINES, _stop_session
+from .session_control import ENGINES, stop_session
 
 logger = logging.getLogger(__name__)
 SERVICE = "browser"
@@ -35,6 +36,10 @@ LIFETIME_DEFAULT_MINUTES = 30
 LIFETIME_MIN_MINUTES = 1
 LIFETIME_MAX_MINUTES = 240
 NAVIGATE_TIMEOUT_SECS = 60
+# A shutdown slice this short still lets a step start; it exists so a spent budget never passes
+# `asyncio.wait_for` a zero or negative timeout, which would cancel the step before it runs.
+MIN_SHUTDOWN_SLICE_SECS = 0.05
+SETTLE_POLL_SECS = 0.02
 
 
 def _in_use(message: str) -> p.BrowserError:
@@ -77,7 +82,7 @@ async def _start_display(paths: Paths, web_port: int) -> display.DisplayStack:
         x11vnc = await display.start_x11vnc(name, vnc_port)
         started.append(x11vnc)
         websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
-    except Exception:
+    except BaseException:
         await asyncio.gather(*[kill_group(process, KILL_GRACE_SECS) for process in reversed(started)], return_exceptions=True)
         raise
     return display.DisplayStack(name, xvfb, openbox, x11vnc, websockify, vnc_port, web_port, webroot)
@@ -89,9 +94,8 @@ def _healthy(paths: Paths, handover: Handover) -> bool:
     runtime = handover.session.runtime
     if stack is None or runtime is None:
         return False
-    number = int(stack.display.lstrip(":").split(".")[0])
     return (
-        display.own_display_serving(paths, number)
+        display.own_display_serving(paths, display.display_number(stack.display))
         and display.port_serving(stack.vnc_port)
         and display.port_serving(stack.web_port)
         and runtime.process.returncode is None
@@ -114,12 +118,13 @@ async def _bring_up(state: State, handover: Handover, *, public_url: str, agent:
     session.runtime = runtime
     warnings = await _navigate(paths, session, runtime, url) if url is not None else []
     secret = await gateway.mint_key(SERVICE, handover.key_label, int(minutes * MINUTE_SECS))
+    handover.expires_at = _expiry_iso(minutes)
     handover.key_id = await gateway.find_key_id(SERVICE, handover.key_label)
     handover.user_url = f"{public_url.rstrip('/')}/agents/{agent}/{SERVICE}/k/{secret}/handover.html"
     if not await asyncio.to_thread(_healthy, paths, handover):
         raise _failed("the display stack came up but is not serving")
     handover.state = "live"
-    handover.task = _own(state, _expire(state, minutes))
+    handover.task = _own(state, _expire(state, handover, minutes))
     return warnings
 
 
@@ -136,35 +141,34 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     session = sessions_mod.resolve_session(state.table, session_name, mode)
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))
-    await _stop_session(session)
+    await stop_session(session)
     sessions_mod.mark(session, "handed_over")
     handover_id = uuid.uuid4().hex[:8]
-    handover = Handover(
-        id=handover_id,
-        session=session,
-        key_label=f"browser-handover-{handover_id}",
-        expires_at=_expiry_iso(minutes),
-        state="starting",
-    )
+    handover = Handover(id=handover_id, session=session, key_label=f"browser-handover-{handover_id}", state="starting")
     state.handover = handover
+    # The bring-up runs as a task the daemon owns, because it holds the display stack and the
+    # browser for as long as it runs: a shutdown must be able to cancel it and take them back.
+    bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes))
+    handover.task = bring_up
     try:
-        warnings = await _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes)
-    except Exception as exc:
-        await stop(state, reason="failed")
+        await asyncio.wait({bring_up})
+        warnings = bring_up.result()
+    except BaseException as exc:
+        await stop(state, handover, reason="failed")
         raise _failed(str(exc) or type(exc).__name__) from exc
     return handover, warnings
 
 
-async def _expire(state: State, minutes: int) -> None:
+async def _expire(state: State, handover: Handover, minutes: int) -> None:
     await asyncio.sleep(minutes * MINUTE_SECS)
-    await stop(state, reason="expired")
+    await stop(state, handover, reason="expired")
 
 
-async def _stop_failed(state: State) -> None:
-    await stop(state, reason="failed")
+async def _stop_failed(state: State, handover: Handover) -> None:
+    await stop(state, handover, reason="failed")
 
 
-async def _guarded(step: tp.Awaitable[object], what: str) -> bool:
+async def _guarded(step: tp.Awaitable[bool | None], what: str) -> bool:
     try:
         await step
     except Exception:
@@ -173,10 +177,10 @@ async def _guarded(step: tp.Awaitable[object], what: str) -> bool:
     return True
 
 
-async def _cancel_expiry(handover: Handover) -> None:
-    task = handover.task
-    handover.task = None
-    if task is None or task is asyncio.current_task():
+async def _cancel_task(handover: Handover) -> None:
+    """Drops whatever the handover currently owns: the bring-up while starting, the timer once live."""
+    task, handover.task = handover.task, None
+    if task is None or task.done() or task is asyncio.current_task():
         return
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
@@ -184,31 +188,29 @@ async def _cancel_expiry(handover: Handover) -> None:
 
 
 async def _release_key(handover: Handover, timeout: float) -> None:
-    key_id = handover.key_id if handover.key_id is not None else await gateway.find_key_id(SERVICE, handover.key_label, timeout=timeout)
-    handover.key_id = None
+    """The URL goes first, before anything that can fail: a key on its way out must stop printing."""
+    key_id, handover.key_id = handover.key_id, None
+    handover.user_url = ""
+    if key_id is None:
+        key_id = await gateway.find_key_id(SERVICE, handover.key_label, timeout=timeout)
     if key_id is not None:
         await gateway.revoke_key(SERVICE, key_id, timeout=timeout)
 
 
 async def _tear_display(paths: Paths, handover: Handover) -> None:
-    stack = handover.stack
-    handover.stack = None
+    stack, handover.stack = handover.stack, None
     if stack is not None:
         await display.stop_stack(paths, stack)
 
 
-async def stop(state: State, *, reason: StopReason, gateway_timeout: float = gateway.GATEWAY_TIMEOUT_SECS) -> list[str]:
-    """Every teardown step attempted, whatever the one before it did. Idempotent, and safe to call
-    on a handover that never finished starting: each step owns whether it has anything to undo."""
-    handover = state.handover
-    if handover is None or handover.state in ("inactive", "stopping"):
-        return []
-    handover.state = "stopping"
+async def _teardown(state: State, handover: Handover, reason: StopReason, gateway_timeout: float) -> list[str]:
+    """Every step attempted, whatever the one before it did, so a failed revoke never skips the
+    deregister. Each step owns whether it has anything to undo, so a half-started handover is fine."""
     done = [
-        await _guarded(_cancel_expiry(handover), "cancel the expiry timer"),
+        await _guarded(_cancel_task(handover), "drop the task it owns"),
         await _guarded(_release_key(handover, gateway_timeout), "revoke the handover key"),
         await _guarded(gateway.deregister_service(SERVICE, timeout=gateway_timeout), "deregister the service"),
-        await _guarded(_stop_session(handover.session, force=True), "stop the headed browser"),
+        await _guarded(stop_session(handover.session, force=True), "stop the headed browser"),
         await _guarded(_tear_display(state.paths, handover), "stop the display stack"),
         await _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),
     ]
@@ -217,12 +219,56 @@ async def stop(state: State, *, reason: StopReason, gateway_timeout: float = gat
     return [] if all(done) else ["cleanup_incomplete"]
 
 
+async def stop(state: State, handover: Handover, *, reason: StopReason, gateway_timeout: float = gateway.GATEWAY_TIMEOUT_SECS) -> list[str]:
+    """Gives `handover` back, once. A caller holding a handover the daemon has already replaced or
+    torn down gets a no-op, so a timer firing late can never touch the handover that came after it."""
+    if state.handover is not handover or handover.state in ("inactive", "stopping"):
+        return []
+    handover.state = "stopping"
+    return await _teardown(state, handover, reason, gateway_timeout)
+
+
+def _slice(deadline: float) -> float:
+    return max(deadline - time.monotonic(), MIN_SHUTDOWN_SLICE_SECS)
+
+
+async def _settle(handover: Handover, deadline: float) -> None:
+    """Waits out a teardown another task already started, so the shutdown that follows cannot cancel
+    that task halfway through it."""
+    while time.monotonic() < deadline:
+        if handover.state != "stopping":
+            return
+        await asyncio.sleep(SETTLE_POLL_SECS)
+
+
+async def shutdown(state: State, *, budget: float, gateway_timeout: float) -> None:
+    """The daemon taking a handover back on its way out, inside `budget`.
+
+    The state is claimed before the bring-up is cancelled, so the `start` waiting on that task rolls
+    nothing back itself and this is the one teardown. Whatever the budget cuts short, the display
+    stack is still killed here, and the browser by the session teardown that follows.
+    """
+    handover = state.handover
+    if handover is None or handover.state == "inactive":
+        return
+    deadline = time.monotonic() + budget
+    if handover.state in ("starting", "live"):
+        handover.state = "stopping"
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_cancel_task(handover), _slice(deadline))
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_teardown(state, handover, "stopped", gateway_timeout), _slice(deadline))
+    else:
+        await _settle(handover, deadline)
+    await _guarded(_tear_display(state.paths, handover), "stop the display stack")
+
+
 async def status(state: State) -> dict[str, p.JsonValue]:
     """The current payload, with a live handover's health re-read: a broken one reports and stops."""
     handover = state.handover
     if handover is not None and handover.state == "live" and not await asyncio.to_thread(_healthy, state.paths, handover):
         handover.state = "failed"
-        _own(state, _stop_failed(state))
+        _own(state, _stop_failed(state, handover))
     return payload(handover)
 
 
@@ -263,6 +309,6 @@ async def op_handover_status(state: State, request_id: str, _request: dict[str, 
 
 async def op_handover_stop(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
     live = state.handover
-    warnings = await stop(state, reason="stopped")
+    warnings = await stop(state, live, reason="stopped") if live is not None else []
     session = sessions_mod.info(live.session) if live is not None else None
     return p.result(request_id=request_id, op="handover_stop", ok=True, session=session, data=payload(state.handover), warnings=warnings)

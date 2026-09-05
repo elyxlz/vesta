@@ -1,6 +1,7 @@
 """The handover: one headed browser on a private display, one keyed URL, and one clean teardown."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import os
@@ -16,7 +17,7 @@ from vesta_browser import display, handover, serve
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_display_fakes, write_fakes, write_gateway_fakes, write_script
-from .waiting import POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_all_dead, with_daemon
+from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_all_dead, with_daemon
 
 FAKE_CAMOUFOX = pl.Path(__file__).parent / "fake_camoufox"
 PUBLIC_URL = "https://gw.example"
@@ -105,6 +106,22 @@ def _exec(session, code, request_id="e1"):
 def _fetch(url):
     with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT_SECS) as answer:
         return answer.status
+
+
+async def _wait_for_pids(rig, wanted):
+    deadline = time.monotonic() + POLL_DEADLINE_SECS
+    while time.monotonic() < deadline:
+        if len(rig.display_pids()) >= wanted:
+            return
+        await asyncio.sleep(POLL_INTERVAL_SECS)
+    raise AssertionError(f"only {len(rig.display_pids())} display processes started, wanted {wanted}")
+
+
+def _await_all_dead(pids):
+    deadline = time.monotonic() + EXPIRY_DEADLINE_SECS
+    while time.monotonic() < deadline and any(pid_alive(pid) for pid in pids):
+        time.sleep(POLL_INTERVAL_SECS)
+    return not any(pid_alive(pid) for pid in pids)
 
 
 def _minutes_ahead(stamp):
@@ -224,7 +241,7 @@ def test_a_missing_public_url_fails_before_anything_is_registered(rig, monkeypat
     assert started["ok"] is False and started["error"]["code"] == "handover_failed"
     assert "VESTAD_PUBLIC_URL" in started["error"]["message"]
     assert rig.register_log() == ""
-    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] in ([], ["stopped"])
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == []
 
 
 def test_a_mint_failure_rolls_the_whole_handover_back(rig):
@@ -245,6 +262,38 @@ def test_a_mint_failure_rolls_the_whole_handover_back(rig):
     assert status["data"]["state"] == "failed"
 
 
+@pytest.mark.parametrize("minutes", [0, 241, True])
+def test_a_lifetime_outside_the_allowed_range_is_refused(rig, minutes):
+    async def run():
+        return await serve.request(rig.paths, _start(minutes=minutes))
+
+    refused = with_daemon(rig.paths, run)
+    assert refused["ok"] is False and refused["error"]["code"] == "invalid_request"
+    assert rig.register_log() == ""
+
+
+def test_a_shutdown_during_start_leaves_no_display_behind(rig):
+    """The daemon stops while the stack is half built: it owns the bring-up, so it takes it back."""
+    (rig.x11_dir / "slow").write_text("")
+
+    async def run():
+        pending = asyncio.create_task(serve.request(rig.paths, _start()))
+        try:
+            await wait_for_state(rig.paths, "research", "handed_over")
+            await _wait_for_pids(rig, 3)
+            return await serve.request(rig.paths, _op("handover_status")), rig.display_pids()
+        finally:
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pending
+
+    status, pids = with_daemon(rig.paths, run)
+    assert status["data"]["state"] == "starting" and status["data"]["user_url"] is None
+    assert len(pids) == 3 and _await_all_dead(pids)
+    assert rig.register_log() == "browser\nderegister browser\n"
+    assert not (rig.paths.profiles / "chromium" / "research" / "launches").exists()
+
+
 def test_daemon_shutdown_stops_a_live_handover(rig):
     async def run():
         started = await serve.request(rig.paths, _start())
@@ -252,9 +301,6 @@ def test_daemon_shutdown_stops_a_live_handover(rig):
         return rig.display_pids()
 
     pids = with_daemon(rig.paths, run)
-    deadline = time.monotonic() + EXPIRY_DEADLINE_SECS
-    while time.monotonic() < deadline and any(pid_alive(pid) for pid in pids):
-        time.sleep(POLL_INTERVAL_SECS)
-    assert len(pids) == 4 and not any(pid_alive(pid) for pid in pids)
+    assert len(pids) == 4 and _await_all_dead(pids)
     assert rig.keys() == []
     assert "deregister browser\n" in rig.register_log()

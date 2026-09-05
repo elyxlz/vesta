@@ -26,7 +26,7 @@ from .daemon_state import State, routes
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths, load_paths
 from .runtimes import ExecOutcome
-from .session_control import ENGINES, _ensure_running, _stop_session
+from .session_control import ENGINES, ensure_running, stop_session
 
 logger = logging.getLogger(__name__)
 IDLE_SWEEP_SECS = 60
@@ -35,9 +35,11 @@ PRUNE_INTERVAL_SECS = 3600
 # `browser daemon stop` SIGKILLs this process two thirds into its own stop budget, so every session
 # teardown shares one budget below that point; whatever the budget catches is killed outright.
 SHUTDOWN_BUDGET_SECS = 6.0
-# A shutdown still asks vestad to revoke the key and drop the service, but a slow vestad must not
-# eat the SIGKILL window the whole teardown shares.
-HANDOVER_GATEWAY_TIMEOUT_SECS = 3.0
+# The handover's slice of that budget, and the vestad timeout inside it. A shutdown still asks
+# vestad to revoke the key and drop the service, but three sequential calls at 0.6s fit the slice,
+# so a vestad that never answers cannot eat the sessions' 4s or the SIGKILL window past it.
+HANDOVER_SHUTDOWN_SECS = 2.0
+SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
 
 
 async def op_status(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
@@ -123,7 +125,7 @@ async def _run_exec(state: State, session: sessions_mod.Session, request_id: str
         session.request_id = None
         needs_restart = outcome is not None and session.engine == "camoufox" and (outcome.timed_out or "worker_restarted" in outcome.warnings)
         if needs_restart:
-            await _stop_session(session, force=True)
+            await stop_session(session, force=True)
             state.restart_pending.add(session.name)
         else:
             sessions_mod.mark(session, "ready")
@@ -171,7 +173,7 @@ async def op_exec(state: State, request_id: str, request: dict[str, p.JsonValue]
         )
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {name!r} is {session.state}; retry once the current request finishes"))
-    warnings += await _ensure_running(state, session)
+    warnings += await ensure_running(state, session)
     sessions_mod.mark(session, "busy")
     session.request_id = request_id
     outcome, started_at = await _run_exec(state, session, request_id, code, timeout)
@@ -197,7 +199,7 @@ async def op_session_stop(state: State, request_id: str, request: dict[str, p.Js
     if name not in state.table.sessions:
         raise p.BrowserError(p.invalid(f"unknown session {name!r}"))
     session = state.table.sessions[name]
-    if not await _stop_session(session):
+    if not await stop_session(session):
         raise p.BrowserError(p.invalid(f"session {name!r} is {session.state}; refusing to stop"))
     return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
 
@@ -206,7 +208,7 @@ async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonV
     stopped: list[str] = []
     for session in state.table.sessions.values():
         was_stopped = session.state == "stopped"
-        if await _stop_session(session) and not was_stopped:
+        if await stop_session(session) and not was_stopped:
             stopped.append(session.name)
     return p.result(request_id=request_id, op="stop_all", ok=True, data={"stopped": stopped})
 
@@ -221,7 +223,7 @@ async def _idle_sweep(state: State) -> None:
         try:
             for session in sessions_mod.idle_sessions(state.table, IDLE_STOP_SECS):
                 logger.info("stopping idle session %s", session.name)
-                await _stop_session(session)
+                await stop_session(session)
             since_prune += IDLE_SWEEP_SECS
             if since_prune >= PRUNE_INTERVAL_SECS:
                 since_prune = 0.0
@@ -330,8 +332,8 @@ async def _stop_every_session(state: State) -> None:
     if not sessions:
         return
     runtimes = [session.runtime for session in sessions]
-    stops = [asyncio.ensure_future(_stop_session(session, force=True)) for session in sessions]
-    _, pending = await asyncio.wait(stops, timeout=SHUTDOWN_BUDGET_SECS)
+    stops = [asyncio.ensure_future(stop_session(session, force=True)) for session in sessions]
+    _, pending = await asyncio.wait(stops, timeout=SHUTDOWN_BUDGET_SECS - HANDOVER_SHUTDOWN_SECS)
     if not pending:
         return
     for task in pending:
@@ -341,8 +343,15 @@ async def _stop_every_session(state: State) -> None:
 
 
 async def shutdown(state: State) -> None:
-    """Cancels the idle sweep, cancels and awaits every inflight exec, gives back a live handover
-    inside half the budget, then force-stops every session."""
+    """Gives a handover back first, then cancels the idle sweep and every inflight exec, then
+    force-stops every session.
+
+    The handover goes first because it owns the task that is still building a display stack and a
+    browser: cancelling it as part of the sweep would strand both. Its slice plus the sessions'
+    is the whole budget, and every kill inside them is itself bounded, so the daemon is always
+    gone well before `browser daemon stop` SIGKILLs it.
+    """
+    await handover.shutdown(state, budget=HANDOVER_SHUTDOWN_SECS, gateway_timeout=SHUTDOWN_GATEWAY_TIMEOUT_SECS)
     for task in list(state.tasks):
         task.cancel()
     for task in list(state.tasks):
@@ -353,10 +362,6 @@ async def shutdown(state: State) -> None:
         task.cancel()
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
-    if state.handover is not None and state.handover.state in ("starting", "live"):
-        stopping = handover.stop(state, reason="stopped", gateway_timeout=HANDOVER_GATEWAY_TIMEOUT_SECS)
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stopping, SHUTDOWN_BUDGET_SECS / 2)
     await _stop_every_session(state)
 
 
