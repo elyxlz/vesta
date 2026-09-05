@@ -134,6 +134,8 @@ export function FormSection({
 
 interface RowProps {
   label: string;
+  // A short secondary note on the label's own line, after the label.
+  labelNote?: string;
   detail?: string;
   icon?: IconName;
   value?: string;
@@ -149,6 +151,7 @@ interface RowProps {
 
 export function FormRow({
   label,
+  labelNote,
   detail,
   icon,
   value,
@@ -177,14 +180,21 @@ export function FormRow({
         </View>
       ) : null}
       <View style={styles.rowText}>
-        <Text
-          style={[
-            styles.rowLabel,
-            { color: destructive ? colors.danger : colors.text },
-          ]}
-        >
-          {label}
-        </Text>
+        <View style={styles.rowLabelLine}>
+          <Text
+            style={[
+              styles.rowLabel,
+              { color: destructive ? colors.danger : colors.text },
+            ]}
+          >
+            {label}
+          </Text>
+          {labelNote ? (
+            <Text style={[styles.rowLabelNote, { color: colors.tertiaryText }]}>
+              {labelNote}
+            </Text>
+          ) : null}
+        </View>
         {detail ? (
           <Text style={[styles.rowDetail, { color: colors.tertiaryText }]}>
             {detail}
@@ -332,7 +342,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  rowLabelLine: { flexDirection: "row", alignItems: "baseline", gap: 6 },
   rowLabel: { fontSize: 16, fontWeight: "500" },
+  rowLabelNote: { fontSize: 13 },
   rowDetail: { fontSize: 14, lineHeight: 20 },
   value: { fontSize: 15 },
   valueDot: { width: 8, height: 8, borderRadius: 4 },
