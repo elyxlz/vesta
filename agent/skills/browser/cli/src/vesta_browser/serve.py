@@ -34,12 +34,11 @@ IDLE_STOP_SECS = p.SESSION_IDLE_STOP_SECS
 PRUNE_INTERVAL_SECS = 3600
 # `browser daemon stop` SIGKILLs this process two thirds into its own 15s budget, so every teardown
 # below shares one budget under that 10s point. A live handover's own steps stay inside
-# HANDOVER_SHUTDOWN_SECS, but the display kill after them is unbounded by that budget (three parallel
-# kill_group at KILL_GRACE_SECS, then Xvfb for one more): 4.0 spent at the worst. The sessions then
-# get whatever SHUTDOWN_BUDGET_SECS has left of that spend (floored at MIN_SESSION_BUDGET_SECS), plus
-# their own KILL_GRACE_SECS escalation past that: 4.0 + 2.0 + 1.0 = 7.0 at the worst, and a shutdown
-# with no handover to give back spends none of the first term and gives the sessions the whole
-# SHUTDOWN_BUDGET_SECS. A hung chromium launch or camoufox's stop can still overrun their own finally.
+# HANDOVER_SHUTDOWN_SECS and end only the stream stack, since the display beneath it is a session's
+# own and outlives any one handover of it. The sessions then get whatever SHUTDOWN_BUDGET_SECS has
+# left of that spend (floored at MIN_SESSION_BUDGET_SECS) to stop their own engine and display, each
+# escalating past that budget at its own KILL_GRACE_SECS. A hung chromium launch or camoufox's stop
+# can still overrun its own finally.
 SHUTDOWN_BUDGET_SECS = 6.0
 HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
@@ -338,20 +337,29 @@ async def serve(paths: Paths) -> int:
 
 async def _stop_every_session(state: State, budget: float) -> None:
     """Every session torn down at once inside one budget, not one after another: a stop that is
-    still running when the budget expires has its process group killed, because the alternative is
-    a browser orphaned by the SIGKILL that ends this daemon, still holding its profile lock."""
+    still running when the budget expires has its engine and display process groups killed, because
+    the alternative is a browser or Xvfb orphaned by the SIGKILL that ends this daemon, still holding
+    its profile lock or X socket."""
     sessions = list(state.table.sessions.values())
     if not sessions:
         return
     runtimes = [session.runtime for session in sessions]
+    displays = [session.display for session in sessions]
     stops = [asyncio.ensure_future(stop_session(state.paths, session, force=True)) for session in sessions]
     _, pending = await asyncio.wait(stops, timeout=budget)
     if not pending:
         return
     for task in pending:
         task.cancel()
-    stuck = [runtime for task, runtime in zip(stops, runtimes, strict=True) if task in pending and runtime is not None]
-    await asyncio.gather(*[kill_group(runtime.process, KILL_GRACE_SECS) for runtime in stuck], *pending, return_exceptions=True)
+    stuck: list[asyncio.subprocess.Process] = []
+    for task, runtime, session_display in zip(stops, runtimes, displays, strict=True):
+        if task not in pending:
+            continue
+        if runtime is not None:
+            stuck.append(runtime.process)
+        if session_display is not None:
+            stuck += [session_display.xvfb, session_display.openbox]
+    await asyncio.gather(*[kill_group(process, KILL_GRACE_SECS) for process in stuck], *pending, return_exceptions=True)
 
 
 async def shutdown(state: State) -> None:

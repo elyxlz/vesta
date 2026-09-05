@@ -15,6 +15,7 @@ from .hermetic import isolated_path
 def test_doctor_reports_daemon_engines_sessions_and_disk(tmp_path, monkeypatch):
     bin_dir = isolated_path(tmp_path, monkeypatch)
     env = write_fakes(bin_dir)
+    write_display_fakes(bin_dir, tmp_path / "x11")
     env["VESTA_BROWSER_CAMOUFOX_PYTHON"] = sys.executable
     paths = load_paths(env, tmp_path)
 
@@ -34,6 +35,7 @@ def test_doctor_reports_daemon_engines_sessions_and_disk(tmp_path, monkeypatch):
     res = asyncio.run(run())
     data = res["data"]
     assert data["daemon"]["protocol_version"] == 1 and data["daemon"]["socket"] == str(paths.socket)
+    assert data["engines"]["display"]["ready"] is True and data["engines"]["display"]["missing"] == []
     assert data["engines"]["routes"]["standard"]["ready"] is True
     assert data["engines"]["routes"]["stealth"]["ready"] is False
     assert data["engines"]["versions"]["camoufox"] == "unavailable"  # the test interpreter has no camoufox
@@ -108,5 +110,8 @@ def test_doctor_lists_every_missing_handover_binary_with_an_empty_path(tmp_path,
     paths = load_paths(env, tmp_path)
 
     data = asyncio.run(_doctor(paths))["data"]
+    assert data["engines"]["display"]["ready"] is False
+    assert sorted(data["engines"]["display"]["missing"]) == sorted(display.DISPLAY_BINARIES)
+    assert data["engines"]["routes"]["standard"]["ready"] is False
     assert data["handover"]["ready"] is False
-    assert sorted(data["handover"]["missing"]) == sorted([*display.DISPLAY_BINARIES, *display.STREAM_BINARIES, "novnc"])
+    assert sorted(data["handover"]["missing"]) == sorted([*display.STREAM_BINARIES, "novnc"])

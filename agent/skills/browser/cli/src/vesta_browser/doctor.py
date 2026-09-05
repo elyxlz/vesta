@@ -72,13 +72,12 @@ def _tree_bytes(root: pl.Path) -> int:
 
 async def report(state: State) -> dict[str, p.JsonValue]:
     paths = state.paths
-    missing = [*display.missing_display_binaries(paths), *display.missing_stream_binaries(paths)]
     return {
         "daemon": {"pid": os.getpid(), "protocol_version": p.PROTOCOL_VERSION, "socket": str(paths.socket), "log": str(paths.log)},
         "engines": {**routes(paths), "versions": await versions(paths)},
         "sessions": [dict(sessions_mod.info(s)) for s in state.table.sessions.values()],
         "artifacts": {"root": str(paths.artifacts), "bytes": await asyncio.to_thread(_tree_bytes, paths.artifacts)},
-        "handover": {"ready": not missing, "missing": missing, **handover_state.diagnostic(state.handover)},
+        "handover": {**display.stream_readiness(paths), **handover_state.diagnostic(state.handover)},
         "last_error": dict(state.last_error) if state.last_error is not None else None,
     }
 

@@ -11,6 +11,7 @@ import dataclasses
 
 from . import protocol as p
 from . import sessions as sessions_mod
+from .display import display_readiness
 from .handover_state import Handover
 from .runtime_paths import Paths
 from .runtimes import ExecOutcome
@@ -29,10 +30,12 @@ class State:
 
 
 def routes(paths: Paths) -> dict[str, p.JsonValue]:
-    """The mode-to-engine table with readiness read from the binaries on disk."""
+    """The mode-to-engine table, each route ready only with its binaries present and the display up."""
+    display = display_readiness(paths)
+    display_ok = display["ready"] is True
     ready = {
-        "chromium": paths.chromium_exe.is_file() and paths.browser_use_bin.is_file(),
-        "camoufox": paths.camoufox_python.is_file() and paths.camoufox_exe.is_file() and paths.worker_script.is_file(),
+        "chromium": paths.chromium_exe.is_file() and paths.browser_use_bin.is_file() and display_ok,
+        "camoufox": paths.camoufox_python.is_file() and paths.camoufox_exe.is_file() and paths.worker_script.is_file() and display_ok,
     }
     table: dict[str, p.JsonValue] = {}
     for mode, engine in p.ENGINE_FOR_MODE.items():
@@ -48,4 +51,5 @@ def routes(paths: Paths) -> dict[str, p.JsonValue]:
         "routes": table,
         "portable_helpers": list(p.PORTABLE_HELPERS),
         "profiles_shared_between_engines": False,
+        "display": display,
     }

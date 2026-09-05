@@ -1,4 +1,5 @@
 import asyncio
+import json
 import pathlib as pl
 import shutil
 import sys
@@ -6,7 +7,7 @@ import tempfile
 import time
 
 import pytest
-from vesta_browser import chromium, serve, sessions
+from vesta_browser import chromium, display, serve, sessions
 from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 from vesta_browser.runtimes import HeadedDisplay
@@ -53,6 +54,11 @@ def _exec(session, code, mode=None, timeout_s=10, request_id="r1"):
     return {"version": 1, "op": "exec", "request_id": request_id, "session": session, "mode": mode, "timeout_s": timeout_s, "code": code}
 
 
+def _display_pids(paths):
+    record = paths.x11_socket_dir / "pids"
+    return [int(line) for line in record.read_text().split()] if record.exists() else []
+
+
 async def _wait_for_file(path, timeout=POLL_DEADLINE_SECS):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -70,6 +76,20 @@ def test_exec_on_a_new_session_starts_chromium_and_returns_the_full_envelope(pat
     assert res["ok"] is True and res["session"]["engine"] == "chromium" and res["session"]["state"] == "ready"
     assert res["page"]["url"] == "https://example.com/" and res["output"]["exit_code"] == 0
     assert res["artifacts"] == [] and res["warnings"] == []
+
+
+def test_exec_claims_a_display_and_the_browser_launches_on_it(paths):
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        result = await serve.op_exec(state, "r1", _exec("research", "print(1)"))
+        session = state.table.sessions["research"]
+        env = json.loads((paths.profiles / "chromium" / "research" / "env.json").read_text())
+        return result, session.display.display, env["DISPLAY"], _display_pids(paths)
+
+    result, display_name, chromium_display, pids = asyncio.run(run())
+    assert result["ok"] is True
+    assert chromium_display == display_name
+    assert len(pids) == 2 and all(pid_alive(pid) for pid in pids)
 
 
 def test_stealth_exec_runs_camoufox_and_pins_the_session(paths):
@@ -179,6 +199,21 @@ def test_sessions_and_session_stop_and_stop_all(paths):
     assert all(s["state"] == "stopped" for s in final["data"]["sessions"])
 
 
+def test_session_stop_ends_the_display_too(paths):
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        await serve.op_exec(state, "r1", _exec("research", "print(1)"))
+        session = state.table.sessions["research"]
+        pids = [session.display.xvfb.pid, session.display.openbox.pid]
+        await serve.op_session_stop(state, "s1", {"session": "research"})
+        dead = await wait_until_all_dead(pids)
+        return dead, session.display
+
+    dead, display_after = asyncio.run(run())
+    assert dead is True
+    assert display_after is None
+
+
 def test_bad_exec_requests_are_invalid(paths):
     async def run():
         empty = await serve.request(paths, _exec("research", ""))
@@ -196,11 +231,15 @@ def test_idle_sweep_stops_a_ready_session(paths, monkeypatch):
 
     async def run():
         await serve.request(paths, _exec("research", "print(1)"))
+        pids = _display_pids(paths)
         await wait_for_state(paths, "research", "stopped")
-        return await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
+        dead = await wait_until_all_dead(pids)
+        listing = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
+        return listing, dead
 
-    res = with_daemon(paths, run)
+    res, dead = with_daemon(paths, run)
     assert res["data"]["sessions"][0]["state"] == "stopped"
+    assert dead is True
 
 
 def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
@@ -227,26 +266,32 @@ def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
 
 
 def test_a_total_start_failure_frees_the_session_and_kills_the_browser(paths, monkeypatch):
-    """A failure the engine cannot name still has to leave no browser behind and no wedged session."""
+    """A failure the engine cannot name still has to leave no browser, no display, and no wedged session."""
 
     def _garbage(_url):
         raise ValueError("devtools answered with garbage")
 
     async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
         original = chromium._fetch_json
         monkeypatch.setattr(chromium, "_fetch_json", _garbage)
-        failed = await serve.request(paths, _exec("research", "print(1)"))
-        listing = await serve.request(paths, {"version": 1, "op": "sessions", "request_id": "l"})
+        failed = await serve.handle_request(state, _exec("research", "print(1)"))
+        session = state.table.sessions["research"]
+        state_after_failure = session.state
+        display_after_failure = session.display
         pid = int((paths.profiles / "chromium" / "research" / "fake.pid").read_text())
         dead = await wait_until_dead(pid)
+        display_dead = await wait_until_all_dead(_display_pids(paths))
         monkeypatch.setattr(chromium, "_fetch_json", original)
-        recovered = await serve.request(paths, _exec("research", "print(1)", request_id="r2"))
-        return failed, listing, dead, recovered
+        recovered = await serve.handle_request(state, _exec("research", "print(1)", request_id="r2"))
+        return failed, state_after_failure, display_after_failure, dead, display_dead, recovered
 
-    failed, listing, dead, recovered = with_daemon(paths, run)
+    failed, state_after, display_after, dead, display_dead, recovered = asyncio.run(run())
     assert failed["ok"] is False and failed["error"]["code"] == "engine_unavailable"
-    assert listing["data"]["sessions"][0]["state"] == "stopped"
+    assert state_after == "stopped"
+    assert display_after is None
     assert dead is True
+    assert display_dead is True
     assert recovered["ok"] is True
 
 
@@ -308,19 +353,24 @@ def test_shutdown_kills_a_session_whose_engine_stop_hangs(paths, monkeypatch):
     async def run():
         state = serve.State(paths=paths, table=sessions.load_table(paths))
         session = sessions.resolve_session(state.table, "research", None)
-        session.runtime = await chromium.start(session, paths, headed=HEADED)
+        session.display = await display.start_session_display(paths)
+        headed = HeadedDisplay(session.display.display, display.SCREEN_W, display.SCREEN_H)
+        session.runtime = await chromium.start(session, paths, headed=headed)
         sessions.mark(session, "ready")
         pid = int((session.profile_dir / "fake.pid").read_text())
+        display_pids = [session.display.xvfb.pid, session.display.openbox.pid]
         monkeypatch.setattr(serve, "SHUTDOWN_BUDGET_SECS", BUDGET_SECS)
         monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _hang)
         started = time.monotonic()
         await serve.shutdown(state)
-        return time.monotonic() - started, await wait_until_dead(pid)
+        elapsed = time.monotonic() - started
+        return elapsed, await wait_until_dead(pid), await wait_until_all_dead(display_pids)
 
-    elapsed, dead = asyncio.run(run())
+    elapsed, dead, display_dead = asyncio.run(run())
     # Above the floor a budget is clamped to, so the wait really is the patched budget and not it.
     assert BUDGET_SECS <= elapsed < 5
     assert dead is True
+    assert display_dead is True
 
 
 def test_shutdown_ends_an_inflight_exec_and_kills_its_processes(paths):

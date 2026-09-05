@@ -5,7 +5,7 @@ import pytest
 from vesta_browser import serve
 from vesta_browser.runtime_paths import load_paths
 
-from .fakes import write_fakes
+from .fakes import write_display_fakes, write_fakes
 from .hermetic import isolated_path
 
 BINARY_KEYS = {"VESTA_BROWSER_CHROMIUM", "VESTA_BROWSER_BROWSER_USE", "VESTA_BROWSER_CAMOUFOX_PYTHON", "VESTA_BROWSER_CAMOUFOX_EXE"}
@@ -94,12 +94,14 @@ def test_engines_reports_not_ready_when_the_binaries_are_missing(tmp_path, monke
 
 def test_engines_reports_ready_when_every_binary_is_present(tmp_path, monkeypatch):
     bin_dir = isolated_path(tmp_path, monkeypatch)
+    write_display_fakes(bin_dir, tmp_path / "x11")
     camoufox_exe = tmp_path / "camoufox"
     camoufox_exe.touch()
     env = {**write_fakes(bin_dir), "VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(camoufox_exe)}
     assert set(env) == BINARY_KEYS
-    routes = _engines(load_paths(env, tmp_path))["data"]["routes"]
-    assert routes["standard"]["ready"] is True and routes["stealth"]["ready"] is True
+    res = _engines(load_paths(env, tmp_path))["data"]
+    assert res["display"]["ready"] is True
+    assert res["routes"]["standard"]["ready"] is True and res["routes"]["stealth"]["ready"] is True
 
 
 def test_ping_is_false_with_no_daemon(paths):

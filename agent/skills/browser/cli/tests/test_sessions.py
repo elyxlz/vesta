@@ -16,6 +16,7 @@ def test_new_session_pins_the_requested_mode_and_creates_its_dirs(table):
     assert session.engine == "camoufox" and session.mode == "stealth" and session.state == "stopped"
     assert session.profile_dir.is_dir() and session.profile_dir.parts[-2:] == ("camoufox", "research")
     assert session.scratch_dir.is_dir() and session.artifact_dir.is_dir()
+    assert session.display is None
 
 
 def test_omitted_mode_defaults_to_standard_on_a_new_session(table):
