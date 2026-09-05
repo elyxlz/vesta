@@ -523,6 +523,22 @@ impl Client {
         .await
     }
 
+    /// Connect the chat node's room socket `GET /rooms/ws` as the user, api-key authed via
+    /// `?token=` (the carrier a browser socket has). `room` scopes the session to that one room;
+    /// `None` reads every room. Replay-free like the chat socket: only events fanned after the
+    /// session subscribed arrive.
+    pub async fn open_rooms_socket(&self, room: Option<&str>) -> Result<SyncSocket, String> {
+        let scope = match room {
+            Some(id) => format!("room={}&", urlencod(id)),
+            None => String::new(),
+        };
+        self.connect_ws(&format!(
+            "/rooms/ws?{scope}token={}",
+            urlencod(&self.api_key)
+        ))
+        .await
+    }
+
     async fn connect_sync(&self, token: &str) -> Result<SyncSocket, String> {
         self.connect_ws(&format!("/sync?token={}", urlencod(token)))
             .await
@@ -534,11 +550,35 @@ impl Client {
     /// the handshake completing is that verdict, and a refusal arrives as `HTTP error: {status}` in
     /// the error string rather than as a socket.
     pub async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
+        self.connect_ws_as(path_and_query, ProxyAuth::None).await
+    }
+
+    /// `connect_ws`, presenting `auth` as a request header instead of a `?token=` query. A browser
+    /// socket cannot set headers, which is why the app surfaces carry the token in the URL; an
+    /// agent's own `X-Agent-Token` has no query carrier at all, so its `/rooms/ws` session can only
+    /// be opened this way.
+    pub async fn connect_ws_as(
+        &self,
+        path_and_query: &str,
+        auth: ProxyAuth<'_>,
+    ) -> Result<SyncSocket, String> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
+
         let url = format!("{}{}", ws_base_url(&self.base_url), path_and_query);
+        let mut request = url
+            .into_client_request()
+            .map_err(|e| format!("ws request build failed: {e}"))?;
+        if let Some((header, value)) = self.auth_header(auth) {
+            let name = HeaderName::try_from(header).map_err(|e| format!("ws header name: {e}"))?;
+            let value =
+                HeaderValue::try_from(value).map_err(|e| format!("ws header value: {e}"))?;
+            request.headers_mut().insert(name, value);
+        }
         let tls = make_ws_rustls_config(self.cert_fingerprint.clone());
         let connector = tokio_tungstenite::Connector::Rustls(tls);
         let (ws, _resp) =
-            tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
+            tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector))
                 .await
                 .map_err(|e| format!("ws connect failed: {e}"))?;
         Ok(SyncSocket { ws })
@@ -621,6 +661,23 @@ impl Client {
             request = request.header(header, &value);
         }
         let response = request.send_json(body).map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// DELETE a path with a chosen credential, preserving the upstream status/body. The chat
+    /// routes answer a refused delete with a 409 and an error string, so the status is the
+    /// assertion and must not be mapped away.
+    pub fn proxy_delete(&self, path: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
+        let mut request = self.agent.delete(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
         let status = response.status().as_u16();
         let body = response
             .into_body()
