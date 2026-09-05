@@ -79,6 +79,7 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
         .collect();
     let trimmed = cleaned.trim_start_matches('.');
     let bounded: String = trimmed.chars().take(FILENAME_MAX_CHARS).collect();
+    let bounded = bounded.trim().to_string();
     if bounded.is_empty() {
         FALLBACK_NAME.to_string()
     } else {
@@ -111,6 +112,9 @@ impl AttachmentStore {
         Self { root }
     }
 
+    /// The store's own directory. `blob_path_of` owns every real path, so this is the tests' way
+    /// to reach a directory by id.
+    #[cfg(test)]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
@@ -236,9 +240,13 @@ impl AttachmentStore {
         Self::read_json(&dir.join(META_FILE))
     }
 
+    pub(crate) fn blob_path_of(&self, meta: &AttachmentMeta) -> PathBuf {
+        self.root.join(&meta.id).join(&meta.name)
+    }
+
     pub(crate) fn blob_path(&self, id: &str) -> Result<PathBuf, AttachmentError> {
         let meta = self.read_meta(id).ok_or(AttachmentError::Unknown)?;
-        Ok(self.root.join(id).join(meta.name))
+        Ok(self.blob_path_of(&meta))
     }
 
     pub(crate) fn is_removed(&self, id: &str) -> bool {
@@ -263,8 +271,13 @@ impl AttachmentStore {
             if !stale {
                 continue;
             }
-            let staging = dir.join(SESSION_FILE).exists();
-            let orphan = dir.join(META_FILE).exists() && !referenced(&id) && !self.is_removed(&id);
+            // A finalized directory that still holds its session file is finalized: reading it as
+            // staging would ignore `referenced` and free a live blob.
+            let finalized = dir.join(META_FILE).exists();
+            let staging = dir.join(SESSION_FILE).exists() && !finalized;
+            // With no meta at all `is_removed` is false, so a directory a crashed create left
+            // empty is reclaimed, while a tombstone (meta, no blob) stays.
+            let orphan = !staging && !self.is_removed(&id) && !referenced(&id);
             if (staging || orphan) && std::fs::remove_dir_all(&dir).is_ok() {
                 swept.push(id);
             }
@@ -318,6 +331,7 @@ mod tests {
         assert_eq!(sanitize_filename("a\u{0}b\nc.txt"), "a_b_c.txt");
         assert_eq!(sanitize_filename(""), "file");
         assert_eq!(sanitize_filename("..."), "file");
+        assert_eq!(sanitize_filename("   "), "file");
         assert_eq!(
             sanitize_filename(&"x".repeat(200)).chars().count(),
             FILENAME_MAX_CHARS
@@ -454,13 +468,24 @@ mod tests {
         let fresh = store
             .create_session("f.bin", "application/octet-stream", 1, extra())
             .expect("fresh");
+        // A finalized blob whose session file survived the unlink is finalized, not staging.
+        let both = store
+            .create_session("b.bin", "application/octet-stream", 1, extra())
+            .expect("both");
+        store.append_at(&both, 0, b"x").expect("chunk");
+        store.finalize(&both).expect("finalize");
+        std::fs::write(store.root().join(&both).join(SESSION_FILE), b"{}").expect("session file");
+        let empty = "0".repeat(ATTACHMENT_ID_BYTES * 2);
+        std::fs::create_dir_all(store.root().join(&empty)).expect("empty dir");
         let old = crate::time_utils::now_epoch_secs() + STALE_SESSION_MAX_AGE_SECS + 1;
-        let mut swept = store.sweep(old, &|id| id == kept);
+        let mut swept = store.sweep(old, &|id| id == kept || id == both);
         swept.sort();
-        let mut expected = vec![staged.clone(), orphan.clone(), fresh.clone()];
+        let mut expected = vec![staged.clone(), orphan.clone(), fresh.clone(), empty.clone()];
         expected.sort();
         assert_eq!(swept, expected);
         assert!(store.read_meta(&kept).is_some());
+        assert!(store.blob_path(&both).is_ok_and(|path| path.exists()));
+        assert!(!store.root().join(&empty).exists());
         assert!(!store.root().join(&staged).exists());
         let recent = store.sweep(crate::time_utils::now_epoch_secs(), &|_| false);
         assert!(recent.is_empty());

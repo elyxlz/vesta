@@ -228,7 +228,7 @@ pub(crate) async fn serve_attachment_handler(
     let Some(meta) = store.read_meta(&id) else {
         return Err(error(StatusCode::NOT_FOUND, "unknown attachment"));
     };
-    let path = store.root().join(&id).join(&meta.name);
+    let path = store.blob_path_of(&meta);
     if !path.exists() {
         return Err(error(StatusCode::GONE, "attachment removed"));
     }

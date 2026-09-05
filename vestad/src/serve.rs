@@ -2762,7 +2762,7 @@ pub fn build_router(state: SharedState) -> Router {
             "/rooms/attachments/{id}/data",
             put(crate::chat::attachment_routes::attachment_data_handler).route_layer(
                 axum::extract::DefaultBodyLimit::max(
-                    crate::chat::attachments::MAX_CHUNK_BYTES + 1024 * 1024,
+                    crate::chat::attachments::MAX_CHUNK_BYTES + CHUNK_FRAMING_BYTES,
                 ),
             ),
         )
@@ -3129,6 +3129,8 @@ pub struct ServerConfig {
 /// The chat attachment GC waits this long after boot, so a large first pass never delays serving.
 const SWEEP_STARTUP_DELAY_SECS: u64 = 60;
 const SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
+/// Headroom over one chunk for the request framing the body limit counts with it.
+const CHUNK_FRAMING_BYTES: usize = 1024 * 1024;
 
 pub async fn run_server(cfg: ServerConfig) {
     let ServerConfig {
