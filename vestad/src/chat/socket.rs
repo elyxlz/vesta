@@ -7,16 +7,20 @@ use std::time::Duration;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::auth::ChatPrincipal;
+use crate::chat::routes::member_room;
 use crate::chat::{ChatEvent, Room};
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
+
+/// How long one outbound frame may take before the session is abandoned.
+pub(crate) const WS_SEND_TIMEOUT_SECS: u64 = 10;
+
+type Sender = futures_util::stream::SplitSink<WebSocket, WsMessage>;
 
 /// What a session reads: one named room, or every room its principal is a member of.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,8 +45,18 @@ pub(crate) fn wants(
     let room_id = event.room_id();
     match scope {
         Scope::Room(id) => id == room_id,
+        // A deletion outlives the room it names, so the lookup can no longer answer for it and a
+        // replica must drop it; an id the reader never held is a no-op there.
+        Scope::All if matches!(event, ChatEvent::RoomDeleted { .. }) => true,
         Scope::All => lookup(room_id).is_some_and(|room| principal.is_member(&room)),
     }
+}
+
+/// Send one frame under a deadline. A client that stops reading must never pin the session: its
+/// speaking flag would refuse every agent post in that room until the OS dropped the socket.
+async fn send_bounded(tx: &mut Sender, message: WsMessage) -> bool {
+    let deadline = Duration::from_secs(WS_SEND_TIMEOUT_SECS);
+    matches!(tokio::time::timeout(deadline, tx.send(message)).await, Ok(Ok(())))
 }
 
 /// The one inbound frame: `{"type":"speaking","active":bool}`; anything else is ignored.
@@ -62,16 +76,9 @@ pub(crate) async fn rooms_ws_handler(
 ) -> Response {
     let scope = match query.room {
         None => Scope::All,
-        Some(id) => match state.chat.room(&id) {
-            None => {
-                let body = serde_json::json!({ "error": "no such room" });
-                return (StatusCode::NOT_FOUND, Json(body)).into_response();
-            }
-            Some(room) if !principal.is_member(&room) => {
-                let body = serde_json::json!({ "error": "not a member of this room" });
-                return (StatusCode::FORBIDDEN, Json(body)).into_response();
-            }
-            Some(_) => Scope::Room(id),
+        Some(id) => match member_room(&state, &principal, &id) {
+            Err(api_error) => return api_error.into_response(),
+            Ok(_) => Scope::Room(id),
         },
     };
     ws.on_upgrade(move |socket| session(state, principal, scope, socket))
@@ -91,18 +98,18 @@ async fn session(state: SharedState, principal: ChatPrincipal, scope: Scope, soc
                         continue;
                     }
                     let Ok(text) = serde_json::to_string(&event.to_frame()) else { continue };
-                    if tx.send(WsMessage::Text(text.into())).await.is_err() {
+                    if !send_bounded(&mut tx, WsMessage::Text(text.into())).await {
                         break;
                     }
                 }
                 Err(RecvError::Lagged(_)) => {
-                    let _ = tx.send(WsMessage::Close(None)).await;
+                    send_bounded(&mut tx, WsMessage::Close(None)).await;
                     break;
                 }
                 Err(RecvError::Closed) => break,
             },
             _ = keepalive.tick() => {
-                if tx.send(WsMessage::Ping(bytes::Bytes::new())).await.is_err() {
+                if !send_bounded(&mut tx, WsMessage::Ping(bytes::Bytes::new())).await {
                     break;
                 }
             }
@@ -171,6 +178,14 @@ mod tests {
         assert!(!wants(&scope, &ChatPrincipal::Agent("cy".into()), &message("dm:alice:bob"), lookup));
         assert!(!wants(&scope, &alice, &message("gone"), lookup));
         assert!(wants(&scope, &ChatPrincipal::User, &message("dm:alice"), lookup));
+    }
+
+    #[test]
+    fn an_unscoped_session_hears_a_deletion_of_a_room_that_is_already_gone() {
+        let alice = ChatPrincipal::Agent("alice".into());
+        let deleted = ChatEvent::RoomDeleted { room: "gone".into() };
+        assert!(wants(&Scope::All, &alice, &deleted, |_| None));
+        assert!(!wants(&Scope::All, &alice, &message("gone"), |_| None));
     }
 
     #[test]

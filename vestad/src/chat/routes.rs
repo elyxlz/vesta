@@ -16,13 +16,13 @@ use crate::chat::{
 use crate::state::SharedState;
 use crate::time_utils::{now_epoch_millis, now_epoch_secs};
 
-type ApiError = (StatusCode, Json<serde_json::Value>);
+pub(crate) type ApiError = (StatusCode, Json<serde_json::Value>);
 
 fn error(status: StatusCode, message: impl Into<String>) -> ApiError {
     (status, Json(serde_json::json!({ "error": message.into() })))
 }
 
-fn chat_error(err: ChatError) -> ApiError {
+pub(crate) fn chat_error(err: ChatError) -> ApiError {
     match err {
         ChatError::NotFound => error(StatusCode::NOT_FOUND, "no such room"),
         ChatError::Forbidden => error(StatusCode::FORBIDDEN, "not a member of this room"),
@@ -40,7 +40,7 @@ fn now_millis() -> u64 {
 }
 
 /// The room, once the caller is a member of it.
-fn member_room(
+pub(crate) fn member_room(
     state: &SharedState,
     principal: &ChatPrincipal,
     id: &str,
