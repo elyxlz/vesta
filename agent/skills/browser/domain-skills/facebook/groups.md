@@ -178,7 +178,7 @@ print(
 ## Full example — mine one group, emit JSON for downstream tools
 
 ```bash
-cd ~/Developer/browser-harness && browser <<'PY'
+browser exec --session default <<'PY'
 import json, sys
 from urllib.parse import urlparse, parse_qs, unquote
 

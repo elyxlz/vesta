@@ -23,14 +23,14 @@ events** (React trick), then click the panel's own "Sign in" submit (find it ins
 account name appears in the header and no "incorrect/verify" error text is present.
 
 ## 3. The search form, synthetic events work for SOME fields, NOT the calendar
-- **Stations**: `browser type <ref> "London Bridge"` into the From/To comboboxes, then click the
-  autocomplete option that appears (`listbox "From"` → first option). Works normally.
+- **Stations**: `click_at_xy` the From/To combobox, `type_text("London Bridge")`, then click the
+  first autocomplete option that appears. Works normally.
 - **Journey type**: the `#return` radio responds to a plain `.click()`.
 - **Calendar day cells + time selects DO NOT respond to synthetic `.value` / dispatched events** , 
   React reverts them instantly. Use **real input**:
-  - Day cell: get its `getBoundingClientRect()` centre and click it by coordinate (the Python
-    helper `click(x, y)` or `browser click --at X Y`).
-  - Hour/minute `<select>`: `click(x,y)` to focus, then `press_key("ArrowUp"/"ArrowDown")` N times
+  - Day cell: get its `getBoundingClientRect()` centre and click it by coordinate with
+    `click_at_xy(x, y)`.
+  - Hour/minute `<select>`: `click_at_xy(x, y)` to focus, then `press_key("ArrowUp"/"ArrowDown")` N times
     to step the value (a focused native select changes on arrow keys and fires a trusted change).
   - The **passenger age** confirm select (US-origin accounts demand "Select age") DOES accept the
     native-setter trick, set it to the option whose text is "<NN> years".
@@ -39,8 +39,8 @@ account name appears in the header and no "incorrect/verify" error text is prese
 
 ## 4. Search submits into a NEW TAB
 "Find cheap tickets" opens the results in a **new tab** (URL `/book/results?...`); the origin tab
-stays on the homepage, which looks like a failed submit. Run `browser tabs` and switch to the
-`book/results` tab. Clicking the button several times spawns several duplicate results tabs, close
+stays on the homepage, which looks like a failed submit. Run `list_tabs()` and `switch_tab()` to
+the `book/results` tab. Clicking the button several times spawns several duplicate results tabs, close
 the extras.
 
 ## 5. Fares

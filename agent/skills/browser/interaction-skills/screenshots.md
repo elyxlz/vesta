@@ -1,12 +1,22 @@
 # Screenshots
 
-Screenshots are costly in context: prefer `--webp` (much smaller than PNG) and `--region` to
-clip to the part that matters. Use PNG only when you need lossless output (e.g. pixel-diffing UI
-state). Camoufox captures PNG and JPEG natively; `--webp` is encoded as JPEG.
+`capture_screenshot(path=None, full=False, max_dim=None)` writes a PNG and returns its path. With
+no `path`, the file lands in the session's artifact directory, and the result's `artifacts` list
+names it with its size. The path is a file: read it with the Read tool to see the image.
 
-```bash
-browser screenshot [--path PATH] [--full-page] [--webp] [--region X,Y,W,H] [--quality N]
+```python
+new_tab("https://example.com")
+wait_for_load()
+print(capture_screenshot(max_dim=1200))
 ```
 
-In Python stdin mode: `screenshot(path, full_page=..., image_format=..., region=(x, y, w, h),
-quality=...)`.
+Images are costly in context, so take fewer and smaller ones:
+
+- Pass `max_dim` to cap the longest side. A full-resolution capture of a wide page rarely earns its
+  size.
+- `full=True` captures the whole scrollable page rather than the viewport. Use it to read a long
+  page in one shot, not to look at one control.
+- Read the DOM instead when text is what you want: `js("document.body.innerText")` costs a fraction
+  of an image and is exact.
+- One screenshot per decision. When a click failed, one capture tells you why; a capture after each
+  step tells you the same thing five times.
