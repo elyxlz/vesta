@@ -79,6 +79,7 @@ def test_worker_argv_headless_is_unchanged(chromium_rig):
     paths, session = chromium_rig
     argv = camoufox.worker_argv(paths, session, paths.root / "config.json", None)
     assert "--headed" not in argv and "--window" not in argv
+    assert argv[argv.index("--ff-version") + 1] == "150"
 
 
 def test_camoufox_start_headed_writes_user_js_fits_preset_and_launches_with_window(camoufox_rig):

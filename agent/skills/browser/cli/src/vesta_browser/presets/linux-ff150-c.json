@@ -18,7 +18,7 @@
   "window.innerHeight": 641,
   "window.devicePixelRatio": 1,
   "webGl:vendor": "Intel",
-  "webGl:renderer": "Mesa Intel(R) UHD Graphics 620 (KBL GT2)",
+  "webGl:renderer": "Intel(R) HD Graphics, or similar",
   "locale:language": "en",
   "locale:region": "GB",
   "timezone": "Europe/London",

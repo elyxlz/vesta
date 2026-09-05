@@ -34,6 +34,8 @@ def worker(tmp_path):
             str(config),
             "--artifacts",
             str(artifacts),
+            "--ff-version",
+            "150",
         ],
         env={**os.environ, "PYTHONPATH": str(FAKE)},
         stdin=subprocess.PIPE,
@@ -59,6 +61,7 @@ def test_launch_options_are_persistent_headless_and_pinned(worker):
     assert launch["persistent_context"] == "True" and launch["user_data_dir"] == str(profile)
     assert launch["executable_path"] == "/opt/camoufox/x/camoufox" and launch["headless"] == "True"
     assert launch["i_know_what_im_doing"] == "True" and "navigator.userAgent" in launch["config"]
+    assert launch["ff_version"] == "150" and launch["exclude_addons"] == "[<DefaultAddons.UBO: 'UBO'>]"
 
 
 def test_exec_captures_stdout_and_observes_the_page(worker):

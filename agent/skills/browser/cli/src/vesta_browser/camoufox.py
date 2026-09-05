@@ -17,7 +17,7 @@ import typing as tp
 from . import protocol as p
 from .presets import fit_to_screen, select_preset
 from .procs import KILL_GRACE_SECS, kill_group
-from .runtime_paths import Paths
+from .runtime_paths import CAMOUFOX_FF_MAJOR, Paths
 from .runtimes import CamoufoxRuntime, ExecOutcome, HeadedDisplay
 from .sessions import Session
 
@@ -52,6 +52,8 @@ def worker_argv(paths: Paths, session: Session, config_path: pl.Path, headed: He
         str(config_path),
         "--artifacts",
         str(session.artifact_dir),
+        "--ff-version",
+        str(CAMOUFOX_FF_MAJOR),
     ]
     return [*argv, "--headed", "--window", f"{headed.width}x{headed.height}"] if headed is not None else argv
 

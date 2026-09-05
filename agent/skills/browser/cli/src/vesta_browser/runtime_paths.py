@@ -15,6 +15,8 @@ CAMOUFOX_INSTALL_ROOT = pl.Path("/opt/camoufox")
 # Duplicated in camoufox_install.py, which runs standalone under the system python and cannot
 # import this package; test_camoufox_install.py pins the two values equal.
 CAMOUFOX_RELEASE_TAG = "v150.0.2-beta.25"
+# The bundle's Firefox major, handed to the Camoufox library so it never looks for a managed install.
+CAMOUFOX_FF_MAJOR = int(CAMOUFOX_RELEASE_TAG[1:].split(".", 1)[0])
 
 
 @dataclasses.dataclass(frozen=True)
