@@ -19,7 +19,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .pb import extract_session_token, strip_envelope
+from .pb import SESSION_TOKEN_RE, strip_envelope
 
 _TOKEN_PAGE = "/maps/search/coffee?hl=en"
 _CONSISTENCY_RE = re.compile(r"AMAbHI[A-Za-z0-9_-]+:\d+")
@@ -67,10 +67,43 @@ _FETCH_JS = """(async () => {{
   return {{signed_in: !walled, status: r.status, body}};
 }})()"""
 
-_HTML_JS = """(async () => {{
-  const r = await fetch("{page}", {{credentials:"include"}});
-  return await r.text();
-}})()"""
+# Reads the tokens inside the page. The token page is far past the daemon's stdout cap, so shipping
+# the document out would truncate it. The session-token rule is `pb.extract_session_token` ported to
+# JS over the same two patterns, which are formatted in from their Python owners.
+_TOKENS_JS_TEMPLATE = r"""(async () => {
+  const text = await (await fetch("__PAGE__", {credentials:"include"})).text();
+  const pool = [...new Set(text.match(/__CONSISTENCY__/g) || [])];
+  let session = "";
+  const start = text.indexOf("APP_INITIALIZATION_STATE");
+  const open = start < 0 ? -1 : text.indexOf("[", start);
+  let depth = 0, inStr = false, esc = false, close = -1;
+  for (let i = open; open >= 0 && i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) { esc = false; } else if (c === "\\") { esc = true; } else if (c === '"') { inStr = false; }
+      continue;
+    }
+    if (c === '"') { inStr = true; }
+    else if (c === "[") { depth++; }
+    else if (c === "]") { depth--; if (depth === 0) { close = i; break; } }
+  }
+  if (close > 0) {
+    try {
+      const section = JSON.parse(text.slice(open, close + 1))[3][1];
+      const meta = JSON.parse(String(section).replace(/^\)\]\}'/, "").replace(/^\n+/, ""));
+      const found = JSON.stringify(meta).match(/__TOKEN__/);
+      if (found) { session = found[1]; }
+    } catch (err) { session = ""; }
+  }
+  return {session_token: session, pool};
+})()"""
+
+_TOKENS_JS = (
+    _TOKENS_JS_TEMPLATE.replace("__PAGE__", _TOKEN_PAGE)
+    .replace("__CONSISTENCY__", _CONSISTENCY_RE.pattern)
+    .replace("__TOKEN__", SESSION_TOKEN_RE.pattern)
+)
+_TOKENS_PROGRAM = _TAB_PROGRAM + _JS_PROGRAM.format(js=_TOKENS_JS)
 
 
 def _exec(code: str) -> str:
@@ -84,7 +117,7 @@ def _exec(code: str) -> str:
         envelope = json.loads(line)
     except json.JSONDecodeError:
         raise BrowserUnavailableError(f"unexpected browser exec output: {line[:120]!r}") from None
-    if not isinstance(envelope, dict) or "ok" not in envelope:
+    if not isinstance(envelope, dict) or "ok" not in envelope or "warnings" not in envelope:
         raise BrowserUnavailableError(f"unexpected browser exec output: {line[:120]!r}")
     if not envelope["ok"]:
         error = envelope["error"]
@@ -92,6 +125,8 @@ def _exec(code: str) -> str:
         if error["code"] == "daemon_down":
             message = f"start the browser daemon: {message}"
         raise BrowserUnavailableError(message)
+    if "output_truncated" in envelope["warnings"]:
+        raise BrowserUnavailableError("browser output was truncated; the program must print less")
     output = envelope["output"]
     return output["stdout"].strip()
 
@@ -105,10 +140,6 @@ def _parse_envelope(raw: str) -> _Envelope:
     if not isinstance(signed_in, bool) or not isinstance(status, int) or not isinstance(body, str):
         raise BrowserUnavailableError(f"malformed evaluate envelope: {raw[:120]!r}")
     return _Envelope(signed_in=signed_in, status=status, body=body)
-
-
-def _ensure_tab() -> None:
-    _exec(_TAB_PROGRAM)
 
 
 def _fetch(op: str, pb: str) -> _Envelope:
@@ -125,16 +156,19 @@ def entitylist_get(op: str, pb: str) -> object:
 
 def _page_tokens() -> tuple[str, list[str]]:
     """The session token plus the ordered, de-duplicated consistency-token pool from the maps page."""
-    js = _HTML_JS.format(page=_TOKEN_PAGE)
-    html = json.loads(_exec(_JS_PROGRAM.format(js=js)))
-    try:
-        session = extract_session_token(html)
-    except (ValueError, KeyError) as exc:
-        raise SignedOutError(f"no session token on the maps page (signed out?): {exc}") from exc
-    pool = list(dict.fromkeys(_CONSISTENCY_RE.findall(html)))
-    if not pool:
+    raw = _exec(_TOKENS_PROGRAM)
+    data = json.loads(raw)
+    if not isinstance(data, dict) or "session_token" not in data or "pool" not in data:
+        raise BrowserUnavailableError(f"unexpected browser exec output: {raw[:120]!r}")
+    session, pool = data["session_token"], data["pool"]
+    if not isinstance(session, str) or not isinstance(pool, list):
+        raise BrowserUnavailableError(f"malformed token payload: {raw[:120]!r}")
+    if not session:
+        raise SignedOutError("no session token on the maps page (signed out?)")
+    tokens = [token for token in pool if isinstance(token, str)]
+    if not tokens:
         raise SignedOutError("no consistency tokens on the maps page (signed out?)")
-    return session, pool
+    return session, tokens
 
 
 def entitylist_write(op: str, build_pb: Callable[[str, str], str]) -> object:
@@ -143,7 +177,6 @@ def entitylist_write(op: str, build_pb: Callable[[str, str], str]) -> object:
     `build_pb(session_token, consistency_token)` returns the `pb` for one attempt. A rejected token
     returns a harmless 400 (no mutation); the first 200 is the applied write.
     """
-    _ensure_tab()
     session, pool = _page_tokens()
     for consistency in pool:
         envelope = _fetch(op, build_pb(session, consistency))
