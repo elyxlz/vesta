@@ -147,9 +147,9 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
         raise _in_use(f"a handover is already {live.state} on session {live.session.name!r}")
     public_url = _env("VESTAD_PUBLIC_URL")
     agent = _env("AGENT_NAME")
-    ready = display.readiness(state.paths)
-    if ready["ready"] is not True:
-        raise _failed(f"the handover display needs {ready['missing']}. Install it: {display.HANDOVER_APT_LINE}")
+    missing = display.missing_binaries(state.paths)
+    if missing:
+        raise _failed(f"the handover display needs {', '.join(missing)}. Install it: {display.HANDOVER_APT_LINE}")
     session = sessions_mod.resolve_session(state.table, session_name, mode)
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))

@@ -1,7 +1,9 @@
 import asyncio
 import os
 import pathlib as pl
+import shutil
 import socket
+import tempfile
 import time
 import urllib.request
 
@@ -22,16 +24,18 @@ ABSTRACT_ONLY_DISPLAY = 1234
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    """Paths whose X socket dir, noVNC tree, and four binaries all sit under tmp_path."""
+    """Paths whose noVNC tree and four binaries sit under tmp_path, with the X sockets under /tmp."""
     bin_dir = tmp_path / "bin"
-    x11_dir = tmp_path / "x"
+    # AF_UNIX addresses cap at 108 bytes and a pytest tmp_path plus the X socket name can pass it.
+    x11_dir = pl.Path(tempfile.mkdtemp(dir="/tmp"))
     write_display_fakes(bin_dir, x11_dir)
     novnc = tmp_path / "novnc"
     (novnc / "core").mkdir(parents=True)
     (novnc / "core" / "rfb.js").write_text("export default class RFB {}\n")
     (novnc / "vendor").mkdir()
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    return load_paths({"VESTA_BROWSER_NOVNC_DIR": str(novnc), "VESTA_BROWSER_X11_DIR": str(x11_dir)}, tmp_path)
+    yield load_paths({"VESTA_BROWSER_NOVNC_DIR": str(novnc), "VESTA_BROWSER_X11_DIR": str(x11_dir)}, tmp_path)
+    shutil.rmtree(x11_dir, ignore_errors=True)
 
 
 def _alive(pid: int) -> bool:
@@ -214,12 +218,15 @@ def test_websockify_serves_the_page_on_its_port(rig):
     async def run():
         process = await display.start_websockify(webroot, port, 5999, rig.log)
         try:
-            return process.pid, await asyncio.to_thread(_fetch, f"http://127.0.0.1:{port}/handover.html")
+            page = await asyncio.to_thread(_fetch, f"http://127.0.0.1:{port}/handover.html")
+            return process.pid, _cmdline(process.pid), page
         finally:
             await kill_group(process, KILL_GRACE_SECS)
 
-    pid, (status, body) = asyncio.run(run())
+    pid, argv, (status, body) = asyncio.run(run())
     assert status == 200 and "websockify" in body
+    # Bound on every interface, not on loopback: vestad proxies the page from outside this container.
+    assert f"0.0.0.0:{port}" in argv
     assert _await_gone([pid])
 
 

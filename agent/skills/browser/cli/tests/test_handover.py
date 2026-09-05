@@ -324,6 +324,7 @@ def test_daemon_shutdown_stops_a_live_handover(rig):
     assert rig.keys() == []
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
 
+
 def test_a_bring_up_that_outlives_its_budget_fails_and_takes_the_stack_back(rig, monkeypatch):
     """The x11vnc that never binds: the daemon answers inside its own budget, not the engine's."""
     (rig.x11_dir / "hang").write_text("")

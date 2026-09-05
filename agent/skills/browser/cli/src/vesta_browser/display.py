@@ -14,14 +14,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
-import os
 import pathlib as pl
 import shutil
 import socket
 import time
 
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import KILL_GRACE_SECS, base_env, kill_group
 from .runtime_paths import Paths
 
 # The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
@@ -74,28 +73,26 @@ class DisplayStack:
     webroot: pl.Path
 
 
-def _path() -> str:
-    return os.environ["PATH"] if "PATH" in os.environ else "/usr/local/bin:/usr/bin:/bin"
-
-
-def _base_env() -> dict[str, str]:
-    return {"PATH": _path(), "HOME": str(pl.Path.home())}
-
-
 def child_env(display: str) -> dict[str, str]:
     """The env of every X client here: our display, and Firefox forced onto X11.
 
     x11vnc 0.9.x exits outright when WAYLAND_DISPLAY is set and Gecko prefers a Wayland session over
     the X display we just claimed, so the env is built from nothing rather than inherited.
     """
-    return {**_base_env(), "DISPLAY": display, "MOZ_ENABLE_WAYLAND": "0"}
+    return {**base_env(), "DISPLAY": display, "MOZ_ENABLE_WAYLAND": "0"}
+
+
+def missing_binaries(paths: Paths) -> list[str]:
+    """Every handover prerequisite this box does not have, named as the apt line names it."""
+    missing = [name for name in HANDOVER_BINARIES if shutil.which(name) is None]
+    if not (paths.novnc_dir / "core" / "rfb.js").is_file():
+        missing.append("novnc")
+    return missing
 
 
 def readiness(paths: Paths) -> dict[str, p.JsonValue]:
     """Whether every handover prerequisite is installed, so `doctor` names the gap up front."""
-    missing = [name for name in HANDOVER_BINARIES if shutil.which(name) is None]
-    if not (paths.novnc_dir / "core" / "rfb.js").is_file():
-        missing.append("novnc")
+    missing = missing_binaries(paths)
     return {"ready": not missing, "missing": list(missing)}
 
 
@@ -311,7 +308,7 @@ async def start_websockify(webroot: pl.Path, web_port: int, vnc_port: int, log: 
             str(webroot),
             f"0.0.0.0:{web_port}",
             f"localhost:{vnc_port}",
-            env=_base_env(),
+            env=base_env(),
             start_new_session=True,
             stdout=handle,
             stderr=asyncio.subprocess.STDOUT,

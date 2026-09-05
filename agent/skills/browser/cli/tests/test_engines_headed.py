@@ -28,6 +28,8 @@ def chromium_rig(tmp_path):
 @pytest.fixture
 def camoufox_rig(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(FAKE))
+    # A DISPLAY the test runner happens to hold would otherwise ride into the headless launch below.
+    monkeypatch.delenv("DISPLAY", raising=False)
     exe = tmp_path / "camoufox"
     exe.write_text("")
     env = {"VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(exe)}
@@ -64,18 +66,6 @@ def test_chromium_start_headed_passes_display_to_the_browser_process(chromium_ri
 
     env_seen = asyncio.run(run())
     assert env_seen["DISPLAY"] == ":101"
-
-
-def test_chromium_stop_removes_user_js(chromium_rig):
-    paths, session = chromium_rig
-    (session.profile_dir / "user.js").write_text("stale")
-
-    async def run():
-        runtime = await chromium.start(session, paths)
-        await chromium.stop(runtime, session)
-
-    asyncio.run(run())
-    assert not (session.profile_dir / "user.js").exists()
 
 
 def test_worker_argv_headed_adds_headed_and_window(chromium_rig):
@@ -126,6 +116,7 @@ def test_camoufox_headless_start_has_no_window_or_software_render_env(camoufox_r
     launch = asyncio.run(run())
     assert "window" not in launch
     assert launch["env_DISPLAY"] == "" and launch["env_LIBGL_ALWAYS_SOFTWARE"] == ""
+    assert not (session.profile_dir / "user.js").exists()
 
 
 def test_camoufox_stop_removes_user_js(camoufox_rig):

@@ -18,7 +18,7 @@ import time
 import urllib.request
 
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import KILL_GRACE_SECS, base_env, kill_group
 from .runtime_paths import Paths
 from .runtimes import ChromiumRuntime, ExecOutcome, HeadedDisplay
 from .sessions import Session
@@ -50,14 +50,9 @@ def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay | None = N
     ]
 
 
-def _path() -> str:
-    return os.environ["PATH"] if "PATH" in os.environ else "/usr/local/bin:/usr/bin:/bin"
-
-
 def child_env(session: Session, port: int) -> dict[str, str]:
     return {
-        "PATH": _path(),
-        "HOME": str(pl.Path.home()),
+        **base_env(),
         "LANG": os.environ["LANG"] if "LANG" in os.environ else "C.UTF-8",
         "TMPDIR": str(session.scratch_dir / "tmp"),
         "BH_RUNTIME_DIR": str(session.scratch_dir / "runtime"),
@@ -72,7 +67,7 @@ def child_env(session: Session, port: int) -> dict[str, str]:
 
 
 def _browser_env(headed: HeadedDisplay | None) -> dict[str, str]:
-    env = {"PATH": _path(), "HOME": str(pl.Path.home())}
+    env = base_env()
     if headed is not None:
         env["DISPLAY"] = headed.display
     return env
@@ -233,5 +228,3 @@ async def stop(runtime: ChromiumRuntime, session: Session) -> None:
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
     (session.scratch_dir / "runtime" / "bu.pid").unlink(missing_ok=True)
-    # A stale headed profile's software-render prefs must never leak into the next headless launch.
-    (session.profile_dir / "user.js").unlink(missing_ok=True)

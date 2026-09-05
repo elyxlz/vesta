@@ -1,6 +1,6 @@
 """Every filesystem location the daemon touches, resolved once at startup and passed down.
 
-Tests inject binaries through the four VESTA_BROWSER_* overrides; production reads the defaults.
+Tests inject binaries through the six VESTA_BROWSER_* overrides; production reads the defaults.
 """
 
 from __future__ import annotations

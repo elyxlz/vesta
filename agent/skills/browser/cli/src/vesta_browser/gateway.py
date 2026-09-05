@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+from .procs import KILL_GRACE_SECS, kill_group
+
 GATEWAY_TIMEOUT_SECS = 35
 
 
@@ -19,14 +21,16 @@ class GatewayError(Exception):
 
 async def _run(*argv: str, timeout: float = GATEWAY_TIMEOUT_SECS) -> str:
     try:
-        process = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        process = await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True
+        )
     except FileNotFoundError as exc:
         raise GatewayError(f"{argv[0]} is not on PATH") from exc
     try:
         out, err = await asyncio.wait_for(process.communicate(), timeout)
     except TimeoutError as exc:
-        process.kill()
-        await process.wait()
+        # The group, not the process: a helper shells out to curl, which would outlive its parent.
+        await kill_group(process, KILL_GRACE_SECS)
         raise GatewayError(f"{argv[0]} did not answer within {timeout}s") from exc
     if process.returncode != 0:
         raise GatewayError(err.decode(errors="replace").strip() or f"{argv[0]} exited with {process.returncode}")
@@ -53,7 +57,7 @@ async def mint_key(service: str, label: str, ttl_secs: int, timeout: float = GAT
 
 async def find_key_id(service: str, label: str, timeout: float = GATEWAY_TIMEOUT_SECS) -> str | None:
     listing = json.loads(await _run("service-key", "list", service, timeout=timeout))
-    if not isinstance(listing, dict) or not isinstance(listing["keys"], list):
+    if not isinstance(listing, dict) or "keys" not in listing or not isinstance(listing["keys"], list):
         raise GatewayError("service-key list answered with an unexpected shape")
     for key in listing["keys"]:
         if isinstance(key, dict) and key["label"] == label:
