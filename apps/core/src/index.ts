@@ -52,7 +52,7 @@ export {
   type NotificationFeed,
 } from "./notifications-pill/notification-feed";
 export { parseServerFrame } from "./protocol/parse";
-export { selectDevices, devicesEqual } from "./tree/devices";
+export { selectDevices, devicesEqual, splitSelfDevice } from "./tree/devices";
 export {
   gatewayOperationLabel,
   gatewayOperationsEqual,

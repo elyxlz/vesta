@@ -66,7 +66,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function harness(expiresAt = NOW + 60 * 60 * 1000): Promise<Harness> {
+async function harness(
+  expiresAt = NOW + 60 * 60 * 1000,
+  device?: { id: string; descriptor: string },
+): Promise<Harness> {
   const sockets: FakeSocket[] = [];
   let connection: ConnectionConfig = {
     url: "https://vestad.test",
@@ -101,6 +104,7 @@ async function harness(expiresAt = NOW + 60 * 60 * 1000): Promise<Harness> {
         return socket;
       },
       clientKind: "web",
+      device,
     },
   });
   await flush();
@@ -294,6 +298,14 @@ describe("createController", () => {
     // A repeat report changes nothing and wakes nobody.
     h.controller.reportViewing("scout");
     expect(viewing).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the device identity it was built with, null without one", async () => {
+    const anonymous = await harness();
+    expect(anonymous.controller.getDevice()).toBeNull();
+    const device = { id: "dev-1", descriptor: "Vesta Mobile on iOS" };
+    const named = await harness(undefined, device);
+    expect(named.controller.getDevice()).toEqual(device);
   });
 
   describe("reauth tick", () => {

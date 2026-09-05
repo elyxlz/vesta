@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
   checkForGatewayUpdate,
+  splitSelfDevice,
   triggerGatewayRestart,
   triggerGatewayUpdate,
   type DeviceInfo,
@@ -36,6 +37,7 @@ import {
   FormSection,
   SwitchRow,
 } from "@/components/ui/Form";
+import { useController } from "@/controller/context";
 import { requestLocationSharing } from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
@@ -95,6 +97,11 @@ export default function SettingsScreen() {
   const queryClient = useQueryClient();
   const session = useSession();
   const roster = useRoster();
+  const controller = useController();
+  const { self: thisDevice, others: otherDevices } = splitSelfDevice(
+    roster.devices,
+    controller.getDevice()?.id ?? null,
+  );
   const preferences = usePreferences();
   const privacy = usePrivacy();
   const { showError } = useToast();
@@ -434,7 +441,20 @@ export default function SettingsScreen() {
 
         {roster.devices.length > 0 ? (
           <FormSection title="Devices">
-            {roster.devices.map((device) => (
+            {thisDevice ? (
+              <FormRow
+                key={thisDevice.id}
+                icon="phone-portrait-outline"
+                label="This device"
+                detail={deviceContextLine(thisDevice)}
+                value={
+                  thisDevice.present
+                    ? "present now"
+                    : lastSeenLabel(thisDevice.lastSeen)
+                }
+              />
+            ) : null}
+            {otherDevices.map((device) => (
               <FormRow
                 key={device.id}
                 label={device.descriptor ?? "Unnamed device"}

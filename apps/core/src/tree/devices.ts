@@ -4,6 +4,23 @@ export function selectDevices(tree: Tree | null): DeviceInfo[] {
   return tree?.devices ?? [];
 }
 
+// This client's own device, pinned apart from the rest; the others come present first, then most
+// recently seen. `self` is null until the gateway has registered this device.
+export function splitSelfDevice(
+  devices: DeviceInfo[],
+  selfId: string | null,
+): { self: DeviceInfo | null; others: DeviceInfo[] } {
+  const self = devices.find((device) => device.id === selfId) ?? null;
+  const others = devices
+    .filter((device) => device.id !== selfId)
+    .sort(
+      (a, b) =>
+        Number(b.present) - Number(a.present) ||
+        new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime(),
+    );
+  return { self, others };
+}
+
 // Structural compare so an unrelated tree delta (an agent update, a notification) does not hand every
 // devices consumer a fresh array through useReplica.
 export function devicesEqual(a: DeviceInfo[], b: DeviceInfo[]): boolean {

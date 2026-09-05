@@ -80,6 +80,7 @@ function createOpenController(): Controller {
     getFocused: () => true,
     subscribeFocused: unsubscribe,
     getViewing: () => null,
+    getDevice: () => null,
     subscribeViewing: unsubscribe,
     getAnyFocused: () => false,
     subscribeAnyFocused: unsubscribe,

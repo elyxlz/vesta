@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Monitor, Smartphone, Globe, HelpCircle, Circle } from "lucide-react";
-import type { DeviceInfo, DeviceKind } from "@vesta/core";
+import { splitSelfDevice, type DeviceInfo, type DeviceKind } from "@vesta/core";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Field,
@@ -116,16 +116,10 @@ export function DevicesCard() {
     bottom: "20px",
   });
   if (devices.length === 0) return null;
-  const selfId = deviceIdentity().id;
-  const current = devices.find((device) => device.id === selfId) ?? null;
-  // Present devices first, then most recently seen.
-  const others = devices
-    .filter((device) => device.id !== selfId)
-    .sort(
-      (a, b) =>
-        Number(b.present) - Number(a.present) ||
-        new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime(),
-    );
+  const { self: current, others } = splitSelfDevice(
+    devices,
+    deviceIdentity().id,
+  );
   return (
     <Card size="sm" className="md:col-span-2">
       <CardContent className="lowercase">

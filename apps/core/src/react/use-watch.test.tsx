@@ -39,6 +39,7 @@ function fakeController(initial: SyncState = "connecting"): {
     getFocused: () => false,
     subscribeFocused: () => () => undefined,
     getViewing: () => null,
+    getDevice: () => null,
     subscribeViewing: () => () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,
