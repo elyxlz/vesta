@@ -298,6 +298,18 @@ function SessionNavigation() {
                 }}
               />
               <Stack.Screen
+                name="gateway-logs"
+                options={{
+                  title: "Gateway logs",
+                  ...(IS_ANDROID
+                    ? {
+                        headerTransparent: false,
+                        headerStyle: { backgroundColor: colors.background },
+                      }
+                    : {}),
+                }}
+              />
+              <Stack.Screen
                 name="debug"
                 options={{
                   title: "Diagnostics",

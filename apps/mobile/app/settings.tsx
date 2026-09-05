@@ -424,6 +424,12 @@ export default function SettingsScreen() {
                 </Button>
                 <Button
                   variant="cardGrouped"
+                  onPress={() => router.push("/gateway-logs")}
+                >
+                  View gateway logs
+                </Button>
+                <Button
+                  variant="cardGrouped"
                   onPress={() => router.push("/switch-gateway")}
                 >
                   Switch gateway

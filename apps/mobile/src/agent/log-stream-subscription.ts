@@ -17,6 +17,10 @@ export interface LogStream {
 // leave two concurrent streams appending duplicate lines. Errors back off exponentially up to
 // maxRetryDelayMs, and a received line resets the delay, so an unreachable agent is polled gently
 // while a live one recovers fast. Returns the teardown.
+// The backoff every log stream in the app reconnects with.
+export const LOG_RETRY_DELAY_MS = 1_000;
+export const LOG_RETRY_MAX_DELAY_MS = 30_000;
+
 export function subscribeLogs(stream: LogStream): () => void {
   let cancelled = false;
   let handle: SseHandle | null = null;
