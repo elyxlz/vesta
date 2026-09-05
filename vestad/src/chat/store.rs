@@ -2,7 +2,7 @@
 //! `messages.jsonl` (append-only, one message per line), both under `<config_dir>/chat/` and
 //! held in memory. A rename is the one operation that rewrites the log instead of appending.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -24,10 +24,14 @@ pub(crate) struct ChatStore {
     rooms: BTreeMap<String, Room>,
     messages: Vec<Entry>,
     next_id: u64,
+    /// The log exists but could not be read, so its ids are unknown. Nothing touches the file
+    /// while this holds: appending under a restarted id counter would duplicate ids.
+    log_unreadable: bool,
 }
 
 impl ChatStore {
-    /// Load both files; a missing file is empty, a torn line is skipped.
+    /// Load both files; a missing file is empty, a torn line is skipped, and a log that exists
+    /// but cannot be read leaves the store in memory only.
     pub(crate) fn load(config_dir: &Path) -> Self {
         let dir = config_dir.join(CHAT_DIR);
         let rooms: BTreeMap<String, Room> = std::fs::read_to_string(dir.join(ROOMS_FILE))
@@ -35,17 +39,28 @@ impl ChatStore {
             .and_then(|content| serde_json::from_str::<Vec<Room>>(&content).ok())
             .map(|list| list.into_iter().map(|room| (room.id.clone(), room)).collect())
             .unwrap_or_default();
-        let messages: Vec<Entry> = std::fs::read_to_string(dir.join(MESSAGES_FILE))
-            .map(|content| {
+        let log = dir.join(MESSAGES_FILE);
+        let (messages, log_unreadable): (Vec<Entry>, bool) = match std::fs::read_to_string(&log) {
+            Ok(content) => (
                 content
                     .lines()
                     .filter_map(|line| serde_json::from_str::<Message>(line).ok())
                     .map(|message| Entry { at_ms: parse_ts(&message.ts).unwrap_or(0), message })
-                    .collect()
-            })
-            .unwrap_or_default();
+                    .collect(),
+                false,
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Vec::new(), false),
+            Err(error) => {
+                tracing::error!(
+                    path = %log.display(),
+                    %error,
+                    "cannot read the chat log; chat stays in memory and the file is left untouched"
+                );
+                (Vec::new(), true)
+            }
+        };
         let next_id = messages.iter().map(|entry| entry.message.id).max().map_or(1, |max| max + 1);
-        Self { dir, rooms, messages, next_id }
+        Self { dir, rooms, messages, next_id, log_unreadable }
     }
 
     pub(crate) fn next_id(&self) -> u64 {
@@ -151,7 +166,10 @@ impl ChatStore {
     }
 
     /// Rewrite every member set, room id, and sender that names `old`, then rewrite both files.
+    /// The rooms that moved make the map every message is rewritten through, so an id and the
+    /// messages under it can never be derived differently.
     pub(crate) fn rename_agent(&mut self, old: &str, new: &str) {
+        let mut moved: HashMap<String, String> = HashMap::new();
         let renamed: BTreeMap<String, Room> = std::mem::take(&mut self.rooms)
             .into_values()
             .map(|mut room| {
@@ -161,7 +179,11 @@ impl ChatStore {
                     }
                 }
                 room.agents.sort_unstable();
-                room.id = Self::renamed_room_id(&room, old, new);
+                let renamed_id = Self::renamed_room_id(&room.id, old, new);
+                if renamed_id != room.id {
+                    moved.insert(room.id.clone(), renamed_id.clone());
+                }
+                room.id = renamed_id;
                 (room.id.clone(), room)
             })
             .collect();
@@ -170,23 +192,18 @@ impl ChatStore {
             if entry.message.sender == old {
                 entry.message.sender = new.to_string();
             }
-            entry.message.room = Self::renamed_message_room(&entry.message.room, old, new);
+            if let Some(renamed_id) = moved.get(&entry.message.room) {
+                entry.message.room.clone_from(renamed_id);
+            }
         }
         self.save_rooms();
         self.rewrite_messages();
     }
 
-    fn renamed_room_id(room: &Room, old: &str, new: &str) -> String {
-        if room.id == Room::direct_id(old) {
-            Room::direct_id(new)
-        } else if room.id.starts_with("dm:") && room.agents.len() == 2 {
-            Room::peer_id(&room.agents[0], &room.agents[1])
-        } else {
-            room.id.clone()
-        }
-    }
-
-    fn renamed_message_room(room_id: &str, old: &str, new: &str) -> String {
+    /// The one id derivation: `dm:<old>` becomes `dm:<new>`, a peer id naming `old` is rebuilt
+    /// around the other member, and every other id stays. Read from the id alone, never the
+    /// member set, which a forgotten agent leaves out of step with the id.
+    fn renamed_room_id(room_id: &str, old: &str, new: &str) -> String {
         if room_id == Room::direct_id(old) {
             return Room::direct_id(new);
         }
@@ -205,6 +222,9 @@ impl ChatStore {
     }
 
     fn append_line(&self, message: &Message) {
+        if self.log_unreadable {
+            return;
+        }
         let Ok(line) = serde_json::to_string(message) else { return };
         if std::fs::create_dir_all(&self.dir).is_err() {
             tracing::warn!(dir = %self.dir.display(), "cannot create the chat dir; message kept in memory only");
@@ -222,6 +242,9 @@ impl ChatStore {
     }
 
     fn rewrite_messages(&self) {
+        if self.log_unreadable {
+            return;
+        }
         let body: String = self
             .messages
             .iter()
@@ -338,6 +361,64 @@ mod tests {
         let (page, _) = reloaded.page("dm:zed", None, 10);
         assert_eq!(page[0].sender, "zed");
         assert_eq!(page[0].room, "dm:zed");
+    }
+
+    #[test]
+    fn rename_after_forget_keeps_a_peer_rooms_history_reachable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut store = ChatStore::load(tmp.path());
+        store.put_room(Room {
+            id: "dm:alice".into(),
+            name: None,
+            agents: vec!["alice".into()],
+            created_at: 1,
+            last_message_at: None,
+        });
+        store.put_room(Room {
+            id: "dm:bob".into(),
+            name: None,
+            agents: vec!["bob".into()],
+            created_at: 1,
+            last_message_at: None,
+        });
+        store.put_room(Room {
+            id: "dm:alice:bob".into(),
+            name: None,
+            agents: vec!["alice".into(), "bob".into()],
+            created_at: 1,
+            last_message_at: None,
+        });
+        store.append(draft("dm:alice:bob", MessageKind::Chat, "alice", "between us", 1_000));
+        store.put_room(Room {
+            id: "dm:alice:bob".into(),
+            name: None,
+            agents: vec!["bob".into()],
+            created_at: 1,
+            last_message_at: Some(1),
+        });
+        store.rename_agent("bob", "zed");
+        let reloaded = ChatStore::load(tmp.path());
+        let ids: Vec<String> = reloaded.rooms().into_iter().map(|room| room.id).collect();
+        assert_eq!(ids, vec!["dm:alice".to_string(), "dm:alice:zed".to_string(), "dm:zed".to_string()]);
+        assert_eq!(reloaded.room("dm:alice:zed").expect("peer room").agents, vec!["zed".to_string()]);
+        let (page, _) = reloaded.page("dm:alice:zed", None, 10);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].room, "dm:alice:zed");
+        assert_eq!(page[0].sender, "alice");
+    }
+
+    #[test]
+    fn an_unreadable_log_is_left_untouched() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log = tmp.path().join("chat").join("messages.jsonl");
+        std::fs::create_dir_all(&log).expect("log as a dir");
+        let mut store = ChatStore::load(tmp.path());
+        let message = store.append(draft("r", MessageKind::User, "user", "in memory", 1_000));
+        assert_eq!(store.page("r", None, 10).0, vec![message]);
+        store.rename_agent("alice", "zed");
+        assert!(log.is_dir());
+        assert_eq!(std::fs::read_dir(&log).expect("read the log dir").count(), 0);
+        assert!(!log.with_extension("jsonl.tmp").exists());
     }
 
     #[test]
