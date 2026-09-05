@@ -15,14 +15,14 @@ the page, e.g. "You can view this item until <date>").
 Visible fields (username, website, name) come out of `document.body.innerText` fine. The **password
 renders as literal bullet characters** (`••••••••••`), NOT CSS-masked text, so its real value is
 never in the visible DOM and there is no reveal toggle. The value is only handed to the OS clipboard
-when you click its **Copy** button. And `navigator.clipboard.readText()` is blocked headless
-("Clipboard read request was blocked due to lack of user activation").
+when you click its **Copy** button. And `navigator.clipboard.readText()` is blocked without a real
+click ("Clipboard read request was blocked due to lack of user activation").
 
 **Solution, intercept the clipboard WRITE, then click Copy.** Override `writeText` to capture the
 argument the page passes it:
 
 ```python
-# after browser open "<share link>" and the page has rendered (~2s):
+# after new_tab("<share link>") and the page has rendered (~2s):
 val = js(r"""
 (async () => {
   window.__cap = null;
@@ -41,9 +41,9 @@ from `innerText` first if the item has an unusual shape (e.g. an API-key item wi
 
 ## Rendering note
 
-`browser open` on the share link may report `0 interactive refs` and no text on the first snapshot
-(heavy SPA fires `load` late). Do not read that as a block: wait ~2s and read
-`document.body.innerText` / run the JS above; the content is there.
+The share link may report an empty `document.body.innerText` on the first read, because this
+heavy SPA fires `load` late. Do not read that as a block: `wait(2)`, then read `innerText` or run
+the JS above; the content is there.
 
 ## Security
 

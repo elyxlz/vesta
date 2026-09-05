@@ -699,35 +699,36 @@ def test_owa_login_browser_captures_token(tmp_path, monkeypatch):
 
     cfg = Config(data_dir=tmp_path)
     fresh = _make_token(time.time() + 7200)
-
-    class _Res:
-        def __init__(self, out):
-            self.stdout = out
-
-    def fake_run(args, capture_output, text, env, check):
-        # `browser evaluate` prints the JS result JSON-encoded, so a string token arrives quoted.
-        return _Res(json.dumps(fresh) if args[1] == "evaluate" else "ok")
-
-    monkeypatch.setattr(auth_commands.subprocess, "run", fake_run)
+    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda config, account, kind: fresh)
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "success"
     assert owa_rest.load_token("user@example.com", cfg) == fresh
 
 
-@pytest.mark.parametrize("raw", ['"NONE"', "null", ""])
-def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch, raw):
+def test_owa_login_reads_the_mail_token_of_the_asked_account(tmp_path, monkeypatch):
+    from microsoft_cli import auth_commands
+    from microsoft_cli.config import Config
+
+    asked: list[tuple[str, str]] = []
+
+    def fake_capture(config, account, kind):
+        asked.append((account, kind))
+        return _make_token(time.time() + 7200)
+
+    monkeypatch.setattr(auth_commands.capture, "capture_token", fake_capture)
+    auth_commands.owa_login(Config(data_dir=tmp_path), account_email="user@example.com")
+    assert asked == [("user@example.com", "mail")]
+
+
+def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch):
     from microsoft_cli import auth_commands
     from microsoft_cli.config import Config
 
     cfg = Config(data_dir=tmp_path)
-
-    class _Res:
-        def __init__(self, out):
-            self.stdout = out
-
-    monkeypatch.setattr(auth_commands.subprocess, "run", lambda *a, **k: _Res(raw))
+    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda config, account, kind: None)
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "sign_in_required"
+    assert "--browser" in result["message"]
     assert owa_rest.has_valid_token("user@example.com", cfg) is False
 
 

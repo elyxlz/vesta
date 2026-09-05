@@ -48,6 +48,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11vnc openbox novnc && \
     rm -rf /var/lib/apt/lists/*
 
+# ── browser daemon engines: Debian chromium for the standard route, the pinned Camoufox bundle for
+# stealth. install-engines.sh is the one owner (the migration runs the same script on the fleet).
+RUN apt-get update && apt-get install -y --no-install-recommends chromium && \
+    rm -rf /var/lib/apt/lists/*
+
 # ── Go toolchain + CGO link deps for the whatsapp skill's on-box builds ───
 # The whatsapp launcher compiles the CLI from source on every invocation and
 # needs go + a C/C++ linker; whisper static libs come from the whisper-build
@@ -96,6 +101,9 @@ WORKDIR /root/agent
 # `uv run` would re-sync the engine venv. PATH exposes the venv instead.
 RUN UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --no-install-project --project core
 ENV PATH="/root/agent/.venv/bin:${PATH}"
+
+# Same script the browser-daemon migration runs on the fleet (fleet upgrades never rerun this file).
+RUN /root/agent/skills/browser/install-engines.sh
 
 # Install Claude Code on PATH, pinned: the fleet runs one known CLI version, and a release built
 # from a bumped pin rebuilds every agent container onto it, so upgrades are deliberate and

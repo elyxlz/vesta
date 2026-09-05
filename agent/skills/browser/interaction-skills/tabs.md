@@ -1,35 +1,32 @@
 # Tabs
 
-Camoufox runs headless, so there is no visible tab strip to keep in sync; tabs are just
-top-level BiDi browsing contexts you open, attach to, and close.
+The browser runs with no visible tab strip, so tabs are only what the helpers report: pages you
+open, switch between, and close by id.
 
-## The BiDi tab model
+## The tab model
 
 ```python
-tabs = list_tabs()  # top-level contexts; includes about: pages
-real_tabs = list_tabs(include_internal=False)  # drop about:/moz-extension:/etc
-ctx = new_tab("https://example.com")  # create + switch + navigate; returns the context id
-switch_tab(ctx)  # make this context current (also activates it)
-print(current_tab())  # {target_id, url, title} for the current context
-print(page_info())
-close_tab(ctx)  # close a context by id
+tabs = list_tabs()  # every page, including about: pages
+ctx = new_tab("https://example.com")  # create, switch, navigate; returns the tab id
+switch_tab(ctx)  # make this tab current
+print(current_tab())  # {target_id, url, title} for the current tab
+print(page_info())  # url, title, viewport size, scroll offsets, page size
+close_tab(ctx)  # close one tab by id
 ```
 
-`target_id` in every helper is the BiDi **context id** (a stable UUID for the tab), the analog
-of the old CDP target id.
+`target_id` is the tab's id in every helper. Take it from `list_tabs()` or `current_tab()`, never
+from memory of an earlier program: a closed and reopened tab carries a different id.
 
 ## What the model is good at
 
-- open, attach to, inspect, and close tabs
-- run JS / take a snapshot in any context by id (`js(expr, target_id=ctx)`)
-- reach an iframe's context: `iframe_target("substring-of-its-url")`
+- open, switch to, inspect, and close tabs
+- run JS in a named tab: `js(expr, target_id=ctx)`
+- drop back to a real page after a tab lands on `about:blank`: `ensure_real_tab()`
 
 ## Rules that held up in practice
 
-- Navigating away invalidates the snapshot's refs; take a fresh `browser snapshot` after.
-- `list_tabs()` includes internal `about:` pages by default; pass `include_internal=False` when
-  you want only real pages.
-- If a page reports `w=0 h=0` in `page_info()`, you're likely attached to a context that hasn't
-  laid out yet; `wait_for_load()` first.
-- For dynamic UIs, re-read element rects (fresh snapshot) after opening dropdowns / modals before
-  coordinate-clicking.
+- A tab reporting `w=0 h=0` in `page_info()` has not laid out yet. Call `wait_for_load()` first.
+- `list_tabs()` includes internal `about:` pages. `list_tabs(include_chrome=False)` drops them.
+- Re-read element rects after opening a dropdown or a modal, before clicking by coordinate.
+- Tabs live in the session, so a tab opened by one program is there for the next one. Close each
+  tab you finish with: a session that accumulates tabs slows every later program down.

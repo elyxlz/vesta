@@ -1,14 +1,18 @@
 """Tests for the unified onboarding + silent-refresh surface.
 
-The browser-driving itself (headed Xvfb, token extraction JS) is exercised live, not here; these
-lock the logic around it: token persistence, refresh scheduling, the `auth setup` state machine, and
-the friendly scope-error on a 403.
+The token-extraction JS runs against a real signed-in web session, not here; these lock the logic
+around it: the per-account browser session and the `browser exec` envelope it answers, token
+persistence, refresh scheduling, the `auth setup` state machine, and the friendly scope-error on a 403.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import stat
+import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -16,6 +20,13 @@ import httpx
 import pytest
 from microsoft_cli import auth_commands, backend, capture, cli, owa_rest, teams
 from microsoft_cli.config import Config
+
+
+def _jwt(exp: float) -> str:
+    """A minimal fake JWT carrying the given exp claim, as the web session's storage holds it."""
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).rstrip(b"=").decode()
+    return f"{header}.{payload}.fake_sig"
 
 
 def _http_error(status: int) -> httpx.HTTPStatusError:
@@ -198,3 +209,177 @@ def test_dispatch_teams_403_gives_reauth_hint(monkeypatch):
     monkeypatch.setattr(cli.teams, "get_presence", _raise)
     with pytest.raises(PermissionError, match="auth setup"):
         cli._dispatch_teams(args, Config(), MagicMock())
+
+
+# ---------------------------------------------------------------------------
+# capture: one Chromium session per account, driven through `browser exec`
+# ---------------------------------------------------------------------------
+
+# Answers one browser.result.v1 envelope and appends one log line per invocation (its argv, the
+# program it read on stdin, and whether there was one), so a caller can assert the call sequence.
+# `FAKE_ERROR_CODE`/`FAKE_ERROR_MESSAGE` answer a failing envelope on stderr with exit 1; otherwise
+# `FAKE_STDOUT` is the program's captured stdout and `FAKE_DATA` (when set) the envelope's data.
+_SHIM = """import json, os, sys
+
+code = sys.stdin.read() if sys.argv[1] == "exec" else ""
+with open(os.environ["SHIM_LOG"], "a") as handle:
+    handle.write(json.dumps({"argv": sys.argv[1:], "code": code, "program": bool(code)}) + "\\n")
+if "FAKE_ERROR_CODE" in os.environ:
+    error = {"code": os.environ["FAKE_ERROR_CODE"], "phase": "launch", "message": os.environ["FAKE_ERROR_MESSAGE"],
+             "retryable": True, "suggested_action": "run: browser daemon start"}
+    sys.stderr.write(json.dumps({"schema": "browser.result.v1", "ok": False, "error": error}))
+    sys.exit(1)
+envelope = {"schema": "browser.result.v1", "ok": True,
+            "output": {"stdout": os.environ["FAKE_STDOUT"], "stderr": "", "exit_code": 0, "duration_ms": 1},
+            "data": json.loads(os.environ["FAKE_DATA"]) if "FAKE_DATA" in os.environ else None}
+sys.stdout.write(json.dumps(envelope))
+"""
+
+
+def _install_shim(tmp_path, monkeypatch, *, stdout: str = "") -> Path:
+    """Put a fake `browser` on an otherwise empty PATH; returns the file its call log lands in."""
+    shim = tmp_path / "browser"
+    shim.write_text(f"#!{sys.executable}\n{_SHIM}")
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    log = tmp_path / "shim.json"
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("SHIM_LOG", str(log))
+    monkeypatch.setenv("FAKE_STDOUT", stdout)
+    monkeypatch.setattr(capture.time, "sleep", lambda _seconds: None)
+    return log
+
+
+def _calls(log: Path) -> list[dict]:
+    """Every `browser` invocation the shim recorded, in the order they were made."""
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+@pytest.mark.parametrize(
+    ("account", "session"),
+    [
+        ("Alice@Example.com", "microsoft-alice_example_com"),
+        ("a.b+c@company.co.uk", "microsoft-a_b_c_company_co_uk"),
+        ("jos\u00e9.garc\u00eda@empresa.es", "microsoft-jos__garc_a_empresa_es"),
+        ("a" * 40 + "@" + "b" * 11 + ".com", "microsoft-" + "a" * 40 + "_" + "b" * 4 + "-fbb1a465"),
+    ],
+)
+def test_session_name_is_one_chromium_session_per_account(account, session):
+    assert capture.session_name(account) == session
+
+
+@pytest.mark.parametrize(
+    "account",
+    ["Alice@Example.com", "jos\u00e9.garc\u00eda@empresa.es", "a" * 40 + "@" + "b" * 11 + ".com", "\u4e2d\u6587@example.com"],
+)
+def test_session_name_fits_the_shape_the_browser_daemon_takes(account):
+    name = capture.session_name(account)
+    assert capture.SESSION_NAME_RE.match(name)
+    assert len(name) <= capture.SESSION_NAME_MAX
+    assert capture.session_name(account) == name  # the same address always names the same session
+
+
+def test_session_name_over_the_cap_fills_the_budget_and_stays_unique():
+    long_account = "a" * 40 + "@" + "b" * 11 + ".com"  # 55 characters
+    name = capture.session_name(long_account)
+    assert len(name) == capture.SESSION_NAME_MAX
+    assert name != capture.session_name("a" * 40 + "@" + "b" * 11 + ".net")  # the digest separates them
+
+
+def test_capture_token_runs_the_token_program_on_the_accounts_session(tmp_path, monkeypatch):
+    token = "eyJ.a.b"
+    log = _install_shim(tmp_path, monkeypatch, stdout=token)
+    assert capture.capture_token(Config(data_dir=tmp_path), "a@x.com", "mail") == token
+    [logged] = _calls(log)
+    assert logged["argv"] == ["exec", "--session", "microsoft-a_x_com", "--timeout", "60"]
+    assert capture.MAIL_URL in logged["code"]
+    assert "wait_for_load()" in logged["code"]
+
+
+def test_harvest_navigates_the_current_tab_instead_of_opening_one_per_poll(tmp_path, monkeypatch):
+    """Every poll drives the tab it finds, so a harvest leaves one tab behind, not one per poll."""
+    log = _install_shim(tmp_path, monkeypatch, stdout="NONE")
+    with pytest.raises(capture.CaptureError):
+        capture.refresh(Config(data_dir=tmp_path), "a@x.com")
+    programs = [call["code"] for call in _calls(log)]
+    assert len(programs) == 24  # 12 polls of each of the two kinds
+    for program in programs:
+        assert program.count("new_tab(") == 1
+        assert program.index("if not list_tabs():") < program.index("new_tab(")
+        assert "goto_url(" in program
+        assert "close_tab" not in program
+
+
+def test_capture_token_reads_the_teams_url_for_the_teams_kind(tmp_path, monkeypatch):
+    log = _install_shim(tmp_path, monkeypatch, stdout="eyJ.a.b")
+    capture.capture_token(Config(data_dir=tmp_path), "a@x.com", "teams")
+    assert capture.TEAMS_URL in _calls(log)[0]["code"]
+
+
+def test_capture_token_is_none_when_the_session_is_not_signed_in(tmp_path, monkeypatch):
+    _install_shim(tmp_path, monkeypatch, stdout="NONE")
+    assert capture.capture_token(Config(data_dir=tmp_path), "a@x.com", "mail") is None
+
+
+def test_exec_failure_raises_capture_error_naming_the_browser_daemon(tmp_path, monkeypatch):
+    _install_shim(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_ERROR_CODE", "daemon_down")
+    monkeypatch.setenv("FAKE_ERROR_MESSAGE", "browser daemon not reachable at /run/browser.sock")
+    with pytest.raises(capture.CaptureError, match="start the browser daemon"):
+        capture.capture_token(Config(data_dir=tmp_path), "a@x.com", "mail")
+
+
+def test_missing_browser_binary_raises_capture_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(capture.CaptureError, match="browser` skill is not active"):
+        capture.capture_token(Config(data_dir=tmp_path), "a@x.com", "mail")
+
+
+def test_begin_interactive_starts_a_handover_on_the_accounts_session(tmp_path, monkeypatch):
+    log = _install_shim(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_DATA", json.dumps({"user_url": "https://gw/agents/a/browser/k/s/handover.html"}))
+    assert capture.begin_interactive(Config(data_dir=tmp_path), "a@x.com").endswith("handover.html")
+    [logged] = _calls(log)
+    assert logged["argv"] == ["handover", "start", "--session", "microsoft-a_x_com", "--url", capture.MAIL_URL, "--minutes", "30"]
+    assert logged["program"] is False
+
+
+def test_begin_interactive_without_a_user_url_raises(tmp_path, monkeypatch):
+    _install_shim(tmp_path, monkeypatch)
+    with pytest.raises(capture.CaptureError):
+        capture.begin_interactive(Config(data_dir=tmp_path), "a@x.com")
+
+
+def test_finish_interactive_stops_the_handover_then_harvests(tmp_path, monkeypatch):
+    log = _install_shim(tmp_path, monkeypatch, stdout=_jwt(time.time() + 7200))
+    captured = capture.finish_interactive(Config(data_dir=tmp_path), "a@x.com")
+    assert sorted(captured) == ["mail", "teams"]
+    calls = _calls(log)
+    assert calls[0]["argv"] == ["handover", "stop"] and calls[0]["program"] is False
+    assert [call["argv"][0] for call in calls[1:]] == ["exec", "exec"]
+    assert all(call["program"] for call in calls[1:])
+
+
+def test_finish_interactive_without_a_signed_in_session_raises(tmp_path, monkeypatch):
+    _install_shim(tmp_path, monkeypatch, stdout="NONE")
+    with pytest.raises(capture.CaptureError, match="no signed-in browser session"):
+        capture.finish_interactive(Config(data_dir=tmp_path), "a@x.com")
+
+
+def test_refresh_harvests_without_a_handover(tmp_path, monkeypatch):
+    log = _install_shim(tmp_path, monkeypatch, stdout=_jwt(time.time() + 7200))
+    captured = capture.refresh(Config(data_dir=tmp_path), "a@x.com")
+    assert sorted(captured) == ["mail", "teams"]
+    assert [call["argv"][0] for call in _calls(log)] == ["exec", "exec"]  # no handover, no window
+
+
+def test_refresh_raises_when_the_sign_in_expired(tmp_path, monkeypatch):
+    _install_shim(tmp_path, monkeypatch, stdout="NONE")
+    with pytest.raises(capture.CaptureError, match="auth setup"):
+        capture.refresh(Config(data_dir=tmp_path), "a@x.com")
+
+
+def test_stop_ignores_a_handover_that_is_not_running(tmp_path, monkeypatch):
+    _install_shim(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_ERROR_CODE", "invalid_request")
+    monkeypatch.setenv("FAKE_ERROR_MESSAGE", "no handover is running")
+    assert capture.stop() is None

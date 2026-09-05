@@ -1,387 +1,182 @@
-"""Tests for the argparse dispatcher and command helpers that don't need a live browser."""
+import io
+import json
+import socket
+import subprocess
+import sys
+import threading
+import time
 
-from __future__ import annotations
-
-import argparse
-
-from vesta_browser import cli, helpers
-
-
-def test_parser_accepts_all_documented_subcommands():
-    parser = cli._build_parser()
-    for cmd in (
-        "launch",
-        "connect",
-        "stop",
-        "stop-all",
-        "sessions",
-        "open",
-        "navigate",
-        "reload",
-        "back",
-        "forward",
-        "snapshot",
-        "screenshot",
-        "pdf",
-        "click",
-        "type",
-        "press",
-        "hover",
-        "scroll",
-        "wait",
-        "evaluate",
-        "bidi",
-        "http-get",
-        "fetch",
-        "doctor",
-        "tabs",
-        "focus",
-        "close",
-        "resize",
-    ):
-        ns = parser.parse_args([cmd, *_minimal_args_for(cmd)])
-        assert ns.cmd == cmd
+import pytest
+from vesta_browser import cli, handover, serve
+from vesta_browser.runtime_paths import load_paths
 
 
-_URL_ARGS = ["https://example.com"]
-_MINIMAL_ARGS = {
-    "open": _URL_ARGS,
-    "navigate": _URL_ARGS,
-    "connect": _URL_ARGS,
-    "http-get": _URL_ARGS,
-    "fetch": _URL_ARGS,
-    "type": ["e1", "hello"],
-    "hover": ["e1"],
-    "click": ["e1"],
-    "press": ["Enter"],
-    "evaluate": ["document.title"],
-    "bidi": ["browsingContext.getTree"],
-    "focus": ["TARGET_XYZ"],
-    "close": ["TARGET_XYZ"],
-    "resize": ["1920", "1080"],
-}
-
-
-def _minimal_args_for(cmd: str) -> list[str]:
-    return _MINIMAL_ARGS[cmd] if cmd in _MINIMAL_ARGS else []
-
-
-def test_parser_launch_flags_compat():
-    # --stealth/--no-sandbox/--port stay accepted (no-ops now) so existing prompts keep parsing.
-    parser = cli._build_parser()
-    ns = parser.parse_args(["launch", "--headless", "--stealth", "--no-sandbox", "--port", "9999"])
-    assert ns.headless is True
-    assert ns.stealth is True
-    assert ns.no_sandbox is True
-    assert ns.port == 9999
-
-
-def test_parser_fetch_navigate_first():
-    parser = cli._build_parser()
-    ns = parser.parse_args(["fetch", "https://x.com", "--navigate-first"])
-    assert ns.navigate_first is True
-
-
-def test_parser_mode_accepts_choices():
-    parser = cli._build_parser()
-    assert parser.parse_args(["mode", "screenshot"]).mode == "screenshot"
-    assert parser.parse_args(["mode"]).mode is None
-
-
-def test_parser_launch_mode_flag():
-    parser = cli._build_parser()
-    assert parser.parse_args(["launch", "--mode", "screenshot"]).mode == "screenshot"
-    assert parser.parse_args(["launch"]).mode is None
-
-
-def test_cmd_mode_sets_and_prints(monkeypatch, capsys):
-    seen: dict = {"mode": "a11y"}
-    monkeypatch.setattr(cli.admin, "set_mode", lambda m: seen.__setitem__("mode", m))
-    monkeypatch.setattr(cli.admin, "read_mode", lambda: seen["mode"])
-    cli.cmd_mode(argparse.Namespace(mode="both"))
-    assert seen["mode"] == "both"
-    assert '"both"' in capsys.readouterr().out
-
-
-def test_print_feedback_a11y_only(monkeypatch):
-    calls: list[str] = []
-    monkeypatch.setattr(cli.admin, "read_mode", lambda: "a11y")
-    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
-    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
-    cli._print_feedback()
-    assert calls == ["snap"]
-
-
-def test_print_feedback_screenshot_only(monkeypatch):
-    calls: list[str] = []
-    monkeypatch.setattr(cli.admin, "read_mode", lambda: "screenshot")
-    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
-    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
-    cli._print_feedback()
-    assert calls == ["view"]
-
-
-def test_print_feedback_both(monkeypatch):
-    calls: list[str] = []
-    monkeypatch.setattr(cli.admin, "read_mode", lambda: "both")
-    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
-    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
-    cli._print_feedback()
-    assert calls == ["snap", "view"]
-
-
-def test_parser_click_at_coords():
-    parser = cli._build_parser()
-    ns = parser.parse_args(["click", "--at", "320.5", "180.0"])
-    assert ns.at == [320.5, 180.0]
-    assert ns.ref is None
-
-
-def test_parser_click_ref_and_modifiers():
-    parser = cli._build_parser()
-    ns = parser.parse_args(["click", "e5", "--double", "--right"])
-    assert ns.ref == "e5"
-    assert ns.double is True
-    assert ns.right is True
-
-
-def test_parser_type_with_submit():
-    parser = cli._build_parser()
-    ns = parser.parse_args(["type", "e3", "hello world", "--submit", "--slowly"])
-    assert ns.ref == "e3"
-    assert ns.text == "hello world"
-    assert ns.submit is True
-    assert ns.slowly is True
-
-
-def test_parser_wait_branches():
-    parser = cli._build_parser()
-    ns = parser.parse_args(["wait", "--text", "Ready"])
-    assert ns.text == "Ready"
-    ns = parser.parse_args(["wait", "--time", "1500"])
-    assert ns.time == 1500
-    ns = parser.parse_args(["wait", "--url", "**/dashboard"])
-    assert ns.url == "**/dashboard"
-
-
-def test_parser_press_modifiers():
-    parser = cli._build_parser()
-    ns = parser.parse_args(["press", "a", "--modifiers", "Control", "Shift"])
-    assert ns.key == "a"
-    assert ns.modifiers == ["Control", "Shift"]
-
-
-def test_press_combo_shorthand_is_expanded(monkeypatch):
-    """'Control+a' should decompose into key='a' + modifier 'Control'."""
-    seen: dict = {}
-
-    def fake_press(key: str, modifiers=0):
-        seen["key"] = key
-        seen["modifiers"] = modifiers
-
-    monkeypatch.setattr(helpers, "press_key", fake_press)
-    monkeypatch.setattr(helpers, "wait", lambda *a, **kw: None)
-    monkeypatch.setattr(cli, "_print_snapshot", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-
-    args = argparse.Namespace(key="Control+a", modifiers=None)
-    rc = cli.cmd_press(args)
-    assert rc == 0
-    assert seen["key"] == "a"
-    assert seen["modifiers"] == ["Control"]
-
-
-def test_cmd_wait_requires_a_condition(monkeypatch, capsys):
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    args = argparse.Namespace(text=None, url=None, load_state=None, time=None, timeout=1.0)
-    rc = cli.cmd_wait(args)
-    assert rc == 2
-    err = capsys.readouterr().err
-    assert "wait needs one of" in err
-
-
-def test_cmd_wait_fails_when_the_condition_never_matches(monkeypatch, capsys):
-    """A wait that gives up is a failed wait: a zero exit with `matched: false` on stdout
-    reads exactly like a slow page, so only the exit code and stderr can say otherwise."""
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.helpers, "wait_for_text", lambda *a, **kw: False)
-    args = argparse.Namespace(text="Ready", url=None, load_state=None, time=None, timeout=1.0)
-    rc = cli.cmd_wait(args)
-    assert rc == 1
+def test_daemon_down_is_a_loud_error_on_stderr(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    code = cli.main(["exec", "--session", "default"])
     out, err = capsys.readouterr()
-    assert out == ""
-    assert err.strip() == '{"matched": false}'
+    assert code == 1 and out == ""
+    envelope = json.loads(err)
+    assert envelope["ok"] is False and envelope["error"]["code"] == "daemon_down"
+    assert envelope["error"]["suggested_action"] == "run: browser daemon start"
 
 
-def test_cmd_wait_reports_a_match_on_stdout(monkeypatch, capsys):
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.helpers, "wait_for_text", lambda *a, **kw: True)
-    args = argparse.Namespace(text="Ready", url=None, load_state=None, time=None, timeout=1.0)
-    rc = cli.cmd_wait(args)
-    assert rc == 0
+def test_daemon_closing_without_an_answer_is_also_daemon_down(tmp_path, monkeypatch, capsys):
+    """A crashed daemon, or `daemon stop` racing an in-flight request, closes the socket having
+    written nothing; that must read as `daemon_down`, not a raw json.JSONDecodeError traceback."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    paths = load_paths({}, tmp_path)
+    paths.root.mkdir(parents=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(paths.socket))
+    server.listen(1)
+
+    def stub():
+        conn, _ = server.accept()
+        conn.makefile("rb").readline()
+        conn.close()
+
+    threading.Thread(target=stub, daemon=True).start()
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    code = cli.main(["exec"])
     out, err = capsys.readouterr()
-    assert out.strip() == '{"matched": true}'
-    assert err == ""
+    assert code == 1 and out == ""
+    envelope = json.loads(err)
+    assert envelope["ok"] is False and envelope["error"]["code"] == "daemon_down"
 
 
-def test_cmd_click_requires_ref_or_at(monkeypatch, capsys):
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    args = argparse.Namespace(at=None, ref=None, double=False, right=False)
-    rc = cli.cmd_click(args)
-    assert rc == 2
+def test_exec_sends_the_request_and_prints_one_line(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+
+    def fake_send(_paths, payload, timeout):
+        seen.update(payload)
+        return serve.p.result(request_id=payload["request_id"], op="exec", ok=True, data={"echo": True})
+
+    monkeypatch.setattr(cli, "send", fake_send)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("new_tab('x')\n"))
+    code = cli.main(["exec", "--session", "research", "--stealth", "--timeout", "42"])
+    out, err = capsys.readouterr()
+    assert code == 0 and err == "" and out.count("\n") == 1
+    assert seen["op"] == "exec" and seen["session"] == "research" and seen["mode"] == "stealth"
+    assert seen["timeout_s"] == 42 and seen["code"] == "new_tab('x')\n" and seen["version"] == 1
 
 
-def test_main_prints_help_when_no_command(monkeypatch, capsys):
-    # Simulate argv without command and no stdin pipe.
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    rc = cli.main([])
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert "Vesta browser CLI" in captured.out or "usage:" in captured.out.lower()
+def test_exec_without_stealth_sends_a_null_mode(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(cli, "send", lambda _p, payload, _t: seen.update(payload) or serve.p.result(request_id="x", op="exec", ok=True))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    cli.main(["exec"])
+    assert seen["mode"] is None and seen["session"] == "default" and seen["timeout_s"] == 120
 
 
-def test_snapshot_banner_format(monkeypatch):
-    def fake_snapshot(interactive_only: bool = False):
-        return {
-            "target_id": "T1",
-            "url": "https://unknown.example/",
-            "title": "A",
-            "text": '- page\n  - button "Go" [ref=e1]',
-            "refs": {"e1": {}},
-            "ref_count": 1,
-        }
-
-    monkeypatch.setattr(cli.snapshot, "snapshot", fake_snapshot)
-    monkeypatch.setattr(cli.helpers, "recipe_banner", lambda _: "")
-
-    banner = cli._snapshot_banner()
-    assert "# A" in banner
-    assert "# https://unknown.example/" in banner
-    assert "1 interactive refs" in banner
-    assert "[ref=e1]" in banner
+def test_failed_result_goes_to_stderr_with_exit_1(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    err = serve.p.error("execution_failed", "execution", "boom", retryable=False, suggested_action="fix")
+    monkeypatch.setattr(cli, "send", lambda _p, payload, _t: serve.p.result(request_id="x", op="exec", ok=False, err=err))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    code = cli.main(["exec"])
+    out, stderr = capsys.readouterr()
+    assert code == 1 and out == "" and json.loads(stderr)["error"]["code"] == "execution_failed"
 
 
-def test_snapshot_banner_handles_snapshot_failure(monkeypatch):
-    def blow_up(**kwargs):
-        raise RuntimeError("backend dead")
-
-    monkeypatch.setattr(cli.snapshot, "snapshot", blow_up)
-    assert "snapshot failed: backend dead" in cli._snapshot_banner()
-
-
-def test_cmd_screenshot_plumbs_webp_and_region(monkeypatch):
-    """--webp + --region flow through as image_format='webp' + region tuple; path default follows the format."""
-    captured: dict = {}
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
-
-    args = argparse.Namespace(path="/tmp/shot.webp", full_page=False, webp=True, jpeg=False, region="10,20,300,200", quality=75)
-    assert cli.cmd_screenshot(args) == 0
-    assert captured["image_format"] == "webp"
-    assert captured["region"] == (10.0, 20.0, 300.0, 200.0)
-    assert captured["quality"] == 75
-
-    captured.clear()
-    cli.cmd_screenshot(argparse.Namespace(path=None, full_page=False, webp=True, jpeg=False, region=None, quality=None))
-    assert captured["path"].endswith(".webp")
-
-
-def test_cmd_screenshot_infers_format_from_path_suffix(monkeypatch):
-    captured: dict = {}
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
-    cli.cmd_screenshot(argparse.Namespace(path="/tmp/x.jpg", full_page=False, webp=False, jpeg=False, region=None, quality=None))
-    assert captured["image_format"] == "jpeg"
+@pytest.mark.parametrize(
+    ("argv", "op", "extra"),
+    [
+        (["doctor"], "doctor", {}),
+        (["engines"], "engines", {}),
+        (["sessions"], "sessions", {}),
+        (["session", "stop", "research"], "session_stop", {"session": "research"}),
+        (["stop-all"], "stop_all", {}),
+        (
+            ["handover", "start", "--url", "https://x", "--session", "s", "--stealth", "--minutes", "10"],
+            "handover_start",
+            {"url": "https://x", "session": "s", "mode": "stealth", "minutes": 10},
+        ),
+        (["handover", "status"], "handover_status", {}),
+        (["handover", "stop"], "handover_stop", {}),
+    ],
+)
+def test_every_rpc_command_maps_to_its_op(monkeypatch, tmp_path, argv, op, extra):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(cli, "send", lambda _p, payload, _t: seen.update(payload) or serve.p.result(request_id="x", op=op, ok=True))
+    assert cli.main(argv) == 0
+    assert seen["op"] == op and all(seen[k] == v for k, v in extra.items())
 
 
-def test_cmd_screenshot_rejects_malformed_region(monkeypatch):
-    import pytest
-
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    with pytest.raises(ValueError, match="--region expects"):
-        cli.cmd_screenshot(argparse.Namespace(path=None, full_page=False, webp=False, jpeg=False, region="0,0,320", quality=None))
-
-
-def test_cmd_stop_accepts_a_session_name(monkeypatch):
-    stopped = []
-    monkeypatch.setattr(cli.admin, "shutdown", stopped.append)
-    parser = cli._build_parser()
-
-    ns = parser.parse_args(["stop", "research-3"])
-    cli.cmd_stop(ns)
-    ns = parser.parse_args(["stop"])
-    cli.cmd_stop(ns)
-
-    assert stopped == ["research-3", None], "a name stops that session; none stops $BROWSER_SESSION"
+@pytest.mark.parametrize("argv", [["handover", "start"], ["handover", "status"], ["handover", "stop"]])
+def test_the_handover_verbs_wait_past_the_daemon_bring_up_budget(monkeypatch, tmp_path, argv):
+    """A slow bring-up must answer, not read as a dead daemon, so the client outlives the budget."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(
+        cli, "send", lambda _p, _payload, timeout: seen.update(timeout=timeout) or serve.p.result(request_id="x", op="h", ok=True)
+    )
+    assert cli.main(argv) == 0
+    assert seen["timeout"] == cli.HANDOVER_RPC_TIMEOUT_SECS
+    assert cli.HANDOVER_RPC_TIMEOUT_SECS > handover.HANDOVER_START_BUDGET_SECS
 
 
-def _stop_all_setup(monkeypatch, sessions):
-    calls = []
-    monkeypatch.setattr(cli.admin, "_session_name", lambda name=None: "mine")
-    monkeypatch.setattr(cli.admin, "list_sessions", lambda: sessions)
-    monkeypatch.setattr(cli.admin, "stop_all", lambda: calls.append("stop_all"))
-    return calls
+def test_usage_on_no_args_and_unknown_command(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli.main([]) == 0
+    out, err = capsys.readouterr()
+    assert "usage" in out.lower() and err == ""
+    assert cli.main(["help"]) == 0
+    out, err = capsys.readouterr()
+    assert "usage" in out.lower() and err == ""
+    assert cli.main(["dance"]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and "usage" in err.lower()
 
 
-_MINE_ALIVE = {"name": "mine", "browser_alive": True, "daemon_alive": True}
-_OTHER_ALIVE = {"name": "research-2", "browser_alive": True, "daemon_alive": False}
+def test_sigint_during_exec_sends_cancel(tmp_path, monkeypatch):
+    """Runs the real CLI as a subprocess against a stub daemon that holds the exec until it sees cancel."""
+    paths = load_paths({}, tmp_path)
+    paths.root.mkdir(parents=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(paths.socket))
+    server.listen(2)
+    seen_ops = []
 
+    def stub():
+        first, _ = server.accept()
+        first_req = json.loads(first.makefile("rb").readline())
+        seen_ops.append(first_req["op"])
+        second, _ = server.accept()
+        second_req = json.loads(second.makefile("rb").readline())
+        seen_ops.append(second_req["op"])
+        second.sendall(json.dumps(serve.p.result(request_id="c", op="cancel", ok=True)).encode() + b"\n")
+        second.close()
+        first.sendall(json.dumps(serve.p.result(request_id=first_req["request_id"], op="exec", ok=False)).encode() + b"\n")
+        first.close()
 
-def test_cmd_stop_all_refuses_when_other_sessions_are_live(monkeypatch, capsys):
-    calls = _stop_all_setup(monkeypatch, [_MINE_ALIVE, _OTHER_ALIVE])
-
-    rc = cli.cmd_stop_all(argparse.Namespace(force=False))
-
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert calls == []
-    assert "research-2" in captured.err
-    assert "--force" in captured.err
-    assert captured.out == "", "the refusal goes to stderr, so piped stdout cannot swallow it"
-
-
-def test_cmd_stop_all_force_overrides_the_guard(monkeypatch):
-    calls = _stop_all_setup(monkeypatch, [_MINE_ALIVE, _OTHER_ALIVE])
-
-    rc = cli.cmd_stop_all(argparse.Namespace(force=True))
-
-    assert rc == 0
-    assert calls == ["stop_all"]
-
-
-def test_cmd_stop_all_proceeds_when_only_own_session_is_live(monkeypatch):
-    calls = _stop_all_setup(monkeypatch, [_MINE_ALIVE])
-
-    rc = cli.cmd_stop_all(argparse.Namespace(force=False))
-
-    assert rc == 0
-    assert calls == ["stop_all"]
-
-
-def _click_setup(monkeypatch, occluder):
-    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.helpers, "click_ref", lambda *a, **kw: occluder)
-    monkeypatch.setattr(cli.helpers, "wait", lambda *a, **kw: None)
-    monkeypatch.setattr(cli, "_print_feedback", lambda *a, **kw: None)
-
-
-def test_cmd_click_fails_when_an_overlay_takes_the_click(monkeypatch, capsys):
-    """An intercepted click is a failed click: the page state it leaves behind looks
-    exactly like success, so only the exit code and stderr can say otherwise."""
-    _click_setup(monkeypatch, "div.onetrust-pc-dark-filter")
-
-    rc = cli.cmd_click(argparse.Namespace(at=None, ref="e5", double=False, right=False))
-
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert "div.onetrust-pc-dark-filter" in captured.err
-    assert "e5" in captured.err
-
-
-def test_cmd_click_succeeds_when_the_ref_is_clear(monkeypatch, capsys):
-    _click_setup(monkeypatch, None)
-
-    rc = cli.cmd_click(argparse.Namespace(at=None, ref="e5", double=False, right=False))
-
-    assert rc == 0
-    assert capsys.readouterr().err == ""
+    threading.Thread(target=stub, daemon=True).start()
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; from vesta_browser.cli import main; sys.exit(main(['exec']))"],
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "PYTHONPATH": str(cli.__file__).rsplit("/vesta_browser", 1)[0]},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    proc.stdin.write("SLEEP")
+    proc.stdin.close()
+    # The CLI installs its SIGINT handler before it sends, so the stub seeing the exec request is
+    # the signal that interrupting it now reaches that handler.
+    deadline = time.monotonic() + 10
+    while not seen_ops and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert seen_ops == ["exec"]
+    proc.send_signal(2)
+    # Not proc.communicate(): CPython's communicate() unconditionally reflushes stdin and only
+    # catches BrokenPipeError, so a stdin already closed above raises ValueError on 3.12. wait()
+    # plus a direct stderr read sidesteps the double-close with no risk of a pipe deadlock, since
+    # this process's own stderr is one short JSON line.
+    proc.wait(timeout=10)
+    err = proc.stderr.read()
+    assert proc.returncode == 1 and seen_ops == ["exec", "cancel"]
+    assert json.loads(err)["error"]["code"] == "cancelled"

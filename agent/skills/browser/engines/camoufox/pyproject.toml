@@ -1,0 +1,12 @@
+[project]
+name = "vesta-browser-engine-camoufox"
+version = "0.1.0"
+description = "Locked executor environment for the browser daemon's Camoufox route: the official Camoufox Python API over Playwright Firefox."
+requires-python = ">=3.11"
+dependencies = [
+    "camoufox==0.5.6b1",
+    "playwright<1.63",
+]
+
+[tool.uv]
+package = false

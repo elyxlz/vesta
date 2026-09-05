@@ -1,638 +1,173 @@
-"""Bash-compatible CLI dispatcher.
+"""The `browser` command: one JSON request over the daemon socket, one JSON line back.
 
-Command surface matches the old TypeScript CLI so existing agent prompts keep working.
-Also supports a `browser <<'PY' ... PY` stdin mode for multi-line scripts (helpers
-are pre-imported).
+Every browser decision lives in the daemon. This client parses arguments, reads the program from
+stdin, sends one request, and prints one line: stdout on success, stderr on failure, exit 1.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import pathlib as pl
+import signal
+import socket
 import sys
-from collections.abc import Callable
-from pathlib import Path
+import threading
+import uuid
 
-from . import admin, handover, helpers, snapshot
+from . import daemon, serve
+from . import protocol as p
+from .runtime_paths import Paths, load_paths
 
-SESSION_ENV = "BROWSER_SESSION"
+USAGE = """Usage:
+  browser exec --session <name> [--stealth] [--timeout <secs>]   # Python on stdin
+  browser daemon start|stop|restart|status
+  browser doctor | engines | sessions | session stop <name> | stop-all
+  browser handover start [--url <url>] [--session <name>] [--stealth] [--minutes <n>]
+  browser handover status | stop"""
+RPC_TIMEOUT_SLACK_SECS = 30
+# Past the daemon's own bring-up budget, so a slow handover answers instead of reading as a dead
+# daemon, and inside the 120s a Bash tool call allows by default.
+HANDOVER_RPC_TIMEOUT_SECS = 110.0
+CANCEL_TIMEOUT_SECS = 5
 
 
-def _snapshot_banner(interactive_only: bool = False) -> str:
-    """Take a snapshot and format it. Called after every mutating action."""
+def _request_id() -> str:
+    return f"r_{uuid.uuid4().hex[:12]}"
+
+
+def _daemon_down(payload: dict[str, p.JsonValue], message: str) -> p.Result:
+    err = p.error("daemon_down", "validation", message, retryable=True, suggested_action="run: browser daemon start")
+    return p.result(request_id=str(payload["request_id"]), op=str(payload["op"]), ok=False, err=err)
+
+
+def send(paths: Paths, payload: dict[str, p.JsonValue], timeout: float) -> p.Result:
+    """One request, one reply. A socket that is absent, refuses, or closes with no answer is `daemon_down`."""
     try:
-        snap = snapshot.snapshot(interactive_only=interactive_only)
-    except (RuntimeError, OSError) as e:
-        return f"(snapshot failed: {e})"
-    header = f"# {snap['title'] or '(no title)'}\n# {snap['url']}\n# {snap['ref_count']} interactive refs"
-    banner = helpers.recipe_banner(snap["url"])
-    parts = [header]
-    if banner:
-        parts.append(banner)
-    parts.append(snap["text"])
-    return "\n\n".join(parts)
-
-
-def _print_snapshot(interactive_only: bool = False) -> None:
-    print(_snapshot_banner(interactive_only=interactive_only))
-
-
-DEFAULT_VIEW_PATH = "/tmp/vesta-browser-view.png"
-
-
-def _print_view(with_header: bool = True) -> None:
-    """Capture a screenshot and print its path (+ optional url/title header)."""
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(str(paths.socket))
+            sock.sendall((json.dumps(payload) + "\n").encode())
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = sock.recv(1 << 16)
+                if not chunk:
+                    break
+                data += chunk
+    except OSError as exc:
+        return _daemon_down(payload, f"browser daemon not reachable at {paths.socket}: {exc}")
     try:
-        path = helpers.screenshot(path=DEFAULT_VIEW_PATH)
-    except (RuntimeError, OSError, ValueError) as e:
-        print(f"(screenshot failed: {e})")
-        return
-    if with_header:
-        try:
-            info = helpers.page_info()
-        except (RuntimeError, OSError):
-            info = {}
-        title = info["title"] if "title" in info else ""
-        url = info["url"] if "url" in info else ""
-        print(f"# {title or '(no title)'}\n# {url}".rstrip())
-    print(f"screenshot: {path}")
-
-
-def _print_feedback(interactive_only: bool = False) -> None:
-    """Report back after an action in the session's perception mode (a11y / screenshot / both)."""
-    mode = admin.read_mode()
-    if mode in ("a11y", "both"):
-        _print_snapshot(interactive_only=interactive_only)
-    if mode in ("screenshot", "both"):
-        _print_view(with_header=(mode == "screenshot"))
-
-
-# ── Commands ──────────────────────────────────────────────────
-
-
-def cmd_launch(args: argparse.Namespace) -> int:
-    if args.user_data_dir and args.ephemeral_profile:
-        print("--user-data-dir and --ephemeral-profile are mutually exclusive", file=sys.stderr)
-        return 2
-    if args.ephemeral_profile:
-        profile = admin.ephemeral_profile_dir()
-    elif args.user_data_dir:
-        # Resolve before launching: the live-owner check matches this path against process
-        # argv, so a relative path here would make a running session look unowned.
-        profile = Path(args.user_data_dir).expanduser().resolve()
-    else:
-        profile = None
-    # Camoufox is fully fingerprint-spoofed headless, so CLI launches are always headless: no
-    # display or Xvfb needed even when DISPLAY is set (e.g. callers that set DISPLAY=:99 out of
-    # a stock-Chromium habit). Headed is reserved for `handover`, which provisions its own Xvfb.
-    running = admin.launch_browser(
-        headless=True,
-        user_data_dir=profile,
-        executable=args.executable,
-    )
-    admin.ensure_daemon()
-    if args.mode:
-        admin.set_mode(args.mode)
-    print(
-        json.dumps(
-            {
-                "session": admin._session_name(),
-                "ws_url": running.ws_url,
-                "pid": running.pid,
-                "user_data_dir": str(running.user_data_dir),
-                "headless": True,
-                "mode": admin.read_mode(),
-            },
-        )
-    )
-    return 0
-
-
-def cmd_mode(args: argparse.Namespace) -> int:
-    """Get or set how action commands report back: a11y tree, screenshot, or both."""
-    if args.mode:
-        admin.set_mode(args.mode)
-    print(json.dumps({"mode": admin.read_mode()}))
-    return 0
-
-
-def cmd_connect(args: argparse.Namespace) -> int:
-    """Attach to an externally running browser, over a tunnel or LAN.
-
-    - http(s)://host:port     -> a Chrome DevTools endpoint (CDP); resolves /json/version
-    - ws(s)://host:port/session -> a Camoufox WebDriver BiDi endpoint
-    - ws(s)://host:port/...    -> a raw Chrome CDP browser websocket
-    """
-    import os
-    import urllib.request
-    from urllib.parse import urlparse, urlunparse
-
-    url = args.url
-    if url.startswith(("http://", "https://")):
-        with urllib.request.urlopen(f"{url.rstrip('/')}/json/version", timeout=5) as r:
-            data = json.loads(r.read())
-        if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
-            print(f"no webSocketDebuggerUrl at {url}/json/version", file=sys.stderr)
-            return 1
-        # Chrome reports its own host in the ws url; rewrite it to the host we connected
-        # through so this works over a tunnel / across the internet.
-        ws_path = urlparse(data["webSocketDebuggerUrl"]).path
-        ws = urlunparse(("ws", urlparse(url).netloc, ws_path, "", "", ""))
-        admin.record_cdp_endpoint(ws)
-        os.environ["VESTA_BROWSER_CDP_WS"] = ws
-        backend = "cdp"
-    elif url.startswith(("ws://", "wss://")) and url.rstrip("/").endswith("/session"):
-        ws = url
-        admin.record_bidi_endpoint(ws)
-        os.environ["VESTA_BROWSER_BIDI_WS"] = ws
-        backend = "bidi"
-    elif url.startswith(("ws://", "wss://")):
-        ws = url
-        admin.record_cdp_endpoint(ws)
-        os.environ["VESTA_BROWSER_CDP_WS"] = ws
-        backend = "cdp"
-    else:
-        print(f"connect expects an http(s):// or ws(s):// url, got {url!r}", file=sys.stderr)
-        return 1
-    admin.ensure_daemon()
-    print(json.dumps({"session": admin._session_name(), "backend": backend, "ws": ws}))
-    return 0
-
-
-def cmd_stop(args: argparse.Namespace) -> int:
-    admin.shutdown(args.session)
-    return 0
-
-
-def cmd_stop_all(args: argparse.Namespace) -> int:
-    own = admin._session_name()
-    others = [s["name"] for s in admin.list_sessions() if s["name"] != own and (s["browser_alive"] or s["daemon_alive"])]
-    if others and not args.force:
-        print(
-            f"stop-all refused: other live session(s) exist ({', '.join(sorted(others))}), likely other work in flight. "
-            "Stop your own with `browser stop <session>`, or pass --force to stop everything.",
-            file=sys.stderr,
-        )
-        return 1
-    admin.stop_all()
-    return 0
-
-
-def cmd_sessions(_args: argparse.Namespace) -> int:
-    print(json.dumps(admin.list_sessions()))
-    return 0
-
-
-def cmd_prune(args: argparse.Namespace) -> int:
-    print(json.dumps(admin.prune_profiles(apply=args.yes)))
-    return 0
-
-
-def cmd_handover(args: argparse.Namespace) -> int:
-    """Hand the live browser to the user over a branded page so they sign in by hand."""
-    if args.action == "start":
-        result = handover.start(url=args.url, port=args.port, user_data_dir=args.user_data_dir)
-    elif args.action == "stop":
-        result = handover.stop()
-    else:
-        result = handover.status()
-    print(json.dumps(result))
-    return 0
-
-
-def cmd_open(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    tid = helpers.new_tab(args.url)
-    helpers.wait_for_load()
-    _print_feedback()
-    print(f"\n# target_id: {tid}")
-    return 0
-
-
-def _navigate(action: Callable[[], object]) -> int:
-    """Run a navigation action, wait for load, print the resulting snapshot."""
-    admin.ensure_daemon()
-    action()
-    helpers.wait_for_load()
-    _print_feedback()
-    return 0
-
-
-def cmd_navigate(args: argparse.Namespace) -> int:
-    return _navigate(lambda: helpers.goto(args.url))
-
-
-def cmd_reload(_args: argparse.Namespace) -> int:
-    return _navigate(helpers.reload)
-
-
-def cmd_back(_args: argparse.Namespace) -> int:
-    return _navigate(helpers.back)
-
-
-def cmd_forward(_args: argparse.Namespace) -> int:
-    return _navigate(helpers.forward)
-
-
-def cmd_snapshot(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    _print_snapshot(interactive_only=args.interactive)
-    return 0
-
-
-_SCREENSHOT_EXT = {"png": "png", "jpeg": "jpg", "webp": "webp"}
-
-
-def cmd_screenshot(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    lower = args.path.lower() if args.path else ""
-    if args.webp or lower.endswith(".webp"):
-        fmt = "webp"
-    elif args.jpeg or lower.endswith((".jpg", ".jpeg")):
-        fmt = "jpeg"
-    else:
-        fmt = "png"
-    region = None
-    if args.region:
-        parts = args.region.split(",")
-        if len(parts) != 4:
-            raise ValueError(f"--region expects 'x,y,w,h', got {args.region!r}")
-        region = (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]))
-    path = args.path or f"/tmp/screenshot.{_SCREENSHOT_EXT[fmt]}"
-    print(helpers.screenshot(path=path, full_page=args.full_page, image_format=fmt, region=region, quality=args.quality))
-    return 0
-
-
-def cmd_pdf(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    path = helpers.pdf(path=args.path)
-    print(path)
-    return 0
-
-
-def cmd_click(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    if args.at:
-        x, y = args.at
-        helpers.click(x, y, button="right" if args.right else "left", clicks=2 if args.double else 1)
-    else:
-        if not args.ref:
-            print("click needs a ref or --at X Y", file=sys.stderr)
-            return 2
-        occluder = helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
-        if occluder:
-            helpers.wait(0.2)
-            _print_feedback()
-            print(
-                f"{args.ref} is covered by <{occluder}>, which took the click instead. "
-                "Dismiss the overlay, take a fresh snapshot, then click again; verify the control changed before trusting the page. "
-                "See interaction-skills/clicking.md",
-                file=sys.stderr,
-            )
-            return 1
-    helpers.wait(0.2)
-    _print_feedback()
-    return 0
-
-
-def cmd_type(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.type_ref(args.ref, args.text, submit=args.submit, slowly=args.slowly)
-    helpers.wait(0.2)
-    _print_feedback()
-    return 0
-
-
-def cmd_press(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    key = args.key
-    mods = [m.capitalize() for m in (args.modifiers or [])]
-    if "+" in key and not args.modifiers:
-        # Accept "Control+a" shorthand.
-        pieces = key.split("+")
-        mods = [p.capitalize() for p in pieces[:-1]]
-        key = pieces[-1]
-    helpers.press_key(key, modifiers=mods or 0)
-    helpers.wait(0.2)
-    _print_feedback()
-    return 0
-
-
-def cmd_hover(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.hover_ref(args.ref)
-    return 0
-
-
-def cmd_scroll(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    if args.down is not None:
-        helpers.scroll(100, 300, dy=args.down)
-    elif args.up is not None:
-        helpers.scroll(100, 300, dy=-args.up)
-    elif args.ref:
-        helpers.scroll_to_ref(args.ref)
-    return 0
-
-
-def cmd_wait(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    if args.text:
-        ok = helpers.wait_for_text(args.text, timeout=args.timeout)
-    elif args.url:
-        ok = helpers.wait_for_url(args.url, timeout=args.timeout)
-    elif args.load_state in {"networkidle", "load"}:
-        ok = helpers.wait_for_load(timeout=args.timeout)
-    elif args.time is not None:
-        helpers.wait(args.time / 1000.0)
-        ok = True
-    else:
-        print("wait needs one of: --text, --url, --load-state, --time", file=sys.stderr)
-        return 2
-    if not ok:
-        print(json.dumps({"matched": False}), file=sys.stderr)
-        return 1
-    print(json.dumps({"matched": True}))
-    return 0
-
-
-def cmd_evaluate(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    result = helpers.js(args.expression)
-    print(json.dumps(result, default=str))
-    return 0
-
-
-def cmd_bidi(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    params = json.loads(args.params) if args.params else {}
-    result = helpers.bidi(args.method, **params)
-    print(json.dumps(result, default=str))
-    return 0
-
-
-def cmd_http_get(args: argparse.Namespace) -> int:
-    print(helpers.http_get(args.url))
-    return 0
-
-
-def cmd_fetch(args: argparse.Namespace) -> int:
-    if args.navigate_first:
-        admin.ensure_daemon()
-        print(helpers.fetch_navigate(args.url))
-    else:
-        print(helpers.http_get(args.url))
-    return 0
-
-
-def cmd_doctor(_args: argparse.Namespace) -> int:
-    import platform
-
-    from .launcher import CAMOUFOX_RELEASE_TAG, _asset_for_arch, camoufox_home, camoufox_installed, libs_readiness
-
-    report: dict = {
-        "arch": platform.machine(),
-        "camoufox_release": CAMOUFOX_RELEASE_TAG,
-        "camoufox_installed": camoufox_installed(),
-        "camoufox_home": str(camoufox_home()),
-        "shared_libs": libs_readiness(),
-        "sessions": admin.list_sessions(),
-        "handover": handover.readiness(),
+        result = json.loads(data) if data else None
+    except json.JSONDecodeError:
+        result = None
+    if not isinstance(result, dict):
+        return _daemon_down(payload, f"browser daemon closed the connection without an answer at {paths.socket}")
+    return result
+
+
+def emit(result: p.Result) -> int:
+    line = json.dumps(result)
+    if result["ok"]:
+        print(line)
+        return 0
+    print(line, file=sys.stderr)
+    return 1
+
+
+def _parser() -> argparse.ArgumentParser:
+    # argparse prepends its own "usage: "; passing the full USAGE (which already opens with
+    # "Usage:") would print "usage: Usage:" on an unknown command, so strip that header here.
+    parser = argparse.ArgumentParser(prog="browser", usage=USAGE.removeprefix("Usage:\n").strip(), add_help=True)
+    sub = parser.add_subparsers(dest="command")
+    run = sub.add_parser("exec")
+    run.add_argument("--session", default=p.DEFAULT_SESSION)
+    run.add_argument("--stealth", action="store_true")
+    run.add_argument("--timeout", type=int, default=p.EXEC_TIMEOUT_DEFAULT_SECS)
+    for name in ("doctor", "engines", "sessions", "stop-all"):
+        sub.add_parser(name)
+    session = sub.add_parser("session")
+    session.add_argument("verb", choices=["stop"])
+    session.add_argument("name")
+    handover = sub.add_parser("handover")
+    handover.add_argument("verb", choices=["start", "status", "stop"])
+    handover.add_argument("--url", default=None)
+    handover.add_argument("--session", default=p.DEFAULT_SESSION)
+    handover.add_argument("--stealth", action="store_true")
+    handover.add_argument("--minutes", type=int, default=None)
+    return parser
+
+
+def _exec(paths: Paths, args: argparse.Namespace) -> int:
+    request_id = _request_id()
+    payload: dict[str, p.JsonValue] = {
+        "version": p.PROTOCOL_VERSION,
+        "op": "exec",
+        "request_id": request_id,
+        "session": args.session,
+        "mode": "stealth" if args.stealth else None,
+        "timeout_s": args.timeout,
+        "code": sys.stdin.read(),
     }
-    try:
-        report["asset"] = _asset_for_arch()[0]
-    except RuntimeError as e:
-        report["asset_error"] = str(e)
-    if admin.daemon_healthy():
-        try:
-            report["contexts"] = len(helpers.bidi("browsingContext.getTree")["contexts"])
-        except RuntimeError as e:
-            report["probe_error"] = str(e)
-    print(json.dumps(report, default=str))
-    return 0
+    cancelled = threading.Event()
 
-
-def cmd_tabs(_args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    print(json.dumps(helpers.list_tabs()))
-    return 0
-
-
-def cmd_focus(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.switch_tab(args.target_id)
-    _print_feedback()
-    return 0
-
-
-def cmd_close(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.close_tab(args.target_id)
-    return 0
-
-
-def cmd_resize(args: argparse.Namespace) -> int:
-    admin.ensure_daemon()
-    helpers.set_viewport(args.width, args.height)
-    return 0
-
-
-def cmd_stdin(_args: argparse.Namespace) -> int:
-    """Run multi-line Python from stdin with helpers pre-imported, browser-harness style."""
-    admin.ensure_daemon()
-    if sys.stdin.isatty():
-        print(
-            "browser stdin mode reads from stdin. Use:\n  browser <<'PY'\n  print(page_info())\n  PY",
-            file=sys.stderr,
+    def on_signal(_signum: int, _frame: object) -> None:
+        cancelled.set()
+        send(
+            paths,
+            {"version": p.PROTOCOL_VERSION, "op": "cancel", "request_id": _request_id(), "target_request_id": request_id},
+            CANCEL_TIMEOUT_SECS,
         )
-        return 2
-    code = sys.stdin.read()
-    exec_globals = {name: value for name, value in vars(helpers).items() if not name.startswith("_")}
-    exec_globals["snapshot"] = snapshot.snapshot
-    exec(code, exec_globals)
-    return 0
+
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
+    result = send(paths, payload, args.timeout + RPC_TIMEOUT_SLACK_SECS)
+    if cancelled.is_set():
+        err = p.error("cancelled", "execution", "interrupted by the caller", retryable=False, suggested_action="rerun when ready")
+        result = p.result(request_id=request_id, op="exec", ok=False, session=result["session"], err=err)
+    return emit(result)
 
 
-# ── Argparse wiring ───────────────────────────────────────────
+def _rpc(paths: Paths, op: str, *, timeout: float = RPC_TIMEOUT_SLACK_SECS, **fields: p.JsonValue) -> int:
+    return emit(send(paths, {"version": p.PROTOCOL_VERSION, "op": op, "request_id": _request_id(), **fields}, timeout))
 
 
-def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    lp = sub.add_parser("launch", help="Launch Camoufox for this session.")
-    lp.add_argument("--headless", action="store_true")
-    lp.add_argument("--stealth", action="store_true")
-    lp.add_argument("--no-sandbox", action="store_true")
-    lp.add_argument("--mode", choices=admin.PERCEPTION_MODES, default=None, help="Perception mode for this session: a11y | screenshot | both.")
-    lp.add_argument("--user-data-dir", default=None, help="Durable profile dir; kept forever, never auto-deleted.")
-    lp.add_argument(
-        "--ephemeral-profile",
-        action="store_true",
-        help="Isolated throwaway profile, deleted on stop. Use instead of --user-data-dir for one-off runs.",
-    )
-    lp.add_argument("--executable", default=None)
-    lp.add_argument("--port", type=int, default=None)
-    lp.set_defaults(func=cmd_launch)
-
-    cp = sub.add_parser("connect", help="Connect to an externally running Camoufox.")
-    cp.add_argument("url", help="BiDi WebSocket URL, e.g. ws://localhost:9222/session")
-    cp.set_defaults(func=cmd_connect)
-
-    mp = sub.add_parser("mode", help="Get/set how actions report back: a11y tree, screenshot, or both.")
-    mp.add_argument("mode", nargs="?", choices=admin.PERCEPTION_MODES, help="Omit to print the current mode.")
-    mp.set_defaults(func=cmd_mode)
-
-    sub.add_parser("doctor", help="Report Camoufox install + session health.").set_defaults(func=cmd_doctor)
-
-    stp = sub.add_parser("stop", help="Stop this session, or the named one.")
-    stp.add_argument("session", nargs="?", default=None, help="Session name; defaults to $BROWSER_SESSION.")
-    stp.set_defaults(func=cmd_stop)
-    sap = sub.add_parser("stop-all", help="Stop all sessions; refuses when other sessions are live unless --force.")
-    sap.add_argument("--force", action="store_true", help="Stop other sessions' browsers too.")
-    sap.set_defaults(func=cmd_stop_all)
-    sub.add_parser("sessions", help="List active sessions.").set_defaults(func=cmd_sessions)
-    p_prune = sub.add_parser("prune", help="Report ephemeral profiles left by crashed sessions; --yes to delete them.")
-    p_prune.add_argument("--yes", action="store_true", help="Actually delete (default is a dry-run report).")
-    p_prune.set_defaults(func=cmd_prune)
-
-    hv = sub.add_parser("handover", help="Hand the live browser to the user over a clean page so they sign in by hand.")
-    hv.add_argument("action", choices=["start", "stop", "status"])
-    hv.add_argument("--url", default=None, help="URL to open in the headed browser (e.g. the sign-in page).")
-    hv.add_argument(
-        "--port", type=int, default=None, help="Override the web-server port; by default start registers a public service and returns its URL."
-    )
-    hv.add_argument("--user-data-dir", default=None, help="Profile dir; its cookies persist for later reuse.")
-    hv.set_defaults(func=cmd_handover)
+def _handover(paths: Paths, args: argparse.Namespace) -> int:
+    if args.verb == "start":
+        return _rpc(
+            paths,
+            "handover_start",
+            timeout=HANDOVER_RPC_TIMEOUT_SECS,
+            url=args.url,
+            session=args.session,
+            mode="stealth" if args.stealth else None,
+            minutes=args.minutes,
+        )
+    return _rpc(paths, f"handover_{args.verb}", timeout=HANDOVER_RPC_TIMEOUT_SECS)
 
 
-def _add_navigation_and_read_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    op = sub.add_parser("open", help="Open a URL in a new tab.")
-    op.add_argument("url")
-    op.set_defaults(func=cmd_open)
-
-    np = sub.add_parser("navigate", help="Navigate current tab.")
-    np.add_argument("url")
-    np.set_defaults(func=cmd_navigate)
-
-    sub.add_parser("reload").set_defaults(func=cmd_reload)
-    sub.add_parser("back").set_defaults(func=cmd_back)
-    sub.add_parser("forward").set_defaults(func=cmd_forward)
-
-    sp = sub.add_parser("snapshot", help="Accessibility snapshot with refs.")
-    sp.add_argument("--interactive", action="store_true")
-    sp.set_defaults(func=cmd_snapshot)
-
-    ssp = sub.add_parser("screenshot")
-    ssp.add_argument("--path", default=None, help="Output path; extension picks format if --webp/--jpeg not set.")
-    ssp.add_argument("--full-page", action="store_true")
-    fmt_group = ssp.add_mutually_exclusive_group()
-    fmt_group.add_argument("--webp", action="store_true", help="Encode as WebP (much smaller than PNG; prefer for routine UI checks).")
-    fmt_group.add_argument("--jpeg", action="store_true", help="Encode as JPEG.")
-    ssp.add_argument("--region", default=None, metavar="X,Y,W,H", help="Clip rectangle in CSS pixels: 'x,y,width,height'.")
-    ssp.add_argument("--quality", type=int, default=None, help="Quality 0-100 (webp/jpeg only).")
-    ssp.set_defaults(func=cmd_screenshot)
-
-    pp = sub.add_parser("pdf")
-    pp.add_argument("--path", default="/tmp/page.pdf")
-    pp.set_defaults(func=cmd_pdf)
-
-
-def _add_action_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    clp = sub.add_parser("click", help="Click a ref (e1) or --at X Y.")
-    clp.add_argument("ref", nargs="?")
-    clp.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"))
-    clp.add_argument("--double", action="store_true")
-    clp.add_argument("--right", action="store_true")
-    clp.set_defaults(func=cmd_click)
-
-    tp = sub.add_parser("type", help="Type into a ref.")
-    tp.add_argument("ref")
-    tp.add_argument("text")
-    tp.add_argument("--submit", action="store_true")
-    tp.add_argument("--slowly", action="store_true")
-    tp.set_defaults(func=cmd_type)
-
-    prp = sub.add_parser("press")
-    prp.add_argument("key")
-    prp.add_argument("--modifiers", nargs="*")
-    prp.set_defaults(func=cmd_press)
-
-    hp = sub.add_parser("hover")
-    hp.add_argument("ref")
-    hp.set_defaults(func=cmd_hover)
-
-    scp = sub.add_parser("scroll")
-    scp.add_argument("ref", nargs="?")
-    scp.add_argument("--up", type=int)
-    scp.add_argument("--down", type=int)
-    scp.set_defaults(func=cmd_scroll)
-
-    wp = sub.add_parser("wait")
-    wp.add_argument("--text")
-    wp.add_argument("--url")
-    wp.add_argument("--time", type=int, help="milliseconds")
-    wp.add_argument("--load-state")
-    wp.add_argument("--timeout", type=float, default=20.0)
-    wp.set_defaults(func=cmd_wait)
-
-
-def _add_misc_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    ep = sub.add_parser("evaluate", aliases=["js"])
-    ep.add_argument("expression")
-    ep.set_defaults(func=cmd_evaluate)
-
-    bidi_p = sub.add_parser("bidi", help="Raw WebDriver BiDi escape hatch.")
-    bidi_p.add_argument("method")
-    bidi_p.add_argument("params", nargs="?", help='JSON params, e.g. \'{"url":"..."}\'.')
-    bidi_p.set_defaults(func=cmd_bidi)
-
-    hg = sub.add_parser("http-get")
-    hg.add_argument("url")
-    hg.set_defaults(func=cmd_http_get)
-
-    fp2 = sub.add_parser("fetch", help="Fetch page text; --navigate-first renders it through the stealth browser.")
-    fp2.add_argument("url")
-    fp2.add_argument("--navigate-first", action="store_true")
-    fp2.set_defaults(func=cmd_fetch)
-
-    sub.add_parser("tabs").set_defaults(func=cmd_tabs)
-
-    fp = sub.add_parser("focus")
-    fp.add_argument("target_id")
-    fp.set_defaults(func=cmd_focus)
-
-    xp = sub.add_parser("close")
-    xp.add_argument("target_id")
-    xp.set_defaults(func=cmd_close)
-
-    rp = sub.add_parser("resize")
-    rp.add_argument("width", type=int)
-    rp.add_argument("height", type=int)
-    rp.set_defaults(func=cmd_resize)
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="browser", description="Vesta browser CLI.")
-    sub = p.add_subparsers(dest="cmd")
-    _add_lifecycle_parsers(sub)
-    _add_navigation_and_read_parsers(sub)
-    _add_action_parsers(sub)
-    _add_misc_parsers(sub)
-    return p
+def _dispatch(paths: Paths, args: argparse.Namespace) -> int:
+    if args.command == "exec":
+        return _exec(paths, args)
+    if args.command == "session":
+        return _rpc(paths, "session_stop", session=args.name)
+    if args.command == "handover":
+        return _handover(paths, args)
+    return _rpc(paths, args.command.replace("-", "_"))
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-
-    # browser-harness style: if nothing on argv and stdin has content, run as Python script.
-    if not argv and not sys.stdin.isatty():
-        return cmd_stdin(argparse.Namespace())
-
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    if args.cmd is None:
-        parser.print_help()
-        return 1
-    return args.func(args)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    args_list = sys.argv[1:] if argv is None else argv
+    if not args_list or args_list[0] in ("-h", "--help", "help"):
+        print(USAGE)
+        return 0
+    paths = load_paths(os.environ, pl.Path.home())
+    if args_list[0] == "daemon":
+        return daemon.daemon_cmd(args_list[1] if len(args_list) > 1 else "", paths)
+    if args_list[0] == "serve":
+        return serve.main()
+    try:
+        args = _parser().parse_args(args_list)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 1
+    return _dispatch(paths, args)

@@ -1,88 +1,39 @@
 # Advanced browser usage
 
-Things you reach for occasionally: extending the helpers, running parallel sessions, the raw
-protocol escape hatch, how stealth actually works, and contributing improvements back.
+Two things you reach for occasionally: running several browsers at once, and giving back what you
+learn about a site.
 
-## Extending the helpers
+## Parallel work
 
-Helpers are in `cli/src/vesta_browser/helpers.py`. The package is installed editable, so when you
-edit that file the next `browser` call uses the new code without rebuilding. Add a helper when you
-find yourself repeating the same BiDi dance. Keep it short.
+A session name is the isolation key: it selects the profile, the browser process, and the tabs a
+program sees. Two programs sent to one session drive one browser, so they share tabs and can
+navigate each other's pages. A session also runs one program at a time, so a second program on a
+busy session is refused rather than queued.
+
+Give every parallel task its own session name, and tell a subagent which name to use:
 
 ```bash
-$EDITOR ~/agent/skills/browser/cli/src/vesta_browser/helpers.py
-# add your helper, save
-browser <<'PY'
-my_new_helper(...)   # already available
+browser exec --session research-a <<'PY'
+new_tab("https://a.example")
+wait_for_load()
+print(page_info())
 PY
 ```
 
-## Multi-session (parallel sub-agents)
-
-`BROWSER_SESSION` is the isolation key: the session name selects the daemon, socket, and browser
-a command talks to. Two agents on the same session (the default, whenever the variable is unset)
-drive one browser, so they share tabs, can navigate each other's pages, and can evict each other
-(`browser stop-all` from either kills both). A distinct `--user-data-dir` alone does NOT isolate:
-it changes the profile, not the session. So each parallel sub-agent sets its own unique
-`BROWSER_SESSION`, and for a throwaway run adds `--ephemeral-profile` so a crashed run leaves
-nothing behind (`browser prune` cleans up ephemeral leftovers).
-
-```bash
-BROWSER_SESSION=agent-1 browser launch --ephemeral-profile
-BROWSER_SESSION=agent-1 browser open "https://a.com"
-
-BROWSER_SESSION=agent-2 browser launch --ephemeral-profile
-BROWSER_SESSION=agent-2 browser open "https://b.com"
-```
-
-Each session's state lives under `/tmp/vesta-browser-<name>.*` (socket, pid, bidi-ws, log).
-`browser stop [session]` cleans one session; `browser stop-all` stops every session in the
-container, refusing while other sessions are live unless you pass `--force`, so stop your own
-named session and reserve `--force` for a cleanup you truly mean. Memory warning:
-each Camoufox uses several hundred MB, so 3+ concurrently on a small host can OOM. Prefer
-sequential for wide-scrape tasks.
-
-## Raw BiDi escape hatch
-
-Anything not wrapped by a helper:
-
-```bash
-browser bidi "browsingContext.getTree"
-browser bidi "storage.setCookie" '{"cookie":{"name":"k","value":"v","domain":"example.com"}}'
-browser bidi "script.evaluate" '{"expression":"1+1","awaitPromise":true}'
-```
-
-Or from stdin mode: `bidi("storage.getCookies", filter={"domain": "example.com"})`. The daemon
-injects the current `context` (or `target`) where the command shape needs one. Over a connected
-Chrome (see remote-control.md) the same BiDi verbs are translated to CDP, so the escape hatch
-still works, but browser-specific methods (Firefox-only or Chrome-only) will not cross over.
-
-## How stealth works
-
-Camoufox spoofs the fingerprint (navigator, screen, WebGL, timezone, fonts,
-`navigator.webdriver=false`) in patched Gecko C++, below anything JS can observe, so it survives
-the CreepJS-tier `Function.prototype.toString` / descriptor / stack-frame battery that stock
-Chromium + CDP injection cannot. Each profile draws one coherent fingerprint preset (`presets.py`),
-stable across restarts and distinct across profiles. There is no `--stealth` flag to toggle and no
-Xvfb to provision; headless is the stealthy default.
+Each live browser costs several hundred MB, so three or more at once on a small host can exhaust
+memory. Prefer one session at a time for a wide scrape, and end a burst of parallel work with
+`browser session stop <name>` for each name you started, or one `browser stop-all`.
 
 ## Contribute back what you learn
 
-If you figured out something non-obvious about a site or mechanic, or wrote a broadly useful
-helper, contribute it upstream before you finish via the `upstream` skill. Three kinds, in
-order of frequency:
+When you work out something non-obvious about a site or a mechanic, contribute it through the
+`upstream` skill before you finish. Two kinds:
 
-1. **Domain skill** under `domain-skills/<host>/<topic>.md`. Private APIs, stable selectors,
+1. **Domain skill** under `domain-skills/<host>/<topic>.md`: private APIs, stable selectors,
    framework quirks, URL patterns, waits, traps.
-2. **Interaction skill** under `interaction-skills/<mechanic>.md`. Reusable mechanics (a new
-   dialog pattern, a shadow-DOM trick, an upload variant).
-3. **New helper in `helpers.py`** when the primitive is broadly useful. Filter: would every other
-   Vesta benefit, or is this a personal quirk? Upstream if generic; keep it local (in a
-   `domain-skills/` recipe) if site- or user-specific.
+2. **Interaction skill** under `interaction-skills/<mechanic>.md`: a mechanic that repeats across
+   sites, such as a new dialog pattern, a shadow-DOM trick, or an upload variant.
 
-What *not* to put anywhere shared: pixel coordinates (they break on viewport/zoom; describe how to
-locate the target instead), narration of the specific task you just did, or secrets / cookies /
-session tokens / personal credentials.
-
-Flow: edit locally (takes effect immediately via `uv tool install --editable`), verify, then use
-the `upstream` skill to open a PR to `elyxlz/vesta`.
+Keep three things out of both: pixel coordinates (they break on a different viewport, so describe
+how to locate the target instead), narration of the task you just did, and any secret, cookie,
+session token, or credential.

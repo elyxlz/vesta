@@ -15,9 +15,22 @@ still returns 403 (verified on whatson.bfi.org.uk, Jul 2026). Cloudflare serves 
 interstitial whose JS computes a token, sets a `cf_clearance` cookie, then reloads. curl
 cannot execute JS, so it is stuck on the challenge forever regardless of headers.
 
-**Fix: use a real browser** (`browser launch`). It runs the challenge
-JS, gets `cf_clearance`, and every subsequent request in that session works. This is *why*
-"just use the browser" works here; it is the only thing that can pass the challenge.
+**Fix: use a real browser.** It runs the challenge JS, gets `cf_clearance`, and every later
+request in that session works. This is *why* "just use the browser" works here; it is the only
+thing that can pass the challenge.
+
+```bash
+browser exec --session default <<'PY'
+new_tab("https://example.com/blocked-page")
+wait_for_load()
+wait(5)                      # the challenge reloads the page once it holds its token
+print(js("document.body.innerText.slice(0, 500)"))
+PY
+```
+
+The cookie stays in that session's profile, so keep the same `--session` name for every later page
+on that host. A challenge still showing after the reload is the case for `--stealth`, on a session
+name of its own.
 
 **Distinguish from a plain 403** (no `cf-mitigated` header, no JS-challenge body): that IS
 usually UA / header / IP based, and a spoofed UA or a different egress may fix it without a

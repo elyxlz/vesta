@@ -370,25 +370,27 @@ def test_teams_capture_browser_captures_token(tmp_path, monkeypatch):
 
     cfg = Config(data_dir=tmp_path)
     fresh = _make_token(time.time() + 7200)
+    asked: list[tuple[str, str]] = []
 
-    def fake_run(args, capture_output, text, env, check):
-        # `browser evaluate` prints the JS result JSON-encoded, so a string token arrives quoted.
-        return SimpleNamespace(stdout=json.dumps(fresh) if args[1] == "evaluate" else "ok")
+    def fake_capture(config, account, kind):
+        asked.append((account, kind))
+        return fresh
 
-    monkeypatch.setattr(auth_commands.subprocess, "run", fake_run)
+    monkeypatch.setattr(auth_commands.capture, "capture_token", fake_capture)
     result = auth_commands.teams_capture(cfg, account_email="user@example.com")
     assert result["status"] == "success"
     assert teams.captured_token(cfg, "user@example.com") == fresh
+    assert asked == [("user@example.com", "teams")]
 
 
-@pytest.mark.parametrize("raw", ['"NONE"', "null", ""])
-def test_teams_capture_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch, raw):
+def test_teams_capture_browser_not_signed_in_returns_sign_in_required(tmp_path, monkeypatch):
     from microsoft_cli import auth_commands
 
     cfg = Config(data_dir=tmp_path)
-    monkeypatch.setattr(auth_commands.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=raw))
+    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda config, account, kind: None)
     result = auth_commands.teams_capture(cfg, account_email="user@example.com")
     assert result["status"] == "sign_in_required"
+    assert "--browser" in result["message"]
     assert teams.has_token("user@example.com", cfg) is False
 
 

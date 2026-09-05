@@ -8,7 +8,7 @@ description: Search flights, airfare, routes; book via Trip.com or Duffel.
 Search via Google Flights CLI.
 
 **When to use which:**
-- **Trip.com** (primary): supports ALL airlines including Wizz Air and Ryanair. Browser automation via the browser skill's stealth Camoufox browser. Use this by default.
+- **Trip.com** (primary): supports ALL airlines including Wizz Air and Ryanair. Browser automation through the browser skill (`browser exec --session flights --stealth`, Camoufox). Use this by default.
 - **Duffel** (fallback): API-based, faster and more reliable when the airline is supported. Does NOT support Wizz Air or Ryanair. Use for easyJet, Vueling, BA, and other GDS-connected airlines.
 
 ## User Preferences
@@ -70,9 +70,13 @@ Store these in your password manager (e.g. Keeper):
 
 ### Trip.com Booking Flow (5 steps)
 
-**Pre-flight: Launch browser**
+**Pre-flight: Open the site**
 ```bash
-browser launch   # Camoufox is stealth by default; handles Cloudflare
+browser exec --session flights --stealth <<'PY'
+new_tab("https://www.trip.com/flights/")
+wait_for_load()
+print(page_info())
+PY
 ```
 
 **Step 1: Search**

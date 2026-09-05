@@ -1,321 +1,238 @@
-"""Per-session daemon holding a WebDriver BiDi websocket and relaying requests over a Unix socket.
+"""Daemon lifecycle for the browser CLI: the whole contract, owned here.
 
-Protocol (one JSON line each way):
-
-  client -> daemon:
-    {"method": "browsingContext.navigate", "params": {...}}   # raw BiDi
-    {"meta": "drain_events"}                                   # control
-    {"meta": "set_context", "context": "..."}
-    {"meta": "context"}
-    {"meta": "pending_dialog"}
-    {"meta": "shutdown"}
-    {"meta": "info"}
-
-  daemon -> client:
-    {"result": {...}} | {"error": "..."} | {"events": [...]}
-    {"context": "..."} | {"dialog": {...}} | {"ok": true}
-    {"info": {...}}
-
-One daemon per BROWSER_SESSION name. Socket: /tmp/vesta-browser-<name>.sock
-
-BiDi has no Runtime.enable-style leak to guard against, and browsing-context ids are
-stable across the session, so the CDP daemon's per-target session juggling collapses
-to a single current-context id the daemon injects where the command shape needs it.
+start claims the pid record then spawns `browser serve` detached, stop is a SIGTERM the
+serve path reads as deliberate, and status answers from the pid record alone. Unlike the
+port-serving daemons, browser carries no port record: the handover registers the `browser`
+service private for its own lifetime, the daemon deregisters it at startup, and status
+always reports `port: null`.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
+import io
 import json
 import os
-import socket
+import pathlib as pl
+import signal
+import subprocess
 import sys
 import time
-from collections import deque
-from pathlib import Path
-from typing import Protocol
 
-from .bidi import BidiClient, BidiError
+from . import serve
+from .runtime_paths import Paths
 
-
-class Backend(Protocol):
-    """The surface the daemon uses, satisfied by BidiClient (Camoufox) and CdpBackend (Chrome)."""
-
-    async def connect(self, ws_url: str) -> None: ...
-    async def new_session(self) -> str: ...
-    def on_event(self, method: str) -> asyncio.Queue[dict]: ...
-    async def send(self, method: str, params: dict | None = None) -> dict: ...
-    async def close(self) -> None: ...
+NAME = "browser"
+USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
+POLL_SECS = 0.5
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_WAIT_SECS = 3
+# One hung connection must not eat the whole readiness budget.
+PROBE_TIMEOUT_SECS = 2.0
 
 
-INTERNAL_URL_PREFIXES = (
-    "about:",
-    "moz-extension://",
-    "chrome://",
-    "resource://",
-)
-
-EVENT_BUFFER = 500
-MARK_TIMEOUT_S = 2
-SUBSCRIBED_EVENTS = (
-    "browsingContext.load",
-    "browsingContext.domContentLoaded",
-    "browsingContext.userPromptOpened",
-    "browsingContext.userPromptClosed",
-    "log.entryAdded",
-)
-
-# BiDi places the target context differently per command; the daemon owns the
-# current-context decision and injects it where the caller left it out.
-_CTX_TOP = frozenset(
-    {
-        "browsingContext.navigate",
-        "browsingContext.reload",
-        "browsingContext.traverseHistory",
-        "browsingContext.captureScreenshot",
-        "browsingContext.activate",
-        "browsingContext.close",
-        "browsingContext.handleUserPrompt",
-        "browsingContext.setViewport",
-        "browsingContext.print",
-        "input.performActions",
-        "input.releaseActions",
-        "input.setFiles",
-    }
-)
-_CTX_TARGET = frozenset({"script.evaluate", "script.callFunction"})
-
-_MARK_JS = "if(!document.title.startsWith('\U0001f7e2'))document.title='\U0001f7e2 '+document.title"
+def _budget(name: str, default: int) -> int:
+    return int(os.environ[name]) if name in os.environ else default
 
 
-def _session_name() -> str:
-    return os.environ["BROWSER_SESSION"] if "BROWSER_SESSION" in os.environ else "default"
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 120)
+STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
 
 
-def socket_path(name: str | None = None) -> str:
-    return f"/tmp/vesta-browser-{name or _session_name()}.sock"
+def _fail(message: str) -> int:
+    print(json.dumps({"error": message}), file=sys.stderr)
+    return 1
 
 
-def pid_path(name: str | None = None) -> str:
-    return f"/tmp/vesta-browser-{name or _session_name()}.pid"
+def _pidfile(paths: Paths) -> pl.Path:
+    return paths.daemons_dir / f"{NAME}.pid"
 
 
-def log_path(name: str | None = None) -> str:
-    return f"/tmp/vesta-browser-{name or _session_name()}.log"
+def _starttime(pid: int) -> int | None:
+    """Field 22 of /proc/<pid>/stat: the process start time in clock ticks since boot.
 
-
-def _log(msg: str) -> None:
+    A recycled pid cannot share the original's starttime, because the process that took the pid
+    necessarily started later, so (pid, starttime) is a stable identity. Returns None where /proc
+    is unreadable, which drops the caller back to a bare pid-existence check.
+    """
     try:
-        with Path(log_path()).open("a") as f:
-            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
-    except OSError:
-        # Logging must never cascade. If the log file is unwritable we're already in trouble.
-        pass
+        stat = pl.Path(f"/proc/{pid}/stat").read_text()
+        # comm is a bracketed field that may itself contain spaces and parentheses, so the
+        # numbered fields resume after the LAST ')'.
+        return int(stat[stat.rindex(")") + 2 :].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
 
 
-def resolve_ws_url() -> str:
-    """Resolve the BiDi websocket URL. Set by `browser launch` (recorded ws) or an
-    explicit VESTA_BROWSER_BIDI_WS for an externally running Camoufox."""
-    if os.environ.get("VESTA_BROWSER_BIDI_WS"):
-        return os.environ["VESTA_BROWSER_BIDI_WS"]
-    raise RuntimeError("VESTA_BROWSER_BIDI_WS must be set. Run `browser launch` first.")
+def _record(pid: int) -> str:
+    """The pid record: "<pid> <starttime>", or a bare pid where the starttime is unavailable.
+
+    A bare pid is the honest form of "identity unknown", and live_pid() reads it the legacy way
+    rather than as a mismatch. Writing the string "None" into the record would mean the same thing
+    while looking like data.
+    """
+    started = _starttime(pid)
+    return f"{pid} {started}" if started is not None else str(pid)
 
 
-class Daemon:
-    def __init__(self) -> None:
-        self.bidi: Backend | None = None
-        self.context: str | None = None
-        self.events: deque[dict] = deque(maxlen=EVENT_BUFFER)
-        self.dialog: dict | None = None
-        self.stop = asyncio.Event()
-        self.ws_url = ""
-        self._consumers: set[asyncio.Task[None]] = set()
+def live_pid(paths: Paths) -> int | None:
+    """The recorded pid, but only while it is still the process that was recorded.
 
-    async def start(self) -> None:
-        # CDP backend (a connected Chrome) if VESTA_BROWSER_CDP_WS is set, else native BiDi.
-        if os.environ.get("VESTA_BROWSER_CDP_WS"):
-            from .cdp_backend import CdpBackend
-
-            self.ws_url = os.environ["VESTA_BROWSER_CDP_WS"]
-            self.bidi = CdpBackend()
-            _log(f"connecting (CDP) to {self.ws_url}")
-        else:
-            self.ws_url = resolve_ws_url()
-            self.bidi = BidiClient()
-            _log(f"connecting (BiDi) to {self.ws_url}")
-        try:
-            await self.bidi.connect(self.ws_url)
-        except Exception as e:
-            raise RuntimeError(f"backend WS handshake failed: {e}") from e
-        self.context = await self.bidi.new_session()
-        _log(f"session ready, context={self.context}")
-
-        # Create every event queue before subscribing so no event arrives before its
-        # consumer exists (the client only enqueues methods it has a queue for).
-        for method in SUBSCRIBED_EVENTS:
-            self.bidi.on_event(method)
-        await self.bidi.send("session.subscribe", {"events": list(SUBSCRIBED_EVENTS)})
-        for method in SUBSCRIBED_EVENTS:
-            self._spawn_consumer(method)
-
-    def _spawn_consumer(self, method: str) -> None:
-        task = asyncio.create_task(self._consume(method))
-        self._consumers.add(task)
-        task.add_done_callback(self._consumers.discard)
-
-    async def _consume(self, method: str) -> None:
-        assert self.bidi is not None
-        queue = self.bidi.on_event(method)
-        while True:
-            params = await queue.get()
-            self.events.append({"method": method, "params": params})
-            if method == "browsingContext.userPromptOpened":
-                self.dialog = params
-            elif method == "browsingContext.userPromptClosed":
-                self.dialog = None
-            elif method == "browsingContext.load":
-                await self._mark_tab(params)
-
-    async def _mark_tab(self, params: dict) -> None:
-        assert self.bidi is not None
-        if "context" not in params:
-            return
-        # Tab-marking is cosmetic; never let it break event handling.
-        with contextlib.suppress(TimeoutError, BidiError):
-            await asyncio.wait_for(
-                self.bidi.send("script.evaluate", {"expression": _MARK_JS, "target": {"context": params["context"]}, "awaitPromise": False}),
-                timeout=MARK_TIMEOUT_S,
-            )
-
-    async def handle(self, req: dict) -> dict:
-        assert self.bidi is not None
-        if "meta" in req:
-            return await self._handle_meta(req)
-        return await self._handle_bidi(req)
-
-    async def _handle_meta(self, req: dict) -> dict:
-        meta = req["meta"]
-        if meta == "drain_events":
-            out = list(self.events)
-            self.events.clear()
-            return {"events": out}
-        if meta in ("context", "set_context"):
-            if meta == "set_context":
-                self.context = req["context"] if "context" in req else None
-            return {"context": self.context}
-        if meta == "pending_dialog":
-            return {"dialog": self.dialog}
-        if meta == "info":
-            return {"info": {"ws_url": self.ws_url, "context": self.context, "event_count": len(self.events)}}
-        if meta == "shutdown":
-            self.stop.set()
-            return {"ok": True}
-        return {"error": f"unknown meta: {meta!r}"}
-
-    async def _handle_bidi(self, req: dict) -> dict:
-        assert self.bidi is not None
-        method = req["method"]
-        params = dict(req["params"]) if req.get("params") else {}
-        if method in _CTX_TOP and "context" not in params and self.context:
-            params["context"] = self.context
-        elif method in _CTX_TARGET and "target" not in params and self.context:
-            params["target"] = {"context": self.context}
-        try:
-            return {"result": await self.bidi.send(method, params)}
-        except BidiError as e:
-            if e.code in ("no such frame", "no such node") and await self._rederive_context():
-                if method in _CTX_TOP:
-                    params["context"] = self.context
-                elif method in _CTX_TARGET:
-                    params["target"] = {"context": self.context}
-                try:
-                    return {"result": await self.bidi.send(method, params)}
-                except BidiError as retry:
-                    return {"error": str(retry)}
-            return {"error": str(e)}
-
-    async def _rederive_context(self) -> bool:
-        """The current context closed (tab gone); adopt the first remaining one."""
-        assert self.bidi is not None
-        try:
-            tree = await self.bidi.send("browsingContext.getTree", {})
-        except BidiError:
-            return False
-        if not tree["contexts"]:
-            return False
-        self.context = tree["contexts"][0]["context"]
-        _log(f"re-derived context={self.context}")
-        return True
-
-
-async def _serve(daemon: Daemon) -> None:
-    sock = socket_path()
-
-    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        try:
-            line = await reader.readline()
-            if not line:
-                return
-            resp = await daemon.handle(json.loads(line))
-            writer.write((json.dumps(resp, default=str) + "\n").encode())
-            await writer.drain()
-        except (json.JSONDecodeError, ConnectionError, OSError) as e:
-            _log(f"conn: {e}")
-            try:
-                writer.write((json.dumps({"error": str(e)}) + "\n").encode())
-                await writer.drain()
-            except (ConnectionError, OSError):
-                pass
-        finally:
-            writer.close()
-
-    server = await asyncio.start_unix_server(handler, path=sock)
-    _log(f"listening on {sock}")
-    async with server:
-        await daemon.stop.wait()
-
-
-async def _main() -> None:
-    daemon = Daemon()
-    await daemon.start()
-    await _serve(daemon)
-
-
-def _already_running() -> bool:
+    os.kill(pid, 0) answers "does some process hold this pid", never "is this still mine". The
+    records outlive the container while a fresh pid namespace renumbers from low values, so a
+    reused pid otherwise reads as a healthy daemon, every idempotent start skips it, and the
+    service is silently down with its one health check reporting health it never measured.
+    """
     try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(1)
-        s.connect(socket_path())
-        s.close()
-        return True
-    except (TimeoutError, FileNotFoundError, ConnectionRefusedError):
+        record = _pidfile(paths).read_text().split()
+        pid = int(record[0])
+        os.kill(pid, 0)
+    except (FileNotFoundError, IndexError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    # A record carrying no starttime (a hand edit, or a truncated write) is trusted as before
+    # rather than read as a mismatch: comparing a real starttime against nothing would declare a
+    # live daemon dead and let a second stack rise beside it.
+    if len(record) > 1 and record[1].isdigit():
+        current = _starttime(pid)
+        if current is not None and current != int(record[1]):
+            return None
+    return pid
+
+
+def _abandon(child: subprocess.Popen[bytes], message: str, paths: Paths) -> int:
+    """A start that gives up takes its child and its record with it: a daemon nothing can reach,
+    with a record that says it is up, reads as running and turns every later start into a no-op."""
+    child.terminate()
+    try:
+        child.wait(timeout=STOP_TIMEOUT_SECS)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+    _pidfile(paths).unlink(missing_ok=True)
+    return _fail(message)
+
+
+def _await_ready(child: subprocess.Popen[bytes], paths: Paths) -> int:
+    """Holds the start open until the daemon it spawned answers on its socket, which is what lets
+    the caller's next line use it."""
+    deadline = time.monotonic() + READY_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        if child.poll() is not None:
+            return _abandon(child, f"{NAME} exited during startup; see {paths.log}", paths)
+        if serve.ping(paths, PROBE_TIMEOUT_SECS):
+            print(json.dumps({"status": "started"}))
+            return 0
+        time.sleep(POLL_SECS)
+    return _abandon(child, f"{NAME} never answered on {paths.socket}; see {paths.log}", paths)
+
+
+def _claim(pid: int, paths: Paths) -> bool:
+    try:
+        record = os.open(_pidfile(paths), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
         return False
+    with os.fdopen(record, "w") as handle:
+        handle.write(_record(pid))
+    return True
 
 
-def run() -> int:
-    """Entry point for the daemon process."""
-    if _already_running():
-        print(f"daemon already running on {socket_path()}", file=sys.stderr)
+def _claim_start(paths: Paths) -> int | None:
+    """Takes the pid record exclusively for this start, so a start that loses the claim answers
+    already_running instead of stacking a daemon beside the winner's. A record no process stands
+    behind is cleared and taken over, which is the one path on which two starts can both spawn, and
+    the duplicate loses on its own resources. None means this start owns the record and everything
+    it later removes; anything else is this start's whole answer."""
+    if _claim(os.getpid(), paths):
+        return None
+    pidfile = _pidfile(paths)
+    deadline = time.monotonic() + CLAIM_WAIT_SECS
+    while time.monotonic() < deadline:
+        if live_pid(paths) is not None:
+            print(json.dumps({"status": "already_running"}))
+            return 0
+        if not pidfile.exists():
+            break
+        time.sleep(POLL_SECS)
+    pidfile.unlink(missing_ok=True)
+    if _claim(os.getpid(), paths):
+        return None
+    return _fail(f"another {NAME} start holds {pidfile}")
+
+
+def _start(paths: Paths) -> int:
+    if live_pid(paths) is not None:
+        print(json.dumps({"status": "already_running"}))
         return 0
+    paths.daemons_dir.mkdir(parents=True, exist_ok=True)
+    paths.log.parent.mkdir(parents=True, exist_ok=True)
+    answer = _claim_start(paths)
+    if answer is not None:
+        return answer
+    with paths.log.open("ab") as log:
+        child = subprocess.Popen(
+            [sys.argv[0], "serve"], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
+        )
+    _pidfile(paths).write_text(_record(child.pid))
+    return _await_ready(child, paths)
 
-    Path(log_path()).write_text("")
-    Path(pid_path()).write_text(str(os.getpid()))
-    Path(socket_path()).unlink(missing_ok=True)  # a crashed daemon may have left a stale socket
-    os.umask(0o177)  # the unix socket is created owner-only (0600)
 
-    try:
-        asyncio.run(_main())
+def _await_gone(deadline: float, paths: Paths) -> bool:
+    """Waits out the daemon until a deadline shared with the rest of this stop. Answers whether
+    the process the record names is gone."""
+    while time.monotonic() < deadline:
+        if live_pid(paths) is None:
+            return True
+        time.sleep(POLL_SECS)
+    return live_pid(paths) is None
+
+
+def _stop(paths: Paths) -> int:
+    """SIGTERM then, for a daemon that ignored it, SIGKILL, both inside the one stop budget,
+    so the verb ends the daemon rather than handing back a record it cannot honour. A daemon
+    that exits between the check and the signal is the stop it was asked for, not an error."""
+    pid = live_pid(paths)
+    if pid is None:
+        print(json.dumps({"status": "already_stopped"}))
         return 0
-    except KeyboardInterrupt:
+    started = time.monotonic()
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+    # Two thirds of the budget in, a daemon that has not honoured SIGTERM is killed instead, and
+    # the remainder is what reaps it. Read here, not at import, so the budget in force is the one
+    # the caller set.
+    if not _await_gone(started + STOP_TIMEOUT_SECS * 2 // 3, paths):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        if not _await_gone(started + STOP_TIMEOUT_SECS, paths):
+            return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM then SIGKILL (pid={pid})")
+    _pidfile(paths).unlink(missing_ok=True)
+    print(json.dumps({"status": "stopped"}))
+    return 0
+
+
+def _status(paths: Paths) -> int:
+    """Reads the pid record alone, never a socket probe, so status answers instantly and
+    truthfully even while the daemon is unreachable."""
+    running = live_pid(paths) is not None
+    print(json.dumps({"running": running, "port": None}))
+    return 0
+
+
+def daemon_cmd(action: str, paths: Paths) -> int:
+    if action in ("", "-h", "--help", "help"):
+        print(USAGE)
         return 0
-    except Exception as e:
-        _log(f"fatal: {e}")
-        return 1
-    finally:
-        for p in (socket_path(), pid_path()):
-            Path(p).unlink(missing_ok=True)
-
-
-if __name__ == "__main__":
-    sys.exit(run())
+    if action == "start":
+        return _start(paths)
+    if action == "stop":
+        return _stop(paths)
+    if action == "restart":
+        # One verb, one line of output: the stop half is swallowed, and a stop that failed
+        # must not be followed by a start onto a daemon that is still there.
+        with contextlib.redirect_stdout(io.StringIO()):
+            stopped = _stop(paths)
+        return _start(paths) if stopped == 0 else stopped
+    if action == "status":
+        return _status(paths)
+    print(USAGE, file=sys.stderr)
+    return 1
