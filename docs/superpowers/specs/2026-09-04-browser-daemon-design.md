@@ -68,6 +68,7 @@ Verified in the tree at `f909df0d` and in the upstream sources.
 14. **Browsers are system packages; venvs install at activation.** `install-engines.sh` installs Chromium from apt and the pinned, sha256-checked Camoufox build. The Dockerfile runs it for fresh images; a prompt migration runs it on the fleet. The three Python projects (`cli/`, `engines/chromium/`, `engines/camoufox/`) install from `SETUP.md` like every other skill. Rejected: venvs baked into the image (against convention, and unreachable by the fleet anyway).
 15. **Replace in one release, no rollback switch.** The old runtime is deleted in the same release the daemon lands. The beta channel and the pre-update snapshot are the rollback. Rejected: a `LEGACY` dual path for one release window.
 16. **Callers move to `browser exec` in the same release.** Maps and Microsoft are rewritten; no compatibility translations of `open`, `evaluate`, `snapshot`, `launch`. Microsoft's second call site folds into `capture.py`.
+17. **Every session runs headed on its own X display; there is no headless mode.** A session's runtime owns an `Xvfb` (`1280x800x24`) and an `openbox`, claimed before the engine starts and released after it stops. Chromium never receives `--headless=new` (`--headless=new` announces `HeadlessChrome/<ver>` in the user agent, which sign-in flows and anti-bot layers reject), and Camoufox never `headless=True` (its own docs steer Linux users to Xvfb because headless Firefox is detectable). This is the browser-use CLI's own model, a headed signed-in Chrome, inside the container. A handover attaches x11vnc and websockify to the session's live display and detaches them after; the browser is never restarted around a handover, so the session returns to `ready` with its tabs and sign-in in place. The `default` session is Vesta's one everyday profile, like a person's own Chrome; a named session isolates an account or a parallel task. Rejected: a `--user-agent` override on a headless launch (removes the loudest tell and keeps a code path no real user runs); one profile for every session (Microsoft's per-tenant cookies clash); keeping `default` always running (the profile persists on disk either way; the idle stop stays).
 
 ## Architecture
 
@@ -95,8 +96,8 @@ User message, notification, or scheduled work
                               standard ─────┘                          └───── stealth
                                  |                                              |
                                  v                                              v
-                 per-session Chromium (headless, loopback CDP)     per-session Camoufox worker
-                 browser-use CLI child per exec                    (one process: sync Camoufox +
+                 per-session Chromium, headed on its own Xvfb      per-session Camoufox worker, headed
+                 (loopback CDP), browser-use CLI child per exec    on its own Xvfb (one process: sync Camoufox +
                  BU_NAME=<session> BU_CDP_URL=<loopback>           Playwright Firefox + helpers)
                  Browser Harness daemon per BU_NAME                fresh globals per exec
 ```
@@ -110,7 +111,7 @@ agent/skills/browser/
   SKILL.md                     model-facing contract (rewritten)
   SETUP.md                     activation, install, recovery
   ATTRIBUTION.md               browser-harness domain skills (MIT), fonts, Camoufox notices
-  install-engines.sh           apt chromium + pinned Camoufox download; run by Dockerfile and migration
+  install-engines.sh           apt chromium + xvfb/openbox/x11vnc/novnc + pinned Camoufox download; run by Dockerfile and migration
   cli/                         uv project, stdlib only, console script `browser`
     src/vesta_browser/
       cli.py                   argparse, one RPC per command, prints one JSON line
@@ -121,7 +122,8 @@ agent/skills/browser/
       chromium.py              Chromium launch, CDP port discovery, browser-use child, page observation
       camoufox.py              worker process supervision, pipe protocol, timeout restart
       artifacts.py             stdout path scan, containment, size/type checks, retention
-      handover.py              Xvfb/openbox/x11vnc/websockify, headed engine, service + key
+      display.py               per-session Xvfb + openbox; the handover's x11vnc + websockify stream; readiness
+      handover.py              stream on the session's live display, service + key
       doctor.py                versions, health, sessions, handover, last errors
       assets/handover/         noVNC page, font, image (kept)
     tests/                     the suite `check.sh agent` runs
@@ -244,15 +246,15 @@ Phases: `validation | routing | launch | execution | observation | handover | cl
 
 ### Session table
 
-A session record holds: name, mode, engine, protocol, state, profile dir, scratch dir, browser pid and CDP endpoint (Chromium) or worker pid (Camoufox), Browser Harness daemon pid (Chromium), in-flight request id, last activity, handover id when handed over. The table is in memory and rebuilt from disk on daemon start: a profile directory under `profiles/<engine>/<session>/` is a known session in state `stopped`. No stale processes survive a daemon restart: `lifecycle.py` places every child in a process group the daemon owns and kills the groups on stop.
+A session record holds: name, mode, engine, protocol, state, profile dir, scratch dir, the session's X display (Xvfb and openbox pids), browser pid and CDP endpoint (Chromium) or worker pid (Camoufox), Browser Harness daemon pid (Chromium), in-flight request id, last activity, handover id when handed over. The table is in memory and rebuilt from disk on daemon start: a profile directory under `profiles/<engine>/<session>/` is a known session in state `stopped`. No stale processes survive a daemon restart: `lifecycle.py` places every child in a process group the daemon owns and kills the groups on stop.
 
-Session names match `^[a-z0-9][a-z0-9_-]{0,63}$` (a subset of Browser Harness's `BU_NAME` rule, `[A-Za-z0-9_-]{1,64}`). `SESSION_IDLE_STOP_SECS = 1800`: an idle session's browser (and worker or harness daemon) is stopped, state becomes `stopped`, the profile stays. Engines start on demand: a stealth-only agent never runs Chromium.
+Session names match `^[a-z0-9][a-z0-9_-]{0,63}$` (a subset of Browser Harness's `BU_NAME` rule, `[A-Za-z0-9_-]{1,64}`). `SESSION_IDLE_STOP_SECS = 1800`: an idle session's browser (and worker or harness daemon) and its display are stopped, state becomes `stopped`, the profile stays. Engines start on demand: a stealth-only agent never runs Chromium.
 
 `stop-all` stops every session of this agent and nothing else. `session stop <name>` stops one.
 
 ### Chromium (standard)
 
-1. On first exec, launch `/usr/bin/chromium --headless=new --no-sandbox --remote-debugging-port=0 --user-data-dir=<profile> --no-first-run --disable-background-networking ...` in its own process group, `DISPLAY` unset. `--no-sandbox` is required because the container runs as root.
+1. On first exec, claim the session's display (`Xvfb :N -screen 0 1280x800x24` plus `openbox`, which places the one window at the origin, undecorated and maximized), then launch `/usr/bin/chromium --window-size=1280,800 --window-position=0,0 --no-sandbox --remote-debugging-port=0 --user-data-dir=<profile> --no-first-run --disable-background-networking ...` in its own process group with `DISPLAY=:N`. Never `--headless=new`: the user agent reads as a plain `Chrome/<ver>`. `--no-sandbox` is required because the container runs as root. Before each launch the profile's `session.restore_on_startup` pref is pinned to the new tab page, so a SIGTERM stop never makes the next launch restore every tab.
 2. Read the port from `<profile>/DevToolsActivePort`, confirm `http://127.0.0.1:<port>/json/version`, record the endpoint. Failure → `engine_unavailable`.
 3. Per exec, spawn `<engines/chromium/.venv>/bin/browser-use` with the code on stdin, cwd `artifacts/<session>/`, and a minimal env: `PATH`, `HOME`, `LANG`, `TMPDIR`, `BH_RUNTIME_DIR=sessions/<session>/runtime` (the harness socket and pid), `BH_TMP_DIR=sessions/<session>/tmp` (its screenshots), `BH_HOME=sessions/<session>/home`, `BU_NAME=<session>`, `BU_CDP_URL=http://127.0.0.1:<port>`, `BH_UPDATE_CHECK=0`, `BH_TELEMETRY=0`, `PYTHONUNBUFFERED=1`. `DISPLAY`, `PYTHONPATH`, `PYTHONHOME`, `AGENT_TOKEN`, and every other agent variable are absent. The chromium engine venv is never `uv tool install`ed: browser-use ships a console script named `browser`.
 4. Browser Harness spawns its own per-`BU_NAME` daemon on first use and records its pid at `<BH_RUNTIME_DIR>/bu.pid`. The daemon reads that record and kills the harness daemon on session stop, idle stop, and daemon shutdown.
@@ -261,7 +263,7 @@ Session names match `^[a-z0-9][a-z0-9_-]{0,63}$` (a subset of Browser Harness's 
 
 ### Camoufox (stealth)
 
-1. On first exec, spawn `<engines/camoufox/.venv>/bin/python engines/camoufox/worker.py --profile <dir> --preset <name> --artifacts <dir>` in its own process group. The worker opens the sync Camoufox API (`camoufox.sync_api.Camoufox`) with the persistent profile and the fingerprint preset (today's `presets.py` logic moves into the worker), `headless=True`, and reports `ready` on stdout. Failure → `engine_unavailable`.
+1. On first exec, spawn `<engines/camoufox/.venv>/bin/python engines/camoufox/worker.py --profile <dir> --preset <name> --artifacts <dir>` in its own process group. The worker opens the sync Camoufox API (`camoufox.sync_api.Camoufox`) with the persistent profile, the fingerprint preset refit to the display with `fit_to_screen`, the bundle's Firefox major as `ff_version`, no default addons, `headless=False` on the session's display with `window=(1280, 800)` and the software WebRender prefs in `user.js`, and reports `ready` on stdout. Failure → `engine_unavailable`.
 2. Daemon and worker speak newline-delimited JSON over the worker's stdin and stdout: `{"op":"exec","code":...}` → `{"stdout":..., "stderr":..., "exit_code":0|1, "page":{...}}`. The worker executes each request's code with `exec(code, fresh_globals)` where `fresh_globals` holds the portable helpers, `page` (the Playwright `Page`), and a `cdp` stub that raises `CapabilityMismatch`. stdout and stderr are captured per request.
 3. Timeout kills the worker's process group (Firefox is a child of the worker). The profile persists, page state is lost, the next exec restarts the worker, and the failed result carries `timed_out` while the next result carries `worker_restarted`. `SKILL.md` names this asymmetry.
 4. Page observation is the worker's own `page.url` and `page.title()` after the code returns.
@@ -329,13 +331,13 @@ Handover hands a session's real browser to the user for a sign-in, SSO, MFA, or 
 Flow of `handover start`:
 
 1. Resolve `--session` (default `default`) and mode; create the session pinned to the engine when it does not exist. Refuse when a handover is already live (`handover_in_use`).
-2. Stop the session's headless browser cleanly (profile lock released).
-3. `register-service browser` (no `--public`) returns the port vestad will proxy; claim a private Xvfb display, start openbox, x11vnc, and websockify serving the noVNC page bound to that same port on `0.0.0.0` (vestad reaches the container over its own network, not a free port websockify picks for itself), with x11vnc kept on localhost (today's `handover.py` orchestration, moved). Screen `1280x800`; the Camoufox preset is refit with `fit_to_screen`.
-4. Start the same engine headed on that display with the same profile: Chromium with `--remote-debugging-port=0` (kept for the resume step's observation), Camoufox through the worker with `headless=False`.
+2. Start the session's browser if it is not running (the same start an exec performs: display, then engine). The browser is never restarted for a handover, so the tabs and sign-in Vesta was working with are what the user sees.
+3. `register-service browser` (no `--public`) returns the port vestad will proxy; start x11vnc on the session's display (localhost only) and websockify serving the noVNC page bound to that same port on `0.0.0.0` (vestad reaches the container over its own network, not a free port websockify picks for itself).
+4. With `--url`, open it and bring that tab to the front (`switch_tab(new_tab(url), activate=True)`, the same program on both engines).
 5. `service-key mint browser --label browser-handover-<id> --ttl <lifetime>`. Lifetime is `--minutes` (default `HANDOVER_DEFAULT_MINUTES = 30`, max `HANDOVER_MAX_MINUTES = 240`); the key TTL equals it.
 6. Health-check every component, then answer with `data`: `{handover_id, session, engine, state: "live", user_url, expires_at}` where `user_url = $VESTAD_PUBLIC_URL/agents/$AGENT_NAME/browser/k/<key>/handover.html`. Without `VESTAD_PUBLIC_URL` the daemon fails `handover_failed` with `suggested_action` naming the missing tunnel or LAN exposure.
 7. The session enters `handed_over`; exec against it fails `handover_in_use`. The daemon takes no screenshot during handover.
-8. `handover stop`, the deadline, a failed health check, or daemon shutdown: revoke the key by id, `deregister-service browser`, stop websockify, x11vnc, openbox, the headed browser, and the display, then return the session to `stopped` (the next exec restarts it headless on the same profile). Revocation and deregistration are idempotent and always attempted; a partial teardown adds `cleanup_incomplete`.
+8. `handover stop`, the deadline, a failed health check, or daemon shutdown: revoke the key by id, `deregister-service browser`, stop websockify and x11vnc, remove the web root, then return the session to `ready` with its browser, display, tabs, and sign-in intact (`stopped` only if the browser died), and touch it so the idle sweep cannot stop it before the caller's next exec. Revocation and deregistration are idempotent and always attempted; a partial teardown adds `cleanup_incomplete`.
 
 `handover status` returns `data: {state, handover_id, session, engine, user_url, expires_at}` with `state ∈ inactive | live | stopping | expired | failed`. `live` means every component passed its last health check now; an expired or unhealthy runtime is never reported `live`.
 
@@ -359,9 +361,9 @@ It parses `output.stdout` as before, maps `ok: false` to `BrowserUnavailableErro
 
 - One Chromium session per account (`microsoft-<slug>`, standard mode), because headless Firefox cannot load the Outlook and Teams SPAs (the old capture code documented this) and locked-tenant SSO needs cookies, not fingerprint stealth. The daemon owns the profile; `~/.microsoft/browser-profiles/` and `--user-data-dir` disappear. Each account signs in once more through the new handover, since a Firefox profile cannot become a Chromium one.
 - Interactive sign-in: `browser handover start --url https://outlook.office.com/mail/ --session microsoft-<slug>`, returning `user_url`; the user signs in; `browser handover stop`.
-- Token capture and the unattended refresh in `monitor.py`: `browser exec --session microsoft-<slug>` running `new_tab(url); wait_for_load(); print(js(TOKEN_JS))`, polled as today. Headless. No handover, no Xvfb, no `stop-all`.
+- Token capture and the unattended refresh in `monitor.py`: `browser exec --session microsoft-<slug>` running `new_tab(url); wait_for_load(); print(js(TOKEN_JS))`, polled as today. No handover and no user present, no `stop-all`.
 - `auth_commands.py`'s two `_run` closures are deleted; they call `capture.py`.
-- Risk to verify in the live tier: Microsoft token refresh from a signed-in Chromium profile works headless. If a tenant demands a headed browser, the fallback is a headed handover with no user, exactly today's behavior, behind one flag in `capture.py`; the spec does not build it ahead of evidence.
+- Risk to verify in the live tier: Microsoft token refresh from a signed-in Chromium profile works with no user present. The browser is already headed on its own display, so no fallback path exists or is needed.
 
 ### Others
 
@@ -401,7 +403,7 @@ Read once at activation: `uv tool install --editable ~/agent/skills/browser/cli`
 
 ### Image (`vestad/Dockerfile`)
 
-- A commented apt layer adds `chromium` (Debian trixie, both architectures). The existing Gecko libs and handover packages stay.
+- A commented apt layer adds `chromium` (Debian trixie, both architectures) and `xvfb`, `openbox`, `x11vnc`, `novnc`. The existing Gecko libs stay.
 - `RUN /root/agent/skills/browser/install-engines.sh` after the agent home is copied: installs Camoufox `<tag>` for the build architecture into `/opt/camoufox/<tag>/` with sha256 verification, applies the search-stub repair, and is a no-op when the tag is present.
 - No venv is built here (convention), so a fresh agent's first `SETUP.md` pass runs the `uv` steps like every other skill.
 
@@ -409,12 +411,12 @@ Read once at activation: `uv tool install --editable ~/agent/skills/browser/cli`
 
 Idempotent steps, each safe to rerun:
 
-1. Run `~/agent/skills/browser/install-engines.sh` (apt chromium; Camoufox to `/opt`).
+1. Run `~/agent/skills/browser/install-engines.sh` (apt chromium and the display packages; Camoufox to `/opt`).
 2. `uv tool install --editable --force ~/agent/skills/browser/cli`; `uv sync --frozen` on both engine projects.
 3. Stop the legacy runtime: scan `/proc/[0-9]*/cmdline` (never `pkill`, removed from the image) for `vesta_browser.daemon` or a Camoufox binary under `~/.cache/camoufox`, `kill` each match, `kill -9` any survivor after a short wait; remove `/tmp/vesta-browser-*`, `~/.cache/camoufox`, `~/.browser`.
 4. `deregister-service browser`: the legacy runtime registered that service public, and only a registration or a deregistration flips exposure, so this step clears it directly; the daemon deregisters the same name for itself on every start.
 5. Replace any `browser` line in `daemons.sh` with `browser daemon start`; add it when absent; create the file with the restart skill's header when missing.
-6. `browser daemon start`, `browser doctor`; both engine routes must read `ready: true`, else stop, leave the migration unmarked, and report it.
+6. `browser daemon start`, `browser doctor`; both engine routes and `engines.display` must read `ready: true`, else stop, leave the migration unmarked, and report it.
 7. For each account directory under `~/.microsoft/browser-profiles/`, tell the user that account needs `microsoft auth setup --account <email> --browser` run again, since a Firefox profile cannot become a Chromium one; then remove `~/.microsoft/browser-profiles`.
 8. `mark_migration_applied`.
 
@@ -442,23 +444,25 @@ Fast tier (`cli/tests`, hermetic, no browser binary):
 
 - `protocol`: every op round-trips; unknown version, oversized code, bad session name → `invalid_request`; every error code carries `phase`, `retryable`, `suggested_action`.
 - `sessions`: engine pinning, `session_engine_conflict`, inheritance, idle stop, rebuild from profile dirs, one exec per session.
-- `chromium`: launch argv, `DevToolsActivePort` discovery against a fake, minimal child env (asserts `PYTHONPATH`, `DISPLAY`, `AGENT_TOKEN` absent), timeout kills the child group and not the browser, page observation from a fake `/json/list`, `unavailable` on failure.
+- `display`: session display claim and release against fake Xvfb and openbox, stream start and stop against fake x11vnc and websockify, the two readiness reports.
+- `chromium`: headed launch argv (window flags, never `--headless=new`), `DevToolsActivePort` discovery against a fake, minimal child env (asserts `PYTHONPATH`, `DISPLAY`, `AGENT_TOKEN` absent), timeout kills the child group and not the browser, page observation from a fake `/json/list`, `unavailable` on failure.
 - `camoufox`: pipe protocol against `worker.py` driven with a fake `page`, fresh globals per request, `cdp` stub → `engine_capability_mismatch`, timeout restarts the worker and warns, portable-helper list equals `protocol.PORTABLE_HELPERS`.
 - `artifacts`: stdout path scan, containment (a path outside the session dirs is skipped with a warning), size and magic-byte checks, timestamped move, retention prune.
-- `handover`: component order, health-check gating of `live`, private registration (`--public` never passed), key mint with TTL = lifetime, revoke + deregister on stop, expiry, failure, and shutdown, `handover_in_use` on exec, cleanup warnings, refusal without `VESTAD_PUBLIC_URL`.
+- `handover`: the session's browser and display survive a start/stop cycle and the session ends `ready`, a cold session is started by the handover itself, component order, health-check gating of `live`, private registration (`--public` never passed), key mint with TTL = lifetime, revoke + deregister on stop, expiry, failure, and shutdown, `handover_in_use` on exec, cleanup warnings, refusal without `VESTAD_PUBLIC_URL`.
 - `cli`: one JSON line per command, stdout/stderr by outcome, `daemon_down`, SIGINT → `cancel`.
 - `lifecycle`: the daemon-contract row in `agent/tests/test_daemon_contract.py`.
-- Maps and Microsoft suites: their `browser` shims answer the `exec` shape; capture tests cover the per-account session names and the headless refresh path.
+- Maps and Microsoft suites: their `browser` shims answer the `exec` shape; capture tests cover the per-account session names and the unattended refresh path.
 
-Live tier (`check.sh live`, real binaries, marked and skipped when absent): one standard exec with a screenshot read back, one stealth exec, engine pinning end to end, a handover start/status/stop cycle asserting the key is revoked and the service deregistered, and the Microsoft headless refresh against a signed-in profile fixture where credentials allow.
+Live tier (`check.sh live`, real binaries, marked and skipped when absent): one standard exec with a screenshot read back, one stealth exec, engine pinning end to end, a handover start/status/stop cycle asserting the key is revoked and the service deregistered, and the Microsoft unattended refresh against a signed-in profile fixture where credentials allow.
 
 ## Delivery
 
-One epic branch, three stacked PRs reviewed in order and released together, because the fleet must never run a release where callers and runtime disagree:
+One epic branch, four stacked PRs reviewed in order and released together, because the fleet must never run a release where callers and runtime disagree:
 
 1. `feat(skills/browser): browser daemon with chromium and camoufox executors`: `cli/`, `engines/`, `install-engines.sh`, Dockerfile layer, tests, daemon-contract row. The old runtime is deleted here, because one console script and one package cannot hold both; between PR 1 and PR 3 the tree's callers point at commands that no longer exist, which is why the three PRs release together.
 2. `feat(skills/browser): private handover through the daemon`: `handover.py`, service-exposure and AGENTS.md updates.
 3. `refactor(skills): move browser callers to browser exec, rewrite the skill, retire the old runtime`: `SKILL.md`, `SETUP.md`, maps, microsoft, flights, MEMORY.md, the migration, deletions.
+4. `feat(skills/browser): every session runs headed on its own display`: decision 17; `display.py`, `session_control.py`, both engines, `handover.py`, docs. Plan: `docs/superpowers/plans/2026-09-05-browser-daemon-pr4-headed.md`.
 
 `MIN_SUPPORTED_CLIENT_VERSION` is untouched: no client wire shape changes.
 
