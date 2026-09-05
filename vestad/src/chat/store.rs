@@ -63,6 +63,9 @@ impl ChatStore {
         Self { dir, rooms, messages, next_id, log_unreadable }
     }
 
+    /// The id the next appended message takes. Reading it back is how the tests prove a reload
+    /// resumes the log's numbering.
+    #[cfg(test)]
     pub(crate) fn next_id(&self) -> u64 {
         self.next_id
     }

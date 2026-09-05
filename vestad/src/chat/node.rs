@@ -437,6 +437,20 @@ mod tests {
         assert!(!rooms_rx.has_changed().expect("watch alive"));
     }
 
+    // The lookup `/sync` presence rides on: a viewed room id names the agents to notify, and an id
+    // naming no room names nobody.
+    #[test]
+    fn a_room_id_resolves_to_its_agents_and_an_unknown_id_to_nothing() {
+        let (_tmp, node) = node();
+        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        let (group, _) = node
+            .open_room(OpenRoom { name: Some("trip".into()), agents: vec!["alice".into(), "bob".into()] }, 2)
+            .expect("open the group room");
+        assert_eq!(node.room(&group.id).expect("the group room").agents, vec!["alice", "bob"]);
+        assert_eq!(node.room("dm:alice").expect("the direct room").agents, vec!["alice"]);
+        assert_eq!(node.room("dm:nobody"), None);
+    }
+
     #[test]
     fn open_room_derives_peer_and_direct_ids_and_needs_a_name_past_two_agents() {
         let (_tmp, node) = node();

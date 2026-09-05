@@ -276,6 +276,58 @@ describe("parseServerFrame", () => {
     });
   });
 
+  it("parses a rooms delta", () => {
+    const rooms = [
+      {
+        id: "dm:scout",
+        name: null,
+        agents: ["scout"],
+        createdAt: 1_756_900_000,
+        lastMessageAt: 1_756_903_000,
+      },
+      {
+        id: "grp-0011223344556677",
+        name: "trip planning",
+        agents: ["scout", "axel"],
+        createdAt: 1_756_900_100,
+        lastMessageAt: null,
+      },
+    ];
+    const parsed = parseServerFrame(JSON.stringify({ type: "rooms", rooms }));
+    expect(parsed).toEqual({ kind: "delta", delta: { type: "rooms", rooms } });
+  });
+
+  it("parses an empty rooms delta", () => {
+    expect(
+      parseServerFrame(JSON.stringify({ type: "rooms", rooms: [] })),
+    ).toEqual({ kind: "delta", delta: { type: "rooms", rooms: [] } });
+  });
+
+  it("treats a rooms delta with a malformed room as unknown", () => {
+    const base = {
+      id: "dm:scout",
+      name: null,
+      agents: ["scout"],
+      createdAt: 1_756_900_000,
+      lastMessageAt: null,
+    };
+    for (const bad of [
+      { ...base, id: 7 },
+      { ...base, name: 7 },
+      { ...base, agents: "scout" },
+      { ...base, agents: ["scout", 7] },
+      { ...base, createdAt: "yesterday" },
+      { ...base, lastMessageAt: "yesterday" },
+    ]) {
+      expect(
+        parseServerFrame(JSON.stringify({ type: "rooms", rooms: [bad] })),
+      ).toEqual({ kind: "unknown" });
+    }
+    expect(parseServerFrame(JSON.stringify({ type: "rooms" }))).toEqual({
+      kind: "unknown",
+    });
+  });
+
   it("ignores unknown frame and delta types", () => {
     const inputs = [
       JSON.stringify({ type: "future_frame", data: 1 }),

@@ -72,6 +72,30 @@ export const syncProtocolFixtures = {
       "any_focused": true,
       "type": "presence"
     },
+    "rooms": {
+      "rooms": [
+        {
+          "agents": [
+            "sample"
+          ],
+          "createdAt": 1756900000,
+          "id": "dm:sample",
+          "lastMessageAt": 1756903000,
+          "name": null
+        },
+        {
+          "agents": [
+            "sample",
+            "scout"
+          ],
+          "createdAt": 1756900100,
+          "id": "grp-0011223344556677",
+          "lastMessageAt": null,
+          "name": "trip planning"
+        }
+      ],
+      "type": "rooms"
+    },
     "state": {
       "scope": "gateway",
       "type": "state",
@@ -204,7 +228,28 @@ export const syncProtocolFixtures = {
         "updateAvailable": true,
         "userNotificationsSeenAt": 1700000000,
         "version": "0.1.0"
-      }
+      },
+      "rooms": [
+        {
+          "agents": [
+            "sample"
+          ],
+          "createdAt": 1756900000,
+          "id": "dm:sample",
+          "lastMessageAt": 1756903000,
+          "name": null
+        },
+        {
+          "agents": [
+            "sample",
+            "scout"
+          ],
+          "createdAt": 1756900100,
+          "id": "grp-0011223344556677",
+          "lastMessageAt": null,
+          "name": "trip planning"
+        }
+      ]
     },
     "type": "snapshot"
   }

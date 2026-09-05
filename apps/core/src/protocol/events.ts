@@ -32,10 +32,20 @@ export type VestaEvent =
       attachments?: ChatAttachment[];
       // The client id of the send this row echoes; a client confirms its optimistic bubble on it.
       intent_id?: string;
+      // The room this message belongs to and the member who wrote it. Absent from a per-agent
+      // chat service's rows, present on every row the gateway's chat node stores.
+      room?: string;
+      sender?: string;
     })
   | (EventBase & { type: "assistant"; text: string })
   | (EventBase & { type: "thinking"; text: string; signature: string })
-  | (EventBase & { type: "chat"; text: string; attachments?: ChatAttachment[] })
+  | (EventBase & {
+      type: "chat";
+      text: string;
+      attachments?: ChatAttachment[];
+      room?: string;
+      sender?: string;
+    })
   | (EventBase & {
       type: "tool_start";
       tool: string;

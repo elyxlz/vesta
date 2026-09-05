@@ -3891,6 +3891,54 @@ mod tests {
         let renamed = serde_json::json!({ "name": "sample-agent-2" });
         let host_folders = serde_json::json!({ "folders": ["/home/sample/Documents"] });
 
+        // The chat node's client surface: the room list, the open-room answer, one history page,
+        // and the two intake acks. Built from the production structs so a renamed field fails here.
+        let chat_rooms = vec![
+            crate::chat::Room {
+                id: "dm:sample-agent".into(),
+                name: None,
+                agents: vec!["sample-agent".into()],
+                created_at: 1_756_900_000,
+                last_message_at: Some(1_756_903_000),
+            },
+            crate::chat::Room {
+                id: "grp-0011223344556677".into(),
+                name: Some("trip planning".into()),
+                agents: vec!["sample-agent".into(), "scout".into()],
+                created_at: 1_756_900_100,
+                last_message_at: None,
+            },
+        ];
+        let chat_messages = vec![
+            crate::chat::Message {
+                id: 1,
+                ts: "2026-09-04T09:00:00.000Z".into(),
+                room: "dm:sample-agent".into(),
+                kind: crate::chat::MessageKind::User,
+                sender: crate::chat::USER_SENDER.into(),
+                text: "are we still on for friday?".into(),
+                input_method: Some(crate::chat::InputMethod::Typed),
+                intent_id: Some("c-sample-1".into()),
+                origin_id: None,
+            },
+            crate::chat::Message {
+                id: 2,
+                ts: "2026-09-04T09:00:04.000Z".into(),
+                room: "dm:sample-agent".into(),
+                kind: crate::chat::MessageKind::Chat,
+                sender: "sample-agent".into(),
+                text: "yes, 19:00 at the usual place".into(),
+                input_method: None,
+                intent_id: None,
+                origin_id: None,
+            },
+        ];
+        let rooms = serde_json::json!({ "rooms": chat_rooms });
+        let room_opened = serde_json::json!({ "room": chat_rooms[0] });
+        let chat_history = serde_json::json!({ "events": chat_messages, "cursor": 1 });
+        let chat_post = serde_json::json!({ "ok": true, "id": 2 });
+        let chat_import = serde_json::json!({ "imported": 3, "skipped": 1 });
+
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
@@ -3907,6 +3955,11 @@ mod tests {
             "file_read": file_read,
             "renamed": renamed,
             "host_folders": host_folders,
+            "rooms": rooms,
+            "room_opened": room_opened,
+            "chat_history": chat_history,
+            "chat_post": chat_post,
+            "chat_import": chat_import,
         })
     }
 

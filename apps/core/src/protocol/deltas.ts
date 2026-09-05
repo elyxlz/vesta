@@ -1,4 +1,4 @@
-import type { AgentInfo, DeviceInfo, GatewayInfo } from "./tree";
+import type { AgentInfo, DeviceInfo, GatewayInfo, Room } from "./tree";
 import type { NotificationEvent } from "./events";
 
 interface StateDelta {
@@ -56,6 +56,13 @@ interface DevicesDelta {
   devices: DeviceInfo[];
 }
 
+// The whole room list, replaced on any change (a room opened, renamed, deleted, or its newest
+// message moving). Additive: an old client ignores it.
+interface RoomsDelta {
+  type: "rooms";
+  rooms: Room[];
+}
+
 export type Delta =
   | StateDelta
   | AgentDelta
@@ -63,4 +70,5 @@ export type Delta =
   | AgentNotificationsDelta
   | UserNotificationDelta
   | PresenceDelta
-  | DevicesDelta;
+  | DevicesDelta
+  | RoomsDelta;

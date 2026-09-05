@@ -59,7 +59,13 @@ export function fakeAgentRow(
 }
 
 export function fakeTree(overrides: Partial<Tree> = {}): Tree {
-  return { gateway: fakeGatewayInfo(), agents: {}, devices: [], ...overrides };
+  return {
+    gateway: fakeGatewayInfo(),
+    agents: {},
+    devices: [],
+    rooms: [],
+    ...overrides,
+  };
 }
 
 export interface FakeController {

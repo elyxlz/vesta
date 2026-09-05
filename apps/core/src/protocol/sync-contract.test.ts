@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { syncProtocolFixtures as fixtures } from "../../fixtures/sync-protocol";
 import { parseServerFrame } from "./parse";
-import type { AgentInfo, GatewayInfo, Tree } from "./tree";
+import type { AgentInfo, GatewayInfo, Room, Tree } from "./tree";
 
 // The generated fixture is `as const`, so its arrays are readonly tuples; the compile-time
 // check compares against the readonly view of the canonical types.
@@ -25,6 +25,16 @@ describe("sync protocol contract (vestad fixtures)", () => {
     expect(tree.gateway.port).toBe(4111);
     expect(gateway.latestVersion).toBe("0.1.1");
     expect(info.status).toBe("alive");
+  });
+
+  it("types the room list the tree and the rooms delta carry", () => {
+    const rooms = fixtures.snapshot.tree.rooms satisfies DeepReadonly<Room[]>;
+    expect(rooms[0].id).toBe("dm:sample");
+    expect(rooms[0].name).toBeNull();
+    expect(rooms[1].agents).toEqual(["sample", "scout"]);
+    expect(rooms[1].lastMessageAt).toBeNull();
+    const delta = fixtures.deltas.rooms.rooms satisfies DeepReadonly<Room[]>;
+    expect(delta).toHaveLength(2);
   });
 
   it("parses the hello frame vestad emits, carrying the served version window", () => {
