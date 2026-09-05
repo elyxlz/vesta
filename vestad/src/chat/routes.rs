@@ -194,7 +194,7 @@ pub(crate) struct ValidPost {
 
 /// Pure shape work over the raw body, mirroring the chat skill's intake rules.
 pub(crate) fn validate_post(body: &serde_json::Value) -> Result<ValidPost, String> {
-    let shape = "body must be {text: string, input_method?, intent_id?}";
+    let shape = "body must be {text?: string, attachments?: [id], input_method?, intent_id?}";
     let attachment_shape = "attachments must be a list of ids";
     let Some(object) = body.as_object() else {
         return Err(shape.into());
@@ -440,7 +440,7 @@ mod tests {
         );
         assert_eq!(
             validate_post(&serde_json::json!({ "text": 5 })).expect_err("shape"),
-            "body must be {text: string, input_method?, intent_id?}"
+            "body must be {text?: string, attachments?: [id], input_method?, intent_id?}"
         );
         let long = serde_json::json!({ "text": "x".repeat(crate::chat::MAX_TEXT_CHARS + 1) });
         assert_eq!(

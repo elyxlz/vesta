@@ -191,13 +191,20 @@ impl ChatStore {
         message
     }
 
-    /// Every attachment id any message references, across every room.
-    pub(crate) fn attachment_ids(&self) -> HashSet<String> {
-        self.messages
-            .iter()
-            .flat_map(|entry| entry.message.attachments.iter())
-            .map(|meta| meta.id.clone())
-            .collect()
+    /// Every attachment id any message references, across every room, or `None` while the log is
+    /// unreadable: the history in memory is then a fraction of what is on disk, and a caller
+    /// sweeping blobs against a short set would delete what those unread messages reference.
+    pub(crate) fn attachment_ids(&self) -> Option<HashSet<String>> {
+        if self.log_unreadable {
+            return None;
+        }
+        Some(
+            self.messages
+                .iter()
+                .flat_map(|entry| entry.message.attachments.iter())
+                .map(|meta| meta.id.clone())
+                .collect(),
+        )
     }
 
     /// The origin ids already imported into `room`.
@@ -408,7 +415,7 @@ impl ChatStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::{MessageDraft, MessageKind};
+    use crate::chat::{AttachmentMeta, MessageDraft, MessageKind};
 
     fn draft(room: &str, kind: MessageKind, sender: &str, text: &str, at_ms: u64) -> MessageDraft {
         MessageDraft {
@@ -593,6 +600,30 @@ mod tests {
             0
         );
         assert!(!log.with_extension("jsonl.tmp").exists());
+    }
+
+    #[test]
+    fn an_unreadable_log_yields_no_reference_set() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log = tmp.path().join("chat").join("messages.jsonl");
+        std::fs::create_dir_all(&log).expect("log as a dir");
+        let mut store = ChatStore::load(tmp.path());
+        let mut carried = draft("r", MessageKind::User, "user", "", 1_000);
+        carried.attachments = vec![AttachmentMeta {
+            id: "a".repeat(32),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            size: 3,
+            width: None,
+            height: None,
+            duration_secs: None,
+        }];
+        store.append(carried);
+        assert_eq!(
+            store.attachment_ids(),
+            None,
+            "an unreadable log knows too little to name what nothing references"
+        );
     }
 
     #[test]

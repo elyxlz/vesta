@@ -115,8 +115,9 @@ impl ChatNode {
         &self.attachments
     }
 
-    /// Every attachment id any message references, the set a sweep must keep.
-    pub(crate) fn referenced_attachment_ids(&self) -> HashSet<String> {
+    /// Every attachment id any message references, the set a sweep must keep, or `None` when the
+    /// store cannot answer for the whole history; a sweep must then delete nothing.
+    pub(crate) fn referenced_attachment_ids(&self) -> Option<HashSet<String>> {
         self.store
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -760,7 +761,7 @@ mod tests {
         assert_eq!(page[0].attachments, vec![meta.clone()]);
         assert_eq!(
             node.referenced_attachment_ids(),
-            HashSet::from([meta.id.clone()])
+            Some(HashSet::from([meta.id.clone()]))
         );
         let frame = ChatEvent::Message(message).to_frame();
         assert_eq!(frame["attachments"][0]["name"], "photo.png");
