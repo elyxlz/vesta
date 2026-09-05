@@ -237,17 +237,21 @@ impl ChatNode {
         self.store.lock().unwrap_or_else(PoisonError::into_inner).after(room, after, limit)
     }
 
-    /// True when `intent_id` was seen recently; otherwise remember it. The one dedup decision.
-    pub(crate) fn remember_intent(&self, intent_id: &str) -> bool {
+    /// True when `intent_id` belongs to a message that already landed. The one dedup decision.
+    pub(crate) fn intent_seen(&self, intent_id: &str) -> bool {
+        let seen = self.seen_intents.lock().unwrap_or_else(PoisonError::into_inner);
+        seen.iter().any(|known| known == intent_id)
+    }
+
+    /// Record a landed message's `intent_id`, so its retry deduplicates. Intake calls this after
+    /// the append, never before: a post refused by the gate or the guard never landed, and its
+    /// retry must reach the room.
+    pub(crate) fn remember_intent(&self, intent_id: &str) {
         let mut seen = self.seen_intents.lock().unwrap_or_else(PoisonError::into_inner);
-        if seen.iter().any(|known| known == intent_id) {
-            return true;
-        }
         seen.push_back(intent_id.to_string());
         while seen.len() > SEEN_INTENT_IDS_CAP {
             seen.pop_front();
         }
-        false
     }
 
     /// The burst guard: agent posts stop once the room's tail holds the cap of agent messages
@@ -555,6 +559,19 @@ mod tests {
         assert_eq!(page[0].origin_id, Some(7));
         assert_eq!(page[1].sender, "alice");
         assert_eq!(page[0].sender, "user");
+    }
+
+    #[test]
+    fn an_intent_is_deduped_only_once_recorded() {
+        let (_tmp, node) = node();
+        assert!(!node.intent_seen("c-1"));
+        node.remember_intent("c-1");
+        assert!(node.intent_seen("c-1"));
+        for index in 0..SEEN_INTENT_IDS_CAP {
+            node.remember_intent(&format!("id-{index}"));
+        }
+        assert!(!node.intent_seen("c-1"));
+        assert!(node.intent_seen(&format!("id-{}", SEEN_INTENT_IDS_CAP - 1)));
     }
 
     #[test]

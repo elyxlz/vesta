@@ -198,7 +198,7 @@ pub(crate) async fn post_message_handler(
     let post = validate_post(&body).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))?;
     member_room(&state, &principal, &id)?;
     if let Some(intent_id) = &post.intent_id {
-        if state.chat.remember_intent(intent_id) {
+        if state.chat.intent_seen(intent_id) {
             return Ok(Json(serde_json::json!({ "ok": true, "deduped": true })).into_response());
         }
     }
@@ -216,10 +216,14 @@ pub(crate) async fn post_message_handler(
         sender: sender.clone(),
         text: post.text,
         input_method: post.input_method,
-        intent_id: post.intent_id,
+        intent_id: post.intent_id.clone(),
         origin_id: None,
         at_ms: now_millis(),
     });
+    // Last, so only a message that landed deduplicates its retry.
+    if let Some(intent_id) = &post.intent_id {
+        state.chat.remember_intent(intent_id);
+    }
     if kind == MessageKind::Chat {
         let preview: String = message.text.chars().take(USER_NOTIFICATION_PREVIEW_CHARS).collect();
         state.user_notifier().await.notify(
