@@ -634,7 +634,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Mobile,
                 resync: false,
-                viewing: Some("scout".into()),
+                viewing: Some("dm:scout".into()),
                 device_id: Some("device-1".into()),
                 descriptor: Some("Vesta on iPhone".into()),
                 context: DeviceContext {
