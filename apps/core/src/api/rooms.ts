@@ -39,9 +39,11 @@ export function roomMessagesPath(id: string): string {
   return `/rooms/${encodeURIComponent(id)}/messages`;
 }
 
-// The replay-free live room socket; dialed with the token in the query.
-export function roomSocketPath(id: string): string {
-  return `/rooms/ws?room=${encodeURIComponent(id)}`;
+// The replay-free live room socket; dialed with the token in the query. Query-free like every
+// other socket path here, since `session.websocketUrl` appends its own `?token=`: name the room by
+// passing `new URLSearchParams({ room: id })` as that builder's second argument.
+export function roomsSocketPath(): string {
+  return "/rooms/ws";
 }
 
 export async function fetchRoomHistory(

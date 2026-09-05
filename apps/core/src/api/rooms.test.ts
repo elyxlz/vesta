@@ -5,19 +5,22 @@ import {
   fetchRoomHistory,
   roomHistoryPath,
   roomMessagesPath,
-  roomSocketPath,
   roomsPath,
+  roomsSocketPath,
 } from "./rooms";
 
 describe("room paths", () => {
-  it("addresses the room list, a room's history, its intake, and its socket", () => {
+  it("addresses the room list, a room's history, and its intake, escaping the id", () => {
     expect(roomsPath()).toBe("/rooms");
     expect(roomHistoryPath("dm:scout")).toBe("/rooms/dm%3Ascout/history");
     expect(roomHistoryPath("dm:scout", 42)).toBe(
       "/rooms/dm%3Ascout/history?cursor=42",
     );
     expect(roomMessagesPath("dm:scout")).toBe("/rooms/dm%3Ascout/messages");
-    expect(roomSocketPath("dm:scout")).toBe("/rooms/ws?room=dm%3Ascout");
+  });
+
+  it("leaves the socket path query-free, since the session URL builder appends its own", () => {
+    expect(roomsSocketPath()).toBe("/rooms/ws");
   });
 });
 
