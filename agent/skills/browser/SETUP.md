@@ -60,8 +60,9 @@ browser daemon start
 browser doctor
 ```
 
-`engines.routes.standard.ready` and `engines.routes.stealth.ready` must both be `true`. A `false`
-route names the file it could not find, which points back at step 2 or step 3.
+`data.engines.routes.standard.ready` and `data.engines.routes.stealth.ready` in the report must
+both be `true`. A `false` route names the file it could not find, which points back at step 2 or
+step 3.
 
 ## Runtime paths
 
@@ -93,8 +94,8 @@ needs three things:
    this container; a handover started while either one is unset answers `handover_failed`.
 2. Four binaries plus the noVNC assets, which the image installs: `Xvfb`, `x11vnc`, `websockify`,
    `openbox`, and `/usr/share/novnc`. Elsewhere: `apt-get install -y xvfb novnc x11vnc openbox`.
-3. `handover.ready` of `true` in `browser doctor`, which lists any missing piece under
-   `handover.missing`.
+3. `data.handover.ready` of `true` in `browser doctor`, which lists any missing piece under
+   `data.handover.missing`.
 
 ## Recovery
 

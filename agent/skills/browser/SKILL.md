@@ -7,10 +7,9 @@ description: Drive a real browser: interactive sites, pages behind a sign-in, Ja
 
 ## Choose a mode
 
-Standard mode runs Chromium. `--stealth` runs Camoufox, an anti-detection Firefox. Start in
-standard mode and keep it there while the site answers. Move to stealth when the user asks for it,
-or on evidence that the site rejects standard automation: a block page, or a challenge that never
-clears.
+Standard mode runs Chromium. `--stealth` runs Camoufox, an anti-detection Firefox. Start in standard
+mode and keep it there while the site answers. Move to stealth when the user asks for it, or on
+evidence that the site rejects standard automation: a block page, or a challenge that never clears.
 
 Never assume anti-bot. An empty body, a wait that times out, and a control that does nothing are
 almost always late hydration, a cross-origin iframe, or a validation error, and a switch of engine
@@ -39,8 +38,9 @@ cookies, the signed-in profile); Python variables do not, because each program r
 globals. Carry a value between programs by printing it and reading it back from `output.stdout`.
 
 `--session` defaults to `default`. Use one session per account and one per parallel task, named in
-lowercase letters, digits, `-`, and `_`. A session runs one program at a time. A session idle for
-30 minutes stops its browser, and the next program starts it again on the same profile.
+lowercase letters, digits, `-`, and `_`, starting with a letter or digit, at most 64 characters. A
+session runs one program at a time. A session idle for 30 minutes stops its browser, and the next
+program starts it again on the same profile.
 
 `--timeout` is the program's budget in seconds: 120 by default, 5 minimum, 600 maximum. Raise the
 Bash tool timeout together with it, or the tool call ends while the program is still running.
@@ -66,11 +66,9 @@ Chromium adds `cdp(method, **params)` for a raw DevTools call, plus `http_get(ur
 Playwright objects.
 
 `cdp` on a stealth session answers `engine_capability_mismatch`. Every other engine-specific name
-simply does not exist on the other engine, so the program raises a `NameError` and the result
-carries `execution_failed`. Either way, two ways out: rewrite the program with the portable
-helpers, or start a session under a new name on the engine that carries the call. Never rerun the
-same program in the other engine, because that engine holds different cookies and a different
-profile.
+does not exist on the other engine, so the program raises a `NameError` and the result carries
+`execution_failed`. Rewrite the program with the portable helpers, or start a session under a new
+name on the engine that carries the call. Never rerun the program in the other engine.
 
 ## Read the result
 
@@ -123,7 +121,9 @@ Search these before inventing an approach to a site, and read only the file that
 - [domain-skills/](domain-skills/): one directory per host, holding selectors, private APIs, URL patterns, and the traps found there.
 
 Map a recipe onto `browser exec` while you read it. The helpers are bound as globals already, so
-drop a recipe's `from helpers import ...` line: it names no module here. `http_get` is a
+drop a recipe's `from helpers import ...` line: it names no module here. A recipe's `goto` is
+`goto_url`, `click(x, y)` is `click_at_xy`, and `screenshot` is `capture_screenshot`; `snapshot`,
+`bidi`, and `drain_events` have no equivalent, so read the DOM with `js`. `http_get` is a
 standard-mode call. Give `capture_screenshot` no path, so the file lands in the session's artifact
 directory; a file written to `/tmp` is left out of `artifacts`. Many sites also answer their own
 JSON endpoints with everything the page shows, so one `curl` can replace a whole session.
