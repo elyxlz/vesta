@@ -91,7 +91,8 @@ look at it. A success prints the line on stdout; a failure prints it on stderr a
 Hand the browser to the user when the wall is account trust: a sign-in the user must complete, a
 locked tenant, a code that only their own device holds. Rule out the cheap causes first
 ([interaction-skills/forms.md](interaction-skills/forms.md)), because a handover spends the user's
-time.
+time. A cold stealth session can spend most of the handover's start budget on the browser start:
+run one `browser exec` on the session first, then hand it over.
 
 ```bash
 browser handover start --session <name> --url "<sign-in URL>" --minutes 30

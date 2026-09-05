@@ -95,8 +95,9 @@ display to the user in their own browser, so it needs three more things:
 
 1. `VESTAD_PUBLIC_URL` and `AGENT_NAME` in the daemon's environment. vestad supplies both to
    this container; a handover started while either one is unset answers `handover_failed`.
-2. `x11vnc`, `websockify`, and `/usr/share/novnc`, which the image installs alongside the display
-   packages. Elsewhere: `apt-get install -y xvfb openbox x11vnc novnc`.
+2. `x11vnc`, `websockify`, and `/usr/share/novnc`, the stream pieces the handover adds on top of
+   the display every session already runs, which the image installs alongside the display
+   packages. Elsewhere, one line covers both sets: `apt-get install -y xvfb openbox x11vnc novnc`.
 3. `data.handover.ready` of `true` in `browser doctor`, which lists any missing piece under
    `data.handover.missing`. `data.engines.display.ready` covers the display packages instead,
    since every session needs them, not only a handover.
