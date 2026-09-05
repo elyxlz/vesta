@@ -80,10 +80,14 @@ function parseHello(frame: Record<string, unknown>): ParsedFrame {
 }
 
 function parseSnapshot(frame: Record<string, unknown>): ParsedFrame {
-  if (record(frame.tree) === null) return UNKNOWN;
+  const tree = record(frame.tree);
+  if (tree === null) return UNKNOWN;
+  // A gateway older than the room list sends a tree without one, and the replica always reads
+  // rooms as an array.
+  const rooms = arr(tree.rooms) ?? [];
   return {
     kind: "snapshot",
-    frame: { type: "snapshot", tree: frame.tree as Tree },
+    frame: { type: "snapshot", tree: { ...tree, rooms } as Tree },
   };
 }
 

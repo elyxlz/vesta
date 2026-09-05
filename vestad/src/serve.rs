@@ -3912,7 +3912,7 @@ mod tests {
         let chat_messages = vec![
             crate::chat::Message {
                 id: 1,
-                ts: "2026-09-04T09:00:00.000Z".into(),
+                ts: crate::chat::format_ts(1_788_512_400_000),
                 room: "dm:sample-agent".into(),
                 kind: crate::chat::MessageKind::User,
                 sender: crate::chat::USER_SENDER.into(),
@@ -3923,7 +3923,7 @@ mod tests {
             },
             crate::chat::Message {
                 id: 2,
-                ts: "2026-09-04T09:00:04.000Z".into(),
+                ts: crate::chat::format_ts(1_788_512_404_123),
                 room: "dm:sample-agent".into(),
                 kind: crate::chat::MessageKind::Chat,
                 sender: "sample-agent".into(),

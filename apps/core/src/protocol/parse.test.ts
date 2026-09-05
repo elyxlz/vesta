@@ -26,10 +26,30 @@ describe("parseServerFrame", () => {
   });
 
   it("parses a snapshot frame and preserves the tree", () => {
-    const tree = { gateway: {}, agents: {} };
+    const tree = {
+      gateway: {},
+      agents: {},
+      rooms: [
+        {
+          id: "dm:scout",
+          name: null,
+          agents: ["scout"],
+          createdAt: 1,
+          lastMessageAt: null,
+        },
+      ],
+    };
     const parsed = parseServerFrame(JSON.stringify({ type: "snapshot", tree }));
     expect(parsed.kind).toBe("snapshot");
     if (parsed.kind === "snapshot") expect(parsed.frame.tree).toEqual(tree);
+  });
+
+  it("reads a snapshot from a gateway with no room list as an empty one", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({ type: "snapshot", tree: { gateway: {}, agents: {} } }),
+    );
+    expect(parsed.kind).toBe("snapshot");
+    if (parsed.kind === "snapshot") expect(parsed.frame.tree.rooms).toEqual([]);
   });
 
   it("classifies each delta type", () => {

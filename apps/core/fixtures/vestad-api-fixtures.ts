@@ -87,7 +87,7 @@ export const vestadApiFixtures = {
         "room": "dm:sample-agent",
         "sender": "user",
         "text": "are we still on for friday?",
-        "ts": "2026-09-04T09:00:00.000Z",
+        "ts": "2026-09-04T09:00:00Z",
         "type": "user"
       },
       {
@@ -95,7 +95,7 @@ export const vestadApiFixtures = {
         "room": "dm:sample-agent",
         "sender": "sample-agent",
         "text": "yes, 19:00 at the usual place",
-        "ts": "2026-09-04T09:00:04.000Z",
+        "ts": "2026-09-04T09:00:04.123Z",
         "type": "chat"
       }
     ]

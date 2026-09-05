@@ -2,6 +2,7 @@
 //! the `ChatPrincipal` the chat middleware inserted and checks membership itself; the node owns
 //! every other decision.
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -45,7 +46,10 @@ pub(crate) fn member_room(
     principal: &ChatPrincipal,
     id: &str,
 ) -> Result<crate::chat::Room, ApiError> {
-    let room = state.chat.room(id).ok_or_else(|| chat_error(ChatError::NotFound))?;
+    let room = state
+        .chat
+        .room(id)
+        .ok_or_else(|| chat_error(ChatError::NotFound))?;
     if !principal.is_member(&room) {
         return Err(chat_error(ChatError::Forbidden));
     }
@@ -74,18 +78,34 @@ pub(crate) struct OpenRoomBody {
 pub(crate) async fn open_room_handler(
     State(state): State<SharedState>,
     Extension(principal): Extension<ChatPrincipal>,
-    Json(body): Json<OpenRoomBody>,
+    body: Result<Json<OpenRoomBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    let Ok(Json(body)) = body else {
+        return Err(error(StatusCode::BAD_REQUEST, "invalid json body"));
+    };
     if let ChatPrincipal::Agent(name) = &principal {
         if !body.agents.iter().any(|agent| agent == name) {
-            return Err(error(StatusCode::FORBIDDEN, "an agent may only open rooms it is in"));
+            return Err(error(
+                StatusCode::FORBIDDEN,
+                "an agent may only open rooms it is in",
+            ));
         }
     }
     let (room, created) = state
         .chat
-        .open_room(OpenRoom { name: body.name, agents: body.agents }, now_epoch_secs())
+        .open_room(
+            OpenRoom {
+                name: body.name,
+                agents: body.agents,
+            },
+            now_epoch_secs(),
+        )
         .map_err(chat_error)?;
-    let status = if created { StatusCode::CREATED } else { StatusCode::OK };
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
     Ok((status, Json(serde_json::json!({ "room": room }))).into_response())
 }
 
@@ -124,7 +144,10 @@ pub(crate) enum HistoryWalk {
 pub(crate) fn parse_history_query(query: &HistoryQuery) -> Result<HistoryWalk, &'static str> {
     let limit = match &query.limit {
         None => DEFAULT_PAGE_SIZE,
-        Some(raw) => raw.parse::<usize>().map_err(|_| "invalid limit")?.min(MAX_PAGE_SIZE),
+        Some(raw) => raw
+            .parse::<usize>()
+            .map_err(|_| "invalid limit")?
+            .clamp(1, MAX_PAGE_SIZE),
     };
     match (&query.cursor, &query.after) {
         (Some(_), Some(_)) => Err("pass cursor or after, not both"),
@@ -132,10 +155,14 @@ pub(crate) fn parse_history_query(query: &HistoryQuery) -> Result<HistoryWalk, &
             before: Some(raw.parse().map_err(|_| "invalid cursor")?),
             limit,
         }),
-        (None, Some(raw)) => {
-            Ok(HistoryWalk::After { after: raw.parse().map_err(|_| "invalid after")?, limit })
-        }
-        (None, None) => Ok(HistoryWalk::Page { before: None, limit }),
+        (None, Some(raw)) => Ok(HistoryWalk::After {
+            after: raw.parse().map_err(|_| "invalid after")?,
+            limit,
+        }),
+        (None, None) => Ok(HistoryWalk::Page {
+            before: None,
+            limit,
+        }),
     }
 }
 
@@ -165,32 +192,46 @@ pub(crate) struct ValidPost {
 /// Pure shape work over the raw body, mirroring the chat skill's intake rules.
 pub(crate) fn validate_post(body: &serde_json::Value) -> Result<ValidPost, String> {
     let shape = "body must be {text: string, input_method?, intent_id?}";
-    let Some(object) = body.as_object() else { return Err(shape.into()) };
+    let Some(object) = body.as_object() else {
+        return Err(shape.into());
+    };
     let text = match object.get("text") {
         Some(serde_json::Value::String(text)) => text.trim().to_string(),
         None => String::new(),
         Some(_) => return Err(shape.into()),
     };
     if text.chars().count() > MAX_TEXT_CHARS {
-        return Err(format!("message text is capped at {MAX_TEXT_CHARS} characters"));
+        return Err(format!(
+            "message text is capped at {MAX_TEXT_CHARS} characters"
+        ));
     }
     if text.is_empty() {
         return Err("empty message".into());
     }
-    let input_method = match object.get("input_method").and_then(serde_json::Value::as_str) {
+    let input_method = match object
+        .get("input_method")
+        .and_then(serde_json::Value::as_str)
+    {
         Some("voice") => Some(InputMethod::Voice),
         Some("typed") => Some(InputMethod::Typed),
         _ => None,
     };
-    let intent_id = object.get("intent_id").and_then(serde_json::Value::as_str).map(str::to_string);
-    Ok(ValidPost { text, input_method, intent_id })
+    let intent_id = object
+        .get("intent_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    Ok(ValidPost {
+        text,
+        input_method,
+        intent_id,
+    })
 }
 
 pub(crate) async fn post_message_handler(
     State(state): State<SharedState>,
     Extension(principal): Extension<ChatPrincipal>,
     Path(id): Path<String>,
-    body: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Ok(Json(body)) = body else {
         return Err(error(StatusCode::BAD_REQUEST, "invalid json body"));
@@ -225,7 +266,11 @@ pub(crate) async fn post_message_handler(
         state.chat.remember_intent(intent_id);
     }
     if kind == MessageKind::Chat {
-        let preview: String = message.text.chars().take(USER_NOTIFICATION_PREVIEW_CHARS).collect();
+        let preview: String = message
+            .text
+            .chars()
+            .take(USER_NOTIFICATION_PREVIEW_CHARS)
+            .collect();
         state.user_notifier().await.notify(
             &sender,
             crate::user_notifications::KIND_MESSAGE,
@@ -256,31 +301,53 @@ pub(crate) async fn import_handler(
     State(state): State<SharedState>,
     Extension(principal): Extension<ChatPrincipal>,
     Path(id): Path<String>,
-    Json(body): Json<ImportBody>,
+    body: Result<Json<ImportBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    let Ok(Json(body)) = body else {
+        return Err(error(StatusCode::BAD_REQUEST, "invalid json body"));
+    };
     let ChatPrincipal::Agent(agent) = principal else {
-        return Err(error(StatusCode::FORBIDDEN, "only an agent imports its own history"));
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "only an agent imports its own history",
+        ));
     };
     if id != crate::chat::Room::direct_id(&agent) {
-        return Err(error(StatusCode::FORBIDDEN, "an agent imports only into its direct room"));
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "an agent imports only into its direct room",
+        ));
     }
     if state.chat.room(&id).is_none() {
         return Err(chat_error(ChatError::NotFound));
     }
-    let items = body
+    // Every stamp is parsed before anything lands, so a batch carrying one unreadable stamp is
+    // refused whole rather than imported with that message stamped at the epoch.
+    let items: Vec<ImportItem> = body
         .messages
         .into_iter()
-        .map(|item| ImportItem {
-            origin_id: item.origin_id,
-            ts: item.ts,
-            kind: item.kind,
-            text: item.text,
-            input_method: item.input_method,
+        .map(|item| {
+            let at_ms = crate::chat::parse_ts(&item.ts).ok_or(item.origin_id)?;
+            Ok(ImportItem {
+                origin_id: item.origin_id,
+                at_ms,
+                kind: item.kind,
+                text: item.text,
+                input_method: item.input_method,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<ImportItem>, u64>>()
+        .map_err(|origin_id| {
+            error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid ts on origin_id {origin_id}"),
+            )
+        })?;
     let outcome = state.chat.import(&id, items);
-    Ok(Json(serde_json::json!({ "imported": outcome.imported, "skipped": outcome.skipped }))
-        .into_response())
+    Ok(
+        Json(serde_json::json!({ "imported": outcome.imported, "skipped": outcome.skipped }))
+            .into_response(),
+    )
 }
 
 /// The other agents on this gateway, for `chat peers`.
@@ -288,8 +355,12 @@ pub(crate) async fn peers_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Response {
-    let peers: Vec<String> =
-        state.chat.known_agents().into_iter().filter(|agent| *agent != name).collect();
+    let peers: Vec<String> = state
+        .chat
+        .known_agents()
+        .into_iter()
+        .filter(|agent| *agent != name)
+        .collect();
     Json(serde_json::json!({ "peers": peers })).into_response()
 }
 
@@ -320,7 +391,9 @@ mod tests {
         );
         let odd_method = serde_json::json!({ "text": "hi", "input_method": "telepathy" });
         assert_eq!(
-            validate_post(&odd_method).expect("odd method is dropped").input_method,
+            validate_post(&odd_method)
+                .expect("odd method is dropped")
+                .input_method,
             None
         );
     }
@@ -329,29 +402,71 @@ mod tests {
     fn history_query_resolves_a_page_size_and_one_cursor_kind() {
         assert_eq!(
             parse_history_query(&HistoryQuery::default()).expect("default"),
-            HistoryWalk::Page { before: None, limit: crate::chat::DEFAULT_PAGE_SIZE }
+            HistoryWalk::Page {
+                before: None,
+                limit: crate::chat::DEFAULT_PAGE_SIZE
+            }
         );
-        let query =
-            HistoryQuery { cursor: Some("12".into()), after: None, limit: Some("9000".into()) };
+        let query = HistoryQuery {
+            cursor: Some("12".into()),
+            after: None,
+            limit: Some("9000".into()),
+        };
         assert_eq!(
             parse_history_query(&query).expect("clamped"),
-            HistoryWalk::Page { before: Some(12), limit: crate::chat::MAX_PAGE_SIZE }
+            HistoryWalk::Page {
+                before: Some(12),
+                limit: crate::chat::MAX_PAGE_SIZE
+            }
         );
-        let query =
-            HistoryQuery { cursor: None, after: Some("3".into()), limit: Some("2".into()) };
+        let query = HistoryQuery {
+            cursor: None,
+            after: Some("3".into()),
+            limit: Some("2".into()),
+        };
         assert_eq!(
             parse_history_query(&query).expect("after"),
             HistoryWalk::After { after: 3, limit: 2 }
         );
-        let both =
-            HistoryQuery { cursor: Some("1".into()), after: Some("1".into()), limit: None };
+        let both = HistoryQuery {
+            cursor: Some("1".into()),
+            after: Some("1".into()),
+            limit: None,
+        };
         assert_eq!(
             parse_history_query(&both).expect_err("both"),
             "pass cursor or after, not both"
         );
-        let bad = HistoryQuery { cursor: Some("x".into()), after: None, limit: None };
-        assert_eq!(parse_history_query(&bad).expect_err("cursor"), "invalid cursor");
-        let bad = HistoryQuery { cursor: None, after: None, limit: Some("-1".into()) };
-        assert_eq!(parse_history_query(&bad).expect_err("limit"), "invalid limit");
+        let bad = HistoryQuery {
+            cursor: Some("x".into()),
+            after: None,
+            limit: None,
+        };
+        assert_eq!(
+            parse_history_query(&bad).expect_err("cursor"),
+            "invalid cursor"
+        );
+        let bad = HistoryQuery {
+            cursor: None,
+            after: None,
+            limit: Some("-1".into()),
+        };
+        assert_eq!(
+            parse_history_query(&bad).expect_err("limit"),
+            "invalid limit"
+        );
+        let none = HistoryQuery {
+            cursor: None,
+            after: None,
+            limit: Some("0".into()),
+        };
+        assert_eq!(
+            parse_history_query(&none).expect("zero"),
+            HistoryWalk::Page {
+                before: None,
+                limit: 1
+            },
+            "a zero page size reads as one, never as an empty page"
+        );
     }
 }
