@@ -4,6 +4,7 @@ filed under, and the node id a replicated message carries."""
 
 import json
 import sqlite3
+import threading
 
 import pytest
 from chat_cli.store import Store, direct_room_id, store_path
@@ -400,4 +401,25 @@ def test_import_rows_files_core_history_into_the_direct_room(tmp_path):
     events, _ = store.page(room=_DIRECT_ROOM)
     assert [e["text"] for e in events] == ["from core"]
     assert [e["text"] for e in store.unsynced_direct_rows()] == ["from core"]
+    store.close()
+
+
+def test_appends_from_two_threads_both_land(tmp_path):
+    """The daemon appends from its own loop while the replica appends from a worker thread, so the one
+    writer connection is shared across threads and every use of it is serialized by the store's lock."""
+    store = _store(tmp_path)
+    written = [f"{name}-{index}" for name in ("one", "two") for index in range(20)]
+
+    def append(name: str) -> None:
+        for index in range(20):
+            store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": f"{name}-{index}"})
+
+    threads = [threading.Thread(target=append, args=(name,)) for name in ("one", "two")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    events, _ = store.page(limit=100, room=_DIRECT_ROOM)
+    assert sorted(event["text"] for event in events) == sorted(written)
     store.close()

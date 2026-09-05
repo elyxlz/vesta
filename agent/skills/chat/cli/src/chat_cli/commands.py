@@ -103,9 +103,9 @@ def cmd_history(args: argparse.Namespace) -> None:
     store = Store(store_path(data_dir), agent_name())
     try:
         if args.search:
-            events = store.search(args.search, limit=args.limit)
+            events = store.search(args.search, limit=args.limit, room=store.direct_room)
         else:
-            events, _ = store.page(limit=args.limit)
+            events, _ = store.page(limit=args.limit, room=store.direct_room)
     except sqlite3.OperationalError as exc:
         _fail({"error": f"invalid search query: {exc}"})
     finally:

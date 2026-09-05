@@ -196,7 +196,8 @@ def _attachment(value: JsonValue) -> AttachmentMeta:
     return meta
 
 
-def _room(value: JsonValue) -> RoomRecord:
+def parse_room(value: JsonValue) -> RoomRecord:
+    """One room as the node describes it, from a history answer or a live frame."""
     holder = _object(value, "room")
     name = holder["name"] if "name" in holder else None
     return {
@@ -206,7 +207,8 @@ def _room(value: JsonValue) -> RoomRecord:
     }
 
 
-def _message(value: JsonValue) -> NodeMessage:
+def parse_message(value: JsonValue) -> NodeMessage:
+    """One message as the node describes it, from a history page or a live frame."""
     holder = _object(value, "message")
     message: NodeMessage = {
         "id": _whole(_field(holder, "id", "message"), "message id"),
@@ -259,7 +261,7 @@ class NodeClient:
     async def rooms(self) -> list[RoomRecord]:
         """Every room the node has this agent in."""
         payload = await self._call("GET", "/rooms")
-        return [_room(item) for item in _items(_field(payload, "rooms", "rooms answer"), "rooms")]
+        return [parse_room(item) for item in _items(_field(payload, "rooms", "rooms answer"), "rooms")]
 
     async def open_room(self, agents: list[str], name: str | None) -> RoomRecord:
         """The room holding exactly these agents, opened when the node does not hold it yet."""
@@ -267,13 +269,13 @@ class NodeClient:
         if name is not None:
             body["name"] = name
         payload = await self._call("POST", "/rooms", body=body)
-        return _room(_field(payload, "room", "open room answer"))
+        return parse_room(_field(payload, "room", "open room answer"))
 
     async def history_after(self, room: str, after: int, limit: int) -> tuple[list[NodeMessage], int | None]:
         """One page of everything the room holds past node id `after`, plus the id to continue from
         while the room holds more."""
         payload = await self._call("GET", f"/rooms/{room}/history", params={"after": str(after), "limit": str(limit)})
-        events = [_message(item) for item in _items(_field(payload, "events", "history page"), "history events")]
+        events = [parse_message(item) for item in _items(_field(payload, "events", "history page"), "history events")]
         cursor = _field(payload, "cursor", "history page")
         return events, None if cursor is None else _whole(cursor, "history cursor")
 

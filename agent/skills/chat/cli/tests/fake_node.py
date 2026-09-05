@@ -130,8 +130,18 @@ class FakeNode:
         self.rooms[room.id] = room
         return room
 
-    def seed_message(self, room: str, kind: str, sender: str, text: str) -> NodeMessage:
-        return self._append(room, kind, sender, text, [])
+    def seed_message(
+        self,
+        room: str,
+        kind: str,
+        sender: str,
+        text: str,
+        *,
+        attachments: list[AttachmentMeta] | None = None,
+        origin_id: int | None = None,
+        input_method: str | None = None,
+    ) -> NodeMessage:
+        return self._append(room, kind, sender, text, attachments or [], origin_id=origin_id, input_method=input_method)
 
     def _append(
         self,

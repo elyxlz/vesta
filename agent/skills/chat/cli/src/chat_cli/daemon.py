@@ -30,6 +30,8 @@ from datetime import UTC, datetime
 from aiohttp import web
 
 from . import attachments
+from .node_client import NodeClient, new_session, node_config_from_env
+from .replica import ReplicaState, run_replica
 from .service import ServiceState, create_app
 from .store import Store, StoredEvent, store_path
 
@@ -103,6 +105,8 @@ class DaemonState:
     service: ServiceState
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
     asked_to_stop: bool = False
+    # The node replica, from the moment the loop builds it. None while the environment names no node.
+    replica: ReplicaState | None = None
 
 
 def _send_user_notification(text: str) -> None:
@@ -160,19 +164,40 @@ async def _run(state: DaemonState) -> None:
     site = web.TCPSite(runner, host="0.0.0.0", port=state.port)
     await site.start()
     _log(f"service on port {state.port}")
-    socket_task = asyncio.create_task(_socket_server(state))
-    sweep_task = asyncio.create_task(_sweep_loop(state))
+    tasks = [asyncio.create_task(_socket_server(state)), asyncio.create_task(_sweep_loop(state)), asyncio.create_task(_replica_loop(state))]
     try:
         await state.shutdown.wait()
-        socket_task.cancel()
-        sweep_task.cancel()
-        await asyncio.gather(socket_task, sweep_task, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         await runner.cleanup()
         state.service.store.close()
         state.sock_path.unlink(missing_ok=True)
         if not state.asked_to_stop:
             write_death_notification(state.notifications_dir)
+
+
+async def _replica_loop(state: DaemonState) -> None:
+    """Replicate every room the node holds this agent in, for as long as the daemon runs. With no node
+    identity in the environment the loop says so once and stays off, and the rest of the daemon works
+    as it does with a node."""
+    config = node_config_from_env(os.environ)
+    if config is None:
+        _log("no node identity in the environment (AGENT_NAME, AGENT_TOKEN, BOX_HOST, VESTAD_PORT): not replicating")
+        return
+    session = new_session(config)
+    try:
+        state.replica = ReplicaState(
+            store=state.service.store,
+            client=NodeClient(config, session),
+            attachments_root=state.service.attachments_root,
+            notifications_dir=state.notifications_dir,
+            agent=config["agent"],
+        )
+        await run_replica(state.replica, state.shutdown)
+    finally:
+        await session.close()
 
 
 def _run_sweep(service: ServiceState) -> int:

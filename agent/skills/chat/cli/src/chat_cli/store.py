@@ -7,6 +7,7 @@ message the node also holds carries that node id, which is what makes replicatio
 import json
 import pathlib as pl
 import sqlite3
+import threading
 import typing as tp
 
 from .attachments import AttachmentMeta
@@ -147,7 +148,9 @@ def _migrate(conn: sqlite3.Connection, agent_name: str) -> None:
 
 
 def _open(db_path: pl.Path, agent_name: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path), timeout=30)
+    """The writer connection. It is opened for any thread because the daemon writes from the loop and
+    from the replica's worker threads; `Store` serializes every use of it behind its own lock."""
+    conn = sqlite3.connect(str(db_path), timeout=30, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     _migrate(conn, agent_name)
     return conn
@@ -179,11 +182,13 @@ class Store:
     """Single-writer store owned by the serve process; readers (the CLI, the paged read) open their own
     short-lived WAL connections. `append` stamps the next AUTOINCREMENT id and files the message under a
     room (the direct room when the caller names none); `page` reads oldest-to-newest with an id cursor;
-    `search` runs FTS5 relevance ranking decayed toward recent."""
+    `search` runs FTS5 relevance ranking decayed toward recent. Every write holds the store's lock, so
+    the daemon's own send path and the replica's worker threads share one connection safely."""
 
     def __init__(self, db_path: pl.Path, agent_name: str) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._direct_room = direct_room_id(agent_name)
+        self.direct_room = direct_room_id(agent_name)
+        self._lock = threading.RLock()
         self._conn = _open(db_path, agent_name)
         self._db_path = db_path
 
@@ -192,15 +197,16 @@ class Store:
         return sqlite3.connect(str(self._db_path), timeout=30)
 
     def append(self, event: StoredEvent) -> int:
-        room = event["room"] if "room" in event else self._direct_room
+        room = event["room"] if "room" in event else self.direct_room
         node_id = event["node_id"] if "node_id" in event else None
         blob = {key: value for key, value in event.items() if key not in _COLUMN_FIELDS}
-        cursor = self._conn.execute(
-            "INSERT INTO events (ts, data, room, node_id) VALUES (?, ?, ?, ?)",
-            (event["ts"], json.dumps(blob), room, node_id),
-        )
-        self._conn.commit()
-        rowid = cursor.lastrowid
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO events (ts, data, room, node_id) VALUES (?, ?, ?, ?)",
+                (event["ts"], json.dumps(blob), room, node_id),
+            )
+            self._conn.commit()
+            rowid = cursor.lastrowid
         if rowid is None:
             raise sqlite3.Error("insert returned no rowid")
         event["id"] = rowid
@@ -209,8 +215,9 @@ class Store:
 
     def mark_node_id(self, local_id: int, node_id: int) -> None:
         """Record that the node also holds this row, so replicating it back is a no-op."""
-        self._conn.execute("UPDATE events SET node_id = ? WHERE id = ?", (node_id, local_id))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("UPDATE events SET node_id = ? WHERE id = ?", (node_id, local_id))
+            self._conn.commit()
 
     def has_node_id(self, node_id: int) -> bool:
         conn = self._read()
@@ -301,7 +308,7 @@ class Store:
             rows = conn.execute(
                 f"SELECT {_ROW_COLUMNS} FROM events "
                 f"WHERE room = ? AND node_id IS NULL AND json_extract(data, '$.type') IN ({placeholders}) ORDER BY id ASC",
-                (self._direct_room, *_CONVERSATION_TYPES),
+                (self.direct_room, *_CONVERSATION_TYPES),
             ).fetchall()
         finally:
             conn.close()
@@ -309,12 +316,13 @@ class Store:
 
     def upsert_room(self, room: RoomRecord) -> None:
         """Store a room as the node describes it now, name and membership included."""
-        self._conn.execute(
-            "INSERT INTO rooms (id, name, agents) VALUES (?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, agents = excluded.agents",
-            (room["id"], room["name"], json.dumps(room["agents"])),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO rooms (id, name, agents) VALUES (?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET name = excluded.name, agents = excluded.agents",
+                (room["id"], room["name"], json.dumps(room["agents"])),
+            )
+            self._conn.commit()
 
     def rooms(self) -> list[RoomRecord]:
         conn = self._read()
@@ -333,8 +341,9 @@ class Store:
         return None if row is None else _row_to_room(row)
 
     def delete_room(self, room_id: str) -> None:
-        self._conn.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+            self._conn.commit()
 
     def attachment_references(self) -> dict[str, tuple[str, str]]:
         """Every attachment id any event references, mapped to that event's (ts, type). One structured
@@ -364,21 +373,24 @@ class Store:
         Returns (count_written, max_id_seen) so the caller can bump the sequence above it (see D3)."""
         count = 0
         max_id = 0
-        for row_id, ts, data in rows:
-            cursor = self._conn.execute(
-                "INSERT OR IGNORE INTO events (id, ts, data, room) VALUES (?, ?, ?, ?)", (row_id, ts, data, self._direct_room)
-            )
-            count += cursor.rowcount
-            max_id = max(max_id, row_id)
-        self._conn.commit()
+        with self._lock:
+            for row_id, ts, data in rows:
+                cursor = self._conn.execute(
+                    "INSERT OR IGNORE INTO events (id, ts, data, room) VALUES (?, ?, ?, ?)", (row_id, ts, data, self.direct_room)
+                )
+                count += cursor.rowcount
+                max_id = max(max_id, row_id)
+            self._conn.commit()
         return count, max_id
 
     def bump_sequence_above(self, max_id: int) -> None:
         """Keep AUTOINCREMENT strictly above an imported id set (D3): a freshly imported store must
         never re-mint an id a client already cached as a cursor."""
-        self._conn.execute("INSERT OR IGNORE INTO sqlite_sequence(name, seq) VALUES ('events', 0)")
-        self._conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'events'", (max_id,))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("INSERT OR IGNORE INTO sqlite_sequence(name, seq) VALUES ('events', 0)")
+            self._conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'events'", (max_id,))
+            self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

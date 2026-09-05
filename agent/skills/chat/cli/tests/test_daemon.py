@@ -71,6 +71,16 @@ def test_any_other_signal_leaves_the_death_report_armed(tmp_path):
     state.service.store.close()
 
 
+def test_the_replica_stays_off_without_a_node_in_the_environment(tmp_path, monkeypatch):
+    state = _daemon_state(tmp_path)
+    monkeypatch.delenv("AGENT_TOKEN", raising=False)
+
+    asyncio.run(daemon._replica_loop(state))
+
+    assert state.replica is None
+    state.service.store.close()
+
+
 def test_live_pid_is_none_without_a_record(records):
     assert daemon.live_pid() is None
 

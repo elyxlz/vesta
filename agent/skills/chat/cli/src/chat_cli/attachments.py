@@ -189,6 +189,21 @@ def finalize(root: pl.Path, attachment_id: str) -> AttachmentMeta:
     return session
 
 
+def blob_destination(root: pl.Path, meta: AttachmentMeta) -> pl.Path:
+    """Where a blob copied from elsewhere lands, its id directory created. The name is sanitized here
+    too, so a file named by another node cannot reach outside the id directory."""
+    directory = _dir(root, meta["id"])
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / sanitize_filename(meta["name"])
+
+
+def record_meta(root: pl.Path, meta: AttachmentMeta) -> None:
+    """Publish the metadata beside a blob that already landed, which is what makes it finalized: from
+    here on `read_meta`, the serve route and `attachments list` all see the attachment."""
+    stored: AttachmentMeta = {**meta, "name": sanitize_filename(meta["name"])}
+    _write_json(_dir(root, meta["id"]) / _META_FILE, stored)
+
+
 def read_meta(root: pl.Path, attachment_id: str) -> AttachmentMeta | None:
     """The finalized metadata, or None while the id is malformed, unknown, or still staging."""
     if not is_valid_id(attachment_id):
