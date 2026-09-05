@@ -29,6 +29,7 @@ async def replica_state(fake, tmp_path):
                 attachments_root=tmp_path / "attachments",
                 notifications_dir=tmp_path / "notifications",
                 agent=fake.agent,
+                echo=lambda event: None,
             )
         finally:
             store.close()
@@ -200,6 +201,27 @@ def test_this_agents_own_message_persists_without_a_notification(tmp_path):
         return main()
 
     assert run_live(fake, tmp_path, scenario) == []
+
+
+def test_this_agents_own_message_reaches_the_old_services_subscribers(tmp_path):
+    # The daemon's send posts and nothing more, so the reply's live echo to today's clients is written
+    # here, where the row itself lands.
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    echoed = []
+
+    def scenario(state):
+        async def main():
+            state.echo = echoed.append
+            await fake.emit(fake.seed_message(DIRECT, "chat", AGENT, "on my way"))
+            await wait_for(lambda: len(echoed) == 1)
+            await fake.emit(fake.seed_message(DIRECT, "user", "user", "thanks"))
+            await wait_for(lambda: texts(state) == ["on my way", "thanks"])
+            return echoed
+
+        return main()
+
+    assert [(event["text"], event["node_id"], event["sender"]) for event in run_live(fake, tmp_path, scenario)] == [("on my way", 1, AGENT)]
 
 
 def test_a_peers_message_in_a_group_waits_for_idle(tmp_path):

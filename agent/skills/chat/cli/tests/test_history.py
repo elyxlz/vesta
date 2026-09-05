@@ -22,8 +22,8 @@ def _seed(tmp_path) -> None:
     store.close()
 
 
-def _args(tmp_path, *, search=None, limit=20) -> argparse.Namespace:
-    return argparse.Namespace(data_dir=str(tmp_path), search=search, limit=limit)
+def _args(tmp_path, *, search=None, limit=20, room=None) -> argparse.Namespace:
+    return argparse.Namespace(data_dir=str(tmp_path), search=search, limit=limit, room=room)
 
 
 def test_history_lists_recent_conversation(tmp_path, capsys):
@@ -48,6 +48,19 @@ def test_history_reads_the_direct_room_alone(tmp_path, capsys):
 
     commands.cmd_history(_args(tmp_path, search="goodbye"))
     assert [row["content"] for row in json.loads(capsys.readouterr().out)] == ["goodbye moon"]
+
+
+def test_history_reads_a_named_room_when_asked(tmp_path, capsys):
+    _seed(tmp_path)
+    store = Store(store_path(tmp_path), "vesta")
+    store.append({"type": "chat", "ts": "2026-01-01T00:00:02", "text": "goodbye harbour", "room": "grp-7"})
+    store.close()
+
+    commands.cmd_history(_args(tmp_path, room="grp-7"))
+    assert [row["content"] for row in json.loads(capsys.readouterr().out)] == ["goodbye harbour"]
+
+    commands.cmd_history(_args(tmp_path, room="grp-7", search="goodbye"))
+    assert [row["content"] for row in json.loads(capsys.readouterr().out)] == ["goodbye harbour"]
 
 
 def test_history_search_projects_matches(tmp_path, capsys):

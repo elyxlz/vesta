@@ -3,18 +3,57 @@
 Commands:
   serve   — daemon: runs the chat HTTP service (intake, history, live chat socket), accepts CLI commands via Unix socket
   daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports whether it is up and on which port)
-  send    — send a message to the app (via daemon Unix socket)
+  send    — send a message into a room (via daemon Unix socket)
+  rooms   — list the rooms this agent is in, or open a new one
+  peers   — list the other agents on this gateway
   history — search/list chat history from the skill's own store
   import  — one-time copy of pre-existing chat history from core's events.db into the skill store
+  import-to-node — hand the node the direct conversation this store already holds
 """
 
 import argparse
 import sys
+import typing as tp
 
-from chat_cli.commands import cmd_attachments_list, cmd_attachments_rm, cmd_history, cmd_import, cmd_send
+from chat_cli.commands import (
+    cmd_attachments_list,
+    cmd_attachments_rm,
+    cmd_history,
+    cmd_import,
+    cmd_import_to_node,
+    cmd_peers,
+    cmd_rooms,
+    cmd_rooms_create,
+    cmd_send,
+)
 from chat_cli.daemon import cmd_serve, daemon_cmd
 
 _HELP_ARGS = ("--help", "-h", "help")
+
+# Every verb and what runs it. A verb with sub-verbs is keyed by both names, so the dispatch below
+# stays one lookup whatever shape a command has.
+_VERBS: dict[str, tp.Callable[[argparse.Namespace], None]] = {
+    "serve": cmd_serve,
+    "send": cmd_send,
+    "peers": cmd_peers,
+    "history": cmd_history,
+    "import": cmd_import,
+    "import-to-node": cmd_import_to_node,
+}
+_SUB_VERBS: dict[tuple[str, str | None], tp.Callable[[argparse.Namespace], None]] = {
+    ("rooms", None): cmd_rooms,
+    ("rooms", "create"): cmd_rooms_create,
+    ("attachments", "list"): cmd_attachments_list,
+    ("attachments", "rm"): cmd_attachments_rm,
+}
+
+
+def _handler(args: argparse.Namespace) -> tp.Callable[[argparse.Namespace], None] | None:
+    """What runs this command line, or None when the parser accepted a verb with no sub-verb to run."""
+    if "action" in args:
+        key = (args.command, args.action)
+        return _SUB_VERBS[key] if key in _SUB_VERBS else None
+    return _VERBS[args.command] if args.command in _VERBS else None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -36,7 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
     daemon_p = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
     daemon_p.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
-    send_p = sub.add_parser("send", help="Send a message to the app")
+    send_p = sub.add_parser("send", help="Send a message into a room (the conversation with the user by default)")
     send_p.add_argument(
         "--message",
         "-m",
@@ -58,9 +97,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="PATH",
-        help="Attach a file (repeatable); the daemon copies it into its own store, so a temp file may be deleted after",
+        help="Attach a file (repeatable); the daemon uploads it and keeps a copy, so a temp file may be deleted after",
     )
     send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.chat/chat.sock)")
+    target = send_p.add_mutually_exclusive_group()
+    target.add_argument("--to", default=None, metavar="AGENT", help="Send to another agent, opening the room with them if it is new")
+    target.add_argument("--room", default=None, metavar="ID", help="Send into a room by id (default: the conversation with the user)")
     send_p.add_argument(
         "--longform",
         action="store_true",
@@ -78,7 +120,18 @@ def _build_parser() -> argparse.ArgumentParser:
     att_rm_p.add_argument("ids", nargs="+", metavar="ID")
     att_rm_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
 
+    rooms_p = sub.add_parser("rooms", help="List the rooms this agent is in, or open a new one")
+    rooms_p.add_argument("--json", action="store_true", help="Print the rooms as one JSON list")
+    rooms_sub = rooms_p.add_subparsers(dest="action")
+    rooms_create_p = rooms_sub.add_parser("create", help="Open a room with the agents named")
+    rooms_create_p.add_argument("--name", required=True, help="What the room is called")
+    rooms_create_p.add_argument("--agents", required=True, metavar="A,B", help="Comma-separated agent names; this agent is always in it")
+
+    peers_p = sub.add_parser("peers", help="List the other agents on this gateway")
+    peers_p.add_argument("--json", action="store_true", help="Print the names as one JSON list")
+
     history_p = sub.add_parser("history", help="Search or list chat history")
+    history_p.add_argument("--room", default=None, metavar="ID", help="Read one room (default: the conversation with the user)")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
     history_p.add_argument("--limit", "-n", type=int, default=20, help="Max results")
     history_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
@@ -86,6 +139,9 @@ def _build_parser() -> argparse.ArgumentParser:
     import_p = sub.add_parser("import", help="Copy pre-existing chat history from core's events.db into the skill store")
     import_p.add_argument("--events-db", default=None, help="Path to core's events.db (default: $AGENT_DIR/data/events.db)")
     import_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
+
+    to_node_p = sub.add_parser("import-to-node", help="Hand the node the direct conversation this store already holds")
+    to_node_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
 
     return parser
 
@@ -98,24 +154,11 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    if args.command == "serve":
-        cmd_serve(args)
-    elif args.command == "daemon":
+    if args.command == "daemon":
+        # The one verb that answers with an exit code rather than printed output.
         sys.exit(daemon_cmd(args.action))
-    elif args.command == "send":
-        cmd_send(args)
-    elif args.command == "attachments":
-        if args.action == "list":
-            cmd_attachments_list(args)
-        elif args.action == "rm":
-            cmd_attachments_rm(args)
-        else:
-            parser.print_help()
-            sys.exit(1)
-    elif args.command == "history":
-        cmd_history(args)
-    elif args.command == "import":
-        cmd_import(args)
-    else:
+    handler = _handler(args)
+    if handler is None:
         parser.print_help()
         sys.exit(1)
+    handler(args)

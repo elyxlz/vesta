@@ -22,6 +22,8 @@ UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 _TOKEN_HEADER = "X-Agent-Token"
 _HTTPS_PREFIX = "https://"
 _ENV_KEYS = ("AGENT_NAME", "AGENT_TOKEN", "BOX_HOST", "VESTAD_PORT")
+# What a caller says when the environment names no node: the four values, so the reader can fix it.
+NODE_UNREACHABLE = f"the chat node is unreachable: {', '.join(_ENV_KEYS)} must be set"
 _SPEAKING_FIELD = "user_speaking"
 _BURST_STATUS = 429
 _CONFLICT_STATUS = 409

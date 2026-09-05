@@ -1,9 +1,10 @@
 """The replica: every room this agent is in, mirrored from the node into the skill's own store. One
 socket carries the live edge and one pull per room carries everything the store missed, both keyed by
 the node's message id, so a message replicates exactly once however it arrives. Each message that is
-not this agent's own echo becomes the notification the monitor loop turns into a turn, and each
-attachment it carries lands in the local blob store first, so the notification names a path the agent
-opens. Every sqlite and file operation runs off the event loop."""
+not this agent's own becomes the notification the monitor loop turns into a turn, this agent's own
+reply is echoed to the clients on the skill's service instead, and each attachment a message carries
+lands in the local blob store first, so the notification names a path the agent opens. Every sqlite and
+file operation runs off the event loop."""
 
 import asyncio
 import contextlib
@@ -11,6 +12,7 @@ import json
 import logging
 import pathlib as pl
 import sqlite3
+import typing as tp
 from dataclasses import dataclass
 
 import aiohttp
@@ -43,6 +45,9 @@ class ReplicaState:
     attachments_root: pl.Path
     notifications_dir: pl.Path
     agent: str
+    # Where this agent's own replicated reply goes besides the store: the live echo the app's current
+    # chat socket reads. The daemon hands it the old service's fan-out.
+    echo: tp.Callable[[StoredEvent], None]
     connected: bool = False
 
 
@@ -91,7 +96,11 @@ async def ingest_message(state: ReplicaState, message: NodeMessage) -> bool:
     if metas:
         event["attachments"] = metas
     await asyncio.to_thread(state.store.append, event)
-    if message["sender"] != state.agent:
+    # This agent's own reply comes back here rather than from its send, so the row, the live echo and
+    # the silence (nothing to notify itself about) all belong to this one ingest.
+    if message["sender"] == state.agent:
+        state.echo(event)
+    else:
         await _notify(state, event, metas, unfetched)
     return True
 

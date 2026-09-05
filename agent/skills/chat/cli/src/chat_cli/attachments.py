@@ -25,7 +25,7 @@ _SESSION_FILE = ".session.json"
 _META_FILE = ".meta.json"
 _PART_FILE = ".part"
 _FILENAME_MAX_CHARS = 120
-_FALLBACK_MIME = "application/octet-stream"
+FALLBACK_MIME = "application/octet-stream"
 
 
 class AttachmentMeta(tp.TypedDict, total=False):
@@ -206,6 +206,13 @@ def record_meta(root: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
     return stored
 
 
+def store_copy(root: pl.Path, source: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
+    """Copy a file that already reached another store into this one, finalized, under the id it carries
+    there. The sender's own history then renders the same blob the room holds."""
+    shutil.copyfile(source, blob_destination(root, meta))
+    return record_meta(root, meta)
+
+
 def read_meta(root: pl.Path, attachment_id: str) -> AttachmentMeta | None:
     """The finalized metadata, or None while the id is malformed, unknown, or still staging."""
     if not is_valid_id(attachment_id):
@@ -258,7 +265,7 @@ def ingest_file(root: pl.Path, source: pl.Path, mime: str | None, *, max_bytes: 
     meta: AttachmentMeta = {
         "id": uuid.uuid4().hex,
         "name": sanitize_filename(source.name),
-        "mime": guessed if guessed is not None else _FALLBACK_MIME,
+        "mime": guessed if guessed is not None else FALLBACK_MIME,
         "size": size,
     }
     directory = _dir(root, meta["id"])
