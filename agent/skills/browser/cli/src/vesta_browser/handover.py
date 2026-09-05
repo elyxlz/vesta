@@ -3,8 +3,8 @@
 The whole flow lives here because every piece of it is one decision: the display stack, the headed
 engine, the vestad service and its key, the lifetime, and the teardown that must run whichever of
 them failed. The session is marked `handed_over` for the duration, so no exec can drive the browser
-the user is holding, and the teardown always ends with the session `stopped` and ready to run
-headless again.
+the user is holding, and the teardown always ends with the session `stopped` and ready to start
+again on its own display.
 """
 
 from __future__ import annotations

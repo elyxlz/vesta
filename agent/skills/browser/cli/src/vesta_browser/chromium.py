@@ -1,4 +1,4 @@
-"""The standard route: one headless Chromium per session, one browser-use child per exec.
+"""The standard route: one headed Chromium per session, on its own display, one browser-use child per exec.
 
 Chromium picks a free DevTools port and writes it to `<profile>/DevToolsActivePort`; the child gets
 that port as `BU_CDP_URL`, so Browser Harness never launches a browser of its own. Browser Harness

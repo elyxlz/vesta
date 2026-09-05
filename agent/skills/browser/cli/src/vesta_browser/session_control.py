@@ -29,9 +29,10 @@ async def ensure_running(state: State, session: sessions_mod.Session) -> list[st
         session.display = await display.start_session_display(state.paths)
         headed = HeadedDisplay(session.display.display, display.SCREEN_W, display.SCREEN_H)
         session.runtime = await ENGINES[session.engine].start(session, state.paths, headed=headed)
-    except Exception:
-        # Any failure at all, not only a named one: a session left `starting` refuses every later
-        # exec and no command can bring it back.
+    except BaseException:
+        # Any failure at all, not only a named one, and a cancellation too: a session left
+        # `starting` refuses every later exec and no command can bring it back, and a claimed
+        # display must not outlive the start it was claimed for.
         sessions_mod.mark(session, "stopped")
         session.runtime = None
         if session.display is not None:

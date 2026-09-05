@@ -13,7 +13,15 @@ from vesta_browser.runtimes import HeadedDisplay
 
 from .fakes import write_display_fakes, write_fakes
 from .hermetic import isolated_path
-from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead, with_daemon
+from .waiting import (
+    POLL_DEADLINE_SECS,
+    POLL_INTERVAL_SECS,
+    pid_alive,
+    wait_for_state,
+    wait_until_all_dead,
+    wait_until_dead,
+    with_daemon,
+)
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
 BUDGET_SECS = 1.5
@@ -240,6 +248,33 @@ def test_a_total_start_failure_frees_the_session_and_kills_the_browser(paths, mo
     assert listing["data"]["sessions"][0]["state"] == "stopped"
     assert dead is True
     assert recovered["ok"] is True
+
+
+def test_cancelling_an_exec_while_the_engine_is_starting_frees_the_display(paths, monkeypatch):
+    """A cancellation mid `ensure_running` must not leak the Xvfb and openbox it just claimed."""
+    hang_started = asyncio.Event()
+
+    async def _hang(*_args, **_kwargs):
+        hang_started.set()
+        await asyncio.sleep(3600)
+
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        monkeypatch.setattr(serve.ENGINES["chromium"], "start", _hang)
+        task = asyncio.ensure_future(serve.op_exec(state, "r1", _exec("research", "print(1)")))
+        await asyncio.wait_for(hang_started.wait(), 5)
+        session = state.table.sessions["research"]
+        display_pids = [session.display.xvfb.pid, session.display.openbox.pid]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        dead = await wait_until_all_dead(display_pids)
+        return dead, session.state, session.display
+
+    dead, state_after, display_after = asyncio.run(run())
+    assert dead is True
+    assert state_after == "stopped"
+    assert display_after is None
 
 
 def test_a_stop_marks_the_session_before_it_awaits_the_engine(paths, monkeypatch):
