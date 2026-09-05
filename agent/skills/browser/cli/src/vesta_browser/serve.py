@@ -130,7 +130,7 @@ async def _run_exec(state: State, session: sessions_mod.Session, request_id: str
         session.request_id = None
         needs_restart = outcome is not None and session.engine == "camoufox" and (outcome.timed_out or "worker_restarted" in outcome.warnings)
         if needs_restart:
-            await stop_session(session, force=True)
+            await stop_session(state.paths, session, force=True)
             state.restart_pending.add(session.name)
         else:
             sessions_mod.mark(session, "ready")
@@ -204,7 +204,7 @@ async def op_session_stop(state: State, request_id: str, request: dict[str, p.Js
     if name not in state.table.sessions:
         raise p.BrowserError(p.invalid(f"unknown session {name!r}"))
     session = state.table.sessions[name]
-    if not await stop_session(session):
+    if not await stop_session(state.paths, session):
         raise p.BrowserError(p.invalid(f"session {name!r} is {session.state}; refusing to stop"))
     return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
 
@@ -213,7 +213,7 @@ async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonV
     stopped: list[str] = []
     for session in state.table.sessions.values():
         was_stopped = session.state == "stopped"
-        if await stop_session(session) and not was_stopped:
+        if await stop_session(state.paths, session) and not was_stopped:
             stopped.append(session.name)
     return p.result(request_id=request_id, op="stop_all", ok=True, data={"stopped": stopped})
 
@@ -228,7 +228,7 @@ async def _idle_sweep(state: State) -> None:
         try:
             for session in sessions_mod.idle_sessions(state.table, IDLE_STOP_SECS):
                 logger.info("stopping idle session %s", session.name)
-                await stop_session(session)
+                await stop_session(state.paths, session)
             since_prune += IDLE_SWEEP_SECS
             if since_prune >= PRUNE_INTERVAL_SECS:
                 since_prune = 0.0
@@ -344,7 +344,7 @@ async def _stop_every_session(state: State, budget: float) -> None:
     if not sessions:
         return
     runtimes = [session.runtime for session in sessions]
-    stops = [asyncio.ensure_future(stop_session(session, force=True)) for session in sessions]
+    stops = [asyncio.ensure_future(stop_session(state.paths, session, force=True)) for session in sessions]
     _, pending = await asyncio.wait(stops, timeout=budget)
     if not pending:
         return

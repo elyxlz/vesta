@@ -159,7 +159,7 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     session = sessions_mod.resolve_session(state.table, session_name, mode)
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))
-    await stop_session(session)
+    await stop_session(state.paths, session)
     sessions_mod.mark(session, "handed_over")
     handover_id = uuid.uuid4().hex[:8]
     handover = Handover(id=handover_id, session=session, key_label=f"browser-handover-{handover_id}", state="starting")
@@ -249,7 +249,7 @@ async def _teardown(
         await _guarded(gateway.deregister_service(SERVICE, timeout=gateway_timeout), "deregister the service"),
     ]
     if stop_session_too:
-        done.append(await _guarded(stop_session(handover.session, force=True), "stop the headed browser"))
+        done.append(await _guarded(stop_session(state.paths, handover.session, force=True), "stop the headed browser"))
     done += [
         await _guarded(_tear_display(state.paths, handover), "stop the display stack"),
         await _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),

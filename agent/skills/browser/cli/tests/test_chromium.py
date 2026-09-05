@@ -7,8 +7,11 @@ import sys
 import pytest
 from vesta_browser import chromium, sessions
 from vesta_browser.runtime_paths import load_paths
+from vesta_browser.runtimes import HeadedDisplay
 
 from .fakes import write_fakes
+
+HEADED = HeadedDisplay(":101", 1280, 800)
 
 
 @pytest.fixture
@@ -24,11 +27,13 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_launch_argv_is_headless_sandboxless_and_profile_scoped(rig):
+def test_launch_argv_is_headed_sandboxless_and_profile_scoped(rig):
     paths, session = rig
-    argv = chromium.launch_argv(paths, session)
+    argv = chromium.launch_argv(paths, session, HEADED)
     assert argv[0] == str(paths.chromium_exe)
-    assert "--headless=new" in argv and "--no-sandbox" in argv and "--remote-debugging-port=0" in argv
+    assert "--headless=new" not in argv
+    assert "--window-size=1280,800" in argv and "--window-position=0,0" in argv
+    assert "--no-sandbox" in argv and "--remote-debugging-port=0" in argv
     assert f"--user-data-dir={session.profile_dir}" in argv
 
 
@@ -65,7 +70,7 @@ def test_start_pins_the_profile_to_open_a_new_tab_page_and_keeps_its_other_prefs
     prefs.write_text(json.dumps({"profile": {"exit_type": "SessionEnded"}, "session": {"other": 1}}))
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         await chromium.stop(runtime, session)
 
     _run(run())
@@ -77,7 +82,7 @@ def test_start_discovers_the_devtools_port_and_exec_runs_the_child(rig):
     paths, session = rig
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         try:
             outcome = await chromium.exec_code(runtime, session, paths, "print('hi')", timeout_s=10)
             page = await chromium.observe(runtime)
@@ -103,7 +108,7 @@ def test_timeout_kills_the_child_and_keeps_the_browser(rig):
     paths, session = rig
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         try:
             outcome = await chromium.exec_code(runtime, session, paths, "SLEEP", timeout_s=1)
             alive = runtime.process.returncode is None
@@ -119,7 +124,7 @@ def test_a_failing_child_reports_its_exit_code_and_stderr(rig):
     paths, session = rig
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         try:
             return await chromium.exec_code(runtime, session, paths, "FAIL", timeout_s=10)
         finally:
@@ -133,7 +138,7 @@ def test_start_fails_engine_unavailable_when_the_binary_is_missing(tmp_path):
     paths = load_paths({"VESTA_BROWSER_CHROMIUM": str(tmp_path / "nope")}, tmp_path)
     session = sessions.resolve_session(sessions.load_table(paths), "research", None)
     with pytest.raises(chromium.p.BrowserError) as excinfo:
-        _run(chromium.start(session, paths))
+        _run(chromium.start(session, paths, headed=HEADED))
     assert excinfo.value.err["code"] == "engine_unavailable" and excinfo.value.err["phase"] == "launch"
 
 
@@ -142,7 +147,7 @@ def test_observe_returns_unavailable_when_a_target_entry_is_malformed(rig):
     (session.profile_dir / "malformed-list").touch()
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         try:
             return await chromium.observe(runtime)
         finally:
@@ -158,7 +163,7 @@ def test_start_kills_chromium_when_cancelled_before_devtools_is_ready(rig, monke
     pid_file = session.profile_dir / "fake.pid"
 
     async def run():
-        task = asyncio.ensure_future(chromium.start(session, paths))
+        task = asyncio.ensure_future(chromium.start(session, paths, headed=HEADED))
         loop = asyncio.get_running_loop()
         pid_deadline = loop.time() + 5
         while True:
@@ -200,7 +205,7 @@ def test_stop_kills_the_harness_daemon_the_record_names_and_drops_the_record(rig
     paths, session = rig
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         harness = await _spawn_marked("browser_harness.daemon")
         record = _write_harness_record(session, harness.pid)
         await chromium.stop(runtime, session)
@@ -216,7 +221,7 @@ def test_stop_leaves_a_recycled_pid_alone(rig):
     paths, session = rig
 
     async def run():
-        runtime = await chromium.start(session, paths)
+        runtime = await chromium.start(session, paths, headed=HEADED)
         stranger = await _spawn_marked("some-other-program")
         _write_harness_record(session, stranger.pid)
         await chromium.stop(runtime, session)
@@ -226,3 +231,17 @@ def test_stop_leaves_a_recycled_pid_alone(rig):
         return survived
 
     assert _run(run()) is True
+
+
+def test_start_passes_the_display_to_the_browser_process(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        try:
+            return json.loads((session.profile_dir / "env.json").read_text())
+        finally:
+            await chromium.stop(runtime, session)
+
+    env_seen = _run(run())
+    assert env_seen["DISPLAY"] == ":101"

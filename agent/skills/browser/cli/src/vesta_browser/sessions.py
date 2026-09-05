@@ -12,6 +12,7 @@ import time
 import typing as tp
 
 from . import protocol as p
+from .display import SessionDisplay
 from .runtime_paths import Paths
 from .runtimes import EngineRuntime
 
@@ -30,6 +31,7 @@ class Session:
     last_activity: float
     runtime: EngineRuntime | None = None
     request_id: str | None = None
+    display: SessionDisplay | None = None
 
 
 @dataclasses.dataclass

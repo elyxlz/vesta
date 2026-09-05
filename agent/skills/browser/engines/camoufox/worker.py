@@ -318,8 +318,7 @@ def main() -> int:
     parser.add_argument("--executable", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--artifacts", required=True)
-    parser.add_argument("--headed", action="store_true")
-    parser.add_argument("--window", default=None)
+    parser.add_argument("--window", required=True)
     parser.add_argument("--ff-version", type=int, required=True)
     args = parser.parse_args()
     config = json.loads(pl.Path(args.config).read_text())
@@ -329,19 +328,18 @@ def main() -> int:
 
     # ff_version names the bundle's Firefox major, so the library never consults its own managed
     # install; excluding uBlock Origin keeps it from downloading an addon at launch.
+    width, height = args.window.split("x")
     options: dict[str, object] = {
         "persistent_context": True,
         "user_data_dir": args.profile,
         "executable_path": args.executable,
         "config": config,
-        "headless": not args.headed,
+        "headless": False,
         "ff_version": args.ff_version,
         "exclude_addons": [DefaultAddons.UBO],
         "i_know_what_im_doing": True,
+        "window": (int(width), int(height)),
     }
-    if args.window is not None:
-        width, height = args.window.split("x")
-        options["window"] = (int(width), int(height))
     with Camoufox(**options) as context:
         state = WorkerState(context, pl.Path(args.artifacts))
         _set_page(state, context.pages[0] if context.pages else context.new_page())

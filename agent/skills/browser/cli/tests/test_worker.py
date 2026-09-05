@@ -34,6 +34,8 @@ def worker(tmp_path):
             str(config),
             "--artifacts",
             str(artifacts),
+            "--window",
+            "1280x800",
             "--ff-version",
             "150",
         ],
@@ -55,11 +57,12 @@ def worker(tmp_path):
     proc.wait()
 
 
-def test_launch_options_are_persistent_headless_and_pinned(worker):
+def test_launch_options_are_persistent_headed_and_pinned(worker):
     _, profile, _ = worker
     launch = json.loads((profile / "launch.json").read_text())
     assert launch["persistent_context"] == "True" and launch["user_data_dir"] == str(profile)
-    assert launch["executable_path"] == "/opt/camoufox/x/camoufox" and launch["headless"] == "True"
+    assert launch["executable_path"] == "/opt/camoufox/x/camoufox" and launch["headless"] == "False"
+    assert launch["window"] == "(1280, 800)"
     assert launch["i_know_what_im_doing"] == "True" and "navigator.userAgent" in launch["config"]
     assert launch["ff_version"] == "150" and launch["exclude_addons"] == "[<DefaultAddons.UBO: 'UBO'>]"
 

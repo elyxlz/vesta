@@ -37,11 +37,11 @@ HARNESS_MARKER = b"browser_harness"
 STARTUP_OPEN_NEW_TAB_PAGE = 5
 
 
-def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay | None = None) -> list[str]:
-    display_flags = [f"--window-size={headed.width},{headed.height}", "--window-position=0,0"] if headed is not None else ["--headless=new"]
+def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay) -> list[str]:
     return [
         str(paths.chromium_exe),
-        *display_flags,
+        f"--window-size={headed.width},{headed.height}",
+        "--window-position=0,0",
         "--no-sandbox",
         "--remote-debugging-port=0",
         f"--user-data-dir={session.profile_dir}",
@@ -70,11 +70,8 @@ def child_env(session: Session, port: int) -> dict[str, str]:
     }
 
 
-def _browser_env(headed: HeadedDisplay | None) -> dict[str, str]:
-    env = base_env()
-    if headed is not None:
-        env["DISPLAY"] = headed.display
-    return env
+def _browser_env(headed: HeadedDisplay) -> dict[str, str]:
+    return {**base_env(), "DISPLAY": headed.display}
 
 
 def _unavailable(message: str) -> p.BrowserError:
@@ -95,7 +92,7 @@ def pin_startup_pref(profile_dir: pl.Path) -> None:
     prefs_path.write_text(json.dumps(prefs))
 
 
-async def start(session: Session, paths: Paths, *, headed: HeadedDisplay | None = None) -> ChromiumRuntime:
+async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> ChromiumRuntime:
     if not paths.chromium_exe.is_file():
         raise _unavailable(f"chromium binary missing at {paths.chromium_exe}")
     if not paths.browser_use_bin.is_file():

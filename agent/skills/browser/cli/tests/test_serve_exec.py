@@ -1,19 +1,23 @@
 import asyncio
 import pathlib as pl
+import shutil
 import sys
+import tempfile
 import time
 
 import pytest
 from vesta_browser import chromium, serve, sessions
 from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
+from vesta_browser.runtimes import HeadedDisplay
 
-from .fakes import write_fakes
+from .fakes import write_display_fakes, write_fakes
 from .hermetic import isolated_path
 from .waiting import POLL_DEADLINE_SECS, POLL_INTERVAL_SECS, pid_alive, wait_for_state, wait_until_dead, with_daemon
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
 BUDGET_SECS = 1.5
+HEADED = HeadedDisplay(":101", 1280, 800)
 
 
 @pytest.fixture
@@ -21,10 +25,20 @@ def paths(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(FAKE))
     bin_dir = isolated_path(tmp_path, monkeypatch)
     env = write_fakes(bin_dir)
+    # AF_UNIX addresses cap at 108 bytes and a pytest tmp_path plus the X socket name can pass it.
+    x11_dir = pl.Path(tempfile.mkdtemp(dir="/tmp"))
+    write_display_fakes(bin_dir, x11_dir)
     exe = tmp_path / "camoufox"
     exe.write_text("")
-    env.update({"VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(exe)})
-    return load_paths(env, tmp_path)
+    env.update(
+        {
+            "VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable,
+            "VESTA_BROWSER_CAMOUFOX_EXE": str(exe),
+            "VESTA_BROWSER_X11_DIR": str(x11_dir),
+        }
+    )
+    yield load_paths(env, tmp_path)
+    shutil.rmtree(x11_dir, ignore_errors=True)
 
 
 def _exec(session, code, mode=None, timeout_s=10, request_id="r1"):
@@ -188,11 +202,11 @@ def test_the_idle_sweep_survives_a_failing_pass(paths, monkeypatch):
     original = serve.stop_session
     calls = []
 
-    async def flaky(session, *, force=False):
+    async def flaky(paths, session, *, force=False):
         calls.append(session.name)
         if len(calls) == 1:
             raise RuntimeError("sweep boom")
-        return await original(session, force=force)
+        return await original(paths, session, force=force)
 
     monkeypatch.setattr(serve, "stop_session", flaky)
 
@@ -241,10 +255,10 @@ def test_a_stop_marks_the_session_before_it_awaits_the_engine(paths, monkeypatch
     async def run():
         table = sessions.load_table(paths)
         session = sessions.resolve_session(table, "research", None)
-        session.runtime = await chromium.start(session, paths)
+        session.runtime = await chromium.start(session, paths, headed=HEADED)
         sessions.mark(session, "ready")
         monkeypatch.setattr(serve.ENGINES["chromium"], "stop", _record_then_stop)
-        await serve.stop_session(session, force=True)
+        await serve.stop_session(paths, session, force=True)
         return seen
 
     assert asyncio.run(run()) == {"state": "stopped", "runtime": None}
@@ -259,7 +273,7 @@ def test_shutdown_kills_a_session_whose_engine_stop_hangs(paths, monkeypatch):
     async def run():
         state = serve.State(paths=paths, table=sessions.load_table(paths))
         session = sessions.resolve_session(state.table, "research", None)
-        session.runtime = await chromium.start(session, paths)
+        session.runtime = await chromium.start(session, paths, headed=HEADED)
         sessions.mark(session, "ready")
         pid = int((session.profile_dir / "fake.pid").read_text())
         monkeypatch.setattr(serve, "SHUTDOWN_BUDGET_SECS", BUDGET_SECS)

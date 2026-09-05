@@ -8,8 +8,10 @@ import sys
 import pytest
 from vesta_browser import camoufox, sessions
 from vesta_browser.runtime_paths import load_paths
+from vesta_browser.runtimes import HeadedDisplay
 
 FAKE = pl.Path(__file__).parent / "fake_camoufox"
+HEADED = HeadedDisplay(":101", 1280, 800)
 
 # Stand-in worker scripts, run under sys.executable (no shebang needed: worker_argv puts the
 # interpreter first). Each writes its pid to <profile>/fake.pid before doing anything else, so a
@@ -77,7 +79,7 @@ def test_start_writes_the_preset_config_and_the_worker_reports_ready(rig):
     paths, session = rig
 
     async def run():
-        runtime = await camoufox.start(session, paths)
+        runtime = await camoufox.start(session, paths, headed=HEADED)
         try:
             return json.loads(runtime.config_path.read_text()), json.loads((session.profile_dir / "launch.json").read_text())
         finally:
@@ -92,7 +94,7 @@ def test_exec_returns_output_and_the_page(rig):
     paths, session = rig
 
     async def run():
-        runtime = await camoufox.start(session, paths)
+        runtime = await camoufox.start(session, paths, headed=HEADED)
         try:
             outcome = await camoufox.exec_code(runtime, session, paths, "new_tab('https://a'); print('ok')", timeout_s=10)
             return outcome, await camoufox.observe(runtime)
@@ -108,7 +110,7 @@ def test_capability_mismatch_is_surfaced(rig):
     paths, session = rig
 
     async def run():
-        runtime = await camoufox.start(session, paths)
+        runtime = await camoufox.start(session, paths, headed=HEADED)
         try:
             return await camoufox.exec_code(runtime, session, paths, "cdp('x')", timeout_s=10)
         finally:
@@ -122,7 +124,7 @@ def test_timeout_kills_the_worker(rig):
     paths, session = rig
 
     async def run():
-        runtime = await camoufox.start(session, paths)
+        runtime = await camoufox.start(session, paths, headed=HEADED)
         outcome = await camoufox.exec_code(runtime, session, paths, "import time; time.sleep(30)", timeout_s=1)
         return outcome, runtime.process.returncode
 
@@ -134,7 +136,7 @@ def test_missing_binary_is_engine_unavailable(tmp_path):
     paths = load_paths({"VESTA_BROWSER_CAMOUFOX_EXE": str(tmp_path / "nope")}, tmp_path)
     session = sessions.resolve_session(sessions.load_table(paths), "s", "stealth")
     with pytest.raises(camoufox.p.BrowserError) as excinfo:
-        asyncio.run(camoufox.start(session, paths))
+        asyncio.run(camoufox.start(session, paths, headed=HEADED))
     assert excinfo.value.err["code"] == "engine_unavailable"
 
 
@@ -145,7 +147,7 @@ def test_start_rejects_a_malformed_first_line_and_kills_the_worker(rig):
 
     async def run():
         with pytest.raises(camoufox.p.BrowserError) as excinfo:
-            await camoufox.start(session, fake_paths)
+            await camoufox.start(session, fake_paths, headed=HEADED)
         pid = int((session.profile_dir / "fake.pid").read_text())
         return excinfo.value, await _wait_until_dead(pid, 2)
 
@@ -160,7 +162,7 @@ def test_start_kills_the_worker_when_cancelled_before_ready(rig):
     fake_paths = dataclasses.replace(paths, worker_script=fake)
 
     async def run():
-        task = asyncio.ensure_future(camoufox.start(session, fake_paths))
+        task = asyncio.ensure_future(camoufox.start(session, fake_paths, headed=HEADED))
         pid_file = session.profile_dir / "fake.pid"
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 5
@@ -184,7 +186,7 @@ def test_stop_kills_a_worker_that_never_answers(rig, monkeypatch):
     fake_paths = dataclasses.replace(paths, worker_script=fake)
 
     async def run():
-        runtime = await camoufox.start(session, fake_paths)
+        runtime = await camoufox.start(session, fake_paths, headed=HEADED)
         await asyncio.wait_for(camoufox.stop(runtime, session), 5)
         return runtime.process.returncode
 
@@ -199,7 +201,7 @@ def test_a_failed_start_leaves_the_workers_stderr_in_the_daemon_log(rig):
 
     async def run():
         with pytest.raises(camoufox.p.BrowserError) as excinfo:
-            await camoufox.start(session, fake_paths)
+            await camoufox.start(session, fake_paths, headed=HEADED)
         return excinfo.value
 
     err = asyncio.run(run())
@@ -215,10 +217,51 @@ def test_stop_does_not_ask_a_worker_that_has_already_exited(rig, monkeypatch):
         raise AssertionError("stop asked an exited worker")
 
     async def run():
-        runtime = await camoufox.start(session, paths)
+        runtime = await camoufox.start(session, paths, headed=HEADED)
         await camoufox.exec_code(runtime, session, paths, "import time; time.sleep(30)", timeout_s=1)
         monkeypatch.setattr(camoufox, "_ask", _refuse)
         await asyncio.wait_for(camoufox.stop(runtime, session), 5)
         return runtime.process.returncode
 
     assert asyncio.run(run()) is not None
+
+
+def test_worker_argv_carries_the_window_geometry_and_never_headed(rig):
+    paths, session = rig
+    argv = camoufox.worker_argv(paths, session, paths.root / "config.json", HEADED)
+    assert "--headed" not in argv
+    assert "--window" in argv
+    assert argv[argv.index("--window") + 1] == "1280x800"
+
+
+def test_start_writes_user_js_fits_the_preset_and_launches_onto_the_display(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await camoufox.start(session, paths, headed=HEADED)
+        try:
+            user_js = (session.profile_dir / "user.js").read_text()
+            config = json.loads(runtime.config_path.read_text())
+            launch = json.loads((session.profile_dir / "launch.json").read_text())
+            return user_js, config, launch
+        finally:
+            await camoufox.stop(runtime, session)
+
+    user_js, config, launch = asyncio.run(run())
+    assert user_js == 'user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n'
+    assert config["screen.width"] == 1280 and config["screen.height"] == 800
+    assert launch["headless"] == "False"
+    assert launch["window"] == "(1280, 800)"
+    assert launch["env_DISPLAY"] == ":101"
+    assert launch["env_LIBGL_ALWAYS_SOFTWARE"] == "1"
+
+
+def test_stop_leaves_user_js_in_place(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await camoufox.start(session, paths, headed=HEADED)
+        await camoufox.stop(runtime, session)
+
+    asyncio.run(run())
+    assert (session.profile_dir / "user.js").exists()
