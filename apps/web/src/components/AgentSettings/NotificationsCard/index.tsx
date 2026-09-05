@@ -20,18 +20,17 @@ import { notificationRowKey, getNotificationHistory } from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
-import { useLiveNotifications } from "./use-live-notifications";
+import { usePendingNotifications } from "./use-pending-notifications";
 import type { NotificationEvent } from "@vesta/core";
 import { httpClient } from "@/api/client";
 
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
-// the rules cards beside it stay sticky. Live-updating: the row list comes from the REST history
-// (paginated), while "pending" is a live set — seeded from the connect snapshot's on-disk ids, plus
-// notifications that arrive live, minus ones cleared live. No disk-state polling; a reconnect re-sends
-// the snapshot, which re-seeds the set for free.
+// the rules cards beside it stay sticky. The row list comes from the REST history (paginated), while
+// "pending" is the live set of ids still on disk, read off the replica. No disk-state polling; a
+// reconnect re-sends the snapshot, which re-seeds the set for free.
 export function NotificationsCard() {
   const { name: agentName } = useSelectedAgent();
-  const { pendingSeed, arrivals, cleared } = useLiveNotifications();
+  const pending = usePendingNotifications();
 
   // The loaded page state is keyed by agent, so a switch reads as empty until its page lands
   // instead of being reset from an effect.
@@ -45,28 +44,13 @@ export function NotificationsCard() {
   const items = forAgent ? page.items : null;
   const cursor = forAgent ? page.cursor : null;
   const error = forAgent ? page.error : null;
-  const setItems = (
-    update: (prev: NotificationEvent[] | null) => NotificationEvent[] | null,
-  ) => {
-    setPage((prev) => ({ ...prev, items: update(prev.items) }));
-  };
   const [loadingMore, setLoadingMore] = useState(false);
   // The currently-selected agent, so an in-flight request drops its result if the user switches
   // agents mid-flight (this card is not unmounted on switch, only its effect re-runs).
   const currentAgent = useRef(agentName);
-  // Keys of arrivals already in `items`, so live merges don't duplicate a REST-loaded row. The key is
-  // the arrival, not the pending slot: notif_id alone recurs across time (see notificationRowKey).
-  const seenRef = useRef<Set<string>>(new Set());
-
-  // Pending = on disk, not yet processed: snapshot seed ∪ live arrivals − live clears. A clear after
-  // an arrival wins (delete last), so a notification that arrived and was processed isn't pending.
-  const pendingIds = useMemo(() => {
-    const set = new Set(pendingSeed);
-    for (const arrival of arrivals)
-      if (arrival.notif_id) set.add(arrival.notif_id);
-    for (const id of cleared) set.delete(id);
-    return set;
-  }, [pendingSeed, arrivals, cleared]);
+  // Pending = on disk, not yet processed. A row is marked by id, so a notification the agent has
+  // since worked through loses its mark on the next replica delta.
+  const pendingIds = useMemo(() => new Set(pending), [pending]);
 
   // Load the newest page of the row list for the selected agent.
   useEffect(() => {
@@ -75,7 +59,6 @@ export function NotificationsCard() {
     getNotificationHistory(httpClient, agentName)
       .then((loaded) => {
         if (currentAgent.current !== agentName) return;
-        seenRef.current = new Set(loaded.notifications.map(notificationRowKey));
         setPage({
           agent: agentName,
           items: loaded.notifications,
@@ -94,18 +77,6 @@ export function NotificationsCard() {
       });
   }, [agentName]);
 
-  // Merge live arrivals into the list (newest on top), skipping any already loaded from history.
-  // Runs once `items` exists, and again when it (re)loads, catching arrivals that raced the fetch.
-  useEffect(() => {
-    if (items === null) return;
-    const fresh = arrivals.filter(
-      (n) => !seenRef.current.has(notificationRowKey(n)),
-    );
-    if (fresh.length === 0) return;
-    fresh.forEach((n) => seenRef.current.add(notificationRowKey(n)));
-    setItems((prev) => (prev ? [...[...fresh].reverse(), ...prev] : prev));
-  }, [arrivals, items]);
-
   const loadMore = async () => {
     if (!agentName || cursor === null || loadingMore) return;
     const requestedAgent = agentName;
@@ -117,9 +88,6 @@ export function NotificationsCard() {
         cursor,
       );
       if (currentAgent.current !== requestedAgent) return;
-      loaded.notifications.forEach((n) =>
-        seenRef.current.add(notificationRowKey(n)),
-      );
       setPage((prev) => ({
         ...prev,
         items: [...(prev.items ?? []), ...loaded.notifications],

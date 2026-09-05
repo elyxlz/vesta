@@ -10,10 +10,10 @@ interface Base {
 }
 type VariantParser = (frame: Frame, base: Base) => ChatMessage | null;
 
-// The chat service's events, as they arrive on the live chat socket and the history page.
+// The chat node's events, as they arrive on the live room socket and the history page.
 // Like the /sync parser, this routes on `type` and checks the fields each variant keys on; a
-// frame it cannot classify is dropped, so a renamed daemon field fails loudly in tests rather
-// than reaching the view as `undefined`.
+// frame it cannot classify is dropped, so a renamed field fails loudly in tests rather than
+// reaching the view as `undefined`.
 export function parseChatEvent(value: unknown): ChatMessage | null {
   const frame = record(value);
   if (frame === null) return null;
@@ -147,9 +147,9 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
   subagent_stop: (frame, base) => subagentEvent("subagent_stop", frame, base),
 };
 
-// The room a message belongs to and the member who wrote it, stamped by the gateway's chat node
-// and absent from a per-agent chat service's rows. A present value of the wrong type drops the
-// frame, matching every other optional field here.
+// The room a message belongs to and the member who wrote it, stamped by the chat node. Both are
+// optional here, since an optimistic bubble carries neither. A present value of the wrong type
+// drops the frame, matching every other optional field here.
 function parseAddressing(
   frame: Frame,
 ): { room?: string; sender?: string } | null {
@@ -174,7 +174,7 @@ function subagentEvent(
 }
 
 // The per-message identity: `id` is absent on an optimistic bubble but a number wherever the
-// daemon stamped it, and `ts` is optional on both.
+// node stamped it, and `ts` is optional on both.
 function parseBase(frame: Frame): Base | null {
   const id = optionalNum(frame.id);
   const ts = optionalStr(frame.ts);

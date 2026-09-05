@@ -314,5 +314,4 @@ export type {
 
 export { createController } from "./controller/controller";
 export type { Controller, ControllerDeps } from "./controller/controller";
-export type { SocketLike } from "./transport/websocket";
 export type { ProviderInfoWire } from "./provider/provider";

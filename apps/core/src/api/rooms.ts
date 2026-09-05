@@ -47,7 +47,7 @@ export function roomsPath(): string {
   return "/rooms";
 }
 
-// One room by id, the base every per-room subpath hangs off and the target of a delete.
+// One room by id, the base every per-room subpath hangs off.
 function roomPath(id: string): string {
   return `/rooms/${encodeURIComponent(id)}`;
 }
@@ -89,10 +89,6 @@ export async function createRoom(
   agents: string[],
 ): Promise<RoomOpened> {
   return http.json<RoomOpened>(roomsPath(), jsonInit("POST", { name, agents }));
-}
-
-export async function deleteRoom(http: HttpClient, id: string): Promise<void> {
-  await http.request(roomPath(id), { method: "DELETE" });
 }
 
 export async function fetchRoomHistory(

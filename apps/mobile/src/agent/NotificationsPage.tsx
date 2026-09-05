@@ -5,10 +5,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getNotificationHistory } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import {
-  getPendingNotificationIds,
-  mergeLiveNotifications,
-} from "@/agent/notification-list-model";
-import {
   notificationRowKey,
   parseNotificationContent,
   type NotificationView,
@@ -142,9 +138,9 @@ export default function NotificationsPage({
     queryFn: () => getNotificationHistory(api, name),
   });
   const lastReseedRevision = useRef(0);
-  const items = useMemo(
-    () => mergeLiveNotifications(data?.notifications ?? [], socket.events),
-    [data?.notifications, socket.events],
+  const items = useMemo<NotificationView[]>(
+    () => data?.notifications ?? [],
+    [data?.notifications],
   );
   const standalone = presentation === "standalone";
   const displayItems = useMemo(
@@ -155,8 +151,8 @@ export default function NotificationsPage({
     displayItems.length,
   );
   const pendingIds = useMemo(
-    () => getPendingNotificationIds(pendingNotifications, socket.events),
-    [socket.events, pendingNotifications],
+    () => new Set(pendingNotifications),
+    [pendingNotifications],
   );
 
   useEffect(() => {
