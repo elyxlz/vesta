@@ -44,6 +44,23 @@ docs/superpowers/specs/2026-09-04-browser-daemon-design.md Task 4 (Microsoft eng
 
 ---
 
+### Task 0: PR 2 residuals
+
+Five small findings from PR 2's final re-review, plus three stale-prose items, all under `agent/skills/browser/`. One commit, `fix(skills/browser): handover residuals from the PR 2 review`.
+
+- `cli/tests/test_engines_headed.py`: the headless-Camoufox `user.js` assertion runs after `stop` (which unlinks the file); capture the fact inside the `try` before `stop` and assert on it.
+- `cli/src/vesta_browser/handover.py` `start`: the inner/outer cancellation check runs after `stop()` has cancelled the bring-up, so `bring_up.cancelled()` is always true; capture it before calling `stop`, or drop the branch and its comment.
+- `cli/src/vesta_browser/serve.py`: the shutdown arithmetic comment says `2.0 + 2.0 + 6.0 + 1.0 = 11.0`; the code subtracts the measured handover spend from the 6.0 budget, so the worst case is about `4.0 + 2.0 + 1.0 = 7.0`; rewrite the comment to match the code.
+- Test hermeticity: every in-process `serve.serve()` fixture (`test_serve_skeleton.py`, `test_doctor.py`, `test_serve_exec.py`, `test_handover.py`) must shadow `PATH` with a tmp bin dir (with the gateway fakes where needed) so the startup `deregister-service` never reaches a real vestad on an agent box.
+- `cli/src/vesta_browser/gateway.py` `_run`: catch `OSError` (not only `FileNotFoundError`) and convert to `GatewayError`, so a non-executable helper cannot stop the daemon from starting; test with a `deregister-service` file that lacks the exec bit.
+- `gateway.find_key_id`: guard `"id" in key and "label" in key` per entry so a malformed entry raises `GatewayError`.
+- `cli/src/vesta_browser/daemon.py` docstring says nothing calls `register-service`; the handover registers and the daemon deregisters at start. Rewrite the sentence.
+- `interaction-skills/handover.md` describes a public route, a URL without `/k/<key>/`, a localhost fallback, and a `--port` flag; Task 3 rewrites the interaction skills, so delete this file here (Task 3 writes the handover section of `SKILL.md`).
+
+Run the skill suite, ruff, `./check.sh guards`, the contract row.
+
+---
+
 ### Task 1: Maps on `browser exec`
 
 **Files:** `browser_bridge.py`, its two test files, `maps/SKILL.md` lines 106-136, `maps/SETUP.md` lines 34-38.
