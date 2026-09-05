@@ -371,11 +371,6 @@ export default function SettingsScreen() {
               }
             />
             <FormRow
-              label="Switch gateway"
-              detail="Connect to a gateway saved on this device."
-              onPress={() => router.push("/switch-gateway")}
-            />
-            <FormRow
               label="Version"
               value={roster.gatewayVersion ?? "unknown"}
             />
@@ -426,6 +421,12 @@ export default function SettingsScreen() {
                         : updateCheck.isSuccess
                           ? "Check again for updates"
                           : "Check for updates"}
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => router.push("/switch-gateway")}
+                >
+                  Switch gateway
                 </Button>
                 <Button
                   variant="cardGrouped"
