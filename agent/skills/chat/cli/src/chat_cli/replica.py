@@ -187,8 +187,7 @@ async def _pull_attachments(state: ReplicaState, message: NodeMessage) -> list[A
         except (NodeError, OSError) as exc:
             logger.error("could not fetch attachment %s: %s", meta["id"], exc)
             continue
-        await asyncio.to_thread(attachments.record_meta, state.attachments_root, meta)
-        landed.append(meta)
+        landed.append(await asyncio.to_thread(attachments.record_meta, state.attachments_root, meta))
     return landed
 
 

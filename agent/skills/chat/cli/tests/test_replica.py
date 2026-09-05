@@ -244,6 +244,25 @@ def test_an_attachment_lands_in_the_local_store_and_the_notification_names_its_p
     assert written["attachments"] == f"photo.jpg (image/jpeg, 12 B) at {blob}"
 
 
+def test_an_attachment_is_stored_under_a_safe_name_and_the_notification_names_that_file(tmp_path):
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    meta = seed_attachment(fake, name="../.hidden/report.pdf", mime="application/pdf", data=b"pdf")
+
+    def scenario(state):
+        async def main():
+            await fake.emit(fake.seed_message(DIRECT, "user", "user", "read this", attachments=[meta]))
+            await wait_for(lambda: notifications_of(state))
+            return notifications_of(state)[0]
+
+        return main()
+
+    written = run_live(fake, tmp_path, scenario)
+    blob = tmp_path / "attachments" / meta["id"] / "report.pdf"
+    assert blob.read_bytes() == b"pdf"
+    assert written["attachments"] == f"report.pdf (application/pdf, 3 B) at {blob}"
+
+
 def test_a_room_created_event_lands_in_the_store_and_a_deletion_removes_it(tmp_path):
     fake = FakeNode()
     fake.seed_room([AGENT])

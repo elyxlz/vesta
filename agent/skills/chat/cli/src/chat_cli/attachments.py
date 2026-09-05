@@ -197,11 +197,13 @@ def blob_destination(root: pl.Path, meta: AttachmentMeta) -> pl.Path:
     return directory / sanitize_filename(meta["name"])
 
 
-def record_meta(root: pl.Path, meta: AttachmentMeta) -> None:
+def record_meta(root: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
     """Publish the metadata beside a blob that already landed, which is what makes it finalized: from
-    here on `read_meta`, the serve route and `attachments list` all see the attachment."""
+    here on `read_meta`, the serve route and `attachments list` all see the attachment. Answers the
+    record as stored, so the caller names the file this store really holds."""
     stored: AttachmentMeta = {**meta, "name": sanitize_filename(meta["name"])}
     _write_json(_dir(root, meta["id"]) / _META_FILE, stored)
+    return stored
 
 
 def read_meta(root: pl.Path, attachment_id: str) -> AttachmentMeta | None:
