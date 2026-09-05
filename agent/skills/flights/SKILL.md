@@ -8,7 +8,7 @@ description: Search flights, airfare, routes; book via Trip.com or Duffel.
 Search via Google Flights CLI.
 
 **When to use which:**
-- **Trip.com** (primary): supports ALL airlines including Wizz Air and Ryanair. Browser automation through the browser skill (`browser exec --stealth`, Camoufox). Use this by default.
+- **Trip.com** (primary): supports ALL airlines including Wizz Air and Ryanair. Browser automation through the browser skill (`browser exec --session flights --stealth`, Camoufox). Use this by default.
 - **Duffel** (fallback): API-based, faster and more reliable when the airline is supported. Does NOT support Wizz Air or Ryanair. Use for easyJet, Vueling, BA, and other GDS-connected airlines.
 
 ## User Preferences
