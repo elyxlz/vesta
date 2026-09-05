@@ -32,6 +32,10 @@ class Paths:
     camoufox_python: pl.Path
     camoufox_exe: pl.Path
     worker_script: pl.Path
+    novnc_dir: pl.Path
+    x11_socket_dir: pl.Path
+    handover_web: pl.Path
+    assets: pl.Path
 
 
 def _override(env: tp.Mapping[str, str], key: str, default: pl.Path) -> pl.Path:
@@ -54,4 +58,8 @@ def load_paths(env: tp.Mapping[str, str], home: pl.Path) -> Paths:
         camoufox_python=_override(env, "VESTA_BROWSER_CAMOUFOX_PYTHON", ENGINES_DIR / "camoufox/.venv/bin/python"),
         camoufox_exe=_override(env, "VESTA_BROWSER_CAMOUFOX_EXE", CAMOUFOX_INSTALL_ROOT / CAMOUFOX_RELEASE_TAG / "camoufox"),
         worker_script=ENGINES_DIR / "camoufox/worker.py",
+        novnc_dir=_override(env, "VESTA_BROWSER_NOVNC_DIR", pl.Path("/usr/share/novnc")),
+        x11_socket_dir=_override(env, "VESTA_BROWSER_X11_DIR", pl.Path("/tmp/.X11-unix")),
+        handover_web=root / "handover-web",
+        assets=SKILL_DIR / "cli/src/vesta_browser/assets/handover",
     )

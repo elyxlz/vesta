@@ -17,6 +17,10 @@ def test_defaults_hang_off_home_and_the_skill_dir(tmp_path):
     assert paths.camoufox_python.name == "python" and "engines/camoufox/.venv/bin" in str(paths.camoufox_python)
     assert paths.worker_script.name == "worker.py" and paths.worker_script.parent.name == "camoufox"
     assert str(paths.camoufox_exe).startswith("/opt/camoufox/") and paths.camoufox_exe.name == "camoufox"
+    assert paths.novnc_dir == pl.Path("/usr/share/novnc")
+    assert paths.x11_socket_dir == pl.Path("/tmp/.X11-unix")
+    assert paths.handover_web == tmp_path / "agent/data/browser/handover-web"
+    assert paths.assets.name == "handover"
 
 
 def test_env_overrides_every_binary(tmp_path):
@@ -25,6 +29,8 @@ def test_env_overrides_every_binary(tmp_path):
         "VESTA_BROWSER_BROWSER_USE": "/x/browser-use",
         "VESTA_BROWSER_CAMOUFOX_PYTHON": "/x/python",
         "VESTA_BROWSER_CAMOUFOX_EXE": "/x/camoufox",
+        "VESTA_BROWSER_NOVNC_DIR": "/x/novnc",
+        "VESTA_BROWSER_X11_DIR": "/x/x11",
     }
     paths = load_paths(env, tmp_path)
     assert (paths.chromium_exe, paths.browser_use_bin, paths.camoufox_python, paths.camoufox_exe) == (
@@ -33,3 +39,4 @@ def test_env_overrides_every_binary(tmp_path):
         pl.Path("/x/python"),
         pl.Path("/x/camoufox"),
     )
+    assert (paths.novnc_dir, paths.x11_socket_dir) == (pl.Path("/x/novnc"), pl.Path("/x/x11"))
