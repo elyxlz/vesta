@@ -191,7 +191,7 @@ async def _history_handler(request: web.Request) -> web.Response:
     kwargs = {"limit": limit} if limit is not None else {}
     channel = request.query.get("channel", "") or None
     if channel == "app-chat":
-        return web.json_response({"error": "app-chat history moved to the app-chat service"}, status=410)
+        return web.json_response({"error": "chat history lives on the chat service"}, status=410)
 
     cursor_raw = request.query.get("cursor", "")
     if cursor_raw:

@@ -1,6 +1,6 @@
-chat
 birth
 browser
+chat
 claude-code
 contacts
 dashboard
