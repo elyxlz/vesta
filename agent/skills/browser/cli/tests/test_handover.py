@@ -1,4 +1,4 @@
-"""The handover: one headed browser on a private display, one keyed URL, and one clean teardown."""
+"""The handover: the session's own display streamed to one keyed URL, and one clean teardown."""
 
 import asyncio
 import contextlib
@@ -134,15 +134,16 @@ def test_handover_start_serves_the_page_and_hands_the_session_over(rig):
     async def run():
         started = await serve.request(rig.paths, _start(url="https://example.com/"))
         try:
+            await _wait_for_pids(rig, 4)
             status = await serve.request(rig.paths, _op("handover_status"))
             listing = await serve.request(rig.paths, _op("sessions", request_id="h3"))
             page = await asyncio.to_thread(_fetch, f"http://127.0.0.1:{rig.web_port}/handover.html")
             navigate = (rig.paths.sessions / "research/tmp/code.txt").read_text()
-            return started, status, listing, page, rig.register_lines(), navigate
+            return started, status, listing, page, rig.register_lines(), navigate, rig.display_pids()
         finally:
             await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
 
-    started, status, listing, page, registered, navigate = with_daemon(rig.paths, run)
+    started, status, listing, page, registered, navigate, pids = with_daemon(rig.paths, run)
     assert started["ok"] is True, started
     assert navigate == "switch_tab(new_tab('https://example.com/'), activate=True)"
     data = started["data"]
@@ -156,22 +157,55 @@ def test_handover_start_serves_the_page_and_hands_the_session_over(rig):
     assert page == 200
     env_seen = json.loads((rig.paths.profiles / "chromium" / "research" / "env.json").read_text())
     assert env_seen["DISPLAY"].startswith(":")
+    assert len(pids) == 4
+
+
+def test_a_handover_streams_a_running_session_and_gives_the_browser_back(rig):
+    """The display and the browser are the session's own: a handover adds a stream and drops it."""
+
+    async def run():
+        first = await serve.request(rig.paths, _exec("research", "print(1)"))
+        await _wait_for_pids(rig, 2)
+        display_pids = rig.display_pids()
+        started = await serve.request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        stream_pids = rig.display_pids()[len(display_pids) :]
+        stopped = await serve.request(rig.paths, _op("handover_stop"))
+        await wait_for_state(rig.paths, "research", "ready")
+        gone = await wait_until_all_dead(stream_pids)
+        again = await serve.request(rig.paths, _exec("research", "print(2)", request_id="e2"))
+        held = all(pid_alive(pid) for pid in display_pids)
+        launched = (rig.paths.profiles / "chromium" / "research" / "launches").read_text().splitlines()
+        return first, started, stopped, again, display_pids, stream_pids, gone, held, launched
+
+    first, started, stopped, again, display_pids, stream_pids, gone, held, launched = with_daemon(rig.paths, run)
+    assert first["ok"] is True and started["ok"] is True, (first, started)
+    assert started["session"]["state"] == "handed_over"
+    assert len(display_pids) == 2 and len(stream_pids) == 2
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert gone is True and held is True
+    assert again["ok"] is True and again["session"]["state"] == "ready" and again["warnings"] == []
+    assert len(launched) == 1
 
 
 def test_a_stealth_handover_launches_camoufox_headed_for_the_requested_lifetime(rig):
     async def run():
         started = await serve.request(rig.paths, _start(session="stealthy", mode="stealth", minutes=5))
-        try:
-            launch = json.loads((rig.paths.profiles / "camoufox" / "stealthy" / "launch.json").read_text())
-            return started, launch, rig.keys()
-        finally:
-            await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        launch = json.loads((rig.paths.profiles / "camoufox" / "stealthy" / "launch.json").read_text())
+        minted = rig.keys()
+        await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
+        await wait_for_state(rig.paths, "stealthy", "ready")
+        gone = await wait_until_all_dead(pids[2:])
+        return started, launch, minted, gone, all(pid_alive(pid) for pid in pids[:2])
 
-    started, launch, minted = with_daemon(rig.paths, run)
+    started, launch, minted, gone, held = with_daemon(rig.paths, run)
     assert started["ok"] is True, started
     assert started["data"]["engine"] == "camoufox"
     assert launch["headless"] == "False" and launch["window"] == "(1280, 800)"
     assert [minted_key["ttl"] for minted_key in minted] == [300]
+    assert gone is True and held is True
 
 
 def test_a_handed_over_session_refuses_exec_stop_and_a_second_handover(rig):
@@ -207,25 +241,46 @@ def test_doctor_never_reports_the_handover_key(rig):
     assert "/k/" not in json.dumps(reported)
 
 
-def test_handover_stop_releases_the_key_the_service_and_the_display(rig):
+def test_handover_stop_releases_the_key_the_service_and_the_stream(rig):
     async def run():
         await serve.request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
         pids = rig.display_pids()
         stopped = await serve.request(rig.paths, _op("handover_stop"))
-        await wait_for_state(rig.paths, "research", "stopped")
-        gone = await wait_until_all_dead(pids)
+        await wait_for_state(rig.paths, "research", "ready")
+        gone = await wait_until_all_dead(pids[2:])
+        held = all(pid_alive(pid) for pid in pids[:2])
         ran = await serve.request(rig.paths, _exec("research", "print(1)"))
         status = await serve.request(rig.paths, _op("handover_status", request_id="h6"))
-        return stopped, pids, gone, ran, status
+        return stopped, pids, gone, held, ran, status
 
-    stopped, pids, gone, ran, status = with_daemon(rig.paths, run)
+    stopped, pids, gone, held, ran, status = with_daemon(rig.paths, run)
     assert stopped["ok"] is True and stopped["warnings"] == []
-    assert len(pids) == 4 and gone is True
+    assert len(pids) == 4 and gone is True and held is True
     assert rig.keys() == []
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
     assert ran["ok"] is True and ran["session"]["state"] == "ready"
     assert status["data"]["state"] == "inactive" and status["data"]["user_url"] is None
     assert not rig.paths.handover_web.exists()
+
+
+def test_an_engine_that_cannot_start_refuses_the_handover(rig):
+    """The session's own start is what fails, so nothing is registered and nothing is left running."""
+
+    async def run():
+        rig.paths.chromium_exe.unlink()
+        started = await serve.request(rig.paths, _start())
+        listing = await serve.request(rig.paths, _op("sessions", request_id="h7"))
+        gone = await wait_until_all_dead(rig.display_pids())
+        status = await serve.request(rig.paths, _op("handover_status"))
+        return started, listing, gone, status, sorted(path.name for path in rig.x11_dir.glob("X*"))
+
+    started, listing, gone, status, sockets = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "engine_unavailable"
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
+    assert gone is True and sockets == []
+    assert status["data"]["state"] == "inactive"
+    assert rig.register_lines() == ["deregister browser"]
 
 
 def test_a_handover_expires_on_its_own(rig, monkeypatch):
@@ -268,14 +323,15 @@ def test_a_mint_failure_rolls_the_whole_handover_back(rig):
     async def run():
         started = await serve.request(rig.paths, _start())
         pids = rig.display_pids()
-        gone = await wait_until_all_dead(pids)
+        gone = await wait_until_all_dead(pids[2:])
+        await wait_for_state(rig.paths, "research", "ready")
         status = await serve.request(rig.paths, _op("handover_status"))
-        return started, pids, gone, status
+        return started, pids, gone, all(pid_alive(pid) for pid in pids[:2]), status
 
-    started, pids, gone, status = with_daemon(rig.paths, run)
+    started, pids, gone, held, status = with_daemon(rig.paths, run)
     assert started["ok"] is False and started["error"]["code"] == "handover_failed"
     assert "no key" in started["error"]["message"]
-    assert len(pids) == 4 and gone is True
+    assert len(pids) == 4 and gone is True and held is True
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
     assert status["data"]["state"] == "failed"
 
@@ -299,17 +355,17 @@ def test_a_shutdown_during_start_leaves_no_display_behind(rig):
         try:
             await wait_for_state(rig.paths, "research", "handed_over")
             await _wait_for_pids(rig, 3)
-            return await serve.request(rig.paths, _op("handover_status")), rig.display_pids()
+            browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+            return await serve.request(rig.paths, _op("handover_status")), rig.display_pids(), browser
         finally:
             pending.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pending
 
-    status, pids = with_daemon(rig.paths, run)
+    status, pids, browser = with_daemon(rig.paths, run)
     assert status["data"]["state"] == "starting" and status["data"]["user_url"] is None
-    assert len(pids) == 3 and _await_all_dead(pids)
+    assert len(pids) == 3 and _await_all_dead([*pids, browser])
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
-    assert not (rig.paths.profiles / "chromium" / "research" / "launches").exists()
 
 
 def test_daemon_shutdown_stops_a_live_handover(rig):
@@ -333,14 +389,14 @@ def test_a_bring_up_that_outlives_its_budget_fails_and_takes_the_stack_back(rig,
     async def run():
         started = await serve.request(rig.paths, _start())
         pids = rig.display_pids()
-        gone = await wait_until_all_dead(pids)
-        await wait_for_state(rig.paths, "research", "stopped")
+        gone = await wait_until_all_dead(pids[2:])
+        await wait_for_state(rig.paths, "research", "ready")
         status = await serve.request(rig.paths, _op("handover_status"))
-        return started, pids, gone, status
+        return started, pids, gone, all(pid_alive(pid) for pid in pids[:2]), status
 
-    started, pids, gone, status = with_daemon(rig.paths, run)
+    started, pids, gone, held, status = with_daemon(rig.paths, run)
     assert started["ok"] is False and started["error"]["code"] == "handover_failed"
     assert f"{BUDGET_SECS}s" in started["error"]["message"]
-    assert len(pids) == 3 and gone is True
+    assert len(pids) == 3 and gone is True and held is True
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
     assert status["data"]["state"] == "failed"

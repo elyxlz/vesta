@@ -1,10 +1,11 @@
-"""Handing one session to the user: a headed browser on a private display, reachable at one keyed URL.
+"""Handing one session to the user: its own live display, reachable at one keyed URL.
 
-The whole flow lives here because every piece of it is one decision: the display stack, the headed
-engine, the vestad service and its key, the lifetime, and the teardown that must run whichever of
-them failed. The session is marked `handed_over` for the duration, so no exec can drive the browser
-the user is holding, and the teardown always ends with the session `stopped` and ready to start
-again on its own display.
+The handover owns the stream alone, an x11vnc and a websockify on the display the session already
+holds; the session owns the browser and that display. The rest of the flow lives here because every
+piece of it is one decision: the vestad service and its key, the lifetime, and the teardown that
+must run whichever of them failed. The session is marked `handed_over` for the duration, so no exec
+can drive the browser the user is holding, and the teardown gives it back on the same display, with
+everything the user did still in front of it.
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ from .daemon_state import State
 from .handover_state import Handover, StopReason, payload
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths
-from .runtimes import EngineRuntime, HeadedDisplay
-from .session_control import ENGINES, stop_session
+from .runtimes import EngineRuntime
+from .session_control import ENGINES, ensure_running
 
 logger = logging.getLogger(__name__)
 SERVICE = "browser"
@@ -75,40 +76,32 @@ def _own(state: State, coro: tp.Coroutine[None, None, None]) -> asyncio.Task[Non
     return task
 
 
-async def _start_display(paths: Paths, web_port: int) -> tuple[display.SessionDisplay, display.StreamStack]:
-    """The session's own display plus the stream on it, torn back down together if any piece fails.
-
-    Task 4 gives sessions their own display through `session_control.py` and folds this bring-up
-    into it; until then the handover claims and releases the display itself.
-    """
-    session_display = await display.start_session_display(paths)
+async def _start_stream(paths: Paths, display_name: str, web_port: int) -> display.StreamStack:
+    """The stream on the display `display_name` names, torn back down if either process fails."""
     started: list[asyncio.subprocess.Process] = []
     try:
         webroot = await asyncio.to_thread(display.build_webroot, paths)
         vnc_port = await asyncio.to_thread(display.free_port, display.VNC_PORT_FIRST)
-        x11vnc = await display.start_x11vnc(session_display.display, vnc_port)
+        x11vnc = await display.start_x11vnc(display_name, vnc_port)
         started.append(x11vnc)
         websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
     except BaseException:
         await asyncio.gather(*[kill_group(process, KILL_GRACE_SECS) for process in reversed(started)], return_exceptions=True)
-        await display.stop_session_display(paths, session_display)
         raise
-    stack = display.StreamStack(x11vnc, websockify, vnc_port, web_port, webroot)
-    return session_display, stack
+    return display.StreamStack(x11vnc, websockify, vnc_port, web_port, webroot)
 
 
 def _healthy(paths: Paths, handover: Handover) -> bool:
-    """The four facts a live handover rests on: our display, the VNC port, the web port, the browser."""
-    session_display = handover.session_display
+    """The four facts a live handover rests on: the display, the VNC port, the web port, the browser."""
+    session = handover.session
     stack = handover.stack
-    runtime = handover.session.runtime
-    if session_display is None or stack is None or runtime is None:
+    if session.display is None or session.runtime is None or stack is None:
         return False
     return (
-        display.own_display_serving(paths, display.display_number(session_display.display))
+        display.own_display_serving(paths, display.display_number(session.display.display))
         and display.port_serving(stack.vnc_port)
         and display.port_serving(stack.web_port)
-        and runtime.process.returncode is None
+        and session.runtime.process.returncode is None
     )
 
 
@@ -129,13 +122,11 @@ async def _bring_up(
     """
     paths = state.paths
     session = handover.session
+    assert session.display is not None and session.runtime is not None
     web_port = await gateway.register_service(SERVICE)
-    handover.session_display, handover.stack = await _start_display(paths, web_port)
-    headed = HeadedDisplay(handover.session_display.display, display.SCREEN_W, display.SCREEN_H)
-    runtime = await ENGINES[session.engine].start(session, paths, headed=headed)
-    session.runtime = runtime
+    handover.stack = await _start_stream(paths, session.display.display, web_port)
     if url is not None:
-        warnings.extend(await _navigate(paths, session, runtime, url))
+        warnings.extend(await _navigate(paths, session, session.runtime, url))
     secret = await gateway.mint_key(SERVICE, handover.key_label, int(minutes * MINUTE_SECS))
     handover.expires_at = _expiry_iso(minutes)
     handover.key_id = await gateway.find_key_id(SERVICE, handover.key_label)
@@ -159,14 +150,15 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     session = sessions_mod.resolve_session(state.table, session_name, mode)
     if session.state in ("busy", "starting"):
         raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))
-    await stop_session(state.paths, session)
+    # The browser comes up before anything is marked or registered, because an engine that cannot
+    # start is the session's own failure to report, with no handover to roll back.
+    warnings = await ensure_running(state, session)
     sessions_mod.mark(session, "handed_over")
     handover_id = uuid.uuid4().hex[:8]
     handover = Handover(id=handover_id, session=session, key_label=f"browser-handover-{handover_id}", state="starting")
     state.handover = handover
-    # The bring-up runs as a task the daemon owns, because it holds the display stack and the
-    # browser for as long as it runs: a shutdown must be able to cancel it and take them back.
-    warnings: list[str] = []
+    # The bring-up runs as a task the daemon owns, because it holds the stream for as long as it
+    # runs: a shutdown must be able to cancel it and take the stream back.
     bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes, warnings=warnings))
     handover.task = bring_up
     try:
@@ -224,38 +216,31 @@ async def _release_key(handover: Handover, timeout: float) -> None:
         await gateway.revoke_key(SERVICE, key_id, timeout=timeout)
 
 
-async def _tear_display(paths: Paths, handover: Handover) -> None:
+async def _tear_stream(handover: Handover) -> None:
     stack, handover.stack = handover.stack, None
-    session_display, handover.session_display = handover.session_display, None
     if stack is not None:
         await display.stop_stack(stack)
-    if session_display is not None:
-        await display.stop_session_display(paths, session_display)
 
 
-async def _teardown(
-    state: State, handover: Handover, reason: StopReason, gateway_timeout: float, *, stop_session_too: bool = True
-) -> list[str]:
+async def _teardown(state: State, handover: Handover, reason: StopReason, gateway_timeout: float) -> list[str]:
     """Every step attempted, whatever the one before it did, so a failed revoke never skips the
     deregister. Each step owns whether it has anything to undo, so a half-started handover is fine.
 
-    A shutdown passes `stop_session_too=False` and keeps the browser: `stop_session` clears the
-    runtime before it awaits the engine, so a teardown cut short inside that step would hide the
-    process from the session sweep that owns the SIGKILL escalation.
+    The session gets its browser back on the display it has held all along, `ready` for the next
+    exec, and `stopped` when the runtime the user was driving died under them.
     """
+    session = handover.session
     done = [
         await _guarded(_cancel_task(handover), "drop the task it owns"),
         await _guarded(_release_key(handover, gateway_timeout), "revoke the handover key"),
         await _guarded(gateway.deregister_service(SERVICE, timeout=gateway_timeout), "deregister the service"),
-    ]
-    if stop_session_too:
-        done.append(await _guarded(stop_session(state.paths, handover.session, force=True), "stop the headed browser"))
-    done += [
-        await _guarded(_tear_display(state.paths, handover), "stop the display stack"),
+        await _guarded(_tear_stream(handover), "stop the stream"),
         await _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),
     ]
     handover.state = "inactive" if reason == "stopped" else reason
-    sessions_mod.mark(handover.session, "stopped")
+    alive = session.runtime is not None and session.runtime.process.returncode is None
+    sessions_mod.mark(session, "ready" if alive else "stopped")
+    sessions_mod.touch(state.table, session)
     return [] if all(done) else ["cleanup_incomplete"]
 
 
@@ -285,9 +270,9 @@ async def shutdown(state: State, *, budget: float, gateway_timeout: float) -> No
     """The daemon taking a handover back on its way out, inside `budget`.
 
     The state is claimed before the bring-up is cancelled, so the `start` waiting on that task rolls
-    nothing back itself and this is the one teardown. Whatever the budget cuts short, the display
-    stack is still killed here. The browser is left whole for the session teardown that follows,
-    which is the one budget with a SIGKILL behind it.
+    nothing back itself and this is the one teardown. Whatever the budget cuts short, the stream is
+    still killed here. The browser and the display under it are the session's own, left whole for
+    the session teardown that follows, which is the one budget with a SIGKILL behind it.
     """
     handover = state.handover
     if handover is None or handover.state == "inactive":
@@ -298,10 +283,10 @@ async def shutdown(state: State, *, budget: float, gateway_timeout: float) -> No
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(_cancel_task(handover), _slice(deadline))
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(_teardown(state, handover, "stopped", gateway_timeout, stop_session_too=False), _slice(deadline))
+            await asyncio.wait_for(_teardown(state, handover, "stopped", gateway_timeout), _slice(deadline))
     else:
         await _settle(handover, deadline)
-    await _guarded(_tear_display(state.paths, handover), "stop the display stack")
+    await _guarded(_tear_stream(handover), "stop the stream")
 
 
 async def status(state: State) -> dict[str, p.JsonValue]:

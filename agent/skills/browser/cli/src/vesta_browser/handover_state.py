@@ -11,7 +11,7 @@ import dataclasses
 import typing as tp
 
 from . import protocol as p
-from .display import SessionDisplay, StreamStack
+from .display import StreamStack
 from .sessions import Session
 
 HandoverState = tp.Literal["starting", "live", "stopping", "expired", "failed", "inactive"]
@@ -20,9 +20,9 @@ StopReason = tp.Literal["stopped", "expired", "failed"]
 
 @dataclasses.dataclass
 class Handover:
-    """One handover, filled in as it comes up: the display, the stream, the key, and the URL exist
-    only once they are made, and `task` holds whatever the daemon currently owns for this handover,
-    the start while it is `starting` and the expiry timer once it is `live`.
+    """One handover, filled in as it comes up: the stream, the key, and the URL exist only once
+    they are made, and `task` holds whatever the daemon currently owns for this handover, the start
+    while it is `starting` and the expiry timer once it is `live`.
 
     `user_url` is the only place the minted secret lives, so nothing else can log it, and the
     teardown clears it: a revoked key must not keep printing as a link.
@@ -32,7 +32,6 @@ class Handover:
     session: Session
     key_label: str
     state: HandoverState
-    session_display: SessionDisplay | None = None
     stack: StreamStack | None = None
     key_id: str | None = None
     user_url: str = ""

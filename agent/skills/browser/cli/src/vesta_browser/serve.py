@@ -366,9 +366,10 @@ async def shutdown(state: State) -> None:
     """Gives a handover back first, then cancels the idle sweep and every inflight exec, then
     force-stops every session.
 
-    The handover goes first because it owns the task that is still building a display stack and a
-    browser: cancelling it as part of the sweep would strand both. It takes its slice out of the
-    sessions' budget only when there is a handover to give back, and never all of it.
+    The handover goes first because it owns the stream and the task still building it: cancelling
+    that task as part of the sweep would strand both, and the browser and display under them are the
+    session's own, stopped below. It takes its slice out of the sessions' budget only when there is
+    a handover to give back, and never all of it.
     """
     started = time.monotonic()
     await handover.shutdown(state, budget=HANDOVER_SHUTDOWN_SECS, gateway_timeout=SHUTDOWN_GATEWAY_TIMEOUT_SECS)
