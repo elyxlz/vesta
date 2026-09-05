@@ -7,7 +7,7 @@ description: The user's chat screen in the Vesta app (web, desktop, mobile), and
 
 Chat is where you talk with the user and with the other agents on this gateway. The direct room is the Vesta app's chat screen on web, desktop, and mobile: the user's own line to you, no third-party account involved. Every other room is a group: you, one or more other agents, and the user, who reads every room there is. Nothing you write to another agent is private.
 
-Each message reaches you as a `source=chat` notification carrying its `room`, the `sender` (`user` or an agent's name), the room's `members`, the `message`, and the `reply_command` that answers in that room. A message from the user interrupts your work; a message from another agent waits for your next idle gap. Replies you send appear in the user's chat live (and as a push notification when they are away). Treat it as a first-class messaging channel with the texting style below.
+Each message reaches you as a `source=chat` notification carrying its `room`, the `room_name` (outside the direct room), the `sender` (`user` or an agent's name), the room's `members`, the `message`, and the `reply_command` that answers in that room. A message from the user interrupts your work; a message from another agent waits for your next idle gap. Replies you send appear in the user's chat live (and as a push notification when they are away). Treat it as a first-class messaging channel with the texting style below.
 
 ## Setup
 ```bash
@@ -17,7 +17,7 @@ uv tool install --editable ~/agent/skills/chat/cli
 **Daemon**: `chat daemon start|stop|restart|status`:
 - Start is idempotent (a running daemon is a no-op) and owns the port registration with vestad
 - Stop is the deliberate shutdown, so it doesn't fire the `daemon_died` notification every other exit fires
-- Status reports whether the daemon is up and on which port, read from `~/agent/data/daemons/chat.pid` and `chat.port`, plus `node_connected`: whether its room socket is live right now
+- Status reports whether the daemon is up and on which port, read from `~/agent/data/daemons/chat.pid` and `chat.port`
 
 Manage the daemon through these commands, not by launching `chat serve` yourself. Startup output lands in `~/agent/logs/chat.log`.
 **Restart**: So it survives restarts, read the `restart` skill and add this line to your restart daemons:
@@ -63,7 +63,7 @@ Send every message body through `--message -` and a quoted heredoc, as above. Th
 
 ## Rooms
 
-Address one room per send. Copy the `reply_command` off the notification you are answering and it is already addressed:
+Address one room per send. Copy the `reply_command` off the notification you are answering and it is already addressed. Every `send` below carries its body the way the Quick Reference shows, `--message -` followed by a `<<'MSG'` heredoc:
 
 ```bash
 chat rooms                                                # the rooms you are in: "<id>  <name or members>"
@@ -83,7 +83,7 @@ chat history --room <id>                                  # the local copy of th
 - The user is in every room. Say to another agent only what you would say in front of the user, because they see it
 - In a group, write when a message names you or when you add something the others do not have. Silence is the default: every message you send costs the user attention
 - Keep a message to another agent short and concrete: one question, one answer, one fact. Ask for what they alone hold and act on the answer yourself
-- Answer the user in the room they wrote in. Take a peer's question in its own room, not in the user's direct line
+- When you do write, write in the room the message came from: a peer's question is answered in its own room, never in the user's direct line
 - A refused send is finished business, not an error to retry:
   - `user_speaking` means the user started talking. Drop the rest of the reply. A fresh notification arrives when they finish, and you answer their whole thought then
   - The burst guard refuses once a room holds 40 agent messages since the user last spoke. Stop writing in that room; it opens again when the user writes
@@ -92,7 +92,7 @@ chat history --room <id>                                  # the local copy of th
 - Your gateway (vestad) holds every room and every message in them: it is the node. The daemon holds one socket to it and mirrors every room you are in into its own store (`~/.chat/chat.db`). On every connect it pulls each room's history by id, so a dropped socket heals itself and no message is lost or doubled
 - Every message you did not send becomes one `source=chat` notification. Your own reply comes back on the same socket and is stored with no notification
 - `chat send` posts through the node before it answers, so a bubble the command reports as sent is on the node and durable with no client connected
-- Attachments arrive downloaded: the notification names a path under `~/.chat/attachments/` that you open directly
+- Attachments arrive downloaded: the notification names a path under `~/.chat/attachments/` that you open directly. A file whose bytes did not arrive is named `could not be fetched from the node` in place of its path, so say that to the sender instead of guessing at the contents
 - `chat history` and `chat history --search` read the local copy, one room at a time
 
 ## Attachments
