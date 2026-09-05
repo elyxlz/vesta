@@ -291,17 +291,6 @@ export default function SettingsScreen() {
           }}
           onDismiss={() => setActiveConfirm(null)}
         />
-        <FormSection title="Appearance">
-          <View style={styles.appearanceRow}>
-            <SegmentedControl
-              accessibilityLabel="Appearance"
-              options={themeOptions}
-              selectedValue={preferences.theme}
-              onSelect={selectTheme}
-            />
-          </View>
-        </FormSection>
-
         <FormSection title="Privacy">
           <SwitchRow
             label="App Lock"
@@ -476,6 +465,17 @@ export default function SettingsScreen() {
             }
           />
         ) : null}
+
+        <FormSection title="Appearance">
+          <View style={styles.appearanceRow}>
+            <SegmentedControl
+              accessibilityLabel="Appearance"
+              options={themeOptions}
+              selectedValue={preferences.theme}
+              onSelect={selectTheme}
+            />
+          </View>
+        </FormSection>
 
         <FormSection
           title="Support"
