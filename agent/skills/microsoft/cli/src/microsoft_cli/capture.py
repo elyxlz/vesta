@@ -5,8 +5,8 @@ A locked tenant hands out no MSAL refresh token, so the browser session itself i
 Each account owns one Chromium session, ``microsoft-<the address in ASCII>``: the user signs in once
 through a handover on that session, and its SSO cookies live on there. Every capture afterwards runs
 one ``browser exec`` program on that same session (open the web app, wait for the load, read the
-token the SPA minted from the still-valid cookies), so onboarding and silent refresh share one path
-and neither needs a display.
+token the SPA minted from the still-valid cookies), so onboarding and silent refresh share one path,
+and the silent refresh opens no view for the user.
 
 All ``browser`` subprocess calls live here so the coupling to that skill stays in one module.
 """
