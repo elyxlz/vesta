@@ -444,9 +444,10 @@ export default function SettingsScreen() {
             {thisDevice ? (
               <FormRow
                 key={thisDevice.id}
-                icon="phone-portrait-outline"
-                label="This device"
-                detail={deviceContextLine(thisDevice)}
+                label={thisDevice.descriptor ?? "Unnamed device"}
+                detail={["This device", deviceContextLine(thisDevice)]
+                  .filter((part) => part !== undefined)
+                  .join(" · ")}
                 value={
                   thisDevice.present
                     ? "present now"
