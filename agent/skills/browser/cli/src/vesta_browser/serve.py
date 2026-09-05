@@ -19,7 +19,7 @@ import sys
 import time
 import typing as tp
 
-from . import artifacts, doctor, handover
+from . import artifacts, doctor, gateway, handover
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
@@ -33,16 +33,18 @@ IDLE_SWEEP_SECS = 60
 IDLE_STOP_SECS = p.SESSION_IDLE_STOP_SECS
 PRUNE_INTERVAL_SECS = 3600
 # `browser daemon stop` SIGKILLs this process two thirds into its own 15s budget, so every teardown
-# below shares one budget under that 10s point. The handover takes 2.0 (three vestad calls at 0.6
-# fit inside it), the display kill it always ends with up to 2.0 more (three parallel kill_group at
-# 1s, then Xvfb), the sessions the 4.0 that remain, and their SIGKILL escalation 1.0 past that:
-# 2.0 + 2.0 + 4.0 + 1.0 = 9.0 < 10. Two paths can still overrun and are accepted: a hung headed
-# chromium launch unwinds through its own kill_group(process, 5), and a handed-over camoufox's stop
-# can add another 5 in its finally.
+# below shares one budget under that 10s point. The handover takes up to 2.0 (three vestad calls at
+# 0.6 fit inside it), the display kill it always ends with up to 2.0 more (three parallel kill_group
+# at 1s, then Xvfb), the sessions whatever the handover left of the 6.0, and their SIGKILL
+# escalation 1.0 past that: 2.0 + 2.0 + 6.0 + 1.0 = 11.0 at the worst, and a shutdown with no
+# handover to give back spends none of the first two and gives the sessions the whole 6.0. Two paths
+# can still overrun and are accepted: a hung headed chromium launch unwinds through its own
+# kill_group(process, 5), and a handed-over camoufox's stop can add another 5 in its finally.
 SHUTDOWN_BUDGET_SECS = 6.0
 HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
 MIN_SESSION_BUDGET_SECS = 1.0
+STARTUP_DEREGISTER_TIMEOUT_SECS = 5.0
 
 
 async def op_status(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
@@ -300,6 +302,13 @@ async def serve(paths: Paths) -> int:
 
     for signum in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(signum, on_signal, signum)
+    # A SIGKILLed daemon leaves its route registered, and vestad would then proxy the next handover's
+    # page to a port nothing serves. Deregistering here is the one place that route is reconciled;
+    # vestad answers a route it does not have with a 404 and the helper exits 0.
+    try:
+        await gateway.deregister_service(handover.SERVICE, timeout=STARTUP_DEREGISTER_TIMEOUT_SECS)
+    except gateway.GatewayError as exc:
+        logger.info("no browser route to deregister at startup: %s", exc)
     old_umask = os.umask(0o177)
     try:
         server = await asyncio.start_unix_server(
@@ -353,8 +362,9 @@ async def shutdown(state: State) -> None:
     browser: cancelling it as part of the sweep would strand both. It takes its slice out of the
     sessions' budget only when there is a handover to give back, and never all of it.
     """
-    reserved = HANDOVER_SHUTDOWN_SECS if state.handover is not None else 0.0
+    started = time.monotonic()
     await handover.shutdown(state, budget=HANDOVER_SHUTDOWN_SECS, gateway_timeout=SHUTDOWN_GATEWAY_TIMEOUT_SECS)
+    spent = time.monotonic() - started
     for task in list(state.tasks):
         task.cancel()
     for task in list(state.tasks):
@@ -365,7 +375,7 @@ async def shutdown(state: State) -> None:
         task.cancel()
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
-    await _stop_every_session(state, max(SHUTDOWN_BUDGET_SECS - reserved, MIN_SESSION_BUDGET_SECS))
+    await _stop_every_session(state, max(SHUTDOWN_BUDGET_SECS - spent, MIN_SESSION_BUDGET_SECS))
 
 
 def ping(paths: Paths, timeout: float) -> bool:

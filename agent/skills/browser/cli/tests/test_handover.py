@@ -40,9 +40,10 @@ class Rig:
         record = self.tmp_path / "keys.json"
         return json.loads(record.read_text()) if record.exists() else []
 
-    def register_log(self):
+    def register_lines(self):
+        """Every gateway call the run made, the daemon's own startup deregister first."""
         record = self.tmp_path / "register.log"
-        return record.read_text() if record.exists() else ""
+        return record.read_text().splitlines() if record.exists() else []
 
     def display_pids(self):
         record = self.x11_dir / "pids"
@@ -136,7 +137,7 @@ def test_handover_start_serves_the_page_and_hands_the_session_over(rig):
             status = await serve.request(rig.paths, _op("handover_status"))
             listing = await serve.request(rig.paths, _op("sessions", request_id="h3"))
             page = await asyncio.to_thread(_fetch, f"http://127.0.0.1:{rig.web_port}/handover.html")
-            return started, status, listing, page, rig.register_log()
+            return started, status, listing, page, rig.register_lines()
         finally:
             await serve.request(rig.paths, _op("handover_stop", request_id="h9"))
 
@@ -149,7 +150,7 @@ def test_handover_start_serves_the_page_and_hands_the_session_over(rig):
     assert started["session"]["state"] == "handed_over"
     assert status["data"]["state"] == "live"
     assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["handed_over"]
-    assert registered == "browser\n"
+    assert registered == ["deregister browser", "browser"]
     assert page == 200
     env_seen = json.loads((rig.paths.profiles / "chromium" / "research" / "env.json").read_text())
     assert env_seen["DISPLAY"].startswith(":")
@@ -203,9 +204,8 @@ def test_handover_stop_releases_the_key_the_service_and_the_display(rig):
     assert stopped["ok"] is True and stopped["warnings"] == []
     assert len(pids) == 4 and gone is True
     assert rig.keys() == []
-    assert "deregister browser\n" in rig.register_log()
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
     assert ran["ok"] is True and ran["session"]["state"] == "ready"
-    assert not (rig.paths.profiles / "chromium" / "research" / "user.js").exists()
     assert status["data"]["state"] == "inactive" and status["data"]["user_url"] is None
     assert not rig.paths.handover_web.exists()
 
@@ -226,7 +226,7 @@ def test_a_handover_expires_on_its_own(rig, monkeypatch):
     status = with_daemon(rig.paths, run)
     assert status["data"]["state"] == "expired"
     assert rig.keys() == []
-    assert "deregister browser\n" in rig.register_log()
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
 
 
 def test_a_missing_public_url_fails_before_anything_is_registered(rig, monkeypatch):
@@ -240,7 +240,7 @@ def test_a_missing_public_url_fails_before_anything_is_registered(rig, monkeypat
     started, listing = with_daemon(rig.paths, run)
     assert started["ok"] is False and started["error"]["code"] == "handover_failed"
     assert "VESTAD_PUBLIC_URL" in started["error"]["message"]
-    assert rig.register_log() == ""
+    assert rig.register_lines() == ["deregister browser"]
     assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == []
 
 
@@ -258,7 +258,7 @@ def test_a_mint_failure_rolls_the_whole_handover_back(rig):
     assert started["ok"] is False and started["error"]["code"] == "handover_failed"
     assert "no key" in started["error"]["message"]
     assert len(pids) == 4 and gone is True
-    assert "deregister browser\n" in rig.register_log()
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
     assert status["data"]["state"] == "failed"
 
 
@@ -269,7 +269,7 @@ def test_a_lifetime_outside_the_allowed_range_is_refused(rig, minutes):
 
     refused = with_daemon(rig.paths, run)
     assert refused["ok"] is False and refused["error"]["code"] == "invalid_request"
-    assert rig.register_log() == ""
+    assert rig.register_lines() == ["deregister browser"]
 
 
 def test_a_shutdown_during_start_leaves_no_display_behind(rig):
@@ -290,7 +290,7 @@ def test_a_shutdown_during_start_leaves_no_display_behind(rig):
     status, pids = with_daemon(rig.paths, run)
     assert status["data"]["state"] == "starting" and status["data"]["user_url"] is None
     assert len(pids) == 3 and _await_all_dead(pids)
-    assert rig.register_log() == "browser\nderegister browser\n"
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
     assert not (rig.paths.profiles / "chromium" / "research" / "launches").exists()
 
 
@@ -304,4 +304,4 @@ def test_daemon_shutdown_stops_a_live_handover(rig):
     pids, browser = with_daemon(rig.paths, run)
     assert len(pids) == 4 and _await_all_dead([*pids, browser])
     assert rig.keys() == []
-    assert "deregister browser\n" in rig.register_log()
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]

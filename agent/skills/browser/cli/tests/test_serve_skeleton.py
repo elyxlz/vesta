@@ -1,11 +1,12 @@
 import asyncio
+import os
 import sys
 
 import pytest
 from vesta_browser import serve
 from vesta_browser.runtime_paths import load_paths
 
-from .fakes import write_fakes
+from .fakes import write_fakes, write_gateway_fakes
 
 BINARY_KEYS = {"VESTA_BROWSER_CHROMIUM", "VESTA_BROWSER_BROWSER_USE", "VESTA_BROWSER_CAMOUFOX_PYTHON", "VESTA_BROWSER_CAMOUFOX_EXE"}
 
@@ -100,3 +101,27 @@ def test_engines_reports_ready_when_every_binary_is_present(tmp_path):
 
 def test_ping_is_false_with_no_daemon(paths):
     assert serve.ping(paths, timeout=0.2) is False
+
+
+def _status(paths):
+    async def run():
+        return await serve.request(paths, {"version": 1, "op": "status", "request_id": "r1"})
+
+    return asyncio.run(_serve_for(paths, run()))
+
+
+def test_the_daemon_deregisters_the_browser_route_before_it_listens(tmp_path, monkeypatch):
+    """A SIGKILLed daemon leaves the route behind, so every start reconciles it."""
+    bin_dir = tmp_path / "bin"
+    write_gateway_fakes(bin_dir)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_REGISTER_LOG", str(tmp_path / "register.log"))
+
+    assert _status(load_paths({}, tmp_path))["ok"] is True
+    assert (tmp_path / "register.log").read_text() == "deregister browser\n"
+
+
+def test_the_daemon_starts_with_no_gateway_helpers_on_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    assert _status(load_paths({}, tmp_path))["ok"] is True
