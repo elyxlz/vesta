@@ -35,7 +35,10 @@ MINUTE_SECS = 60.0
 LIFETIME_DEFAULT_MINUTES = 30
 LIFETIME_MIN_MINUTES = 1
 LIFETIME_MAX_MINUTES = 240
-NAVIGATE_TIMEOUT_SECS = 60
+NAVIGATE_TIMEOUT_SECS = 30
+# What the client waits behind, not the sum of the steps below it: every one of them has its own
+# bound, and a bring-up still running at this point is one the user is no longer waiting for.
+HANDOVER_START_BUDGET_SECS = 100.0
 # A rollback runs while a SIGTERM may already be in flight, so it never waits on vestad as long as
 # a foreground call does: the daemon must be gone before `browser daemon stop` SIGKILLs it.
 ROLLBACK_GATEWAY_TIMEOUT_SECS = 5.0
@@ -161,10 +164,16 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes, warnings=warnings))
     handover.task = bring_up
     try:
-        await asyncio.wait({bring_up})
-        bring_up.result()
+        await asyncio.wait_for(asyncio.shield(bring_up), HANDOVER_START_BUDGET_SECS)
+    except TimeoutError as exc:
+        await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
+        raise _failed(f"the handover was still coming up after {HANDOVER_START_BUDGET_SECS}s") from exc
     except BaseException as exc:
         await stop(state, handover, reason="failed", gateway_timeout=ROLLBACK_GATEWAY_TIMEOUT_SECS)
+        # The shield keeps an outer cancellation off the bring-up, so which of the two was cancelled
+        # is what tells them apart: this caller going away is not a handover failure to report.
+        if isinstance(exc, asyncio.CancelledError) and not bring_up.cancelled():
+            raise
         raise _failed(str(exc) or type(exc).__name__) from exc
     return handover, warnings
 

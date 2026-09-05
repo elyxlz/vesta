@@ -27,6 +27,9 @@ USAGE = """Usage:
   browser handover start [--url <url>] [--session <name>] [--stealth] [--minutes <n>]
   browser handover status | stop"""
 RPC_TIMEOUT_SLACK_SECS = 30
+# Past the daemon's own bring-up budget, so a slow handover answers instead of reading as a dead
+# daemon, and inside the 120s a Bash tool call allows by default.
+HANDOVER_RPC_TIMEOUT_SECS = 110.0
 CANCEL_TIMEOUT_SECS = 5
 
 
@@ -125,8 +128,8 @@ def _exec(paths: Paths, args: argparse.Namespace) -> int:
     return emit(result)
 
 
-def _rpc(paths: Paths, op: str, **fields: p.JsonValue) -> int:
-    return emit(send(paths, {"version": p.PROTOCOL_VERSION, "op": op, "request_id": _request_id(), **fields}, RPC_TIMEOUT_SLACK_SECS))
+def _rpc(paths: Paths, op: str, *, timeout: float = RPC_TIMEOUT_SLACK_SECS, **fields: p.JsonValue) -> int:
+    return emit(send(paths, {"version": p.PROTOCOL_VERSION, "op": op, "request_id": _request_id(), **fields}, timeout))
 
 
 def _handover(paths: Paths, args: argparse.Namespace) -> int:
@@ -134,12 +137,13 @@ def _handover(paths: Paths, args: argparse.Namespace) -> int:
         return _rpc(
             paths,
             "handover_start",
+            timeout=HANDOVER_RPC_TIMEOUT_SECS,
             url=args.url,
             session=args.session,
             mode="stealth" if args.stealth else None,
             minutes=args.minutes,
         )
-    return _rpc(paths, f"handover_{args.verb}")
+    return _rpc(paths, f"handover_{args.verb}", timeout=HANDOVER_RPC_TIMEOUT_SECS)
 
 
 def _dispatch(paths: Paths, args: argparse.Namespace) -> int:

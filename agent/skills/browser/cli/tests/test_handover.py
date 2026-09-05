@@ -25,6 +25,8 @@ AGENT = "luna"
 WEB_PORT_FIRST = 6180
 HTTP_TIMEOUT_SECS = 5
 EXPIRY_DEADLINE_SECS = 3.0
+# Short enough to fire well inside the fake x11vnc's own readiness wait, so the budget is what answers.
+BUDGET_SECS = 2.0
 
 
 class Rig:
@@ -305,3 +307,23 @@ def test_daemon_shutdown_stops_a_live_handover(rig):
     assert len(pids) == 4 and _await_all_dead([*pids, browser])
     assert rig.keys() == []
     assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+def test_a_bring_up_that_outlives_its_budget_fails_and_takes_the_stack_back(rig, monkeypatch):
+    """The x11vnc that never binds: the daemon answers inside its own budget, not the engine's."""
+    (rig.x11_dir / "hang").write_text("")
+    monkeypatch.setattr(handover, "HANDOVER_START_BUDGET_SECS", BUDGET_SECS)
+
+    async def run():
+        started = await serve.request(rig.paths, _start())
+        pids = rig.display_pids()
+        gone = await wait_until_all_dead(pids)
+        await wait_for_state(rig.paths, "research", "stopped")
+        status = await serve.request(rig.paths, _op("handover_status"))
+        return started, pids, gone, status
+
+    started, pids, gone, status = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert f"{BUDGET_SECS}s" in started["error"]["message"]
+    assert len(pids) == 3 and gone is True
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+    assert status["data"]["state"] == "failed"

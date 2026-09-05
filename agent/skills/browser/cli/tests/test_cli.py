@@ -7,7 +7,7 @@ import threading
 import time
 
 import pytest
-from vesta_browser import cli, serve
+from vesta_browser import cli, handover, serve
 from vesta_browser.runtime_paths import load_paths
 
 
@@ -105,6 +105,19 @@ def test_every_rpc_command_maps_to_its_op(monkeypatch, tmp_path, argv, op, extra
     monkeypatch.setattr(cli, "send", lambda _p, payload, _t: seen.update(payload) or serve.p.result(request_id="x", op=op, ok=True))
     assert cli.main(argv) == 0
     assert seen["op"] == op and all(seen[k] == v for k, v in extra.items())
+
+
+@pytest.mark.parametrize("argv", [["handover", "start"], ["handover", "status"], ["handover", "stop"]])
+def test_the_handover_verbs_wait_past_the_daemon_bring_up_budget(monkeypatch, tmp_path, argv):
+    """A slow bring-up must answer, not read as a dead daemon, so the client outlives the budget."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(
+        cli, "send", lambda _p, _payload, timeout: seen.update(timeout=timeout) or serve.p.result(request_id="x", op="h", ok=True)
+    )
+    assert cli.main(argv) == 0
+    assert seen["timeout"] == cli.HANDOVER_RPC_TIMEOUT_SECS
+    assert cli.HANDOVER_RPC_TIMEOUT_SECS > handover.HANDOVER_START_BUDGET_SECS
 
 
 def test_usage_on_no_args_and_unknown_command(capsys, tmp_path, monkeypatch):

@@ -98,6 +98,8 @@ port = int(sys.argv[sys.argv.index("-rfbport") + 1])
 open("{X11_DIR}/pids", "a").write(str(os.getpid()) + "\\n")
 if pathlib.Path("{X11_DIR}", "slow").exists():
     time.sleep(3)
+if pathlib.Path("{X11_DIR}", "hang").exists():
+    time.sleep(3600)
 if pathlib.Path("{X11_DIR}", "fail-always").exists():
     sys.exit(1)
 if pathlib.Path("{X11_DIR}", "fail-shm").exists() and "-noshm" not in sys.argv:
