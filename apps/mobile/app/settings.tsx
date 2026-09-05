@@ -452,6 +452,7 @@ export default function SettingsScreen() {
                     ? "present now"
                     : lastSeenLabel(thisDevice.lastSeen)
                 }
+                valueTone={thisDevice.present ? "positive" : undefined}
               />
             ) : null}
             {otherDevices.map((device) => (
@@ -464,6 +465,7 @@ export default function SettingsScreen() {
                     ? "present now"
                     : lastSeenLabel(device.lastSeen)
                 }
+                valueTone={device.present ? "positive" : undefined}
               />
             ))}
           </FormSection>
