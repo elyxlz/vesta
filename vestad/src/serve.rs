@@ -3920,6 +3920,7 @@ mod tests {
                 input_method: Some(crate::chat::InputMethod::Typed),
                 intent_id: Some("c-sample-1".into()),
                 origin_id: None,
+                attachments: Vec::new(),
             },
             crate::chat::Message {
                 id: 2,
@@ -3931,6 +3932,7 @@ mod tests {
                 input_method: None,
                 intent_id: None,
                 origin_id: None,
+                attachments: Vec::new(),
             },
         ];
         let rooms = serde_json::json!({ "rooms": chat_rooms });

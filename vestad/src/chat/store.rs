@@ -2,13 +2,13 @@
 //! `messages.jsonl` (append-only, one message per line), both under `<config_dir>/chat/` and
 //! held in memory. A rename is the one operation that rewrites the log instead of appending.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::chat::{format_ts, parse_ts, Message, MessageDraft, Room};
 
-const CHAT_DIR: &str = "chat";
+pub(crate) const CHAT_DIR: &str = "chat";
 const ROOMS_FILE: &str = "rooms.json";
 const MESSAGES_FILE: &str = "messages.jsonl";
 
@@ -173,6 +173,7 @@ impl ChatStore {
             input_method: draft.input_method,
             intent_id: draft.intent_id,
             origin_id: draft.origin_id,
+            attachments: draft.attachments,
         };
         self.next_id += 1;
         self.append_line(&message);
@@ -188,6 +189,15 @@ impl ChatStore {
             message: message.clone(),
         });
         message
+    }
+
+    /// Every attachment id any message references, across every room.
+    pub(crate) fn attachment_ids(&self) -> HashSet<String> {
+        self.messages
+            .iter()
+            .flat_map(|entry| entry.message.attachments.iter())
+            .map(|meta| meta.id.clone())
+            .collect()
     }
 
     /// The origin ids already imported into `room`.
@@ -409,6 +419,7 @@ mod tests {
             input_method: None,
             intent_id: None,
             origin_id: None,
+            attachments: Vec::new(),
             at_ms,
         }
     }

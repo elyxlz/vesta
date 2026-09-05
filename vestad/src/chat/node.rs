@@ -9,14 +9,16 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::{broadcast, watch};
 
-use crate::chat::store::ChatStore;
+use crate::chat::attachments::AttachmentStore;
+use crate::chat::store::{ChatStore, CHAT_DIR};
 use crate::chat::{
-    ChatEvent, InputMethod, Message, MessageDraft, MessageKind, Room, BURST_REFUSAL,
-    CHAT_EVENT_BROADCAST_CAPACITY, ROOM_AGENT_POSTS_WITHOUT_USER, ROOM_NAME_MAX_CHARS,
-    SEEN_INTENT_IDS_CAP, SPEAKING_REFUSAL, USER_SENDER,
+    AttachmentMeta, ChatEvent, InputMethod, Message, MessageDraft, MessageKind, Room,
+    BURST_REFUSAL, CHAT_EVENT_BROADCAST_CAPACITY, ROOM_AGENT_POSTS_WITHOUT_USER,
+    ROOM_NAME_MAX_CHARS, SEEN_INTENT_IDS_CAP, SPEAKING_REFUSAL, USER_SENDER,
 };
 
 const GROUP_ID_BYTES: usize = 8;
+const ATTACHMENTS_DIR: &str = "attachments";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChatError {
@@ -57,6 +59,8 @@ pub(crate) struct ImportItem {
     pub kind: MessageKind,
     pub text: String,
     pub input_method: Option<InputMethod>,
+    /// Attachment ids the importer already uploaded; an id this node cannot resolve is dropped.
+    pub attachments: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +79,7 @@ struct Speaking {
 
 pub(crate) struct ChatNode {
     store: Mutex<ChatStore>,
+    attachments: AttachmentStore,
     known_agents: Mutex<HashSet<String>>,
     seen_intents: Mutex<VecDeque<String>>,
     speaking: Mutex<HashMap<String, Speaking>>,
@@ -96,6 +101,7 @@ impl ChatNode {
         let (events_tx, _) = broadcast::channel(CHAT_EVENT_BROADCAST_CAPACITY);
         Self {
             store: Mutex::new(store),
+            attachments: AttachmentStore::new(config_dir.join(CHAT_DIR).join(ATTACHMENTS_DIR)),
             known_agents: Mutex::new(HashSet::new()),
             seen_intents: Mutex::new(VecDeque::new()),
             speaking: Mutex::new(HashMap::new()),
@@ -103,6 +109,18 @@ impl ChatNode {
             rooms_tx,
             events_tx,
         }
+    }
+
+    pub(crate) fn attachments(&self) -> &AttachmentStore {
+        &self.attachments
+    }
+
+    /// Every attachment id any message references, the set a sweep must keep.
+    pub(crate) fn referenced_attachment_ids(&self) -> HashSet<String> {
+        self.store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .attachment_ids()
     }
 
     pub(crate) fn subscribe_rooms(&self) -> watch::Receiver<Vec<Room>> {
@@ -430,12 +448,27 @@ impl ChatNode {
                 input_method: item.input_method,
                 intent_id: None,
                 origin_id: Some(item.origin_id),
+                attachments: self.resolve_attachments(&item.attachments),
                 at_ms: item.at_ms,
             });
             outcome.imported += 1;
         }
         self.publish_rooms(&store, None);
         outcome
+    }
+
+    /// The metadata of every id this node holds; an id it does not know is dropped, since an
+    /// import must land the message whatever the importer failed to upload.
+    fn resolve_attachments(&self, ids: &[String]) -> Vec<AttachmentMeta> {
+        ids.iter()
+            .filter_map(|id| {
+                let meta = self.attachments.read_meta(id);
+                if meta.is_none() {
+                    tracing::warn!(attachment = %id, "unknown attachment on an imported message");
+                }
+                meta
+            })
+            .collect()
     }
 
     pub(crate) fn rename_agent(&self, old: &str, new: &str) {
@@ -489,6 +522,7 @@ impl ChatNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::attachments::MetaExtra;
     use crate::chat::MessageKind;
 
     fn node() -> (tempfile::TempDir, ChatNode) {
@@ -506,6 +540,7 @@ mod tests {
             input_method: None,
             intent_id: None,
             origin_id: None,
+            attachments: Vec::new(),
             at_ms: 1_000,
         }
     }
@@ -706,6 +741,41 @@ mod tests {
     }
 
     #[test]
+    fn append_keeps_attachments_and_lists_referenced_ids() {
+        let (_tmp, node) = node();
+        node.ensure_direct_room("alice", 1);
+        let meta = AttachmentMeta {
+            id: "a".repeat(32),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            size: 3,
+            width: None,
+            height: None,
+            duration_secs: None,
+        };
+        let mut carried = draft("dm:alice", MessageKind::User, "user", "");
+        carried.attachments = vec![meta.clone()];
+        let message = node.append(carried);
+        let (page, _) = node.page("dm:alice", None, 10);
+        assert_eq!(page[0].attachments, vec![meta.clone()]);
+        assert_eq!(
+            node.referenced_attachment_ids(),
+            HashSet::from([meta.id.clone()])
+        );
+        let frame = ChatEvent::Message(message).to_frame();
+        assert_eq!(frame["attachments"][0]["name"], "photo.png");
+        let plain = node.append(draft("dm:alice", MessageKind::Chat, "alice", "hi"));
+        assert_eq!(
+            serde_json::to_value(&plain)
+                .expect("json")
+                .get("attachments"),
+            None,
+            "a message with no attachments carries no key"
+        );
+        assert!(node.attachments().root().ends_with("chat/attachments"));
+    }
+
+    #[test]
     fn import_skips_known_origin_ids_and_keeps_original_stamps() {
         let (_tmp, node) = node();
         node.ensure_direct_room("alice", 1);
@@ -716,6 +786,7 @@ mod tests {
                 kind: MessageKind::User,
                 text: "old".into(),
                 input_method: None,
+                attachments: Vec::new(),
             },
             ImportItem {
                 origin_id: 8,
@@ -723,6 +794,7 @@ mod tests {
                 kind: MessageKind::Chat,
                 text: "reply".into(),
                 input_method: None,
+                attachments: Vec::new(),
             },
         ];
         let first = node.import("dm:alice", items.clone());
@@ -760,6 +832,42 @@ mod tests {
                 skipped: 1
             },
             "an origin id repeated inside one batch imports once"
+        );
+    }
+
+    #[test]
+    fn an_imported_item_carries_known_attachment_ids_and_skips_unknown_ones() {
+        let (_tmp, node) = node();
+        node.ensure_direct_room("alice", 1);
+        let store = node.attachments();
+        let id = store
+            .create_session("note.txt", "text/plain", 2, MetaExtra::default())
+            .expect("session");
+        store.append_at(&id, 0, b"hi").expect("chunk");
+        let meta = store.finalize(&id).expect("finalize");
+        let outcome = node.import(
+            "dm:alice",
+            vec![ImportItem {
+                origin_id: 3,
+                at_ms: 1_788_516_723_123,
+                kind: MessageKind::User,
+                text: String::new(),
+                input_method: None,
+                attachments: vec![id.clone(), "b".repeat(32)],
+            }],
+        );
+        assert_eq!(
+            outcome,
+            ImportOutcome {
+                imported: 1,
+                skipped: 0
+            }
+        );
+        let (page, _) = node.page("dm:alice", None, 10);
+        assert_eq!(
+            page[0].attachments,
+            vec![meta],
+            "an unknown id is dropped and the message still imports"
         );
     }
 
