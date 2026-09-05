@@ -2,9 +2,10 @@
 
 import argparse
 import json
+import sys
 
 import pytest
-from chat_cli import commands
+from chat_cli import cli, commands
 from chat_cli.store import Store, store_path
 
 
@@ -83,3 +84,18 @@ def test_history_reports_invalid_search_query(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "error" in json.loads(captured.err)
+
+
+def test_a_command_without_an_agent_name_prints_one_error_line(tmp_path, monkeypatch, capsys):
+    """The name comes from the container's environment and names the room the conversation is filed
+    under, so a command that cannot read it says what is missing."""
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    monkeypatch.setattr(sys, "argv", ["chat", "history", "--data-dir", str(tmp_path)])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {"error": "AGENT_NAME is not set"}

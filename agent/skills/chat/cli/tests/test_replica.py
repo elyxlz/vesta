@@ -165,6 +165,24 @@ def test_an_imported_message_stamps_the_local_row_it_came_from(tmp_path):
     assert run(fake, tmp_path, scenario) == (False, ["already here"], 1)
 
 
+def test_an_origin_frame_naming_a_replicated_row_lands_as_its_own_message(tmp_path):
+    """A restored store can hold a replicated row under a local id a later origin id also names. That
+    row carries a node id, so the frame is persisted as the message it is."""
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+
+    def scenario(state):
+        async def main():
+            local_id = state.store.append({"type": "chat", "ts": "2026-09-05T09:00:00+00:00", "text": "replicated", "node_id": 40})
+            message = fake.seed_message(DIRECT, "chat", AGENT, "imported", origin_id=local_id)
+            ingested = await ingest_message(state, message)
+            return ingested, texts(state)
+
+        return main()
+
+    assert run(fake, tmp_path, scenario) == (True, ["replicated", "imported"])
+
+
 def test_a_live_user_message_persists_and_becomes_a_notification(tmp_path):
     fake = FakeNode()
     fake.seed_room([AGENT])

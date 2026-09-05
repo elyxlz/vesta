@@ -12,6 +12,13 @@ from chat_cli.store import Store, store_path
 from .attachment_fixture import stored_attachment
 
 
+@pytest.fixture(autouse=True)
+def _agent_name(monkeypatch) -> None:
+    """`chat attachments list` reads this agent's name from the environment, as the daemon does, and it
+    names the room the referencing events are filed under."""
+    monkeypatch.setenv("AGENT_NAME", "vesta")
+
+
 def _seed(tmp_path):
     """Three finalized attachments: a large received one, a small sent one, and an unreferenced one."""
     root = tmp_path / "attachments"

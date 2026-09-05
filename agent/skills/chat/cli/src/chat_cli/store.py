@@ -186,6 +186,8 @@ class Store:
     the daemon's own send path and the replica's worker threads share one connection safely."""
 
     def __init__(self, db_path: pl.Path, agent_name: str) -> None:
+        if not agent_name:
+            raise ValueError("agent name is empty")
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.agent_name = agent_name
         self.direct_room = direct_room_id(agent_name)
@@ -239,10 +241,11 @@ class Store:
 
     def local_id_for_origin(self, room: str, origin_id: int) -> int | None:
         """The local row an imported message came from: the node echoes back the id the import carried,
-        which is this store's own row id, so the row it names is stamped instead of duplicated."""
+        which is this store's own row id, so the row it names is stamped instead of duplicated. A row
+        already carrying a node id is the node's copy of another message, so it is never the origin."""
         conn = self._read()
         try:
-            row = conn.execute("SELECT id FROM events WHERE id = ? AND room = ?", (origin_id, room)).fetchone()
+            row = conn.execute("SELECT id FROM events WHERE id = ? AND room = ? AND node_id IS NULL", (origin_id, room)).fetchone()
         finally:
             conn.close()
         return None if row is None else int(row[0])

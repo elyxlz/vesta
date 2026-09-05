@@ -373,6 +373,24 @@ def test_local_id_for_origin_maps_an_imported_message_back(tmp_path):
     store.close()
 
 
+def test_local_id_for_origin_skips_a_row_the_node_already_holds(tmp_path):
+    """A row carrying a node id is already the node's copy of that message, so an origin id naming it
+    names a different message: it is persisted on its own rather than stamped over this row."""
+    store = _store(tmp_path)
+    local_id = store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "replicated"})
+    store.mark_node_id(local_id, 40)
+
+    assert store.local_id_for_origin(_DIRECT_ROOM, local_id) is None
+    store.close()
+
+
+def test_an_empty_agent_name_is_refused(tmp_path):
+    """The name is what the direct room is called, so a store opened without one would file the whole
+    conversation under `dm:`."""
+    with pytest.raises(ValueError, match="agent name is empty"):
+        Store(store_path(tmp_path), "")
+
+
 def test_rooms_round_trip_through_upsert_read_and_delete(tmp_path):
     store = _store(tmp_path)
     store.upsert_room({"id": "room-1", "name": "Sailing", "agents": ["vesta", "bob"]})

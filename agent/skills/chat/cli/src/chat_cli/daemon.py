@@ -86,8 +86,12 @@ def default_notifications_dir() -> pl.Path:
 
 def agent_name() -> str:
     """This agent's name, which vestad writes into the container's environment. It names the direct
-    room, so the store takes it and never reads the environment itself."""
-    return os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
+    room, so the store takes it and never reads the environment itself. Without it every room id would
+    read `dm:`, so the command ends here with the one error line instead."""
+    name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
+    if not name:
+        sys.exit(_fail("AGENT_NAME is not set"))
+    return name
 
 
 def _sock_path(data_dir: pl.Path) -> pl.Path:
