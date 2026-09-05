@@ -7,7 +7,9 @@ description: Browse, navigate, click, fill forms, screenshot, or scrape web page
 --session <name> [--stealth]` to run Python against that session, script on stdin (helpers
 include `new_tab`, `goto_url`, `page_info`, `js`, `click_at_xy`, `fill_input`,
 `capture_screenshot`, and more). The detailed reference below this block lags the CLI; run
-`browser --help` for the authoritative command list.
+`browser --help` for the authoritative command list. `browser handover start [--url <url>]
+[--session <name>] [--stealth]` returns a `user_url`; send that URL to the user and nothing
+else. Run `browser handover stop` when they are done.
 
 # Browser
 

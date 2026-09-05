@@ -123,12 +123,12 @@ agent/skills/browser/
       artifacts.py             stdout path scan, containment, size/type checks, retention
       handover.py              Xvfb/openbox/x11vnc/websockify, headed engine, service + key
       doctor.py                versions, health, sessions, handover, last errors
+      assets/handover/         noVNC page, font, image (kept)
     tests/                     the suite `check.sh agent` runs
   engines/
     chromium/                  uv project: browser-use==0.13.10 (pulls browser-harness==0.1.13)
     camoufox/                  uv project: camoufox Python lib pinned to the release matching browser tag v150.0.2-beta.25 (0.5.6b1 upstream today), playwright<1.63
       worker.py                the stealth executor; single module, run by this venv's python
-  assets/handover/             noVNC page, font, image (kept)
   presets/                     Camoufox fingerprint presets (kept)
   domain-skills/               optional recipes (kept, stale files removed)
 ```
@@ -330,9 +330,9 @@ Flow of `handover start`:
 
 1. Resolve `--session` (default `default`) and mode; create the session pinned to the engine when it does not exist. Refuse when a handover is already live (`handover_in_use`).
 2. Stop the session's headless browser cleanly (profile lock released).
-3. Claim a private Xvfb display, start openbox, x11vnc, and websockify serving the noVNC page (today's `handover.py` orchestration, moved). Screen `1280x800`; the Camoufox preset is refit with `fit_to_screen`.
+3. `register-service browser` (no `--public`) returns the port vestad will proxy; claim a private Xvfb display, start openbox, x11vnc, and websockify serving the noVNC page bound to that same port on `0.0.0.0` (vestad reaches the container over its own network, not a free port websockify picks for itself), with x11vnc kept on localhost (today's `handover.py` orchestration, moved). Screen `1280x800`; the Camoufox preset is refit with `fit_to_screen`.
 4. Start the same engine headed on that display with the same profile: Chromium with `--remote-debugging-port=0` (kept for the resume step's observation), Camoufox through the worker with `headless=False`.
-5. `register-service browser` (no `--public`), then `service-key mint browser --label browser-handover-<id> --ttl <lifetime>`. Lifetime is `--minutes` (default `HANDOVER_DEFAULT_MINUTES = 30`, max `HANDOVER_MAX_MINUTES = 240`); the key TTL equals it.
+5. `service-key mint browser --label browser-handover-<id> --ttl <lifetime>`. Lifetime is `--minutes` (default `HANDOVER_DEFAULT_MINUTES = 30`, max `HANDOVER_MAX_MINUTES = 240`); the key TTL equals it.
 6. Health-check every component, then answer with `data`: `{handover_id, session, engine, state: "live", user_url, expires_at}` where `user_url = $VESTAD_PUBLIC_URL/agents/$AGENT_NAME/browser/k/<key>/handover.html`. Without `VESTAD_PUBLIC_URL` the daemon fails `handover_failed` with `suggested_action` naming the missing tunnel or LAN exposure.
 7. The session enters `handed_over`; exec against it fails `handover_in_use`. The daemon takes no screenshot during handover.
 8. `handover stop`, the deadline, a failed health check, or daemon shutdown: revoke the key by id, `deregister-service browser`, stop websockify, x11vnc, openbox, the headed browser, and the display, then return the session to `stopped` (the next exec restarts it headless on the same profile). Revocation and deregistration are idempotent and always attempted; a partial teardown adds `cleanup_incomplete`.
@@ -357,11 +357,11 @@ It parses `output.stdout` as before, maps `ok: false` to `BrowserUnavailableErro
 
 ### Microsoft
 
-- One stealth session per account: `microsoft-<email-slug>`. The daemon owns the profile; `~/.microsoft/browser-profiles/` and `--user-data-dir` disappear.
-- Interactive sign-in: `browser handover start --url https://outlook.office.com/mail/ --session microsoft-<slug> --stealth`, returning `user_url`; the user signs in; `browser handover stop`.
-- Token capture and the unattended refresh in `monitor.py`: `browser exec --session microsoft-<slug> --stealth` running `new_tab(url); wait_for_load(); print(js(TOKEN_JS))`, polled as today. Headless. No handover, no Xvfb, no `stop-all`.
+- One Chromium session per account (`microsoft-<slug>`, standard mode), because headless Firefox cannot load the Outlook and Teams SPAs (the old capture code documented this) and locked-tenant SSO needs cookies, not fingerprint stealth. The daemon owns the profile; `~/.microsoft/browser-profiles/` and `--user-data-dir` disappear. Each account signs in once more through the new handover, since a Firefox profile cannot become a Chromium one.
+- Interactive sign-in: `browser handover start --url https://outlook.office.com/mail/ --session microsoft-<slug>`, returning `user_url`; the user signs in; `browser handover stop`.
+- Token capture and the unattended refresh in `monitor.py`: `browser exec --session microsoft-<slug>` running `new_tab(url); wait_for_load(); print(js(TOKEN_JS))`, polled as today. Headless. No handover, no Xvfb, no `stop-all`.
 - `auth_commands.py`'s two `_run` closures are deleted; they call `capture.py`.
-- Risk to verify in the live tier: Microsoft token refresh from a signed-in Camoufox profile works headless. If a tenant demands a headed browser, the fallback is a headed handover with no user, exactly today's behavior, behind one flag in `capture.py`; the spec does not build it ahead of evidence.
+- Risk to verify in the live tier: Microsoft token refresh from a signed-in Chromium profile works headless. If a tenant demands a headed browser, the fallback is a headed handover with no user, exactly today's behavior, behind one flag in `capture.py`; the spec does not build it ahead of evidence.
 
 ### Others
 

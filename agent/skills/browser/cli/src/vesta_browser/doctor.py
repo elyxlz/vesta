@@ -6,6 +6,7 @@ import asyncio
 import os
 import pathlib as pl
 
+from . import display, handover
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import State, routes
@@ -71,6 +72,7 @@ async def report(state: State) -> dict[str, p.JsonValue]:
         "engines": {**routes(paths), "versions": await versions(paths)},
         "sessions": [dict(sessions_mod.info(s)) for s in state.table.sessions.values()],
         "artifacts": {"root": str(paths.artifacts), "bytes": await asyncio.to_thread(_tree_bytes, paths.artifacts)},
+        "handover": {**display.readiness(paths), **await handover.status(state)},
         "last_error": dict(state.last_error) if state.last_error is not None else None,
     }
 
