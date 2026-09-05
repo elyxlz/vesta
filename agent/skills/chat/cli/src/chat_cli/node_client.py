@@ -5,6 +5,7 @@ certificate is self-signed, so an https node is dialed with certificate verifica
 
 import asyncio
 import json
+import logging
 import pathlib as pl
 import typing as tp
 
@@ -13,11 +14,16 @@ import aiohttp
 from .attachments import AttachmentMeta
 from .store import RoomRecord
 
+logger = logging.getLogger("chat.node")
+
 # Every HTTP call to the node is bounded by this. The live socket is not: it is dialed on a session
 # that carries no deadline of its own, so a quiet room never drops it.
 NODE_TIMEOUT_SECS = 30.0
 # One upload chunk, and the size a download streams in.
 UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+# How often the live socket pings. A connection that answers no pong inside it is half open, so the
+# client closes it and the replica reconnects instead of reading a socket nothing arrives on.
+REPLICA_HEARTBEAT_SECS = 30.0
 
 _TOKEN_HEADER = "X-Agent-Token"
 _HTTPS_PREFIX = "https://"
@@ -237,6 +243,21 @@ def _read_at(path: pl.Path, offset: int, length: int) -> bytes:
         return handle.read(length)
 
 
+async def _write_body(content: aiohttp.StreamReader, dest: pl.Path) -> None:
+    """Every chunk of a blob into `dest`. A read that ends part way removes what it wrote, so no caller
+    ever takes a truncated file for the blob."""
+    handle = await asyncio.to_thread(dest.open, "wb")
+    try:
+        try:
+            async for chunk in content.iter_chunked(UPLOAD_CHUNK_BYTES):
+                await asyncio.to_thread(handle.write, chunk)
+        finally:
+            handle.close()
+    except (TimeoutError, aiohttp.ClientError, OSError):
+        await asyncio.to_thread(dest.unlink, missing_ok=True)
+        raise
+
+
 class NodeClient:
     """The node's surface as the daemon uses it. Every call raises NodeError on a transport failure or
     an answer this client cannot read; a refused post raises its own refusal instead."""
@@ -277,7 +298,12 @@ class NodeClient:
         """One page of everything the room holds past node id `after`, plus the id to continue from
         while the room holds more."""
         payload = await self._call("GET", f"/rooms/{room}/history", params={"after": str(after), "limit": str(limit)})
-        events = [parse_message(item) for item in _items(_field(payload, "events", "history page"), "history events")]
+        events: list[NodeMessage] = []
+        for item in _items(_field(payload, "events", "history page"), "history events"):
+            try:
+                events.append(parse_message(item))
+            except NodeError as error:
+                logger.warning("skipping unreadable message %s", error)
         cursor = _field(payload, "cursor", "history page")
         return events, None if cursor is None else _whole(cursor, "history cursor")
 
@@ -357,15 +383,10 @@ class NodeClient:
             async with self._session.get(self._base + path, headers=self._headers, timeout=self._timeout) as response:
                 if response.status != 200:
                     raise NodeError(f"GET {path}: {_reason(_decode(await response.text(), path), response.status)}")
-                handle = await asyncio.to_thread(dest.open, "wb")
-                try:
-                    async for chunk in response.content.iter_chunked(UPLOAD_CHUNK_BYTES):
-                        await asyncio.to_thread(handle.write, chunk)
-                finally:
-                    handle.close()
+                await _write_body(response.content, dest)
         except (TimeoutError, aiohttp.ClientError) as error:
             raise NodeError(f"GET {path}: {error}") from error
 
     def ws_connect(self) -> aiohttp.client._WSRequestContextManager:
         """The live edge of every room this agent is in. The caller owns the socket's lifetime."""
-        return self._session.ws_connect(f"{self._base}/rooms/ws", headers=self._headers)
+        return self._session.ws_connect(f"{self._base}/rooms/ws", headers=self._headers, heartbeat=REPLICA_HEARTBEAT_SECS)

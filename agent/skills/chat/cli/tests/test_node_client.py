@@ -121,6 +121,21 @@ def test_history_reads_every_optional_field_the_message_wire_carries():
     assert events[0]["attachments"] == [PHOTO]
 
 
+def test_history_skips_a_message_it_cannot_read_and_keeps_the_rest():
+    """One unreadable message must not stop a room's whole catch-up, exactly as one unreadable live
+    frame does not end the socket."""
+    fake = FakeNode()
+    fake.seed_room(["vesta"])
+    fake.seed_message("dm:vesta", "user", "user", "one")
+    broken = fake.seed_message("dm:vesta", "user", "user", "two")
+    del broken["sender"]
+    fake.seed_message("dm:vesta", "user", "user", "three")
+
+    events, _ = run(fake, lambda client: client.history_after("dm:vesta", 0, 10))
+
+    assert [message["text"] for message in events] == ["one", "three"]
+
+
 def test_post_answers_the_node_id_and_lands_the_message():
     fake = FakeNode()
     fake.seed_room(["vesta"])
@@ -324,6 +339,25 @@ def test_download_writes_the_blob_into_a_directory_it_creates(tmp_path):
     assert dest.read_bytes() == b"\x89PNG payload"
 
 
+def test_a_download_that_ends_part_way_leaves_no_file_behind(tmp_path):
+    """A truncated file would read as the blob to every later caller, so the read that failed removes
+    what it wrote."""
+    fake = FakeNode()
+    source = tmp_path / "photo.png"
+    source.write_bytes(b"\x89PNG payload")
+    dest = tmp_path / "store" / "an-id" / "photo.png"
+
+    async def scenario(client):
+        meta = await client.upload(source, "image/png")
+        fake.cut_downloads = True
+        await client.download(meta["id"], dest)
+
+    with pytest.raises(NodeError):
+        run(fake, scenario)
+
+    assert not dest.exists()
+
+
 def test_download_of_a_blob_the_node_does_not_hold_is_a_node_error(tmp_path):
     fake = FakeNode()
 
@@ -351,6 +385,24 @@ def test_the_socket_is_refused_without_the_right_token():
 
     with pytest.raises(aiohttp.WSServerHandshakeError):
         run_with_token(fake, "wrong", scenario)
+
+
+def test_the_live_socket_negotiates_a_heartbeat():
+    """A half-open socket answers no pong, so the client closes it and the replica reconnects instead
+    of waiting on a connection nothing will ever arrive on."""
+    recorded = {}
+
+    class RecordingSession:
+        def ws_connect(self, url, **options):
+            recorded["url"] = url
+            recorded.update(options)
+            return "socket"
+
+    client = NodeClient({"base_url": "http://node:8443", "token": "t", "agent": "vesta"}, RecordingSession())
+
+    assert client.ws_connect() == "socket"
+    assert recorded["url"] == "http://node:8443/rooms/ws"
+    assert recorded["heartbeat"] == node_client.REPLICA_HEARTBEAT_SECS
 
 
 def test_node_config_from_env_needs_all_four_values():

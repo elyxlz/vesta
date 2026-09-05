@@ -7,8 +7,8 @@ Test hooks: `emit` pushes one frame to every connected socket, `refuse_speaking`
 turn a post into the node's two refusals, `drop_answers_at` lands the chunk at that offset and then
 kills the connection (an answer lost on the way back), `rewind_stage_to` refuses one chunk whole and
 names a staged size behind it, `stall_chunks` refuses every chunk naming the offset it was handed,
-`refuse_downloads` answers 500 to every blob read, and `requests` records every (method, path with its
-query, json body)."""
+`refuse_downloads` answers 500 to every blob read, `cut_downloads` drops the connection part way
+through a blob, and `requests` records every (method, path with its query, json body)."""
 
 import contextlib
 import dataclasses
@@ -61,11 +61,13 @@ def _stamp() -> str:
 
 
 def _readable_ts(ts: str) -> bool:
+    """The node's RFC 3339 parse: a stamp carrying no explicit offset names no instant, so it is
+    refused."""
     try:
-        dt.datetime.fromisoformat(ts)
+        stamp = dt.datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return True
+    return stamp.tzinfo is not None
 
 
 def room_id_for(agents: list[str], name: str | None) -> str:
@@ -97,6 +99,7 @@ class FakeNode:
         self.rewind_stage_to: int | None = None
         self.stall_chunks = False
         self.refuse_downloads = False
+        self.cut_downloads = False
         self._next_id = 0
         self.app = web.Application(middlewares=[self._gate()])
         self.app.router.add_get("/rooms", self._list_rooms)
@@ -315,7 +318,22 @@ class FakeNode:
         upload = self._upload(request)
         if upload is None or not upload.finalized:
             return web.json_response({"error": "unknown attachment"}, status=404)
+        if self.cut_downloads:
+            return await self._cut_download(request, upload)
         return web.Response(body=bytes(upload.data), content_type=upload.meta["mime"])
+
+    async def _cut_download(self, request: web.Request, upload: FakeUpload) -> web.StreamResponse:
+        """Announce the whole blob, write one byte, then kill the connection: the reader has part of a
+        file and no way to finish it."""
+        response = web.StreamResponse()
+        response.content_length = len(upload.data)
+        response.content_type = upload.meta["mime"]
+        await response.prepare(request)
+        await response.write(bytes(upload.data[:1]))
+        transport = request.transport
+        if transport is not None:
+            transport.abort()
+        return response
 
     async def _socket(self, request: web.Request) -> web.StreamResponse:
         socket = web.WebSocketResponse()

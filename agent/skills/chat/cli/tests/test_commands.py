@@ -102,9 +102,9 @@ def test_import_to_node_hands_over_every_unsynced_row_with_its_origin_id(tmp_pat
     fake = FakeNode()
     fake.seed_room([AGENT])
     store = Store(store_path(tmp_path), AGENT)
-    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "hello", "input_method": "typed"})
-    store.append({"type": "chat", "ts": "2026-01-01T00:00:01", "text": "hi back"})
-    store.append({"type": "chat", "ts": "2026-01-01T00:00:02", "text": "already there", "node_id": 7})
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00+00:00", "text": "hello", "input_method": "typed"})
+    store.append({"type": "chat", "ts": "2026-01-01T00:00:01+00:00", "text": "hi back"})
+    store.append({"type": "chat", "ts": "2026-01-01T00:00:02+00:00", "text": "already there", "node_id": 7})
     store.close()
 
     with serving(fake, monkeypatch):
@@ -120,7 +120,7 @@ def test_import_to_node_is_re_runnable_and_reports_what_the_node_skipped(tmp_pat
     fake = FakeNode()
     fake.seed_room([AGENT])
     store = Store(store_path(tmp_path), AGENT)
-    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "hello"})
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00+00:00", "text": "hello"})
     store.close()
 
     with serving(fake, monkeypatch):
@@ -136,7 +136,7 @@ def test_import_to_node_sends_one_request_per_batch(tmp_path, monkeypatch, capsy
     fake.seed_room([AGENT])
     store = Store(store_path(tmp_path), AGENT)
     for index in range(5):
-        store.append({"type": "user", "ts": f"2026-01-01T00:00:0{index}", "text": f"line {index}"})
+        store.append({"type": "user", "ts": f"2026-01-01T00:00:0{index}+00:00", "text": f"line {index}"})
     store.close()
     monkeypatch.setattr(commands, "IMPORT_BATCH_SIZE", 2)
 
@@ -158,7 +158,7 @@ def test_import_to_node_uploads_an_attachment_and_skips_one_whose_file_is_gone(t
     gone = stored_attachment(root, source, "image/png")
     attachments.remove_blob(root, gone["id"])
     store = Store(store_path(tmp_path), AGENT)
-    store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "here", "attachments": [kept, gone]})
+    store.append({"type": "chat", "ts": "2026-01-01T00:00:00+00:00", "text": "here", "attachments": [kept, gone]})
     store.close()
 
     with serving(fake, monkeypatch):
@@ -177,7 +177,7 @@ def test_a_node_failure_is_one_json_line_on_stderr(tmp_path, monkeypatch, capsys
     fake = FakeNode()  # nothing seeded, so the import is a 404
 
     store = Store(store_path(tmp_path), AGENT)
-    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "hello"})
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00+00:00", "text": "hello"})
     store.close()
 
     with serving(fake, monkeypatch), pytest.raises(SystemExit) as exit_code:
