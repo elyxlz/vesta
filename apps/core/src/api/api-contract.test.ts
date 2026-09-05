@@ -126,7 +126,7 @@ describe("vestad API contract", () => {
     expect(created.id).toBe("0f1e2d3c4b5a69788796a5b4c3d2e1f0");
     const status =
       vestadApiFixtures.attachment_status satisfies DeepReadonly<AttachmentStatus>;
-    expect(status.received).toBe(status.size);
+    expect(status.received).toBe(1234);
     expect(status.finalized).toBe(true);
     const completed =
       vestadApiFixtures.attachment_completed satisfies DeepReadonly<AttachmentCompleted>;

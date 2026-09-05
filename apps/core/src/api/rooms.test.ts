@@ -21,12 +21,10 @@ describe("room paths", () => {
     expect(roomMessagesPath("dm:scout")).toBe("/rooms/dm%3Ascout/messages");
   });
 
-  it("addresses the upload surface and one blob, forcing a save on request", () => {
+  it("addresses the upload surface and one blob, leaving both query-free", () => {
     expect(roomAttachmentsPath()).toBe("/rooms/attachments");
+    expect(roomAttachmentPath("a1b2c3")).toBe("/rooms/attachments/a1b2c3");
     expect(roomAttachmentPath("a1b2/c3")).toBe("/rooms/attachments/a1b2%2Fc3");
-    expect(roomAttachmentPath("a1b2c3", true)).toBe(
-      "/rooms/attachments/a1b2c3?download=1",
-    );
   });
 
   it("leaves the socket path query-free, since the session URL builder appends its own", () => {

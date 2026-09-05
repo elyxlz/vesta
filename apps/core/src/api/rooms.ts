@@ -62,11 +62,11 @@ export function roomAttachmentsPath(): string {
   return "/rooms/attachments";
 }
 
-// The blob read, which doubles as the base of the upload subpaths. `download` forces the browser
-// to save rather than render, which is the only way a non-media blob is ever offered.
-export function roomAttachmentPath(id: string, download = false): string {
-  const base = `/rooms/attachments/${encodeURIComponent(id)}`;
-  return download ? `${base}?download=1` : base;
+// The blob read, which doubles as the base of the upload subpaths. Query-free like the socket
+// path: a download surface passes `new URLSearchParams({ download: "1" })` to `authedUrl` or the
+// http client, since a `?` baked in here would meet the token's own `?` and strand the request.
+export function roomAttachmentPath(id: string): string {
+  return `/rooms/attachments/${encodeURIComponent(id)}`;
 }
 
 // The replay-free live room socket; dialed with the token in the query. Query-free like every

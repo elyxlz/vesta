@@ -1,6 +1,9 @@
 //! The chat node end to end: the rooms every agent gets, the rooms the user and an agent open,
 //! intake and its echo on `/rooms/ws`, paged history, the speaking and burst gates, history
 //! import, and the rename/delete hooks, all driven against a real vestad through the harness.
+//! Attachments ride along: the chunked upload and its offset refusal, the metadata a finalized id
+//! carries onto a message, what a browser is told about a served blob, and the refusal a post
+//! naming an unknown id gets.
 //!
 //! Nothing here needs anything running inside a container: no docker exec, no wait for an agent
 //! to boot. `POST /agents` mints the direct room before it answers, the chat gate resolves an
