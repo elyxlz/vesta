@@ -337,7 +337,6 @@ pub(crate) async fn post_message_handler(
             .collect();
         state.user_notifier().await.notify_in_room(
             &sender,
-            crate::user_notifications::KIND_MESSAGE,
             sender.clone(),
             preview,
             message.room.clone(),

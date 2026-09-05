@@ -83,6 +83,7 @@ describe("sync protocol contract (vestad fixtures)", () => {
       expect(parsed.delta.kind).toBe("message");
       expect(parsed.delta.title).toBe("sample-agent");
       expect(parsed.delta.body).toBe("hello");
+      expect(parsed.delta.room).toBe("dm:sample");
     }
   });
 });
