@@ -92,7 +92,13 @@ for log in "$HOME"/agent/logs/*.log; do
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
-        | grep -iE 'error|traceback')
+        | grep -aiE 'error|traceback')
+    # **`-a` non e' decorativo: senza, un log con byte NUL (una scrittura troncata) fa dire a grep
+    # «Binary file matches» invece delle righe, e il conteggio diventa 1 al posto di 300.** Il
+    # codice di prima faceva `grep -c` direttamente sulla pipe, dove un numero esce comunque;
+    # avendolo spezzato in due passaggi ho introdotto la regressione, e l'ha presa il test
+    # `test_error_storm_survives_nul_bytes_in_the_log` di upstream. Spezzare una pipe in una
+    # variabile cambia il comportamento sui dati binari: ricordarlo.
     errors=$(printf '%s' "$righe" | grep -c . )
     # A bare count under the threshold reads as OK and tells you nothing about WHAT is failing.
     # On 5 Sep 2026 chat-mirror.log sat at 153 errors, comfortably under 200, and 148 of them were
