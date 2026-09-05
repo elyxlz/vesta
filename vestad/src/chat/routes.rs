@@ -12,8 +12,9 @@ use serde::Deserialize;
 use crate::auth::ChatPrincipal;
 use crate::chat::attachments::MAX_ATTACHMENTS_PER_MESSAGE;
 use crate::chat::{
-    AttachmentMeta, ChatError, ImportItem, InputMethod, MessageDraft, MessageKind, OpenRoom,
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_TEXT_CHARS, USER_NOTIFICATION_PREVIEW_CHARS, USER_SENDER,
+    AttachmentMeta, ChatError, ChatNode, ImportItem, InputMethod, MessageDraft, MessageKind,
+    OpenRoom, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_TEXT_CHARS, USER_NOTIFICATION_PREVIEW_CHARS,
+    USER_SENDER,
 };
 use crate::state::SharedState;
 use crate::time_utils::{now_epoch_millis, now_epoch_secs};
@@ -253,6 +254,34 @@ pub(crate) fn validate_post(body: &serde_json::Value) -> Result<ValidPost, Strin
     })
 }
 
+/// The intake's first decision, before any side effect: a repeated `intent_id` is the client's
+/// retry and is answered from the dedup memory alone (`None`), so a message that already landed
+/// never reads the attachment store again. Otherwise the named attachments resolve, refusing a
+/// body that names an id this node never finalized.
+fn dedup_or_attachments(
+    chat: &ChatNode,
+    post: &ValidPost,
+) -> Result<Option<Vec<AttachmentMeta>>, ApiError> {
+    if let Some(intent_id) = &post.intent_id {
+        if chat.intent_seen(intent_id) {
+            return Ok(None);
+        }
+    }
+    let attachments = post
+        .attachment_ids
+        .iter()
+        .map(|attachment_id| {
+            chat.attachments().read_meta(attachment_id).ok_or_else(|| {
+                error(
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown attachment: {attachment_id}"),
+                )
+            })
+        })
+        .collect::<Result<Vec<AttachmentMeta>, ApiError>>()?;
+    Ok(Some(attachments))
+}
+
 pub(crate) async fn post_message_handler(
     State(state): State<SharedState>,
     Extension(principal): Extension<ChatPrincipal>,
@@ -263,30 +292,10 @@ pub(crate) async fn post_message_handler(
         return Err(error(StatusCode::BAD_REQUEST, "invalid json body"));
     };
     let post = validate_post(&body).map_err(|reason| error(StatusCode::BAD_REQUEST, reason))?;
-    // Resolved before any side effect, so a body naming an attachment this node never finalized
-    // persists nothing.
-    let attachments = post
-        .attachment_ids
-        .iter()
-        .map(|attachment_id| {
-            state
-                .chat
-                .attachments()
-                .read_meta(attachment_id)
-                .ok_or_else(|| {
-                    error(
-                        StatusCode::BAD_REQUEST,
-                        format!("unknown attachment: {attachment_id}"),
-                    )
-                })
-        })
-        .collect::<Result<Vec<AttachmentMeta>, ApiError>>()?;
     member_room(&state, &principal, &id)?;
-    if let Some(intent_id) = &post.intent_id {
-        if state.chat.intent_seen(intent_id) {
-            return Ok(Json(serde_json::json!({ "ok": true, "deduped": true })).into_response());
-        }
-    }
+    let Some(attachments) = dedup_or_attachments(&state.chat, &post)? else {
+        return Ok(Json(serde_json::json!({ "ok": true, "deduped": true })).into_response());
+    };
     let (kind, sender) = match &principal {
         ChatPrincipal::User => (MessageKind::User, USER_SENDER.to_string()),
         ChatPrincipal::Agent(name) => (MessageKind::Chat, name.clone()),
@@ -479,6 +488,29 @@ mod tests {
                 .expect_err("too many"),
             "at most 10 attachments per message"
         );
+    }
+
+    #[test]
+    fn a_repeated_intent_is_deduped_without_reading_the_attachment_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chat = ChatNode::load(tmp.path());
+        let post = validate_post(&serde_json::json!({
+            "text": "hi",
+            "intent_id": "c-1",
+            "attachments": ["0f1e2d3c4b5a69788796a5b4c3d2e1f0"],
+        }))
+        .expect("valid");
+
+        // A first attempt resolves the ids and refuses one this node never finalized.
+        let (status, _) = dedup_or_attachments(&chat, &post).expect_err("unknown attachment");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // The retry of a landed message is answered from the dedup memory alone, so the same
+        // unresolvable id costs it nothing.
+        chat.remember_intent("c-1");
+        assert!(dedup_or_attachments(&chat, &post)
+            .expect("the retry is deduped, never refused")
+            .is_none());
     }
 
     #[test]
