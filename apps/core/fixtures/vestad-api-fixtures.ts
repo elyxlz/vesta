@@ -253,6 +253,27 @@ export const vestadApiFixtures = {
     "mode": 420,
     "path": "notes/todo.md"
   },
+  "user_notifications": {
+    "notifications": [
+      {
+        "agent": "sample-agent",
+        "at": 1700000400,
+        "body": "hello",
+        "id": 3,
+        "kind": "message",
+        "room": "dm:sample-agent",
+        "title": "sample-agent"
+      },
+      {
+        "agent": "",
+        "at": 1700000000,
+        "body": "",
+        "id": 2,
+        "kind": "update_available",
+        "title": "gateway v0.3.0 available"
+      }
+    ]
+  },
   "version": {
     "api_compat": "0.2",
     "auto_update": true,

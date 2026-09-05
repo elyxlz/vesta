@@ -9,11 +9,11 @@ use tokio::time::Instant;
 use super::protocol::ClientContext;
 use crate::types::ClientKind;
 
-/// The user must have been away from an agent this long before opening its page notifies it, so
-/// glances and quick re-opens never spam it.
+/// The user must have been away from a room this long before opening it notifies its agents, so
+/// glances and quick re-opens never spam them.
 pub(crate) const PRESENCE_NOTIFY_DEBOUNCE: Duration = Duration::from_mins(10);
 
-/// After an agent's page is opened, wait this long before notifying it: a return that navigates
+/// After a room is opened, wait this long before notifying its agents: a return that navigates
 /// away inside the window was only a glance, so nothing is sent.
 pub(crate) const PRESENCE_NOTIFY_DELAY: Duration = Duration::from_secs(45);
 
@@ -22,12 +22,12 @@ pub(crate) type ConnId = u64;
 #[derive(Debug)]
 struct PresenceState {
     contexts: HashMap<ConnId, ClientContext>,
-    /// Per agent, the last instant it was viewed. A frame that views it refreshes it, and the edge
+    /// Per room, the last instant it was viewed. A frame that views it refreshes it, and the edge
     /// where it leaves the viewed set records the departure time, so the debounce measures time
-    /// away from that agent. Frozen for an agent while it awaits confirmation: a glance that never
+    /// away from that room. Frozen for a room while it awaits confirmation: a glance that never
     /// survives the settle window must not consume its debounce.
     last_viewed_at: HashMap<String, Instant>,
-    /// Agents whose page-open has been detected and awaits its settle-window `confirm_return`.
+    /// Rooms whose open has been detected and awaits its settle-window `confirm_return`.
     pending: HashSet<String>,
 }
 
@@ -59,9 +59,9 @@ impl Presence {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// The agent whose page-open this frame just detected, if any: the caller answers it by
-    /// scheduling a settle-window `confirm_return` for that agent. The `any_focused` fan-out rides
-    /// the watch channel, so that edge is the only one a caller acts on.
+    /// The room whose open this frame just detected, if any: the caller answers it by scheduling
+    /// a settle-window `confirm_return` for that room. The `any_focused` fan-out rides the watch
+    /// channel, so that edge is the only one a caller acts on.
     pub(crate) fn record(&self, id: ConnId, ctx: ClientContext, now: Instant) -> Option<String> {
         let mut state = self.state.lock().expect("presence mutex");
         let was_focused = Self::compute_any_focused(&state.contexts);
@@ -80,10 +80,10 @@ impl Presence {
         self.finish(&mut state, was_focused, &old_viewed, false, now);
     }
 
-    /// Consume `agent`'s pending page-open once the settle window has elapsed: the kind of a client
+    /// Consume a room's pending open once the settle window has elapsed: the kind of a client
     /// still viewing it when the open is real, `None` when the user navigated away inside the
-    /// window. A glance leaves `last_viewed_at[agent]` at the pre-glance value, so a later open
-    /// still fires.
+    /// window. A glance leaves the room's `last_viewed_at` at the pre-glance value, so a later
+    /// open still fires.
     pub(crate) fn confirm_return(&self, agent: &str, now: Instant) -> Option<ClientKind> {
         let mut state = self.state.lock().expect("presence mutex");
         if !state.pending.remove(agent) {
@@ -106,13 +106,13 @@ impl Presence {
         contexts.values().any(|c| c.focused)
     }
 
-    /// Every agent some connection currently reports viewing. The client reports `viewing` only
-    /// while its window is focused, so this is the set of pages the user is looking at now.
+    /// Every room some connection currently reports viewing. The client reports `viewing` only
+    /// while its window is focused, so this is the set of rooms the user is looking at now.
     fn viewed_agents(contexts: &HashMap<ConnId, ClientContext>) -> HashSet<String> {
         contexts.values().filter_map(|c| c.viewing.clone()).collect()
     }
 
-    /// The kind of some client currently viewing `agent`; which one is unspecified when several are.
+    /// The kind of some client currently viewing this room; which one is unspecified when several are.
     fn viewing_client(contexts: &HashMap<ConnId, ClientContext>, agent: &str) -> Option<ClientKind> {
         contexts
             .values()
@@ -120,9 +120,9 @@ impl Presence {
             .map(|c| c.client)
     }
 
-    /// Reconcile a presence change: publish `any_focused` if it flipped, refresh each viewed agent's
-    /// timeline, and report the one agent (if any) whose page-open after a long-enough gap now awaits
-    /// its settle-window confirmation. At most one agent enters the viewed set per frame (a single
+    /// Reconcile a presence change: publish `any_focused` if it flipped, refresh each viewed room's
+    /// timeline, and report the one room (if any) whose open after a long-enough gap now awaits its
+    /// settle-window confirmation. At most one room enters the viewed set per frame (a single
     /// connection carries a single `viewing`), so a single return is exact.
     fn finish(
         &self,
@@ -154,8 +154,8 @@ impl Presence {
                 state.last_viewed_at.insert(agent.clone(), now);
             }
         }
-        // Refresh agents still viewed and stamp the departure of those leaving, unless frozen while
-        // pending. This is what makes the debounce measure time away from the agent.
+        // Refresh rooms still viewed and stamp the departure of those leaving, unless frozen while
+        // pending. This is what makes the debounce measure time away from the room.
         for agent in new_viewed.intersection(old_viewed).chain(old_viewed.difference(&new_viewed)) {
             if !state.pending.contains(agent) {
                 state.last_viewed_at.insert(agent.clone(), now);

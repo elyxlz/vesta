@@ -3954,6 +3954,31 @@ mod tests {
         let renamed = serde_json::json!({ "name": "sample-agent-2" });
         let host_folders = serde_json::json!({ "folders": ["/home/sample/Documents"] });
 
+        // One `GET /notifications` page: the durable entries behind the ephemeral
+        // `user_notification` delta, the message one naming the room it was minted in.
+        let user_notifications = serde_json::json!({
+            "notifications": [
+                crate::user_notification_log::LoggedUserNotification {
+                    id: 3,
+                    at: 1_700_000_400,
+                    agent: "sample-agent".into(),
+                    kind: crate::user_notifications::KIND_MESSAGE.into(),
+                    title: "sample-agent".into(),
+                    body: "hello".into(),
+                    room: Some("dm:sample-agent".into()),
+                },
+                crate::user_notification_log::LoggedUserNotification {
+                    id: 2,
+                    at: 1_700_000_000,
+                    agent: String::new(),
+                    kind: crate::user_notifications::KIND_UPDATE_AVAILABLE.into(),
+                    title: "gateway v0.3.0 available".into(),
+                    body: String::new(),
+                    room: None,
+                },
+            ]
+        });
+
         // The chat node's client surface: the room list, the open-room answer, one history page,
         // and the two intake acks. Built from the production structs so a renamed field fails here.
         let chat_rooms = vec![
@@ -4034,6 +4059,7 @@ mod tests {
             "file_read": file_read,
             "renamed": renamed,
             "host_folders": host_folders,
+            "user_notifications": user_notifications,
             "rooms": rooms,
             "room_opened": room_opened,
             "chat_history": chat_history,

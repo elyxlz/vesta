@@ -213,7 +213,18 @@ pub(crate) enum Frame {
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
     AgentNotifications { agent: String, pending: Vec<serde_json::Value> },
-    UserNotification { id: u64, at: u64, agent: String, kind: String, title: String, body: String },
+    UserNotification {
+        id: u64,
+        at: u64,
+        agent: String,
+        kind: String,
+        title: String,
+        body: String,
+        /// The chat room a `message` notification was minted in, so a client already looking at
+        /// that room stays quiet. Additive: absent on every other kind and on older gateways.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<String>,
+    },
     Presence { any_focused: bool },
     Devices { devices: Vec<DeviceInfo> },
     Rooms { rooms: Vec<crate::chat::Room> },
@@ -375,6 +386,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "agent_notifications": to_value(Frame::AgentNotifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize agent_notifications"),
             "user_notification": to_value(Frame::UserNotification {
                 id: 3, at: 1_700_000_400, agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
+                room: Some("dm:sample".into()),
             }).expect("serialize user_notification"),
             "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
             "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
@@ -532,7 +544,7 @@ mod tests {
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::AgentNotifications { agent: "scout".into(), pending: vec![] }, "agent_notifications"),
-            (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into(), room: None }, "user_notification"),
             (Frame::Presence { any_focused: true }, "presence"),
             (Frame::Rooms { rooms: vec![sample_room()] }, "rooms"),
         ];
@@ -551,6 +563,33 @@ mod tests {
         assert_eq!(value["rooms"][0]["lastMessageAt"], serde_json::Value::Null);
         let parsed: Frame = serde_json::from_str(&encoded).expect("parse rooms frame");
         assert_eq!(parsed, frame);
+    }
+
+    #[test]
+    fn the_user_notification_delta_names_a_room_only_when_it_has_one() {
+        let notification = |room: Option<String>| Frame::UserNotification {
+            id: 1,
+            at: 1_700_000_000,
+            agent: "scout".into(),
+            kind: "message".into(),
+            title: "scout".into(),
+            body: "hi".into(),
+            room,
+        };
+        let in_room = notification(Some("dm:scout".into()));
+        let encoded = in_room.encode().expect("encode a chat notification");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse json");
+        assert_eq!(value["room"], serde_json::json!("dm:scout"));
+        let parsed: Frame = serde_json::from_str(&encoded).expect("parse frame");
+        assert_eq!(parsed, in_room);
+
+        // Every other kind carries no room at all, so an older client sees the frame it always saw.
+        let roomless = notification(None);
+        let encoded = roomless.encode().expect("encode a gateway notification");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse json");
+        assert!(value.get("room").is_none(), "{encoded}");
+        let parsed: Frame = serde_json::from_str(&encoded).expect("parse frame");
+        assert_eq!(parsed, roomless);
     }
 
     #[test]
