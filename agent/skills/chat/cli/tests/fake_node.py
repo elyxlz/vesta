@@ -5,8 +5,9 @@ command suites all drive real HTTP against it.
 
 Test hooks: `emit` pushes one frame to every connected socket, `refuse_speaking` and `refuse_burst`
 turn a post into the node's two refusals, `drop_answers_at` lands the chunk at that offset and then
-kills the connection (an answer lost on the way back), `conflict_next_chunk` answers one chunk with
-the node's 409, and `requests` records every (method, path with its query, json body)."""
+kills the connection (an answer lost on the way back), `rewind_stage_to` refuses one chunk whole and
+names a staged size behind it, `stall_chunks` refuses every chunk naming the offset it was handed,
+and `requests` records every (method, path with its query, json body)."""
 
 import contextlib
 import dataclasses
@@ -92,7 +93,8 @@ class FakeNode:
         self.refuse_speaking = False
         self.refuse_burst = False
         self.drop_answers_at: int | None = None
-        self.conflict_next_chunk = False
+        self.rewind_stage_to: int | None = None
+        self.stall_chunks = False
         self._next_id = 0
         self.app = web.Application(middlewares=[self._gate()])
         self.app.router.add_get("/rooms", self._list_rooms)
@@ -172,10 +174,12 @@ class FakeNode:
         name = body["name"] if "name" in body else None
         if name is None and len(agents) > 2:
             return web.json_response({"error": "a room with three or more agents needs a name"}, status=400)
-        existing = next((room for room in self.rooms.values() if room.agents == agents and room.name == name), None)
-        if existing is not None:
-            return web.json_response({"room": existing.wire()})
-        room = FakeRoom(id=room_id_for(agents, name), name=name, agents=agents)
+        # Only a derived id can be claimed twice: a named room mints a fresh group id on every open,
+        # so two rooms of the same people under the same name are two rooms.
+        room_id = room_id_for(agents, name)
+        if room_id in self.rooms:
+            return web.json_response({"room": self.rooms[room_id].wire()})
+        room = FakeRoom(id=room_id, name=name, agents=agents)
         self.rooms[room.id] = room
         return web.json_response({"room": room.wire()}, status=201)
 
@@ -263,12 +267,19 @@ class FakeNode:
             if transport is not None:
                 transport.abort()
             return web.Response(status=204)
+        # A node that lost part of its stage: the first chunk reaching past that point is refused
+        # whole, so the 409 names a staged size behind the offset the uploader asked for.
+        if self.rewind_stage_to is not None and offset > self.rewind_stage_to:
+            del upload.data[self.rewind_stage_to :]
+            self.rewind_stage_to = None
+            return web.json_response({"error": "offset mismatch", "received": len(upload.data)}, status=409)
+        # A node reporting the offset it was handed: it staged nothing, and the uploader must give up
+        # rather than send that chunk forever.
+        if self.stall_chunks:
+            return web.json_response({"error": "offset mismatch", "received": offset}, status=409)
         if offset != len(upload.data):
             return web.json_response({"error": "offset mismatch", "received": len(upload.data)}, status=409)
         upload.data.extend(await request.read())
-        if self.conflict_next_chunk:
-            self.conflict_next_chunk = False
-            return web.json_response({"error": "offset mismatch", "received": len(upload.data)}, status=409)
         return web.json_response({"ok": True, "received": len(upload.data)})
 
     async def _attachment_status(self, request: web.Request) -> web.StreamResponse:

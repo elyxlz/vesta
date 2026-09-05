@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 import pytest
 from chat_cli import node_client
-from chat_cli.node_client import BurstRefusal, NodeClient, NodeError, SpeakingRefusal, new_session, node_config_from_env
+from chat_cli.node_client import BurstRefusedError, NodeClient, NodeError, SpeakingRefusedError, new_session, node_config_from_env
 
 from .fake_node import BURST_REFUSAL, SPEAKING_REFUSAL, FakeNode, connected_client, running_node
 
@@ -70,13 +70,18 @@ def test_open_room_creates_once_and_answers_the_same_room_again():
     assert len(fake.rooms) == 1
 
 
-def test_open_room_carries_a_group_name():
+def test_open_room_mints_a_fresh_group_for_every_named_open():
     fake = FakeNode()
 
-    room = run(fake, lambda client: client.open_room(["vesta", "bob"], "trip planning"))
+    async def scenario(client):
+        return await client.open_room(["vesta", "bob"], "trip planning"), await client.open_room(["vesta", "bob"], "trip planning")
 
-    assert room["name"] == "trip planning"
-    assert room["id"].startswith("grp-")
+    first, second = run(fake, scenario)
+
+    assert first["name"] == "trip planning"
+    assert first["id"].startswith("grp-")
+    assert second["id"] != first["id"]
+    assert len(fake.rooms) == 2
 
 
 def test_history_after_reads_a_page_and_the_id_to_continue_from():
@@ -132,7 +137,7 @@ def test_post_refused_while_the_user_is_talking():
     fake.seed_room(["vesta"])
     fake.refuse_speaking = True
 
-    with pytest.raises(SpeakingRefusal) as refusal:
+    with pytest.raises(SpeakingRefusedError) as refusal:
         run(fake, lambda client: client.post("dm:vesta", "hold on", []))
 
     assert str(refusal.value) == SPEAKING_REFUSAL
@@ -143,7 +148,7 @@ def test_post_refused_by_the_burst_guard():
     fake.seed_room(["vesta"])
     fake.refuse_burst = True
 
-    with pytest.raises(BurstRefusal) as refusal:
+    with pytest.raises(BurstRefusedError) as refusal:
         run(fake, lambda client: client.post("dm:vesta", "again", []))
 
     assert str(refusal.value) == BURST_REFUSAL
@@ -237,6 +242,19 @@ def test_upload_opens_a_session_sends_every_chunk_in_order_then_completes(tmp_pa
     assert paths(fake, "POST") == ["/rooms/attachments", f"/rooms/attachments/{meta['id']}/complete"]
 
 
+def test_upload_declares_the_media_facts_it_is_given(tmp_path):
+    fake = FakeNode()
+    blob = tmp_path / "shot.png"
+    blob.write_bytes(b"\x89PNG")
+
+    meta = run(fake, lambda client: client.upload(blob, "image/png", {"width": 800, "height": 600}))
+
+    created = next(body for method, path, body in fake.requests if method == "POST" and path == "/rooms/attachments")
+    assert created == {"name": "shot.png", "mime": "image/png", "size": 4, "width": 800, "height": 600}
+    assert meta["width"] == 800
+    assert meta["height"] == 600
+
+
 def test_an_empty_file_uploads_with_no_chunk_at_all(tmp_path):
     fake = FakeNode()
     blob = tmp_path / "empty.txt"
@@ -249,17 +267,33 @@ def test_an_empty_file_uploads_with_no_chunk_at_all(tmp_path):
     assert fake.attachments[meta["id"]].finalized is True
 
 
-def test_upload_resumes_from_the_offset_a_conflict_names(tmp_path, monkeypatch):
+def test_upload_re_sends_from_the_staged_size_a_conflict_names(tmp_path, monkeypatch):
     monkeypatch.setattr(node_client, "UPLOAD_CHUNK_BYTES", 8)
     fake = FakeNode()
-    fake.conflict_next_chunk = True
+    fake.rewind_stage_to = 4
     blob = tmp_path / "clip.bin"
     blob.write_bytes(b"0123456789abcdefghij")
 
     meta = run(fake, lambda client: client.upload(blob, "application/octet-stream"))
 
     assert bytes(fake.attachments[meta["id"]].data) == b"0123456789abcdefghij"
-    assert [path.split("offset=")[1] for path in paths(fake, "PUT")] == ["0", "8", "16"]
+    assert [path.split("offset=")[1] for path in paths(fake, "PUT")] == ["0", "8", "4", "12"]
+
+
+def test_a_node_that_stages_nothing_ends_the_upload_instead_of_spinning(tmp_path, monkeypatch):
+    monkeypatch.setattr(node_client, "UPLOAD_CHUNK_BYTES", 8)
+    fake = FakeNode()
+    fake.stall_chunks = True
+    blob = tmp_path / "clip.bin"
+    blob.write_bytes(b"0123456789abcdefghij")
+
+    async def scenario(client):
+        return await asyncio.wait_for(client.upload(blob, "application/octet-stream"), timeout=5)
+
+    with pytest.raises(NodeError) as failure:
+        run(fake, scenario)
+
+    assert "no progress at offset 0" in str(failure.value)
 
 
 def test_upload_asks_for_the_staged_size_when_a_chunk_response_is_lost(tmp_path, monkeypatch):

@@ -69,15 +69,23 @@ class ImportOutcome(tp.TypedDict):
     skipped: int
 
 
+class UploadExtra(tp.TypedDict, total=False):
+    """What an upload declares beyond name, mime and size: the media facts a client renders from."""
+
+    width: int
+    height: int
+    duration_secs: float
+
+
 class NodeError(Exception):
     """The node could not be reached, or answered something this client cannot read."""
 
 
-class SpeakingRefusal(Exception):
+class SpeakingRefusedError(Exception):
     """The user is talking in that room, so the post was refused. Not a failure to retry."""
 
 
-class BurstRefusal(Exception):
+class BurstRefusedError(Exception):
     """The room holds too many agent messages since the user last spoke."""
 
 
@@ -92,10 +100,13 @@ def node_config_from_env(env: tp.Mapping[str, str]) -> NodeConfig | None:
 
 def new_session(config: NodeConfig) -> aiohttp.ClientSession:
     """The session every NodeClient runs on. An https node is vestad, whose certificate is self-signed
-    and so verifies nothing; a test dials plain http. The session sets no deadline, which is what keeps
-    the live socket open; each HTTP call passes NODE_TIMEOUT_SECS itself."""
+    and so verifies nothing; a test dials plain http. The session bounds the connect alone, so a node
+    that never answers the handshake falls into the replica's backoff instead of the OS deadline, while
+    reads stay unbounded and the live socket survives a quiet room. Each HTTP call passes
+    NODE_TIMEOUT_SECS itself."""
     checks_certificate = not config["base_url"].startswith(_HTTPS_PREFIX)
-    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=checks_certificate), timeout=aiohttp.ClientTimeout(total=None))
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=NODE_TIMEOUT_SECS)
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=checks_certificate), timeout=timeout)
 
 
 def _object(value: JsonValue, what: str) -> dict[str, JsonValue]:
@@ -162,9 +173,9 @@ def _answer(status: int, text: str, what: str) -> JsonValue:
         return payload
     reason = _reason(payload, status)
     if _refused_by_the_user(status, payload):
-        raise SpeakingRefusal(reason)
+        raise SpeakingRefusedError(reason)
     if status == _BURST_STATUS:
-        raise BurstRefusal(reason)
+        raise BurstRefusedError(reason)
     raise NodeError(f"{what}: {reason}")
 
 
@@ -312,16 +323,25 @@ class NodeClient:
             raise NodeError(f"PUT {path}: {_reason(payload, status)}")
         return _whole(_field(payload, "received", "chunk answer"), "received offset")
 
-    async def upload(self, path: pl.Path, mime: str) -> AttachmentMeta:
+    async def upload(self, path: pl.Path, mime: str, extra: UploadExtra | None = None) -> AttachmentMeta:
         """Move one local file into the node's attachment store: open the session, send the bytes in
         UPLOAD_CHUNK_BYTES pieces, finalize. The finalized metadata is what a message references."""
         size = (await asyncio.to_thread(path.stat)).st_size
-        created = await self._call("POST", "/rooms/attachments", body={"name": path.name, "mime": mime, "size": size})
+        declared: dict[str, JsonValue] = {"name": path.name, "mime": mime, "size": size}
+        if extra is not None:
+            declared.update(extra)
+        created = await self._call("POST", "/rooms/attachments", body=declared)
         attachment_id = _text(_field(created, "id", "attachment session"), "attachment id")
         offset = 0
         while offset < size:
             chunk = await asyncio.to_thread(_read_at, path, offset, UPLOAD_CHUNK_BYTES)
-            offset = await self._send_chunk(attachment_id, offset, chunk)
+            received = await self._send_chunk(attachment_id, offset, chunk)
+            # A node answering the very offset it was handed staged nothing and never will, so the loop
+            # would spin. A lower answer is the node naming where it really stands, which the next read
+            # resumes from.
+            if received == offset or received < 0:
+                raise NodeError(f"PUT /rooms/attachments/{attachment_id}/data: no progress at offset {offset}")
+            offset = received
         completed = await self._call("POST", f"/rooms/attachments/{attachment_id}/complete")
         return _attachment(_field(completed, "attachment", "attachment answer"))
 
