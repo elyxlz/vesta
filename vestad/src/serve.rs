@@ -2747,6 +2747,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/rooms/{id}/history", get(crate::chat::routes::history_handler))
         .route("/rooms/{id}/messages", post(crate::chat::routes::post_message_handler))
         .route("/rooms/{id}/messages/import", post(crate::chat::routes::import_handler))
+        .route("/rooms/ws", get(crate::chat::socket::rooms_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_chat,
