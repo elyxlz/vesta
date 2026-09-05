@@ -8,6 +8,7 @@ dependencies = []
 
 [project.scripts]
 browser = "vesta_browser.cli:main"
+browser-serve = "vesta_browser.serve:main"
 
 [dependency-groups]
 dev = [

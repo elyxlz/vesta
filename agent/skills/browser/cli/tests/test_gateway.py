@@ -1,19 +1,17 @@
 import asyncio
 import json
-import os
 import sys
 
 import pytest
 from vesta_browser import gateway
 
-from .fakes import write_gateway_fakes, write_script
+from .fakes import write_script
+from .hermetic import isolated_path
 
 
 @pytest.fixture
 def gateway_env(tmp_path, monkeypatch):
-    bin_dir = tmp_path / "bin"
-    write_gateway_fakes(bin_dir)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    isolated_path(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_KEYS", str(tmp_path / "keys.json"))
     monkeypatch.setenv("FAKE_REGISTER_LOG", str(tmp_path / "register.log"))
     monkeypatch.setenv("FAKE_PORT", "43210")

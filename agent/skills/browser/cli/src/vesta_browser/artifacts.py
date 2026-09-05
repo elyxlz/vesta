@@ -11,9 +11,8 @@ import datetime as dt
 import pathlib as pl
 import re
 import time
-import typing as tp
 
-from .protocol import ARTIFACT_MAX_BYTES, ARTIFACT_RETENTION_DAYS, Artifact
+from .protocol import ARTIFACT_MAX_BYTES, ARTIFACT_RETENTION_DAYS, Artifact, now_iso
 from .runtime_paths import Paths
 from .sessions import Session
 
@@ -36,15 +35,12 @@ def _mime(path: pl.Path) -> str | None:
     return None
 
 
-def _contained(path: pl.Path, session: Session) -> bool:
-    resolved = path.resolve()
-    return any(resolved.is_relative_to(root.resolve()) for root in (session.scratch_dir, session.artifact_dir))
-
-
 def _candidates(session: Session, stdout: str, started_at: float) -> list[pl.Path]:
+    """Every resolved path the exec may have written: printed on stdout, or new in the artifact dir.
+    The name tests come first, so a file already collected costs no stat."""
     printed = [pl.Path(match) for match in IMAGE_PATH_RE.findall(stdout)]
     present = [
-        path for path in session.artifact_dir.iterdir() if path.is_file() and not path.name.startswith(".") and not OWN_NAME_RE.match(path.name)
+        path for path in session.artifact_dir.iterdir() if not path.name.startswith(".") and not OWN_NAME_RE.match(path.name) and path.is_file()
     ]
     seen: dict[pl.Path, None] = {}
     for path in [*printed, *present]:
@@ -60,12 +56,13 @@ def _free_target(artifact_dir: pl.Path, stamp: str, ext: str) -> pl.Path:
     return target
 
 
-def collect(session: Session, stdout: str, started_at: float, now: tp.Callable[[], str]) -> tuple[list[Artifact], list[str]]:
+def collect(session: Session, stdout: str, started_at: float) -> tuple[list[Artifact], list[str]]:
     found: list[Artifact] = []
     warnings: list[str] = []
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    roots = (session.scratch_dir.resolve(), session.artifact_dir.resolve())
     for path in _candidates(session, stdout, started_at):
-        if not _contained(path, session):
+        if not any(path.is_relative_to(root) for root in roots):
             warnings.append(f"artifact_skipped: {path} is outside the session directories")
             continue
         mime = _mime(path)
@@ -79,7 +76,7 @@ def collect(session: Session, stdout: str, started_at: float, now: tp.Callable[[
         target = _free_target(session.artifact_dir, stamp, EXTENSION_FOR_MIME[mime])
         if path != target:
             path.replace(target)
-        found.append({"kind": "screenshot", "path": str(target), "mime_type": mime, "bytes": size, "captured_at": now()})
+        found.append({"kind": "screenshot", "path": str(target), "mime_type": mime, "bytes": size, "captured_at": now_iso()})
     return found, warnings
 
 

@@ -8,6 +8,7 @@ import time
 
 import pytest
 from vesta_browser import cli, handover, serve
+from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 
 
@@ -61,6 +62,31 @@ def test_exec_sends_the_request_and_prints_one_line(tmp_path, monkeypatch, capsy
     assert code == 0 and err == "" and out.count("\n") == 1
     assert seen["op"] == "exec" and seen["session"] == "research" and seen["mode"] == "stealth"
     assert seen["timeout_s"] == 42 and seen["code"] == "new_tab('x')\n" and seen["version"] == 1
+
+
+def test_an_out_of_range_timeout_still_answers_with_one_envelope(tmp_path, monkeypatch, capsys):
+    """The socket wait follows the daemon's clamp, since the OS refuses a negative timeout with a
+    ValueError that no envelope would otherwise carry."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    code = cli.main(["exec", "--timeout", "-60"])
+    out, err = capsys.readouterr()
+    envelope = json.loads(err)
+    assert code == 1 and out == "" and envelope["error"]["code"] == "daemon_down"
+
+
+@pytest.mark.parametrize(("requested", "clamped"), [(5000, p.EXEC_TIMEOUT_MAX_SECS), (42, 42), (-60, p.EXEC_TIMEOUT_MIN_SECS)])
+def test_the_exec_wait_covers_the_engine_start_budget_and_the_clamped_program_budget(monkeypatch, tmp_path, requested, clamped):
+    """A cold engine start runs inside the daemon's own budget before the program's; the client
+    waits past both, so a slow start answers instead of reading as a dead daemon."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(
+        cli, "send", lambda _p, _payload, timeout: seen.update(timeout=timeout) or serve.p.result(request_id="x", op="exec", ok=True)
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    assert cli.main(["exec", "--timeout", str(requested)]) == 0
+    assert seen["timeout"] == p.SESSION_START_BUDGET_SECS + clamped + cli.RPC_TIMEOUT_SLACK_SECS
 
 
 def test_exec_without_stealth_sends_a_null_mode(monkeypatch, tmp_path, capsys):

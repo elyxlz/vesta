@@ -81,6 +81,15 @@ def test_variables_do_not_survive_between_execs(worker):
     assert res["exit_code"] == 1 and "NameError" in res["stderr"]
 
 
+def test_a_program_that_exits_itself_reports_the_exit_it_asked_for(worker):
+    """`sys.exit(0)` is a clean end on the standard route's subprocess; the worker reports the same."""
+    ask, _, _ = worker
+    assert ask({"op": "exec", "code": "import sys; print('done'); sys.exit(0)"})["exit_code"] == 0
+    assert ask({"op": "exec", "code": "raise SystemExit(3)"})["exit_code"] == 3
+    res = ask({"op": "exec", "code": "import sys; sys.exit('AUTH_WALL: sign in first')"})
+    assert res["exit_code"] == 1 and res["stderr"].strip() == "AUTH_WALL: sign in first"
+
+
 def test_cdp_raises_a_capability_mismatch(worker):
     ask, _, _ = worker
     res = ask({"op": "exec", "code": "cdp('Page.navigate', url='x')"})

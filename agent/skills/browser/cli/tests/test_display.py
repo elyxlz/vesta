@@ -1,23 +1,18 @@
 import asyncio
-import os
 import pathlib as pl
 import shutil
 import socket
 import sys
-import tempfile
-import time
-import urllib.request
 
 import pytest
 from vesta_browser import display
 from vesta_browser.procs import KILL_GRACE_SECS, kill_group
 from vesta_browser.runtime_paths import load_paths
 
-from .fakes import write_display_fakes
+from .hermetic import display_rig
+from .waiting import cmdline_of, fetch, pid_alive, wait_for_recorded_pids, wait_until_all_dead
 
-PID_POLL_SECS = 0.05
 PID_GONE_TIMEOUT_SECS = 10.0
-HTTP_TIMEOUT_SECS = 5
 WEB_PORT_FIRST = 6080
 # Above DISPLAY_LAST, so no real claim and no other test can be holding this abstract name.
 ABSTRACT_ONLY_DISPLAY = 1234
@@ -26,34 +21,13 @@ ABSTRACT_ONLY_DISPLAY = 1234
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     """Paths whose noVNC tree and four binaries sit under tmp_path, with the X sockets under /tmp."""
-    bin_dir = tmp_path / "bin"
-    # AF_UNIX addresses cap at 108 bytes and a pytest tmp_path plus the X socket name can pass it.
-    x11_dir = pl.Path(tempfile.mkdtemp(dir="/tmp"))
-    write_display_fakes(bin_dir, x11_dir)
-    novnc = tmp_path / "novnc"
-    (novnc / "core").mkdir(parents=True)
-    (novnc / "core" / "rfb.js").write_text("export default class RFB {}\n")
-    (novnc / "vendor").mkdir()
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    yield load_paths({"VESTA_BROWSER_NOVNC_DIR": str(novnc), "VESTA_BROWSER_X11_DIR": str(x11_dir)}, tmp_path)
+    env, x11_dir = display_rig(tmp_path, monkeypatch, novnc=True, camoufox=False)
+    yield load_paths(env, tmp_path)
     shutil.rmtree(x11_dir, ignore_errors=True)
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
 def _await_gone(pids: list[int]) -> bool:
-    deadline = time.monotonic() + PID_GONE_TIMEOUT_SECS
-    while time.monotonic() < deadline:
-        if not any(_alive(pid) for pid in pids):
-            return True
-        time.sleep(PID_POLL_SECS)
-    return not any(_alive(pid) for pid in pids)
+    return asyncio.run(wait_until_all_dead(pids, PID_GONE_TIMEOUT_SECS))
 
 
 def _listening_x_socket(path: pl.Path) -> socket.socket:
@@ -61,15 +35,6 @@ def _listening_x_socket(path: pl.Path) -> socket.socket:
     sock.bind(str(path))
     sock.listen(8)
     return sock
-
-
-def _cmdline(pid: int) -> list[str]:
-    return pl.Path(f"/proc/{pid}/cmdline").read_bytes().decode().split("\0")
-
-
-def _fetch(url: str) -> tuple[int, str]:
-    with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT_SECS) as answer:
-        return answer.status, answer.read().decode()
 
 
 async def _full_stack(paths) -> tuple[display.SessionDisplay, display.StreamStack]:
@@ -95,8 +60,7 @@ async def _full_stack(paths) -> tuple[display.SessionDisplay, display.StreamStac
 def test_display_readiness_reports_missing_binaries(tmp_path, monkeypatch):
     (tmp_path / "empty").mkdir()
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
-    paths = load_paths({"VESTA_BROWSER_NOVNC_DIR": str(tmp_path / "novnc")}, tmp_path)
-    assert display.display_readiness(paths) == {"ready": False, "missing": ["Xvfb", "openbox"]}
+    assert display.display_readiness() == {"ready": False, "missing": ["Xvfb", "openbox"]}
 
 
 def test_stream_readiness_reports_missing_binaries_and_novnc(tmp_path, monkeypatch):
@@ -107,7 +71,7 @@ def test_stream_readiness_reports_missing_binaries_and_novnc(tmp_path, monkeypat
 
 
 def test_display_readiness_is_ready_with_the_fakes(rig):
-    assert display.display_readiness(rig) == {"ready": True, "missing": []}
+    assert display.display_readiness() == {"ready": True, "missing": []}
 
 
 def test_stream_readiness_is_ready_with_the_fakes_and_novnc(rig):
@@ -192,7 +156,7 @@ def test_x11vnc_retries_without_shm_when_the_first_attempt_dies(rig):
     async def run():
         process = await display.start_x11vnc(":99", port)
         try:
-            return process.pid, _cmdline(process.pid), display.port_serving(port)
+            return process.pid, cmdline_of(process.pid), display.port_serving(port)
         finally:
             await kill_group(process, KILL_GRACE_SECS)
 
@@ -226,7 +190,7 @@ def test_build_webroot_replaces_whatever_was_there(rig):
 
 def test_build_webroot_without_novnc_raises(rig):
     (rig.novnc_dir / "core" / "rfb.js").unlink()
-    with pytest.raises(display.DisplayError, match="noVNC"):
+    with pytest.raises(display.DisplayError, match="novnc"):
         display.build_webroot(rig)
 
 
@@ -237,8 +201,8 @@ def test_websockify_serves_the_page_on_its_port(rig):
     async def run():
         process = await display.start_websockify(webroot, port, 5999, rig.log)
         try:
-            page = await asyncio.to_thread(_fetch, f"http://127.0.0.1:{port}/handover.html")
-            return process.pid, _cmdline(process.pid), page
+            page = await asyncio.to_thread(fetch, f"http://127.0.0.1:{port}/handover.html")
+            return process.pid, cmdline_of(process.pid), page
         finally:
             await kill_group(process, KILL_GRACE_SECS)
 
@@ -249,13 +213,21 @@ def test_websockify_serves_the_page_on_its_port(rig):
     assert _await_gone([pid])
 
 
-def _wait_for_recorded_pids(pids_file: pl.Path, wanted: int) -> None:
-    deadline = time.monotonic() + PID_GONE_TIMEOUT_SECS
-    while time.monotonic() < deadline:
-        if pids_file.exists() and len(pids_file.read_text().split()) >= wanted:
-            return
-        time.sleep(PID_POLL_SECS)
-    raise AssertionError(f"{pids_file} never recorded {wanted} pids")
+def test_websockify_refuses_a_port_something_else_already_serves(rig):
+    """A bridge a killed daemon left behind answers on the port vestad hands out again; a new
+    websockify would die on the bind while the port probe read the stranger as ready."""
+    webroot = display.build_webroot(rig)
+    port = display.free_port(WEB_PORT_FIRST)
+    squatter = socket.socket()
+    squatter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    squatter.bind(("127.0.0.1", port))
+    squatter.listen(1)
+    try:
+        with pytest.raises(display.DisplayError, match="does not own"):
+            asyncio.run(display.start_websockify(webroot, port, 5999, rig.log))
+    finally:
+        squatter.close()
+    assert not (rig.x11_socket_dir / "pids").exists()
 
 
 def test_start_session_display_returns_a_display_this_container_serves(rig):
@@ -265,7 +237,7 @@ def test_start_session_display_returns_a_display_this_container_serves(rig):
         session_display = await display.start_session_display(rig)
         try:
             serving = display.own_display_serving(rig, display.display_number(session_display.display))
-            await asyncio.to_thread(_wait_for_recorded_pids, pids_file, 2)
+            await wait_for_recorded_pids(pids_file, 2, PID_GONE_TIMEOUT_SECS)
             return session_display, serving
         finally:
             await display.stop_session_display(rig, session_display)
@@ -352,8 +324,8 @@ def test_stop_stack_ends_the_stream_and_leaves_the_display_alive(rig):
         display_pids = [session_display.xvfb.pid, session_display.openbox.pid]
         serving = display.port_serving(stack.web_port) and display.port_serving(stack.vnc_port)
         await display.stop_stack(stack)
-        stream_gone = _await_gone(stream_pids)
-        display_still_alive = all(_alive(pid) for pid in display_pids)
+        stream_gone = await wait_until_all_dead(stream_pids, PID_GONE_TIMEOUT_SECS)
+        display_still_alive = all(pid_alive(pid) for pid in display_pids)
         await display.stop_session_display(rig, session_display)
         return serving, stream_gone, display_still_alive, display_pids
 

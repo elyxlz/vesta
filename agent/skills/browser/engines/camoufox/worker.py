@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import functools
 import io
 import json
 import os
@@ -19,33 +20,23 @@ import time
 import traceback
 import typing as tp
 
-PORTABLE_HELPERS: tuple[str, ...] = (
-    "new_tab",
-    "goto_url",
-    "page_info",
-    "current_tab",
-    "list_tabs",
-    "switch_tab",
-    "close_tab",
-    "ensure_real_tab",
-    "click_at_xy",
-    "type_text",
-    "fill_input",
-    "press_key",
-    "scroll",
-    "js",
-    "wait",
-    "wait_for_load",
-    "wait_for_element",
-    "wait_for_network_idle",
-    "capture_screenshot",
-    "upload_file",
-)
 MODIFIER_NAMES = ((1, "Alt"), (2, "Control"), (4, "Meta"), (8, "Shift"))
 PAGE_INFO_JS = (
     "() => ({url: location.href, title: document.title, w: innerWidth, h: innerHeight, "
     "sx: scrollX, sy: scrollY, pw: document.documentElement.scrollWidth, ph: document.documentElement.scrollHeight})"
 )
+
+
+class ExecResult(tp.TypedDict):
+    stdout: str
+    stderr: str
+    exit_code: int
+    capability_mismatch: str | None
+    page: dict[str, str] | None
+
+
+Payload = ExecResult | dict[str, bool] | dict[str, dict[str, str] | None]
+TabTarget = str | dict[str, str]
 
 
 class MouseLike(tp.Protocol):
@@ -120,7 +111,7 @@ def _tab(state: WorkerState, page: PageLike) -> dict[str, str]:
     return {"targetId": tab_id, "target_id": tab_id, "url": page.url, "title": page.title()}
 
 
-def _resolve(state: WorkerState, target: object) -> PageLike:
+def _resolve(state: WorkerState, target: TabTarget) -> PageLike:
     tab_id = target["target_id"] if isinstance(target, dict) else str(target)
     return state.tabs[tab_id]
 
@@ -149,7 +140,7 @@ def _list_tabs(state: WorkerState, include_chrome: bool = True) -> list[dict[str
     return [_tab(state, page) for page in state.context.pages if include_chrome or not page.url.startswith("about:")]
 
 
-def _switch_tab(state: WorkerState, target: object, activate: bool = False) -> str:
+def _switch_tab(state: WorkerState, target: TabTarget, activate: bool = False) -> str:
     page = _resolve(state, target)
     _set_page(state, page)
     if activate:
@@ -157,7 +148,7 @@ def _switch_tab(state: WorkerState, target: object, activate: bool = False) -> s
     return _tab_id(state, page)
 
 
-def _close_tab(state: WorkerState, target: object | None = None) -> None:
+def _close_tab(state: WorkerState, target: TabTarget | None = None) -> None:
     page = state.page if target is None else _resolve(state, target)
     page.close()
     if page is state.page:
@@ -204,28 +195,27 @@ def _wait(seconds: float = 1.0) -> None:
     time.sleep(seconds)
 
 
-def _wait_for_load(state: WorkerState, timeout: float = 15.0) -> bool:
+def _settles(action: tp.Callable[[], None]) -> bool:
+    """Whether a Playwright wait finishes; its own TimeoutError subclass is the False answer."""
     try:
-        state.page.wait_for_load_state("load", timeout=timeout * 1000)
-    except Exception:  # Playwright raises its own TimeoutError subclass
+        action()
+    except Exception:
         return False
     return True
+
+
+def _wait_for_load(state: WorkerState, timeout: float = 15.0) -> bool:
+    return _settles(functools.partial(state.page.wait_for_load_state, "load", timeout=timeout * 1000))
 
 
 def _wait_for_element(state: WorkerState, selector: str, timeout: float = 10.0, visible: bool = False) -> bool:
-    try:
-        state.page.wait_for_selector(selector, state="visible" if visible else "attached", timeout=timeout * 1000)
-    except Exception:
-        return False
-    return True
+    return _settles(
+        functools.partial(state.page.wait_for_selector, selector, state="visible" if visible else "attached", timeout=timeout * 1000)
+    )
 
 
 def _wait_for_network_idle(state: WorkerState, timeout: float = 10.0, idle_ms: int = 500) -> bool:
-    try:
-        state.page.wait_for_load_state("networkidle", timeout=timeout * 1000)
-    except Exception:
-        return False
-    return True
+    return _settles(functools.partial(state.page.wait_for_load_state, "networkidle", timeout=timeout * 1000))
 
 
 def _capture_screenshot(state: WorkerState, path: str | None = None, full: bool = False, max_dim: int | None = None) -> str:
@@ -243,31 +233,34 @@ def _cdp(*_args: object, **_kwargs: object) -> tp.NoReturn:
     raise CapabilityMismatchError("cdp")
 
 
+# The portable helpers that take the worker state first; `wait` alone needs none of it.
+HELPERS: dict[str, tp.Callable[..., object]] = {
+    "new_tab": _new_tab,
+    "goto_url": _goto_url,
+    "page_info": _page_info,
+    "current_tab": _current_tab,
+    "list_tabs": _list_tabs,
+    "switch_tab": _switch_tab,
+    "close_tab": _close_tab,
+    "ensure_real_tab": _ensure_real_tab,
+    "click_at_xy": _click_at_xy,
+    "type_text": _type_text,
+    "fill_input": _fill_input,
+    "press_key": _press_key,
+    "scroll": _scroll,
+    "js": _js,
+    "wait_for_load": _wait_for_load,
+    "wait_for_element": _wait_for_element,
+    "wait_for_network_idle": _wait_for_network_idle,
+    "capture_screenshot": _capture_screenshot,
+    "upload_file": _upload_file,
+}
+
+
 def build_globals(state: WorkerState) -> dict[str, object]:
-    """One binding per portable helper, `state` closed over so the exec'd code sees plain functions."""
-    bound: dict[str, tp.Callable[..., object]] = {
-        "new_tab": lambda *a, **kw: _new_tab(state, *a, **kw),
-        "goto_url": lambda *a, **kw: _goto_url(state, *a, **kw),
-        "page_info": lambda *a, **kw: _page_info(state, *a, **kw),
-        "current_tab": lambda *a, **kw: _current_tab(state, *a, **kw),
-        "list_tabs": lambda *a, **kw: _list_tabs(state, *a, **kw),
-        "switch_tab": lambda *a, **kw: _switch_tab(state, *a, **kw),
-        "close_tab": lambda *a, **kw: _close_tab(state, *a, **kw),
-        "ensure_real_tab": lambda *a, **kw: _ensure_real_tab(state, *a, **kw),
-        "click_at_xy": lambda *a, **kw: _click_at_xy(state, *a, **kw),
-        "type_text": lambda *a, **kw: _type_text(state, *a, **kw),
-        "fill_input": lambda *a, **kw: _fill_input(state, *a, **kw),
-        "press_key": lambda *a, **kw: _press_key(state, *a, **kw),
-        "scroll": lambda *a, **kw: _scroll(state, *a, **kw),
-        "js": lambda *a, **kw: _js(state, *a, **kw),
-        "wait": _wait,
-        "wait_for_load": lambda *a, **kw: _wait_for_load(state, *a, **kw),
-        "wait_for_element": lambda *a, **kw: _wait_for_element(state, *a, **kw),
-        "wait_for_network_idle": lambda *a, **kw: _wait_for_network_idle(state, *a, **kw),
-        "capture_screenshot": lambda *a, **kw: _capture_screenshot(state, *a, **kw),
-        "upload_file": lambda *a, **kw: _upload_file(state, *a, **kw),
-    }
-    return {**bound, "cdp": _cdp, "context": state.context, "page": state.page, "__builtins__": __builtins__}
+    """One binding per portable helper, `state` bound in so the exec'd code sees plain functions."""
+    bound = {name: functools.partial(helper, state) for name, helper in HELPERS.items()}
+    return {**bound, "wait": _wait, "cdp": _cdp, "context": state.context, "page": state.page, "__builtins__": __builtins__}
 
 
 def observe(state: WorkerState) -> dict[str, str] | None:
@@ -279,7 +272,17 @@ def observe(state: WorkerState) -> dict[str, str] | None:
         return None
 
 
-def run_exec(state: WorkerState, code: str) -> dict[str, object]:
+def _exit_status(code: object) -> int:
+    """What the interpreter would exit with: None is 0, an int is itself, anything else prints and is 1."""
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    print(code, file=sys.stderr)
+    return 1
+
+
+def run_exec(state: WorkerState, code: str) -> ExecResult:
     out, err = io.StringIO(), io.StringIO()
     exit_code, mismatch = 0, None
     state.exec_globals = build_globals(state)
@@ -289,13 +292,16 @@ def run_exec(state: WorkerState, code: str) -> dict[str, object]:
         except CapabilityMismatchError as exc:
             exit_code, mismatch = 1, exc.operation
             print(str(exc), file=sys.stderr)
+        except SystemExit as exc:
+            # A program that ends itself is a process exit on the standard route; the same here.
+            exit_code = _exit_status(exc.code)
         except BaseException:
             exit_code = 1
             traceback.print_exc()
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "exit_code": exit_code, "capability_mismatch": mismatch, "page": observe(state)}
 
 
-def emit(channel: tp.TextIO, payload: dict[str, object]) -> None:
+def emit(channel: tp.TextIO, payload: Payload) -> None:
     channel.write(json.dumps(payload) + "\n")
     channel.flush()
 
@@ -329,18 +335,17 @@ def main() -> int:
     # ff_version names the bundle's Firefox major, so the library never consults its own managed
     # install; excluding uBlock Origin keeps it from downloading an addon at launch.
     width, height = args.window.split("x")
-    options: dict[str, object] = {
-        "persistent_context": True,
-        "user_data_dir": args.profile,
-        "executable_path": args.executable,
-        "config": config,
-        "headless": False,
-        "ff_version": args.ff_version,
-        "exclude_addons": [DefaultAddons.UBO],
-        "i_know_what_im_doing": True,
-        "window": (int(width), int(height)),
-    }
-    with Camoufox(**options) as context:
+    with Camoufox(
+        persistent_context=True,
+        user_data_dir=args.profile,
+        executable_path=args.executable,
+        config=config,
+        headless=False,
+        ff_version=args.ff_version,
+        exclude_addons=[DefaultAddons.UBO],
+        i_know_what_im_doing=True,
+        window=(int(width), int(height)),
+    ) as context:
         state = WorkerState(context, pl.Path(args.artifacts))
         _set_page(state, context.pages[0] if context.pages else context.new_page())
         emit(channel, {"ready": True})

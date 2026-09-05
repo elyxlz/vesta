@@ -88,7 +88,7 @@ User message, notification, or scheduled work
         thin CLI (stdlib)  ── one JSON request ──▶  ~/agent/data/browser/browser.sock (0600)
                                                           |
                                                           v
-                                        browser daemon (`browser serve`)
+                                        browser daemon (`browser-serve`)
                                         validation · session table · engine routing
                                         process supervision · artifacts · timeouts
                                         page observation · doctor · handover
@@ -162,7 +162,7 @@ browser stop-all
 browser handover start [--url <url>] [--session <name>] [--stealth] [--minutes <n>]
 browser handover status
 browser handover stop
-browser serve                                                    # internal foreground entry
+browser-serve                                                    # internal foreground entry, spawned by `browser daemon start`
 ```
 
 Rules:

@@ -1,17 +1,14 @@
 import asyncio
 import json
-import os
 import signal
 import sys
 
 import pytest
 from vesta_browser import chromium, sessions
 from vesta_browser.runtime_paths import load_paths
-from vesta_browser.runtimes import HeadedDisplay
 
-from .fakes import write_fakes
-
-HEADED = HeadedDisplay(":101", 1280, 800)
+from .fakes import HEADED, write_fakes
+from .waiting import wait_for_file, wait_until_dead
 
 
 @pytest.fixture
@@ -23,15 +20,12 @@ def rig(tmp_path):
     return paths, session
 
 
-def _run(coro):
-    return asyncio.run(coro)
-
-
 def test_launch_argv_is_headed_sandboxless_and_profile_scoped(rig):
     paths, session = rig
     argv = chromium.launch_argv(paths, session, HEADED)
     assert argv[0] == str(paths.chromium_exe)
     assert "--headless=new" not in argv
+    assert "--disable-blink-features=AutomationControlled" in argv
     assert "--window-size=1280,800" in argv and "--window-position=0,0" in argv
     assert "--no-sandbox" in argv and "--remote-debugging-port=0" in argv
     assert f"--user-data-dir={session.profile_dir}" in argv
@@ -73,7 +67,7 @@ def test_start_pins_the_profile_to_open_a_new_tab_page_and_keeps_its_other_prefs
         runtime = await chromium.start(session, paths, headed=HEADED)
         await chromium.stop(runtime, session)
 
-    _run(run())
+    asyncio.run(run())
     written = json.loads(prefs.read_text())
     assert written["session"] == {"other": 1, "restore_on_startup": 5} and written["profile"] == {"exit_type": "SessionEnded"}
 
@@ -90,7 +84,7 @@ def test_start_discovers_the_devtools_port_and_exec_runs_the_child(rig):
             await chromium.stop(runtime, session)
         return runtime, outcome, page
 
-    runtime, outcome, page = _run(run())
+    runtime, outcome, page = asyncio.run(run())
     assert runtime.port > 0 and outcome.exit_code == 0 and not outcome.timed_out
     env_seen = json.loads(outcome.stdout.strip().splitlines()[-1])
     assert env_seen["BU_CDP_URL"] == f"http://127.0.0.1:{runtime.port}"
@@ -116,7 +110,7 @@ def test_timeout_kills_the_child_and_keeps_the_browser(rig):
             await chromium.stop(runtime, session)
         return outcome, alive
 
-    outcome, alive = _run(run())
+    outcome, alive = asyncio.run(run())
     assert outcome.timed_out is True and alive is True
 
 
@@ -130,7 +124,7 @@ def test_a_failing_child_reports_its_exit_code_and_stderr(rig):
         finally:
             await chromium.stop(runtime, session)
 
-    outcome = _run(run())
+    outcome = asyncio.run(run())
     assert outcome.exit_code == 1 and "boom" in outcome.stderr
 
 
@@ -138,7 +132,7 @@ def test_start_fails_engine_unavailable_when_the_binary_is_missing(tmp_path):
     paths = load_paths({"VESTA_BROWSER_CHROMIUM": str(tmp_path / "nope")}, tmp_path)
     session = sessions.resolve_session(sessions.load_table(paths), "research", None)
     with pytest.raises(chromium.p.BrowserError) as excinfo:
-        _run(chromium.start(session, paths, headed=HEADED))
+        asyncio.run(chromium.start(session, paths, headed=HEADED))
     assert excinfo.value.err["code"] == "engine_unavailable" and excinfo.value.err["phase"] == "launch"
 
 
@@ -153,7 +147,7 @@ def test_observe_returns_unavailable_when_a_target_entry_is_malformed(rig):
         finally:
             await chromium.stop(runtime, session)
 
-    assert _run(run()) == {"state": "unavailable"}
+    assert asyncio.run(run()) == {"state": "unavailable"}
 
 
 def test_start_kills_chromium_when_cancelled_before_devtools_is_ready(rig, monkeypatch):
@@ -164,29 +158,14 @@ def test_start_kills_chromium_when_cancelled_before_devtools_is_ready(rig, monke
 
     async def run():
         task = asyncio.ensure_future(chromium.start(session, paths, headed=HEADED))
-        loop = asyncio.get_running_loop()
-        pid_deadline = loop.time() + 5
-        while True:
-            if pid_file.is_file():
-                break
-            if loop.time() > pid_deadline:
-                raise TimeoutError("fake chromium never wrote fake.pid")
-            await asyncio.sleep(0.05)
+        await wait_for_file(pid_file)
         pid = int(pid_file.read_text())
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        death_deadline = loop.time() + 2
-        while True:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                return True
-            if loop.time() > death_deadline:
-                return False
-            await asyncio.sleep(0.05)
+        return await wait_until_dead(pid, 2)
 
-    assert _run(run()) is True
+    assert asyncio.run(run()) is True
 
 
 async def _spawn_marked(marker: str) -> asyncio.subprocess.Process:
@@ -212,7 +191,7 @@ def test_stop_kills_the_harness_daemon_the_record_names_and_drops_the_record(rig
         await asyncio.wait_for(harness.wait(), 5)
         return harness.returncode, record.exists()
 
-    returncode, record_kept = _run(run())
+    returncode, record_kept = asyncio.run(run())
     assert returncode == -signal.SIGTERM
     assert record_kept is False
 
@@ -230,7 +209,7 @@ def test_stop_leaves_a_recycled_pid_alone(rig):
         await stranger.wait()
         return survived
 
-    assert _run(run()) is True
+    assert asyncio.run(run()) is True
 
 
 def test_start_passes_the_display_to_the_browser_process(rig):
@@ -243,5 +222,5 @@ def test_start_passes_the_display_to_the_browser_process(rig):
         finally:
             await chromium.stop(runtime, session)
 
-    env_seen = _run(run())
+    env_seen = asyncio.run(run())
     assert env_seen["DISPLAY"] == ":101"

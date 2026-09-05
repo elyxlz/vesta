@@ -7,18 +7,20 @@ set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Every apt package this box lacks, gathered first so one update and one install cover them all.
+packages=()
 if ! command -v chromium >/dev/null 2>&1; then
+  packages+=(chromium)
+fi
+if ! command -v Xvfb >/dev/null 2>&1 || ! command -v openbox >/dev/null 2>&1 \
+  || ! command -v x11vnc >/dev/null 2>&1 || ! command -v websockify >/dev/null 2>&1 \
+  || [ ! -f /usr/share/novnc/core/rfb.js ]; then
+  packages+=(xvfb openbox x11vnc novnc)
+fi
+if [ "${#packages[@]}" -gt 0 ]; then
   apt-get update
-  apt-get install -y --no-install-recommends chromium
+  apt-get install -y --no-install-recommends "${packages[@]}"
   rm -rf /var/lib/apt/lists/*
 fi
 
 python3 "$SKILL_DIR/cli/src/vesta_browser/camoufox_install.py"
-
-if ! command -v Xvfb >/dev/null 2>&1 || ! command -v openbox >/dev/null 2>&1 \
-  || ! command -v x11vnc >/dev/null 2>&1 || ! command -v websockify >/dev/null 2>&1 \
-  || [ ! -f /usr/share/novnc/core/rfb.js ]; then
-  apt-get update
-  apt-get install -y --no-install-recommends xvfb openbox x11vnc novnc
-  rm -rf /var/lib/apt/lists/*
-fi

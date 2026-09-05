@@ -7,6 +7,7 @@ because a fleet upgrade never reruns the Dockerfile. Idempotent: an installed ta
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib as pl
 import platform
@@ -15,7 +16,6 @@ import sys
 import typing as tp
 import urllib.request
 import zipfile
-from hashlib import sha256
 
 CAMOUFOX_RELEASE_TAG = "v150.0.2-beta.25"
 # arm64 and x86_64 assets carry different build numbers within one release, so pin
@@ -34,11 +34,8 @@ Downloader = tp.Callable[[str, pl.Path], None]
 
 
 def _verify_sha256(path: pl.Path, expected: str) -> None:
-    digest = sha256()
     with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(DOWNLOAD_CHUNK), b""):
-            digest.update(chunk)
-    actual = digest.hexdigest()
+        actual = hashlib.file_digest(f, "sha256").hexdigest()
     if actual != expected:
         raise RuntimeError(f"Camoufox download sha256 mismatch: expected {expected}, got {actual}")
 

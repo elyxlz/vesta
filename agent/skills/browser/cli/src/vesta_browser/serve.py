@@ -1,6 +1,6 @@
 """The browser daemon: one unix socket, one JSON line per request, one owner for every browser decision.
 
-`browser daemon start` runs `browser serve` detached; nothing else launches this. Handlers return a
+`browser daemon start` runs `browser-serve` detached; nothing else launches this. Handlers return a
 `protocol.Result`, and a `BrowserError` raised anywhere inside a handler becomes the failed result
 for that request alone.
 """
@@ -14,7 +14,6 @@ import logging
 import os
 import pathlib as pl
 import signal
-import socket
 import sys
 import time
 import typing as tp
@@ -22,11 +21,11 @@ import typing as tp
 from . import artifacts, doctor, gateway, handover
 from . import protocol as p
 from . import sessions as sessions_mod
-from .daemon_state import State, routes
+from .daemon_state import ENGINES, State, identity, own, routes
 from .procs import KILL_GRACE_SECS, kill_group
 from .runtime_paths import Paths, load_paths
-from .runtimes import ExecOutcome
-from .session_control import ENGINES, ensure_running, stop_session
+from .runtimes import ExecOutcome, elapsed_ms
+from .session_control import ensure_running, settle, stop_session
 
 logger = logging.getLogger(__name__)
 IDLE_SWEEP_SECS = 60
@@ -44,11 +43,11 @@ HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
 MIN_SESSION_BUDGET_SECS = 1.0
 STARTUP_DEREGISTER_TIMEOUT_SECS = 5.0
+READ_CHUNK_BYTES = 1 << 16
 
 
 async def op_status(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
-    data: p.JsonValue = {"protocol_version": p.PROTOCOL_VERSION, "pid": os.getpid(), "socket": str(state.paths.socket)}
-    return p.result(request_id=request_id, op="status", ok=True, data=data)
+    return p.result(request_id=request_id, op="status", ok=True, data=identity(state.paths))
 
 
 async def op_engines(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
@@ -62,18 +61,13 @@ def _validate_exec(request: dict[str, p.JsonValue]) -> tuple[str, p.Mode | None,
         raise p.BrowserError(p.invalid("code is empty"))
     if len(code.encode()) > p.CODE_MAX_BYTES:
         raise p.BrowserError(p.invalid(f"code exceeds {p.CODE_MAX_BYTES} bytes"))
-    session = request["session"] if "session" in request else p.DEFAULT_SESSION
-    if not isinstance(session, str):
-        raise p.BrowserError(p.invalid("session must be a string"))
-    mode = request["mode"] if "mode" in request else None
-    if mode not in (None, "standard", "stealth"):
-        raise p.BrowserError(p.invalid("mode must be standard, stealth, or null"))
+    session, mode = p.read_session_mode(request)
     raw_timeout = request["timeout_s"] if "timeout_s" in request else p.EXEC_TIMEOUT_DEFAULT_SECS
     if not isinstance(raw_timeout, int):
         raise p.BrowserError(p.invalid("timeout_s must be an integer"))
-    timeout = min(max(raw_timeout, p.EXEC_TIMEOUT_MIN_SECS), p.EXEC_TIMEOUT_MAX_SECS)
+    timeout = p.clamp_timeout(raw_timeout)
     warnings = ["timeout_clamped"] if timeout != raw_timeout else []
-    return session, tp.cast(p.Mode | None, mode), timeout, code, warnings
+    return session, mode, timeout, code, warnings
 
 
 def _outcome_error(outcome: ExecOutcome, session: sessions_mod.Session) -> p.Error | None:
@@ -107,33 +101,23 @@ def _outcome_error(outcome: ExecOutcome, session: sessions_mod.Session) -> p.Err
     return None
 
 
-async def _run_exec(state: State, session: sessions_mod.Session, request_id: str, code: str, timeout: int) -> tuple[ExecOutcome, float]:
-    """Spawns the engine exec as an owned, cancellable task. The `finally` is the one place session
-    state is restored, so a cancellation, a timeout, or any other exception all leave the session
-    usable again instead of stuck `busy`: only a Camoufox restart-needed outcome stays stopped.
+async def _run_exec(state: State, session: sessions_mod.Session, request_id: str, code: str, timeout: int) -> ExecOutcome:
+    """Spawns the engine exec as an owned, cancellable task. The `finally` settles the session
+    whatever happened, so a cancellation, a timeout, or any other exception all leave it usable
+    again instead of stuck `busy`; an engine that reaped its own runtime leaves it `stopped`.
     """
     assert session.runtime is not None
     engine = ENGINES[session.engine]
-    started_at = time.time()
+    started = time.monotonic()
     task = asyncio.ensure_future(engine.exec_code(session.runtime, session, state.paths, code, timeout))
     state.inflight[request_id] = task
-    outcome: ExecOutcome | None = None
     try:
-        outcome = await task
-        return outcome, started_at
+        return await task
     except asyncio.CancelledError:
-        outcome = ExecOutcome("", "", None, int((time.time() - started_at) * 1000), cancelled=True)
-        return outcome, started_at
+        return ExecOutcome("", "", None, elapsed_ms(started), cancelled=True)
     finally:
         state.inflight.pop(request_id, None)
-        session.request_id = None
-        needs_restart = outcome is not None and session.engine == "camoufox" and (outcome.timed_out or "worker_restarted" in outcome.warnings)
-        if needs_restart:
-            await stop_session(state.paths, session, force=True)
-            state.restart_pending.add(session.name)
-        else:
-            sessions_mod.mark(session, "ready")
-        sessions_mod.touch(state.table, session)
+        await settle(state, session)
 
 
 async def _finish_exec(
@@ -142,10 +126,10 @@ async def _finish_exec(
     """Observes the page, collects artifacts, and builds the exec envelope from a terminal outcome."""
     engine = ENGINES[session.engine]
     page = await engine.observe(session.runtime) if session.runtime is not None else p.page_unavailable()
-    found, artifact_warnings = artifacts.collect(session, outcome.stdout, started_at, now=p.now_iso)
+    found, artifact_warnings = await asyncio.to_thread(artifacts.collect, session, outcome.stdout, started_at)
     stdout, cut_out = p.truncate(outcome.stdout, p.STDOUT_CAP_BYTES)
     stderr, cut_err = p.truncate(outcome.stderr, p.STDERR_CAP_BYTES)
-    warnings = [*warnings, *outcome.warnings, *artifact_warnings, *(["output_truncated"] if cut_out or cut_err else [])]
+    warnings = [*warnings, *artifact_warnings, *(["output_truncated"] if cut_out or cut_err else [])]
     err = _outcome_error(outcome, session)
     if err is not None:
         state.last_error = err
@@ -175,27 +159,26 @@ async def op_exec(state: State, request_id: str, request: dict[str, p.JsonValue]
                 suggested_action="wait for browser handover stop",
             )
         )
-    if session.state in ("busy", "starting"):
-        raise p.BrowserError(p.invalid(f"session {name!r} is {session.state}; retry once the current request finishes"))
-    warnings += await ensure_running(state, session)
-    sessions_mod.mark(session, "busy")
-    session.request_id = request_id
-    outcome, started_at = await _run_exec(state, session, request_id, code, timeout)
+    try:
+        warnings += await asyncio.wait_for(ensure_running(state, session), p.SESSION_START_BUDGET_SECS)
+    except TimeoutError as exc:
+        raise p.BrowserError(p.unavailable(f"the {session.engine} engine did not start within {p.SESSION_START_BUDGET_SECS}s")) from exc
+    session.state = "busy"
+    started_at = time.time()
+    outcome = await _run_exec(state, session, request_id, code, timeout)
     return await _finish_exec(state, session, request_id, outcome, started_at, warnings)
 
 
 async def op_cancel(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:
     target = str(request["target_request_id"]) if "target_request_id" in request else ""
     task = state.inflight.pop(target, None)
-    if task is None:
-        return p.result(request_id=request_id, op="cancel", ok=True, data={"cancelled": False})
-    task.cancel()
-    return p.result(request_id=request_id, op="cancel", ok=True, data={"cancelled": True})
+    if task is not None:
+        task.cancel()
+    return p.result(request_id=request_id, op="cancel", ok=True, data={"cancelled": task is not None})
 
 
 async def op_sessions(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
-    listing: p.JsonValue = [dict(sessions_mod.info(s)) for s in state.table.sessions.values()]
-    return p.result(request_id=request_id, op="sessions", ok=True, data={"sessions": listing})
+    return p.result(request_id=request_id, op="sessions", ok=True, data={"sessions": sessions_mod.listing(state.table)})
 
 
 async def op_session_stop(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:
@@ -261,17 +244,40 @@ async def handle_request(state: State, request: dict[str, p.JsonValue]) -> p.Res
         return p.result(request_id=request_id, op=op, ok=False, err=err)
 
 
+async def _drain_line(reader: asyncio.StreamReader) -> None:
+    """Reads out the rest of a line too long to keep, so the client's own write completes and the
+    answer reaches it instead of a reset."""
+    while True:
+        chunk = await reader.read(READ_CHUNK_BYTES)
+        if not chunk or b"\n" in chunk:
+            return
+
+
+async def _read_request(reader: asyncio.StreamReader) -> dict[str, p.JsonValue]:
+    """One request line as an object, or ValueError naming what was wrong with it. The limit is
+    owned here: StreamReader.readline would drop an over-limit line and raise the same ValueError
+    whether or not its newline had arrived, leaving nothing to tell a drain from a deadlock."""
+    line = bytearray()
+    while b"\n" not in line:
+        if len(line) > p.REQUEST_MAX_BYTES:
+            await _drain_line(reader)
+            break
+        chunk = await reader.read(READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        line += chunk
+    if len(line) > p.REQUEST_MAX_BYTES:
+        raise ValueError(f"request exceeds {p.REQUEST_MAX_BYTES} bytes")
+    request = json.loads(line) if line else {}
+    if not isinstance(request, dict):
+        raise ValueError("request must be an object")
+    return request
+
+
 async def _handle_connection(state: State, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
-        line = await reader.readline()
-    except asyncio.LimitOverrunError:
-        line = b""
-    try:
-        request = json.loads(line) if line else {}
-        if not isinstance(request, dict):
-            raise ValueError("request must be an object")
-        response = await handle_request(state, request)
-    except (ValueError, KeyError) as exc:
+        response = await handle_request(state, await _read_request(reader))
+    except ValueError as exc:
         response = p.result(request_id="", op="", ok=False, err=p.invalid(f"unreadable request: {exc}"))
     writer.write((json.dumps(response) + "\n").encode())
     with contextlib.suppress(ConnectionError):
@@ -310,15 +316,11 @@ async def serve(paths: Paths) -> int:
         logger.info("no browser route to deregister at startup: %s", exc)
     old_umask = os.umask(0o177)
     try:
-        server = await asyncio.start_unix_server(
-            lambda r, w: _handle_connection(state, r, w), path=str(paths.socket), limit=p.REQUEST_MAX_BYTES
-        )
+        server = await asyncio.start_unix_server(lambda r, w: _handle_connection(state, r, w), path=str(paths.socket))
     finally:
         os.umask(old_umask)
     await asyncio.to_thread(artifacts.prune, paths)
-    sweep_task = asyncio.create_task(_idle_sweep(state))
-    state.tasks.add(sweep_task)
-    sweep_task.add_done_callback(state.tasks.discard)
+    own(state, _idle_sweep(state))
     logger.info("browser daemon listening on %s", paths.socket)
     try:
         await stop.wait()
@@ -374,47 +376,14 @@ async def shutdown(state: State) -> None:
     started = time.monotonic()
     await handover.shutdown(state, budget=HANDOVER_SHUTDOWN_SECS, gateway_timeout=SHUTDOWN_GATEWAY_TIMEOUT_SECS)
     spent = time.monotonic() - started
-    for task in list(state.tasks):
+    tasks = [*state.tasks, *state.inflight.values()]
+    for task in tasks:
         task.cancel()
-    for task in list(state.tasks):
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-    inflight = list(state.inflight.values())
-    for task in inflight:
-        task.cancel()
-    if inflight:
-        await asyncio.gather(*inflight, return_exceptions=True)
+    await asyncio.gather(*tasks, return_exceptions=True)
     await _stop_every_session(state, max(SHUTDOWN_BUDGET_SECS - spent, MIN_SESSION_BUDGET_SECS))
 
 
-def ping(paths: Paths, timeout: float) -> bool:
-    """Sync liveness probe: a daemon that answers `status` is up. Used by lifecycle readiness and the CLI."""
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(str(paths.socket))
-            sock.sendall(json.dumps({"version": p.PROTOCOL_VERSION, "op": "status", "request_id": "ping"}).encode() + b"\n")
-            data = b""
-            while not data.endswith(b"\n"):
-                chunk = sock.recv(65536)
-                if not chunk:
-                    break
-                data += chunk
-        return bool(data) and json.loads(data)["ok"] is True
-    except (OSError, ValueError, KeyError):
-        return False
-
-
-async def request(paths: Paths, payload: dict[str, p.JsonValue]) -> p.Result:
-    reader, writer = await asyncio.open_unix_connection(str(paths.socket), limit=p.REQUEST_MAX_BYTES * 4)
-    writer.write((json.dumps(payload) + "\n").encode())
-    await writer.drain()
-    line = await reader.readline()
-    writer.close()
-    return json.loads(line)
-
-
-HANDLERS: dict[str, Handler] = {
+HANDLERS: dict[p.Op, Handler] = {
     "status": op_status,
     "engines": op_engines,
     "exec": op_exec,

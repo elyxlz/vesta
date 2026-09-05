@@ -20,6 +20,9 @@ STDERR_CAP_BYTES = 16 * 1024
 EXEC_TIMEOUT_DEFAULT_SECS = 120
 EXEC_TIMEOUT_MIN_SECS = 5
 EXEC_TIMEOUT_MAX_SECS = 600
+# The engine start an exec waits behind: a display claim plus a cold browser launch, inside one
+# daemon-owned deadline so the client's socket wait is this plus the program's own clamped budget.
+SESSION_START_BUDGET_SECS = 100
 SESSION_IDLE_STOP_SECS = 1800
 ARTIFACT_MAX_BYTES = 16 * 1024 * 1024
 ARTIFACT_RETENTION_DAYS = 7
@@ -165,12 +168,42 @@ def invalid(message: str) -> Error:
     return error("invalid_request", "validation", message, retryable=False, suggested_action="fix the request and retry")
 
 
+def unavailable(message: str) -> Error:
+    """The one shape for an engine or display that could not be brought up."""
+    return error("engine_unavailable", "launch", message, retryable=True, suggested_action="run: browser doctor")
+
+
 def session_info(name: str, mode: Mode, engine: Engine, state: SessionState) -> SessionInfo:
     return {"name": name, "mode": mode, "engine": engine, "protocol": PROTOCOL_FOR_ENGINE[engine], "state": state}
 
 
 def page_unavailable() -> PageInfo:
     return {"state": "unavailable"}
+
+
+def page_ready(tab_id: str, url: str, title: str) -> PageInfo:
+    return {"state": "ready", "tab_id": tab_id, "url": url, "title": title, "observed_at": now_iso()}
+
+
+def clamp_timeout(raw: int) -> int:
+    """The budget the daemon runs a program under: the requested seconds held inside [min, max]."""
+    return min(max(raw, EXEC_TIMEOUT_MIN_SECS), EXEC_TIMEOUT_MAX_SECS)
+
+
+def read_session_mode(request: dict[str, JsonValue]) -> tuple[str, Mode | None]:
+    """The session name and mode a request carries; an absent or null session is the default one."""
+    session = request["session"] if "session" in request and request["session"] is not None else DEFAULT_SESSION
+    if not isinstance(session, str):
+        raise BrowserError(invalid("session must be a string"))
+    mode = request["mode"] if "mode" in request else None
+    if mode not in (None, "standard", "stealth"):
+        raise BrowserError(invalid("mode must be standard, stealth, or null"))
+    return session, tp.cast(Mode | None, mode)
+
+
+def request(op: Op, request_id: str, **fields: JsonValue) -> dict[str, JsonValue]:
+    """The one request envelope: the protocol version, the op, its id, and the op's own fields."""
+    return {"version": PROTOCOL_VERSION, "op": op, "request_id": request_id, **fields}
 
 
 def result(
@@ -209,5 +242,9 @@ def truncate(text: str, cap: int) -> tuple[str, bool]:
     return raw[:cap].decode(errors="ignore"), True
 
 
+def iso(when: dt.datetime) -> str:
+    return when.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def now_iso() -> str:
-    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return iso(dt.datetime.now(dt.UTC))

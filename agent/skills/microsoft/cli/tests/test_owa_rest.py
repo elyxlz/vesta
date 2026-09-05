@@ -699,7 +699,7 @@ def test_owa_login_browser_captures_token(tmp_path, monkeypatch):
 
     cfg = Config(data_dir=tmp_path)
     fresh = _make_token(time.time() + 7200)
-    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda config, account, kind: fresh)
+    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda account, kind: fresh)
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "success"
     assert owa_rest.load_token("user@example.com", cfg) == fresh
@@ -711,7 +711,7 @@ def test_owa_login_reads_the_mail_token_of_the_asked_account(tmp_path, monkeypat
 
     asked: list[tuple[str, str]] = []
 
-    def fake_capture(config, account, kind):
+    def fake_capture(account, kind):
         asked.append((account, kind))
         return _make_token(time.time() + 7200)
 
@@ -725,7 +725,7 @@ def test_owa_login_browser_not_signed_in_returns_sign_in_required(tmp_path, monk
     from microsoft_cli.config import Config
 
     cfg = Config(data_dir=tmp_path)
-    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda config, account, kind: None)
+    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda account, kind: None)
     result = auth_commands.owa_login(cfg, account_email="user@example.com")
     assert result["status"] == "sign_in_required"
     assert "--browser" in result["message"]

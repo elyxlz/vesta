@@ -17,10 +17,11 @@ import signal
 import time
 import urllib.request
 
+from . import display
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, base_env, kill_group
+from .procs import KILL_GRACE_SECS, base_env, kill_group, reaped_on_failure
 from .runtime_paths import Paths
-from .runtimes import ChromiumRuntime, ExecOutcome, HeadedDisplay
+from .runtimes import ChromiumRuntime, ExecOutcome, HeadedDisplay, elapsed_ms
 from .sessions import Session
 
 CHROMIUM_READY_TIMEOUT_SECS = 30
@@ -43,7 +44,13 @@ def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay) -> list[s
         f"--window-size={headed.width},{headed.height}",
         "--window-position=0,0",
         "--no-sandbox",
+        # Docker's default /dev/shm is 64MB and the container sets no shm size; the renderer falls
+        # back to /tmp instead of crashing the tab on a shared-memory-heavy page.
+        "--disable-dev-shm-usage",
         "--remote-debugging-port=0",
+        # Remote debugging alone flips navigator.webdriver to true, an automation tell every
+        # anti-bot script reads; this keeps the flag at false, as it is in a person's own Chrome.
+        "--disable-blink-features=AutomationControlled",
         f"--user-data-dir={session.profile_dir}",
         "--no-first-run",
         "--no-default-browser-check",
@@ -70,14 +77,6 @@ def child_env(session: Session, port: int) -> dict[str, str]:
     }
 
 
-def _browser_env(headed: HeadedDisplay) -> dict[str, str]:
-    return {**base_env(), "DISPLAY": headed.display}
-
-
-def _unavailable(message: str) -> p.BrowserError:
-    return p.BrowserError(p.error("engine_unavailable", "launch", message, retryable=True, suggested_action="run: browser doctor"))
-
-
 def _fetch_json(url: str) -> p.JsonValue:
     with urllib.request.urlopen(url, timeout=OBSERVE_TIMEOUT_SECS) as response:
         return json.loads(response.read())
@@ -92,11 +91,19 @@ def pin_startup_pref(profile_dir: pl.Path) -> None:
     prefs_path.write_text(json.dumps(prefs))
 
 
+def missing(paths: Paths) -> list[str]:
+    """Every file the standard route needs and this box does not have, each named with its path."""
+    needed = (
+        (paths.chromium_exe, "chromium binary"),
+        (paths.browser_use_bin, "browser-use executor (run the SETUP.md uv sync step)"),
+    )
+    return [f"{label} missing at {path}" for path, label in needed if not path.is_file()]
+
+
 async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> ChromiumRuntime:
-    if not paths.chromium_exe.is_file():
-        raise _unavailable(f"chromium binary missing at {paths.chromium_exe}")
-    if not paths.browser_use_bin.is_file():
-        raise _unavailable(f"browser-use executor missing at {paths.browser_use_bin}; run the SETUP.md uv sync step")
+    gaps = missing(paths)
+    if gaps:
+        raise p.BrowserError(p.unavailable("; ".join(gaps)))
     for sub in ("tmp", "runtime", "home"):
         (session.scratch_dir / sub).mkdir(exist_ok=True)
     port_file = session.profile_dir / "DevToolsActivePort"
@@ -104,41 +111,34 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Chr
     await asyncio.to_thread(pin_startup_pref, session.profile_dir)
     process = await asyncio.create_subprocess_exec(
         *launch_argv(paths, session, headed),
-        env=_browser_env(headed),
+        env=display.child_env(headed.display),
         start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
     deadline = time.monotonic() + CHROMIUM_READY_TIMEOUT_SECS
-    exited: int | None = None
     try:
-        while time.monotonic() < deadline:
-            if process.returncode is not None:
-                exited = process.returncode
-                break
-            if port_file.is_file():
-                first = port_file.read_text().splitlines()
-                if first and first[0].isdigit():
-                    port = int(first[0])
-                    try:
-                        await asyncio.to_thread(_fetch_json, f"http://127.0.0.1:{port}/json/version")
-                    except OSError:
-                        pass
-                    else:
-                        return ChromiumRuntime(process=process, port=port)
-            await asyncio.sleep(READY_POLL_SECS)
-    except asyncio.CancelledError:
-        await kill_group(process, BROWSER_STOP_GRACE_SECS)
-        raise
+        # Any failure here (an unreadable port file, a DevTools answer that is not JSON, a cancel)
+        # would otherwise leave a browser running that nothing else holds a handle to.
+        async with reaped_on_failure(process, BROWSER_STOP_GRACE_SECS):
+            while time.monotonic() < deadline and process.returncode is None:
+                if port_file.is_file():
+                    first = port_file.read_text().splitlines()
+                    if first and first[0].isdigit():
+                        port = int(first[0])
+                        try:
+                            await asyncio.to_thread(_fetch_json, f"http://127.0.0.1:{port}/json/version")
+                        except OSError:
+                            pass
+                        else:
+                            return ChromiumRuntime(process=process, port=port)
+                await asyncio.sleep(READY_POLL_SECS)
     except Exception as exc:
-        # Every other failure here (an unreadable port file, a DevTools answer that is not JSON)
-        # leaves a browser running that nothing else holds a handle to.
-        await kill_group(process, BROWSER_STOP_GRACE_SECS)
-        raise _unavailable(f"chromium startup failed: {exc}") from exc
+        raise p.BrowserError(p.unavailable(f"chromium startup failed: {exc}")) from exc
     await kill_group(process, BROWSER_STOP_GRACE_SECS)
-    if exited is not None:
-        raise _unavailable(f"chromium exited with {exited} during startup")
-    raise _unavailable(f"chromium did not expose DevTools within {CHROMIUM_READY_TIMEOUT_SECS}s")
+    if process.returncode is not None:
+        raise p.BrowserError(p.unavailable(f"chromium exited with {process.returncode} during startup"))
+    raise p.BrowserError(p.unavailable(f"chromium did not expose DevTools within {CHROMIUM_READY_TIMEOUT_SECS}s"))
 
 
 async def exec_code(runtime: ChromiumRuntime, session: Session, paths: Paths, code: str, timeout_s: int) -> ExecOutcome:
@@ -156,11 +156,11 @@ async def exec_code(runtime: ChromiumRuntime, session: Session, paths: Paths, co
         out, err = await asyncio.wait_for(child.communicate(code.encode()), timeout_s)
     except TimeoutError:
         await kill_group(child, KILL_GRACE_SECS)
-        return ExecOutcome("", "", None, int((time.monotonic() - started) * 1000), timed_out=True)
+        return ExecOutcome("", "", None, elapsed_ms(started), timed_out=True)
     except asyncio.CancelledError:
         await kill_group(child, KILL_GRACE_SECS)
         raise
-    return ExecOutcome(out.decode(errors="replace"), err.decode(errors="replace"), child.returncode, int((time.monotonic() - started) * 1000))
+    return ExecOutcome(out.decode(errors="replace"), err.decode(errors="replace"), child.returncode, elapsed_ms(started))
 
 
 async def observe(runtime: ChromiumRuntime) -> p.PageInfo:
@@ -173,28 +173,29 @@ async def observe(runtime: ChromiumRuntime) -> p.PageInfo:
     try:
         for target in targets:
             if isinstance(target, dict) and target["type"] == "page" and not str(target["url"]).startswith(("chrome://", "devtools://")):
-                return {
-                    "state": "ready",
-                    "tab_id": str(target["id"]),
-                    "url": str(target["url"]),
-                    "title": str(target["title"]),
-                    "observed_at": p.now_iso(),
-                }
+                return p.page_ready(str(target["id"]), str(target["url"]), str(target["title"]))
     except (KeyError, TypeError):
         return p.page_unavailable()
     return p.page_unavailable()
 
 
 def _harness_pid(session: Session) -> int | None:
+    """The recorded harness pid, but only while it is still the harness daemon that was recorded.
+
+    The scratch dir outlives the container, so a record can name a pid the kernel has since handed
+    to something else; signalling on the record alone would kill that stranger.
+    """
     record = session.scratch_dir / "runtime" / "bu.pid"
     if not record.is_file():
         return None
     text = record.read_text().strip()
     try:
         parsed = json.loads(text)
-        return int(parsed["pid"]) if isinstance(parsed, dict) else int(text)
-    except (ValueError, KeyError):
+        pid = int(parsed["pid"]) if isinstance(parsed, dict) else int(text)
+        cmdline = pl.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except (ValueError, KeyError, OSError):
         return None
+    return pid if HARNESS_MARKER in cmdline else None
 
 
 def _pid_alive(pid: int) -> bool:
@@ -203,19 +204,6 @@ def _pid_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
-
-
-def _is_harness(pid: int) -> bool:
-    """Whether the recorded pid is still the harness daemon that was recorded.
-
-    The scratch dir outlives the container, so a record can name a pid the kernel has since handed
-    to something else; signalling on the record alone would kill that stranger.
-    """
-    try:
-        cmdline = pl.Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return False
-    return HARNESS_MARKER in cmdline
 
 
 async def _await_exit(pid: int, grace: float) -> bool:
@@ -229,11 +217,9 @@ async def _await_exit(pid: int, grace: float) -> bool:
 
 async def stop(runtime: ChromiumRuntime, session: Session) -> None:
     pid = _harness_pid(session)
-    if pid is not None and _is_harness(pid):
+    if pid is not None:
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGTERM)
-    else:
-        pid = None
     await kill_group(runtime.process, BROWSER_STOP_GRACE_SECS)
     if pid is not None and not await _await_exit(pid, HARNESS_STOP_GRACE_SECS):
         with contextlib.suppress(ProcessLookupError):

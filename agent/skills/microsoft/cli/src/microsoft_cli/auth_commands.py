@@ -247,7 +247,7 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
     Reads the outlook.office.com access token out of the signed-in web session. A session that
     holds no such token returns `sign_in_required` (no blocking prompt), so the sign-in runs as a
     handover the user completes."""
-    token = capture.capture_token(config, account_email, "mail")
+    token = capture.capture_token(account_email, "mail")
 
     if token is None:
         return {
@@ -391,7 +391,7 @@ def _teams_capture_paste(config: Config, *, account_email: str, token: str) -> d
 
 
 def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, str]:
-    token = capture.capture_token(config, account_email, "teams")
+    token = capture.capture_token(account_email, "teams")
 
     if token is None:
         return {
@@ -478,8 +478,8 @@ def _setup_save_captured(config: Config, *, account_email: str, captured: dict) 
     }
 
 
-def _setup_begin_browser(config: Config, *, account_email: str) -> dict[str, str]:
-    user_url = capture.begin_interactive(config, account_email)
+def _setup_begin_browser(*, account_email: str) -> dict[str, str]:
+    user_url = capture.begin_interactive(account_email)
     return {
         "status": "sign_in",
         "account": account_email,
@@ -506,7 +506,7 @@ def _setup_finish_device(config: Config, *, account_email: str, flow_cache: str)
             return {"status": "pending", "message": "Sign-in is still pending; finish the code entry, then retry."}
         if _is_consent_wall(error_msg):
             # Locked tenant: device code is blocked, pivot to the browser capture with no extra ask.
-            return _setup_begin_browser(config, account_email=account_email)
+            return _setup_begin_browser(account_email=account_email)
         raise Exception(f"Sign-in failed: {error_msg}")
     cache = app.token_cache
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
@@ -560,11 +560,11 @@ def auth_setup(
     even for a work/school domain (permissive tenants). ``--capture``: after signing in via the browser, lift
     the tokens and finish."""
     if do_capture:
-        captured = capture.finish_interactive(config, account_email)
+        captured = capture.finish_interactive(account_email)
         return _setup_save_captured(config, account_email=account_email, captured=captured)
 
     if use_browser:
-        return _setup_begin_browser(config, account_email=account_email)
+        return _setup_begin_browser(account_email=account_email)
 
     if flow_cache is not None:
         return _setup_finish_device(config, account_email=account_email, flow_cache=flow_cache)
@@ -572,7 +572,7 @@ def auth_setup(
     if not force_device and not _is_personal_ms_account(account_email):
         # Work/school (custom domain): the tenant almost always blocks the public client, so skip the
         # device-code round-trip that would be rejected and hand off to the browser up front.
-        return _setup_begin_browser(config, account_email=account_email)
+        return _setup_begin_browser(account_email=account_email)
 
     app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
     flow = app.initiate_device_flow(scopes=setup_scopes_for(account_email))

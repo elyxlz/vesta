@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import pathlib as pl
-
-from . import protocol as p
+import time
 
 
 @dataclasses.dataclass
@@ -18,8 +16,6 @@ class ChromiumRuntime:
 @dataclasses.dataclass
 class CamoufoxRuntime:
     process: asyncio.subprocess.Process
-    config_path: pl.Path
-    last_page: p.PageInfo
 
 
 EngineRuntime = ChromiumRuntime | CamoufoxRuntime
@@ -43,4 +39,8 @@ class ExecOutcome:
     timed_out: bool = False
     cancelled: bool = False
     capability_mismatch: str | None = None
-    warnings: list[str] = dataclasses.field(default_factory=list)
+
+
+def elapsed_ms(started: float) -> int:
+    """Milliseconds since a `time.monotonic()` reading."""
+    return int((time.monotonic() - started) * 1000)

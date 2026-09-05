@@ -97,7 +97,8 @@ display to the user in their own browser, so it needs three more things:
    this container; a handover started while either one is unset answers `handover_failed`.
 2. `x11vnc`, `websockify`, and `/usr/share/novnc`, the stream pieces the handover adds on top of
    the display every session already runs, which the image installs alongside the display
-   packages. Elsewhere, one line covers both sets: `apt-get install -y xvfb openbox x11vnc novnc`.
+   packages. Elsewhere, `~/agent/skills/browser/install-engines.sh` installs both sets, and a
+   daemon refusing to start a display or a stream names that script as the fix.
 3. `data.handover.ready` of `true` in `browser doctor`, which lists any missing piece under
    `data.handover.missing`. `data.engines.display.ready` covers the display packages instead,
    since every session needs them, not only a handover.

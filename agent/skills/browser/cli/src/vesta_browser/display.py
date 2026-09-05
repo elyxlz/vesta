@@ -14,16 +14,18 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import functools
 import os
 import pathlib as pl
 import shutil
 import socket
 import tempfile
 import time
+import typing as tp
 
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, base_env, kill_group
-from .runtime_paths import Paths
+from .procs import KILL_GRACE_SECS, base_env, kill_group, reaped_on_failure
+from .runtime_paths import DEFAULT_X11_SOCKET_DIR, Paths
 
 # The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
 # page has. A geometry no real display ships would itself be an automation tell on the
@@ -37,12 +39,11 @@ XVFB_READY_TIMEOUT_SECS = 5.0
 X11VNC_READY_TIMEOUT_SECS = 10.0
 X11VNC_SETTLE_SECS = 0.4
 WEB_READY_TIMEOUT_SECS = 10.0
-READY_POLL_SECS = 0.2
+READY_POLL_SECS = 0.05
 SOCKET_PROBE_TIMEOUT_SECS = 2.0
 DISPLAY_BINARIES = ("Xvfb", "openbox")
 STREAM_BINARIES = ("x11vnc", "websockify")
-DISPLAY_APT_LINE = "apt-get install -y xvfb openbox x11vnc novnc"
-DEFAULT_X11_SOCKET_DIR = pl.Path("/tmp/.X11-unix")
+INSTALL_HINT = "run ~/agent/skills/browser/install-engines.sh"
 ABSTRACT_X11_PREFIX = "\0/tmp/.X11-unix/X"
 
 # A session's display shows exactly one window. Left to itself openbox smart-places it a few pixels
@@ -94,42 +95,47 @@ def child_env(display: str) -> dict[str, str]:
     return {**base_env(), "DISPLAY": display, "MOZ_ENABLE_WAYLAND": "0"}
 
 
-def missing_display_binaries(_paths: Paths) -> list[str]:
+def missing_display_binaries() -> list[str]:
     """Every display prerequisite this box does not have: Xvfb and its window manager."""
     return [name for name in DISPLAY_BINARIES if shutil.which(name) is None]
 
 
 def missing_stream_binaries(paths: Paths) -> list[str]:
-    """Every stream prerequisite this box does not have, named as the apt line names it."""
+    """Every stream prerequisite this box does not have, named as the package that carries it."""
     missing = [name for name in STREAM_BINARIES if shutil.which(name) is None]
     if not (paths.novnc_dir / "core" / "rfb.js").is_file():
         missing.append("novnc")
     return missing
 
 
-def display_readiness(paths: Paths) -> dict[str, p.JsonValue]:
-    """Whether every display prerequisite is installed, so `doctor` names the gap up front."""
-    missing = missing_display_binaries(paths)
+def _require(what: str, missing: list[str]) -> None:
+    """Refuses to spawn onto a gap, naming every missing piece and the one command that fills it."""
+    if missing:
+        raise DisplayError(f"the {what} needs {', '.join(missing)}. Install it: {INSTALL_HINT}")
+
+
+def _readiness(missing: list[str]) -> dict[str, p.JsonValue]:
     return {"ready": not missing, "missing": list(missing)}
+
+
+def display_readiness() -> dict[str, p.JsonValue]:
+    """Whether every display prerequisite is installed, so `doctor` names the gap up front."""
+    return _readiness(missing_display_binaries())
 
 
 def stream_readiness(paths: Paths) -> dict[str, p.JsonValue]:
     """Whether every stream prerequisite is installed, so `doctor` names the gap up front."""
-    missing = missing_stream_binaries(paths)
-    return {"ready": not missing, "missing": list(missing)}
+    return _readiness(missing_stream_binaries(paths))
 
 
 def _unix_socket_serving(address: str) -> bool:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(SOCKET_PROBE_TIMEOUT_SECS)
-    try:
-        sock.connect(address)
-    except OSError:
-        return False
-    else:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(SOCKET_PROBE_TIMEOUT_SECS)
+        try:
+            sock.connect(address)
+        except OSError:
+            return False
         return True
-    finally:
-        sock.close()
 
 
 def own_display_serving(paths: Paths, number: int) -> bool:
@@ -180,17 +186,24 @@ def _clear_stale_records(paths: Paths, number: int) -> None:
             pl.Path(f"/tmp/.X{number}-lock").unlink(missing_ok=True)
 
 
-async def _xvfb_ready(paths: Paths, process: asyncio.subprocess.Process, number: int) -> bool:
-    deadline = time.monotonic() + XVFB_READY_TIMEOUT_SECS
+async def _await(process: asyncio.subprocess.Process, probe: tp.Callable[[], bool], timeout: float) -> bool:
+    """Whether `probe` answers while `process` is still alive, inside `timeout`.
+
+    The process first: every Xvfb claimant in this container probes the same socket path, so a
+    probe alone cannot tell our own server from the one that won the number.
+    """
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        # The process first: every claimant in this container probes the same socket path, so a
-        # probe alone cannot tell our own Xvfb from the one that won the number.
         if process.returncode is not None:
             return False
-        if await asyncio.to_thread(own_display_serving, paths, number):
+        if await asyncio.to_thread(probe):
             return True
         await asyncio.sleep(READY_POLL_SECS)
     return False
+
+
+async def _xvfb_ready(paths: Paths, process: asyncio.subprocess.Process, number: int) -> bool:
+    return await _await(process, functools.partial(own_display_serving, paths, number), XVFB_READY_TIMEOUT_SECS)
 
 
 async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
@@ -222,11 +235,8 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
             )
         except OSError as exc:
             raise DisplayError(f"Xvfb could not start: {exc}") from exc
-        try:
+        async with reaped_on_failure(process, KILL_GRACE_SECS):
             ready = await _xvfb_ready(paths, process, number)
-        except BaseException:
-            await kill_group(process, KILL_GRACE_SECS)
-            raise
         if ready:
             return display, process
         if process.returncode is None:
@@ -263,6 +273,7 @@ async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Proces
 async def start_session_display(paths: Paths) -> SessionDisplay:
     """The display a session claims from its first exec: Xvfb plus openbox, torn down together
     if openbox never starts or this call is cancelled while it waits on openbox."""
+    _require("display", missing_display_binaries())
     display_name, xvfb = await claim_display(paths)
     try:
         openbox = await start_openbox(paths, display_name)
@@ -291,14 +302,7 @@ def x11vnc_argv(display: str, vnc_port: int, *, noshm: bool) -> list[str]:
 
 
 async def _await_port(process: asyncio.subprocess.Process, port: int, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if process.returncode is not None:
-            return False
-        if await asyncio.to_thread(port_serving, port):
-            return True
-        await asyncio.sleep(READY_POLL_SECS)
-    return False
+    return await _await(process, functools.partial(port_serving, port), timeout)
 
 
 async def _x11vnc_settles(process: asyncio.subprocess.Process, vnc_port: int) -> bool:
@@ -328,11 +332,8 @@ async def start_x11vnc(display: str, vnc_port: int) -> asyncio.subprocess.Proces
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        try:
+        async with reaped_on_failure(process, KILL_GRACE_SECS):
             settled = await _x11vnc_settles(process, vnc_port)
-        except BaseException:
-            await kill_group(process, KILL_GRACE_SECS)
-            raise
         if settled:
             return process
         if process.returncode is None:
@@ -341,9 +342,9 @@ async def start_x11vnc(display: str, vnc_port: int) -> asyncio.subprocess.Proces
 
 
 def build_webroot(paths: Paths) -> pl.Path:
-    """The web root websockify serves: the branded page, its fonts and frame, and noVNC's own code."""
-    if not (paths.novnc_dir / "core" / "rfb.js").is_file():
-        raise DisplayError(f"noVNC has no core/rfb.js under {paths.novnc_dir}. Install it: {DISPLAY_APT_LINE}")
+    """The web root websockify serves: the branded page, its fonts and frame, and noVNC's own code.
+    The stream's first step, so it is where the whole stream's prerequisites are checked."""
+    _require("stream", missing_stream_binaries(paths))
     webroot = paths.handover_web
     if webroot.exists():
         shutil.rmtree(webroot)
@@ -360,6 +361,11 @@ def build_webroot(paths: Paths) -> pl.Path:
 
 async def start_websockify(webroot: pl.Path, web_port: int, vnc_port: int, log: pl.Path) -> asyncio.subprocess.Process:
     """The bridge from the page's WebSocket to x11vnc, bound on every interface for vestad to proxy."""
+    # vestad hands this daemon the port, so anything answering on it now is a bridge a killed daemon
+    # left behind, still forwarding to its own old display: a new websockify would fail to bind
+    # while the port probe below read the stranger as ready.
+    if await asyncio.to_thread(port_serving, web_port):
+        raise DisplayError(f"port {web_port} is already served by a process this daemon does not own; end it and retry")
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("ab") as handle:
         process = await asyncio.create_subprocess_exec(
@@ -373,11 +379,8 @@ async def start_websockify(webroot: pl.Path, web_port: int, vnc_port: int, log: 
             stdout=handle,
             stderr=asyncio.subprocess.STDOUT,
         )
-    try:
+    async with reaped_on_failure(process, KILL_GRACE_SECS):
         serving = await _await_port(process, web_port, WEB_READY_TIMEOUT_SECS)
-    except BaseException:
-        await kill_group(process, KILL_GRACE_SECS)
-        raise
     if serving:
         return process
     await kill_group(process, KILL_GRACE_SECS)

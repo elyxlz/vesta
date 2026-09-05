@@ -3,6 +3,10 @@
 import json
 import os
 import pathlib as pl
+import time
+
+# A navigation the daemon's budget must cut short: longer than any NAVIGATE_TIMEOUT a test sets.
+SLOW_HOST_SECS = 30
 
 
 class PlaywrightError(Exception):
@@ -49,6 +53,8 @@ class FakePage:
         self.closed = False
 
     def goto(self, url, **_):
+        if url.startswith("https://slow."):
+            time.sleep(SLOW_HOST_SECS)
         self.url = url
         self._title = "Title of " + url
         self.log.append(("goto", url))

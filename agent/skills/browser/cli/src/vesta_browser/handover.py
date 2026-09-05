@@ -15,6 +15,7 @@ import contextlib
 import datetime as dt
 import logging
 import os
+import pathlib as pl
 import shutil
 import time
 import typing as tp
@@ -23,12 +24,12 @@ import uuid
 from . import display, gateway
 from . import protocol as p
 from . import sessions as sessions_mod
-from .daemon_state import State
+from .daemon_state import ENGINES, State, own
 from .handover_state import Handover, StopReason, payload
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import KILL_GRACE_SECS, reaped_on_failure
 from .runtime_paths import Paths
 from .runtimes import EngineRuntime
-from .session_control import ENGINES, ensure_running, stop_session
+from .session_control import ensure_running, settle
 
 logger = logging.getLogger(__name__)
 SERVICE = "browser"
@@ -68,32 +69,26 @@ def _env(name: str) -> str:
     return os.environ[name]
 
 
-def _expiry_iso(minutes: int) -> str:
-    when = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=minutes)
-    return when.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _own(state: State, coro: tp.Coroutine[None, None, None]) -> asyncio.Task[None]:
-    """Every task this module spawns is held by the daemon, so shutdown cancels and awaits it."""
-    task = asyncio.create_task(coro)
-    state.tasks.add(task)
-    task.add_done_callback(state.tasks.discard)
-    return task
-
-
-async def _start_stream(paths: Paths, display_name: str, web_port: int) -> display.StreamStack:
+async def _start_stream(paths: Paths, display_name: str, webroot: pl.Path, web_port: int, vnc_port: int) -> display.StreamStack:
     """The stream on the display `display_name` names, torn back down if either process fails."""
-    started: list[asyncio.subprocess.Process] = []
-    try:
-        webroot = await asyncio.to_thread(display.build_webroot, paths)
-        vnc_port = await asyncio.to_thread(display.free_port, display.VNC_PORT_FIRST)
-        x11vnc = await display.start_x11vnc(display_name, vnc_port)
-        started.append(x11vnc)
+    x11vnc = await display.start_x11vnc(display_name, vnc_port)
+    async with reaped_on_failure(x11vnc, KILL_GRACE_SECS):
         websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
-    except BaseException:
-        await asyncio.gather(*[kill_group(process, KILL_GRACE_SECS) for process in reversed(started)], return_exceptions=True)
-        raise
     return display.StreamStack(x11vnc, websockify, vnc_port, web_port, webroot)
+
+
+async def _prepare(paths: Paths) -> tuple[int, pl.Path, int]:
+    """The three independent pieces a stream starts from, gathered: vestad's port for the page,
+    the web root, and a VNC port. Every one runs to its end before a failure is reported, so a
+    rollback's deregister can never race a register still in flight."""
+    register = asyncio.ensure_future(gateway.register_service(SERVICE))
+    webroot = asyncio.ensure_future(asyncio.to_thread(display.build_webroot, paths))
+    vnc_port = asyncio.ensure_future(asyncio.to_thread(display.free_port, display.VNC_PORT_FIRST))
+    try:
+        return await asyncio.gather(register, webroot, vnc_port)
+    except BaseException:
+        await asyncio.gather(register, webroot, vnc_port, return_exceptions=True)
+        raise
 
 
 def _healthy(paths: Paths, handover: Handover) -> bool:
@@ -128,18 +123,20 @@ async def _bring_up(
     paths = state.paths
     session = handover.session
     assert session.display is not None and session.runtime is not None
-    web_port = await gateway.register_service(SERVICE)
-    handover.stack = await _start_stream(paths, session.display.display, web_port)
+    web_port, webroot, vnc_port = await _prepare(paths)
+    handover.stack = await _start_stream(paths, session.display.display, webroot, web_port, vnc_port)
     if url is not None:
         warnings.extend(await _navigate(paths, session, session.runtime, url))
-    secret = await gateway.mint_key(SERVICE, handover.key_label, int(minutes * MINUTE_SECS))
-    handover.expires_at = _expiry_iso(minutes)
-    handover.key_id = await gateway.find_key_id(SERVICE, handover.key_label)
-    handover.user_url = f"{public_url.rstrip('/')}/agents/{agent}/{SERVICE}/k/{secret}/handover.html"
+    # Checked before the key exists: a stack that is not serving, a browser the navigation killed
+    # included, never gets a key it would only revoke a step later.
     if not await asyncio.to_thread(_healthy, paths, handover):
         raise _failed("the display stack came up but is not serving")
+    secret = await gateway.mint_key(SERVICE, handover.key_label, int(minutes * MINUTE_SECS))
+    handover.expires_at = p.iso(dt.datetime.now(dt.UTC) + dt.timedelta(minutes=minutes))
+    handover.key_id = await gateway.find_key_id(SERVICE, handover.key_label)
+    handover.user_url = f"{public_url.rstrip('/')}/agents/{agent}/{SERVICE}/k/{secret}/handover.html"
     handover.state = "live"
-    handover.task = _own(state, _expire(state, handover, minutes))
+    handover.task = own(state, _expire(state, handover, minutes))
 
 
 async def start(state: State, *, session_name: str, mode: p.Mode | None, url: str | None, minutes: int) -> tuple[Handover, list[str]]:
@@ -149,12 +146,7 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
         raise _in_use(f"a handover is already {live.state} on session {live.session.name!r}")
     public_url = _env("VESTAD_PUBLIC_URL")
     agent = _env("AGENT_NAME")
-    missing = [*display.missing_display_binaries(state.paths), *display.missing_stream_binaries(state.paths)]
-    if missing:
-        raise _failed(f"the handover display needs {', '.join(missing)}. Install it: {display.DISPLAY_APT_LINE}")
     session = sessions_mod.resolve_session(state.table, session_name, mode)
-    if session.state in ("busy", "starting"):
-        raise p.BrowserError(p.invalid(f"session {session_name!r} is {session.state}; retry once the current request finishes"))
     deadline = time.monotonic() + HANDOVER_START_BUDGET_SECS
     handover_id = uuid.uuid4().hex[:8]
     handover = Handover(id=handover_id, session=session, key_label=f"browser-handover-{handover_id}", state="starting")
@@ -171,10 +163,10 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     except BaseException:
         state.handover = None
         raise
-    sessions_mod.mark(session, "handed_over")
+    session.state = "handed_over"
     # The bring-up runs as a task the daemon owns, because it holds the stream for as long as it
     # runs: a shutdown must be able to cancel it and take the stream back.
-    bring_up = _own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes, warnings=warnings))
+    bring_up = own(state, _bring_up(state, handover, public_url=public_url, agent=agent, url=url, minutes=minutes, warnings=warnings))
     handover.task = bring_up
     try:
         await asyncio.wait_for(asyncio.shield(bring_up), deadline - time.monotonic())
@@ -198,10 +190,6 @@ async def _expire(state: State, handover: Handover, minutes: int) -> None:
     await stop(state, handover, reason="expired")
 
 
-async def _stop_failed(state: State, handover: Handover) -> None:
-    await stop(state, handover, reason="failed")
-
-
 async def _guarded(step: tp.Awaitable[bool | None], what: str) -> bool:
     try:
         await step
@@ -222,9 +210,7 @@ async def _cancel_task(handover: Handover) -> None:
 
 
 async def _release_key(handover: Handover, timeout: float) -> None:
-    """The URL goes first, before anything that can fail: a key on its way out must stop printing."""
     key_id, handover.key_id = handover.key_id, None
-    handover.user_url = ""
     if key_id is None:
         key_id = await gateway.find_key_id(SERVICE, handover.key_label, timeout=timeout)
     if key_id is not None:
@@ -238,29 +224,22 @@ async def _tear_stream(handover: Handover) -> None:
 
 
 async def _teardown(state: State, handover: Handover, reason: StopReason, gateway_timeout: float) -> list[str]:
-    """Every step attempted, whatever the one before it did, so a failed revoke never skips the
-    deregister. Each step owns whether it has anything to undo, so a half-started handover is fine.
-
-    The session gets its browser back on the display it has held all along, `ready` for the next
-    exec. A runtime that died under the user is reaped with that display instead, and the session is
-    queued for a restart, so the next exec starts a fresh browser and says it did.
+    """Every step attempted, whatever the others did, so a failed revoke never skips the deregister.
+    Each step owns whether it has anything to undo, so a half-started handover is fine. The task
+    goes first, since it may still be building what the rest take down; the four after it are
+    independent and run together. The session is then settled: its browser back on the display it
+    has held all along, or reaped with that display if it died under the user.
     """
-    session = handover.session
-    done = [
-        await _guarded(_cancel_task(handover), "drop the task it owns"),
-        await _guarded(_release_key(handover, gateway_timeout), "revoke the handover key"),
-        await _guarded(gateway.deregister_service(SERVICE, timeout=gateway_timeout), "deregister the service"),
-        await _guarded(_tear_stream(handover), "stop the stream"),
-        await _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),
-    ]
+    first = await _guarded(_cancel_task(handover), "drop the task it owns")
+    done = await asyncio.gather(
+        _guarded(_release_key(handover, gateway_timeout), "revoke the handover key"),
+        _guarded(gateway.deregister_service(SERVICE, timeout=gateway_timeout), "deregister the service"),
+        _guarded(_tear_stream(handover), "stop the stream"),
+        _guarded(asyncio.to_thread(shutil.rmtree, state.paths.handover_web, ignore_errors=True), "remove the web root"),
+    )
     handover.state = "inactive" if reason == "stopped" else reason
-    if session.runtime is not None and session.runtime.process.returncode is None:
-        sessions_mod.mark(session, "ready")
-    else:
-        done.append(await _guarded(stop_session(state.paths, session, force=True), "reap the browser that died"))
-        state.restart_pending.add(session.name)
-    sessions_mod.touch(state.table, session)
-    return [] if all(done) else ["cleanup_incomplete"]
+    settled = await _guarded(settle(state, handover.session), "give the session back")
+    return [] if first and all(done) and settled else ["cleanup_incomplete"]
 
 
 async def stop(state: State, handover: Handover, *, reason: StopReason, gateway_timeout: float = gateway.GATEWAY_TIMEOUT_SECS) -> list[str]:
@@ -324,24 +303,19 @@ async def status(state: State) -> dict[str, p.JsonValue]:
     handover = state.handover
     if handover is not None and handover.state == "live" and not await asyncio.to_thread(_healthy, state.paths, handover):
         handover.state = "failed"
-        _own(state, _stop_failed(state, handover))
+        own(state, stop(state, handover, reason="failed"))
     return payload(handover)
 
 
 def _read_start(request: dict[str, p.JsonValue]) -> tuple[str, p.Mode | None, str | None, int]:
-    session = request["session"] if "session" in request and request["session"] is not None else p.DEFAULT_SESSION
-    if not isinstance(session, str):
-        raise p.BrowserError(p.invalid("session must be a string"))
-    mode = request["mode"] if "mode" in request else None
-    if mode not in (None, "standard", "stealth"):
-        raise p.BrowserError(p.invalid("mode must be standard, stealth, or null"))
+    session, mode = p.read_session_mode(request)
     url = request["url"] if "url" in request else None
     if url is not None and not isinstance(url, str):
         raise p.BrowserError(p.invalid("url must be a string"))
     minutes = request["minutes"] if "minutes" in request and request["minutes"] is not None else LIFETIME_DEFAULT_MINUTES
     if not isinstance(minutes, int) or isinstance(minutes, bool) or not LIFETIME_MIN_MINUTES <= minutes <= LIFETIME_MAX_MINUTES:
         raise p.BrowserError(p.invalid(f"minutes must be an integer between {LIFETIME_MIN_MINUTES} and {LIFETIME_MAX_MINUTES}"))
-    return session, tp.cast(p.Mode | None, mode), url, minutes
+    return session, mode, url, minutes
 
 
 async def op_handover_start(state: State, request_id: str, request: dict[str, p.JsonValue]) -> p.Result:

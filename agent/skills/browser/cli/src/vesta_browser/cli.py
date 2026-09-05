@@ -11,13 +11,13 @@ import json
 import os
 import pathlib as pl
 import signal
-import socket
 import sys
 import threading
 import uuid
 
-from . import daemon, serve
+from . import daemon
 from . import protocol as p
+from .client import send
 from .runtime_paths import Paths, load_paths
 
 USAGE = """Usage:
@@ -26,6 +26,7 @@ USAGE = """Usage:
   browser doctor | engines | sessions | session stop <name> | stop-all
   browser handover start [--url <url>] [--session <name>] [--stealth] [--minutes <n>]
   browser handover status | stop"""
+# Past the daemon's own deadlines, so a slow answer arrives instead of reading as a dead daemon.
 RPC_TIMEOUT_SLACK_SECS = 30
 # Past the daemon's own bring-up budget, so a slow handover answers instead of reading as a dead
 # daemon, and inside the 120s a Bash tool call allows by default.
@@ -35,35 +36,6 @@ CANCEL_TIMEOUT_SECS = 5
 
 def _request_id() -> str:
     return f"r_{uuid.uuid4().hex[:12]}"
-
-
-def _daemon_down(payload: dict[str, p.JsonValue], message: str) -> p.Result:
-    err = p.error("daemon_down", "validation", message, retryable=True, suggested_action="run: browser daemon start")
-    return p.result(request_id=str(payload["request_id"]), op=str(payload["op"]), ok=False, err=err)
-
-
-def send(paths: Paths, payload: dict[str, p.JsonValue], timeout: float) -> p.Result:
-    """One request, one reply. A socket that is absent, refuses, or closes with no answer is `daemon_down`."""
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(str(paths.socket))
-            sock.sendall((json.dumps(payload) + "\n").encode())
-            data = b""
-            while not data.endswith(b"\n"):
-                chunk = sock.recv(1 << 16)
-                if not chunk:
-                    break
-                data += chunk
-    except OSError as exc:
-        return _daemon_down(payload, f"browser daemon not reachable at {paths.socket}: {exc}")
-    try:
-        result = json.loads(data) if data else None
-    except json.JSONDecodeError:
-        result = None
-    if not isinstance(result, dict):
-        return _daemon_down(payload, f"browser daemon closed the connection without an answer at {paths.socket}")
-    return result
 
 
 def emit(result: p.Result) -> int:
@@ -100,36 +72,34 @@ def _parser() -> argparse.ArgumentParser:
 
 def _exec(paths: Paths, args: argparse.Namespace) -> int:
     request_id = _request_id()
-    payload: dict[str, p.JsonValue] = {
-        "version": p.PROTOCOL_VERSION,
-        "op": "exec",
-        "request_id": request_id,
-        "session": args.session,
-        "mode": "stealth" if args.stealth else None,
-        "timeout_s": args.timeout,
-        "code": sys.stdin.read(),
-    }
+    payload = p.request(
+        "exec",
+        request_id,
+        session=args.session,
+        mode="stealth" if args.stealth else None,
+        timeout_s=args.timeout,
+        code=sys.stdin.read(),
+    )
     cancelled = threading.Event()
 
     def on_signal(_signum: int, _frame: object) -> None:
         cancelled.set()
-        send(
-            paths,
-            {"version": p.PROTOCOL_VERSION, "op": "cancel", "request_id": _request_id(), "target_request_id": request_id},
-            CANCEL_TIMEOUT_SECS,
-        )
+        send(paths, p.request("cancel", _request_id(), target_request_id=request_id), CANCEL_TIMEOUT_SECS)
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
-    result = send(paths, payload, args.timeout + RPC_TIMEOUT_SLACK_SECS)
+    # The daemon answers inside its engine-start budget plus the program's clamped budget; the wait
+    # here covers both, so an out-of-range --timeout still gets one envelope back.
+    budget = p.SESSION_START_BUDGET_SECS + p.clamp_timeout(args.timeout) + RPC_TIMEOUT_SLACK_SECS
+    result = send(paths, payload, budget)
     if cancelled.is_set():
         err = p.error("cancelled", "execution", "interrupted by the caller", retryable=False, suggested_action="rerun when ready")
         result = p.result(request_id=request_id, op="exec", ok=False, session=result["session"], err=err)
     return emit(result)
 
 
-def _rpc(paths: Paths, op: str, *, timeout: float = RPC_TIMEOUT_SLACK_SECS, **fields: p.JsonValue) -> int:
-    return emit(send(paths, {"version": p.PROTOCOL_VERSION, "op": op, "request_id": _request_id(), **fields}, timeout))
+def _rpc(paths: Paths, op: p.Op, *, timeout: float = RPC_TIMEOUT_SLACK_SECS, **fields: p.JsonValue) -> int:
+    return emit(send(paths, p.request(op, _request_id(), **fields), timeout))
 
 
 def _handover(paths: Paths, args: argparse.Namespace) -> int:
@@ -143,7 +113,7 @@ def _handover(paths: Paths, args: argparse.Namespace) -> int:
             mode="stealth" if args.stealth else None,
             minutes=args.minutes,
         )
-    return _rpc(paths, f"handover_{args.verb}", timeout=HANDOVER_RPC_TIMEOUT_SECS)
+    return _rpc(paths, "handover_status" if args.verb == "status" else "handover_stop", timeout=HANDOVER_RPC_TIMEOUT_SECS)
 
 
 def _dispatch(paths: Paths, args: argparse.Namespace) -> int:
@@ -153,7 +123,7 @@ def _dispatch(paths: Paths, args: argparse.Namespace) -> int:
         return _rpc(paths, "session_stop", session=args.name)
     if args.command == "handover":
         return _handover(paths, args)
-    return _rpc(paths, args.command.replace("-", "_"))
+    return _rpc(paths, "stop_all" if args.command == "stop-all" else args.command)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -164,8 +134,6 @@ def main(argv: list[str] | None = None) -> int:
     paths = load_paths(os.environ, pl.Path.home())
     if args_list[0] == "daemon":
         return daemon.daemon_cmd(args_list[1] if len(args_list) > 1 else "", paths)
-    if args_list[0] == "serve":
-        return serve.main()
     try:
         args = _parser().parse_args(args_list)
     except SystemExit as exc:

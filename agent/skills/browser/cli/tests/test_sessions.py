@@ -57,9 +57,9 @@ def test_table_rebuilds_stopped_sessions_from_profile_dirs(tmp_path):
 def test_idle_sessions_are_ready_ones_past_the_idle_budget(table):
     table, clock = table
     ready = s.resolve_session(table, "a", None)
-    s.mark(ready, "ready")
+    ready.state = "ready"
     busy = s.resolve_session(table, "b", None)
-    s.mark(busy, "busy")
+    busy.state = "busy"
     clock["now"] += p.SESSION_IDLE_STOP_SECS + 1
     assert [x.name for x in s.idle_sessions(table)] == ["a"]
     s.touch(table, ready)

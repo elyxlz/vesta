@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
+import typing as tp
 
+from . import camoufox, chromium
 from . import protocol as p
 from . import sessions as sessions_mod
 from .display import display_readiness
@@ -22,22 +25,34 @@ class State:
     paths: Paths
     table: sessions_mod.SessionTable
     inflight: dict[str, asyncio.Task[ExecOutcome]] = dataclasses.field(default_factory=dict)
-    tasks: set[asyncio.Task[None]] = dataclasses.field(default_factory=set)
-    restart_pending: set[str] = dataclasses.field(default_factory=set)
+    tasks: set[asyncio.Task[object]] = dataclasses.field(default_factory=set)
     display_lock: asyncio.Lock = dataclasses.field(default_factory=asyncio.Lock)
     handover: Handover | None = None
     last_error: p.Error | None = None
     asked_to_stop: bool = False
 
 
+def own(state: State, coro: tp.Coroutine[None, None, object]) -> asyncio.Task[object]:
+    """Every background task the daemon spawns is held here, so shutdown cancels and awaits it."""
+    task = asyncio.create_task(coro)
+    state.tasks.add(task)
+    task.add_done_callback(state.tasks.discard)
+    return task
+
+
+ENGINES = {"chromium": chromium, "camoufox": camoufox}
+
+
+def identity(paths: Paths) -> dict[str, p.JsonValue]:
+    """Which daemon answered: its pid, the protocol it speaks, and the socket it serves."""
+    return {"pid": os.getpid(), "protocol_version": p.PROTOCOL_VERSION, "socket": str(paths.socket)}
+
+
 def routes(paths: Paths) -> dict[str, p.JsonValue]:
     """The mode-to-engine table, each route ready only with its binaries present and the display up."""
-    display = display_readiness(paths)
+    display = display_readiness()
     display_ok = display["ready"] is True
-    ready = {
-        "chromium": paths.chromium_exe.is_file() and paths.browser_use_bin.is_file() and display_ok,
-        "camoufox": paths.camoufox_python.is_file() and paths.camoufox_exe.is_file() and paths.worker_script.is_file() and display_ok,
-    }
+    ready = {engine: not module.missing(paths) and display_ok for engine, module in ENGINES.items()}
     table: dict[str, p.JsonValue] = {}
     for mode, engine in p.ENGINE_FOR_MODE.items():
         table[mode] = {

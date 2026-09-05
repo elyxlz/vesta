@@ -372,7 +372,7 @@ def test_teams_capture_browser_captures_token(tmp_path, monkeypatch):
     fresh = _make_token(time.time() + 7200)
     asked: list[tuple[str, str]] = []
 
-    def fake_capture(config, account, kind):
+    def fake_capture(account, kind):
         asked.append((account, kind))
         return fresh
 
@@ -387,7 +387,7 @@ def test_teams_capture_browser_not_signed_in_returns_sign_in_required(tmp_path, 
     from microsoft_cli import auth_commands
 
     cfg = Config(data_dir=tmp_path)
-    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda config, account, kind: None)
+    monkeypatch.setattr(auth_commands.capture, "capture_token", lambda account, kind: None)
     result = auth_commands.teams_capture(cfg, account_email="user@example.com")
     assert result["status"] == "sign_in_required"
     assert "--browser" in result["message"]

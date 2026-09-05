@@ -1,17 +1,16 @@
 import asyncio
 import dataclasses
 import json
-import os
 import pathlib as pl
 import sys
 
 import pytest
 from vesta_browser import camoufox, sessions
 from vesta_browser.runtime_paths import load_paths
-from vesta_browser.runtimes import HeadedDisplay
 
-FAKE = pl.Path(__file__).parent / "fake_camoufox"
-HEADED = HeadedDisplay(":101", 1280, 800)
+from .fakes import HEADED
+from .hermetic import FAKE_CAMOUFOX
+from .waiting import wait_for_file, wait_until_dead
 
 # Stand-in worker scripts, run under sys.executable (no shebang needed: worker_argv puts the
 # interpreter first). Each writes its pid to <profile>/fake.pid before doing anything else, so a
@@ -51,22 +50,9 @@ def _write_fake_worker(scratch_dir: pl.Path, name: str, body: str) -> pl.Path:
     return script
 
 
-async def _wait_until_dead(pid: int, deadline_s: float) -> bool:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + deadline_s
-    while True:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return True
-        if loop.time() > deadline:
-            return False
-        await asyncio.sleep(0.05)
-
-
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    monkeypatch.setenv("PYTHONPATH", str(FAKE))
+    monkeypatch.setenv("PYTHONPATH", str(FAKE_CAMOUFOX))
     exe = tmp_path / "camoufox"
     exe.write_text("")
     env = {"VESTA_BROWSER_CAMOUFOX_PYTHON": sys.executable, "VESTA_BROWSER_CAMOUFOX_EXE": str(exe)}
@@ -81,7 +67,8 @@ def test_start_writes_the_preset_config_and_the_worker_reports_ready(rig):
     async def run():
         runtime = await camoufox.start(session, paths, headed=HEADED)
         try:
-            return json.loads(runtime.config_path.read_text()), json.loads((session.profile_dir / "launch.json").read_text())
+            config = json.loads((session.scratch_dir / "camou-config.json").read_text())
+            return config, json.loads((session.profile_dir / "launch.json").read_text())
         finally:
             await camoufox.stop(runtime, session)
 
@@ -149,7 +136,7 @@ def test_start_rejects_a_malformed_first_line_and_kills_the_worker(rig):
         with pytest.raises(camoufox.p.BrowserError) as excinfo:
             await camoufox.start(session, fake_paths, headed=HEADED)
         pid = int((session.profile_dir / "fake.pid").read_text())
-        return excinfo.value, await _wait_until_dead(pid, 2)
+        return excinfo.value, await wait_until_dead(pid, 2)
 
     err, dead = asyncio.run(run())
     assert err.err["code"] == "engine_unavailable"
@@ -164,17 +151,12 @@ def test_start_kills_the_worker_when_cancelled_before_ready(rig):
     async def run():
         task = asyncio.ensure_future(camoufox.start(session, fake_paths, headed=HEADED))
         pid_file = session.profile_dir / "fake.pid"
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + 5
-        while not pid_file.is_file():
-            if loop.time() > deadline:
-                raise TimeoutError("fake worker never wrote fake.pid")
-            await asyncio.sleep(0.05)
+        await wait_for_file(pid_file)
         pid = int(pid_file.read_text())
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        return await _wait_until_dead(pid, 2)
+        return await wait_until_dead(pid, 2)
 
     assert asyncio.run(run()) is True
 
@@ -241,7 +223,7 @@ def test_start_writes_user_js_fits_the_preset_and_launches_onto_the_display(rig)
         runtime = await camoufox.start(session, paths, headed=HEADED)
         try:
             user_js = (session.profile_dir / "user.js").read_text()
-            config = json.loads(runtime.config_path.read_text())
+            config = json.loads((session.scratch_dir / "camou-config.json").read_text())
             launch = json.loads((session.profile_dir / "launch.json").read_text())
             return user_js, config, launch
         finally:

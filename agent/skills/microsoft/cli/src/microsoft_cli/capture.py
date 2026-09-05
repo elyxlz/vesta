@@ -13,12 +13,11 @@ All ``browser`` subprocess calls live here so the coupling to that skill stays i
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-import re
 import string
 import subprocess
-import time
 import typing as tp
 
 from . import owa_rest, teams
@@ -35,8 +34,7 @@ HANDOVER_TIMEOUT_SECS = 150.0
 RPC_SLACK_SECS = 30
 HANDOVER_MINUTES = 30
 
-# The session-name shape the browser daemon takes, and the length it caps a name at.
-SESSION_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# The length the browser daemon caps a session name at; the shape is lowercase alphanumerics, `-`, `_`.
 SESSION_NAME_MAX = 64
 _SESSION_PREFIX = "microsoft-"
 _SESSION_ALPHABET = frozenset(string.ascii_lowercase + string.digits)
@@ -95,21 +93,34 @@ _TEAMS_TOKEN_JS = """
 
 _TOKEN_SOURCES: dict[TokenKind, tuple[str, str]] = {"mail": (MAIL_URL, _MAIL_TOKEN_JS), "teams": (TEAMS_URL, _TEAMS_TOKEN_JS)}
 
-# The program `browser exec` runs: drive this session's one tab to the web app and print its token.
-# Each poll navigates the tab it finds, so a run of polls holds one tab open, not one per poll.
-_TOKEN_PROGRAM = """if not list_tabs():
+# The SPA mints its token a few seconds into the load, so the program polls for it in the page.
+TOKEN_POLL_TRIES = 12
+TOKEN_POLL_DELAY_SECS = 2.5
+
+# The program `browser exec` runs: drive this session's one tab to the web app, then read the token
+# until it appears. One navigation and one process per capture; the tab it drives is the one it finds,
+# so a session holds one tab open, not one per capture. `js` returns the expression's value.
+_TOKEN_PROGRAM = """if list_tabs():
+    goto_url({url!r})
+else:
     new_tab({url!r})
-goto_url({url!r})
 wait_for_load()
-print(js({expression!r}))
+token = "NONE"
+for attempt in range({tries}):
+    token = js({expression!r})
+    if token != "NONE":
+        break
+    if attempt + 1 < {tries}:
+        wait({delay})
+print(token)
 """
 
 
 def session_name(account_email: str) -> str:
     """The Chromium session that holds this account's sign-in. One account, one session.
 
-    The daemon takes `SESSION_NAME_RE`, so the address maps to ASCII lowercase alphanumerics with
-    every other character replaced by `_`. An address that overruns `SESSION_NAME_MAX` keeps the
+    The daemon takes lowercase alphanumerics, `-`, and `_`, so the address maps to ASCII lowercase
+    alphanumerics with every other character replaced by `_`. An address that overruns `SESSION_NAME_MAX` keeps the
     head that fits plus a digest of the whole address, so the name stays inside the cap, unique to
     the account, and the same on every call.
     """
@@ -154,37 +165,20 @@ def _exec(code: str, *, session: str, timeout: float) -> str:
     return output["stdout"].strip()
 
 
-def eval_value(raw: str) -> str:
-    """Unwrap what the page evaluation prints: a JSON-encoded JS result arrives quoted."""
-    return json.loads(raw) if raw.startswith('"') else raw
-
-
 def _looks_like_jwt(value: str) -> bool:
     return value.count(".") == 2 and value.startswith("eyJ")
 
 
-def capture_token(_config, account_email: str, kind: TokenKind) -> str | None:
-    """Read one token from this account's browser session. None means the session is not signed in.
-
-    The account's session carries the whole sign-in, so the config holds nothing this needs."""
+def capture_token(account_email: str, kind: TokenKind) -> str | None:
+    """Read one token from this account's browser session, waiting for the SPA to mint it. None means
+    the session is not signed in. The session carries the whole sign-in, so nothing else is needed."""
     url, expression = _TOKEN_SOURCES[kind]
-    code = _TOKEN_PROGRAM.format(url=url, expression=expression)
-    value = eval_value(_exec(code, session=session_name(account_email), timeout=TOKEN_TIMEOUT_SECS))
+    code = _TOKEN_PROGRAM.format(url=url, expression=expression, tries=TOKEN_POLL_TRIES, delay=TOKEN_POLL_DELAY_SECS)
+    value = _exec(code, session=session_name(account_email), timeout=TOKEN_TIMEOUT_SECS)
     return value if _looks_like_jwt(value) else None
 
 
-def _poll_token(account_email: str, kind: TokenKind, *, tries: int = 12, delay: float = 2.5) -> str | None:
-    """Read the token until it appears: the SPA mints it a few seconds into the load."""
-    for attempt in range(tries):
-        token = capture_token(None, account_email, kind)
-        if token is not None:
-            return token
-        if attempt + 1 < tries:
-            time.sleep(delay)
-    return None
-
-
-def begin_interactive(_config, account_email: str) -> str:
+def begin_interactive(account_email: str) -> str:
     """Open a handover on this account's session and return the URL to hand the user."""
     args = ["handover", "start", "--session", session_name(account_email), "--url", MAIL_URL, "--minutes", str(HANDOVER_MINUTES)]
     envelope = _send(args, timeout=HANDOVER_TIMEOUT_SECS)
@@ -199,13 +193,13 @@ def _harvest(account_email: str) -> dict[str, dict[str, float | str]]:
     (e.g. Teams not provisioned) rather than failing the whole capture."""
     captured: dict[str, dict[str, float | str]] = {}
     for kind in TOKEN_KINDS:
-        token = _poll_token(account_email, kind)
+        token = capture_token(account_email, kind)
         if token:
             captured[kind] = {"token": token, "expires_at": owa_rest.jwt_exp(token)}
     return captured
 
 
-def finish_interactive(_config, account_email: str) -> dict[str, dict[str, float | str]]:
+def finish_interactive(account_email: str) -> dict[str, dict[str, float | str]]:
     """After the user has signed in, close the handover window and lift both tokens from the session."""
     # The stop detaches the user's view; the session keeps running signed in, so the harvest
     # reads it directly.
@@ -216,7 +210,7 @@ def finish_interactive(_config, account_email: str) -> dict[str, dict[str, float
     return captured
 
 
-def refresh(_config, account_email: str) -> dict[str, dict[str, float | str]]:
+def refresh(account_email: str) -> dict[str, dict[str, float | str]]:
     """Silently re-mint tokens: read them from the account's session with no window and no user.
 
     Works while the SSO cookies live (weeks with "stay signed in"); raises once they lapse so the
@@ -230,10 +224,8 @@ def refresh(_config, account_email: str) -> dict[str, dict[str, float | str]]:
 def stop() -> None:
     """Close the handover. The account's session keeps its profile, so the sign-in survives, and a
     stop with nothing to stop is not a failure, which makes this idempotent."""
-    try:
+    with contextlib.suppress(CaptureError):
         _send(["handover", "stop"], timeout=HANDOVER_TIMEOUT_SECS)
-    except CaptureError:
-        return
 
 
 def save_captured(config, account_email: str, captured: dict[str, dict[str, float | str]]) -> list[str]:
@@ -261,4 +253,4 @@ def due_accounts(config, now: float) -> list[str]:
 
 def refresh_and_save(config, account_email: str) -> list[str]:
     """Silently re-mint and persist an account's tokens. Raises CaptureError if the sign-in lapsed."""
-    return save_captured(config, account_email, refresh(config, account_email))
+    return save_captured(config, account_email, refresh(account_email))

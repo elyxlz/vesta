@@ -24,8 +24,8 @@ class Handover:
     they are made, and `task` holds whatever the daemon currently owns for this handover, the start
     while it is `starting` and the expiry timer once it is `live`.
 
-    `user_url` is the only place the minted secret lives, so nothing else can log it, and the
-    teardown clears it: a revoked key must not keep printing as a link.
+    `user_url` is the only place the minted secret lives, so nothing else can log it, and `payload`
+    prints it for a live handover alone: a revoked key must not keep printing as a link.
     """
 
     id: str
@@ -36,7 +36,7 @@ class Handover:
     key_id: str | None = None
     user_url: str = ""
     expires_at: str = ""
-    task: asyncio.Task[None] | None = None
+    task: asyncio.Task[object] | None = None
 
 
 def diagnostic(handover: Handover | None) -> dict[str, p.JsonValue]:
@@ -56,6 +56,8 @@ def diagnostic(handover: Handover | None) -> dict[str, p.JsonValue]:
 
 
 def payload(handover: Handover | None) -> dict[str, p.JsonValue]:
-    """What `handover start|status|stop` answers with; a field it has no answer for yet is null."""
-    user_url = handover.user_url if handover is not None and handover.state != "inactive" else ""
+    """What `handover start|status|stop` answers with; a field it has no answer for yet is null.
+
+    The keyed URL prints only for a live handover: a broken or ended one must not hand out a link."""
+    user_url = handover.user_url if handover is not None and handover.state == "live" else ""
     return {**diagnostic(handover), "user_url": user_url or None}

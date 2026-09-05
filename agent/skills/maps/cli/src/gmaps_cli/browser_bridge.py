@@ -5,9 +5,10 @@ with a small Python program on stdin: the program reuses (or opens) a Google Map
 one in-page `fetch` against a `/maps/preview/entitylist/` RPC and prints its result. So the page's
 cookies and origin auth apply with no token or cookie handling here. Reads are cookie-authed
 alone. A write also needs the page's session token plus one of a pool of server-issued
-consistency tokens the page carries, and each write action accepts only its own token, so
-`entitylist_write` tries the pool until one lands. Signed-out is a structured result, not a
-scraped string. Every other maps command stays on the unauthenticated `client.py` path.
+consistency tokens the page carries, and each write action accepts only its own token, so a write
+is one program that reads the tokens and tries the pool in the page until one lands. Signed-out is
+a structured result, not a scraped string. Every other maps command stays on the unauthenticated
+`client.py` path.
 """
 
 from __future__ import annotations
@@ -103,7 +104,26 @@ _TOKENS_JS = (
     .replace("__CONSISTENCY__", _CONSISTENCY_RE.pattern)
     .replace("__TOKEN__", SESSION_TOKEN_RE.pattern)
 )
-_TOKENS_PROGRAM = _TAB_PROGRAM + _JS_PROGRAM.format(js=_TOKENS_JS)
+
+# The whole write in one program: read the tokens, then fetch once per pooled consistency token
+# until one is accepted, and print the envelope of the last attempt. A page with no tokens prints a
+# signed-out envelope, so the caller reads one shape whatever stopped the write. The pb arrives as
+# a template whose two placeholders the program fills per attempt.
+_WRITE_PROGRAM = (
+    _TAB_PROGRAM
+    + """import json
+tokens = js({tokens_js!r})
+session = tokens["session_token"] if isinstance(tokens, dict) and isinstance(tokens["session_token"], str) else ""
+pool = [t for t in tokens["pool"] if isinstance(t, str)] if isinstance(tokens, dict) and isinstance(tokens["pool"], list) else []
+envelope = {{"signed_in": bool(session) and bool(pool), "status": 0, "body": ""}}
+for consistency in pool if session else []:
+    pb = {pb_template!r}.replace("__SESSION__", session).replace("__CONSISTENCY__", consistency)
+    envelope = js({fetch_js!r}.replace("__PB__", pb))
+    if not envelope["signed_in"] or envelope["status"] == 200:
+        break
+print(json.dumps(envelope))
+"""
+)
 
 
 def _exec(code: str) -> str:
@@ -132,13 +152,16 @@ def _exec(code: str) -> str:
 
 
 def _parse_envelope(raw: str) -> _Envelope:
-    """The in-page JS returns {signed_in, status, body}; the fetch program JSON-encodes it."""
+    """The in-page JS returns {signed_in, status, body}; the program JSON-encodes it. Only a
+    signed-in envelope comes back: a signed-out page is the one failure every caller shares."""
     data = json.loads(raw)
     if not isinstance(data, dict) or "signed_in" not in data or "status" not in data or "body" not in data:
         raise BrowserUnavailableError(f"unexpected browser exec output: {raw[:120]!r}")
     signed_in, status, body = data["signed_in"], data["status"], data["body"]
     if not isinstance(signed_in, bool) or not isinstance(status, int) or not isinstance(body, str):
         raise BrowserUnavailableError(f"malformed evaluate envelope: {raw[:120]!r}")
+    if not signed_in:
+        raise SignedOutError(f"not signed into Google (status {status})")
     return _Envelope(signed_in=signed_in, status=status, body=body)
 
 
@@ -148,40 +171,24 @@ def _fetch(op: str, pb: str) -> _Envelope:
 
 
 def entitylist_get(op: str, pb: str) -> object:
-    envelope = _fetch(op, pb)
-    if not envelope.signed_in:
-        raise SignedOutError(f"not signed into Google (status {envelope.status})")
-    return json.loads(strip_envelope(envelope.body))
+    return json.loads(strip_envelope(_fetch(op, pb).body))
 
 
-def _page_tokens() -> tuple[str, list[str]]:
-    """The session token plus the ordered, de-duplicated consistency-token pool from the maps page."""
-    raw = _exec(_TOKENS_PROGRAM)
-    data = json.loads(raw)
-    if not isinstance(data, dict) or "session_token" not in data or "pool" not in data:
-        raise BrowserUnavailableError(f"unexpected browser exec output: {raw[:120]!r}")
-    session, pool = data["session_token"], data["pool"]
-    if not isinstance(session, str) or not isinstance(pool, list):
-        raise BrowserUnavailableError(f"malformed token payload: {raw[:120]!r}")
-    if not session:
-        raise SignedOutError("no session token on the maps page (signed out?)")
-    tokens = [token for token in pool if isinstance(token, str)]
-    if not tokens:
-        raise SignedOutError("no consistency tokens on the maps page (signed out?)")
-    return session, tokens
+def write_program(op: str, build_pb: Callable[[str, str], str]) -> str:
+    """The one program a write runs: `build_pb` is called once with the two placeholders the program
+    fills in the page, so the pb shape stays with its Python owner."""
+    pb_template = build_pb("__SESSION__", "__CONSISTENCY__")
+    fetch_js = _FETCH_JS.format(op=op, pb="__PB__")
+    return _WRITE_PROGRAM.format(tokens_js=_TOKENS_JS, pb_template=pb_template, fetch_js=fetch_js)
 
 
 def entitylist_write(op: str, build_pb: Callable[[str, str], str]) -> object:
-    """Run a write RPC, trying each pooled consistency token until one is accepted.
+    """Run a write RPC in one program, trying each pooled consistency token until one is accepted.
 
     `build_pb(session_token, consistency_token)` returns the `pb` for one attempt. A rejected token
     returns a harmless 400 (no mutation); the first 200 is the applied write.
     """
-    session, pool = _page_tokens()
-    for consistency in pool:
-        envelope = _fetch(op, build_pb(session, consistency))
-        if not envelope.signed_in:
-            raise SignedOutError(f"not signed into Google (status {envelope.status})")
-        if envelope.status == 200:
-            return json.loads(strip_envelope(envelope.body))
+    envelope = _parse_envelope(_exec(write_program(op, build_pb)))
+    if envelope.status == 200:
+        return json.loads(strip_envelope(envelope.body))
     raise WriteRejectedError(f"{op}: no consistency token accepted; the write pb may have drifted")

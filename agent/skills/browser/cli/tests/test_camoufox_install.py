@@ -8,7 +8,6 @@ import zipfile
 
 import pytest
 from vesta_browser import camoufox_install as ci
-from vesta_browser import runtime_paths
 
 SCRIPT = pl.Path(ci.__file__)
 
@@ -21,10 +20,6 @@ def _zip_bytes(with_exec_bit: bool) -> bytes:
         z.writestr(info, "#!/bin/sh\n")
         z.writestr("properties.json", "{}")
     return buf.getvalue()
-
-
-def test_tags_agree_between_installer_and_runtime_paths():
-    assert ci.CAMOUFOX_RELEASE_TAG == runtime_paths.CAMOUFOX_RELEASE_TAG
 
 
 def test_install_is_a_no_op_when_the_tag_is_present(tmp_path):

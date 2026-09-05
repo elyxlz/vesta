@@ -22,11 +22,7 @@ _DEFAULTS = {"showcursor": False}
 
 
 def _load() -> list[dict]:
-    presets = []
-    for path in sorted(_DIR.glob("*.json")):
-        data = json.loads(path.read_text())
-        data["_name"] = path.stem
-        presets.append(data)
+    presets = [json.loads(path.read_text()) for path in sorted(_DIR.glob("*.json"))]
     if not presets:
         raise RuntimeError("no fingerprint presets bundled")
     return presets

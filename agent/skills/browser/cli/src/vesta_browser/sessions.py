@@ -30,8 +30,9 @@ class Session:
     artifact_dir: pl.Path
     last_activity: float
     runtime: EngineRuntime | None = None
-    request_id: str | None = None
     display: SessionDisplay | None = None
+    # Set when a runtime died under the session's own use, so the next start reports the restart.
+    restart_pending: bool = False
 
 
 @dataclasses.dataclass
@@ -102,10 +103,6 @@ def touch(table: SessionTable, session: Session) -> None:
     session.last_activity = table.clock()
 
 
-def mark(session: Session, state: p.SessionState) -> None:
-    session.state = state
-
-
 def idle_sessions(table: SessionTable, idle_secs: int = p.SESSION_IDLE_STOP_SECS) -> list[Session]:
     cutoff = table.clock() - idle_secs
     return [x for x in table.sessions.values() if x.state == "ready" and x.last_activity < cutoff]
@@ -113,3 +110,7 @@ def idle_sessions(table: SessionTable, idle_secs: int = p.SESSION_IDLE_STOP_SECS
 
 def info(session: Session) -> p.SessionInfo:
     return p.session_info(session.name, session.mode, session.engine, session.state)
+
+
+def listing(table: SessionTable) -> list[p.JsonValue]:
+    return [dict(info(session)) for session in table.sessions.values()]

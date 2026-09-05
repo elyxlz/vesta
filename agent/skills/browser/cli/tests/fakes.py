@@ -4,6 +4,11 @@ import pathlib as pl
 import stat
 import sys
 
+from vesta_browser.runtimes import HeadedDisplay
+
+# The display every engine test launches onto.
+HEADED = HeadedDisplay(":101", 1280, 800)
+
 FAKE_CHROMIUM = f"""#!{sys.executable}
 import http.server, json, os, pathlib, sys, threading
 args = sys.argv[1:]
@@ -128,6 +133,12 @@ def write_display_fakes(bin_dir: pl.Path, x11_dir: pl.Path) -> None:
     entries = (("Xvfb", FAKE_XVFB), ("openbox", FAKE_OPENBOX), ("x11vnc", FAKE_X11VNC), ("websockify", FAKE_WEBSOCKIFY))
     for name, body in entries:
         write_script(bin_dir, name, body.replace(X11_DIR, str(x11_dir)))
+
+
+def display_pids(x11_dir: pl.Path) -> list[int]:
+    """Every display-stack fake started under `x11_dir`, in start order."""
+    record = x11_dir / "pids"
+    return [int(line) for line in record.read_text().split()] if record.exists() else []
 
 
 # The three vestad helpers, recording what they were asked to the files FAKE_KEYS and

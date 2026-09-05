@@ -1,6 +1,6 @@
 """Daemon lifecycle for the browser CLI: the whole contract, owned here.
 
-start claims the pid record then spawns `browser serve` detached, stop is a SIGTERM the
+start claims the pid record then spawns `browser-serve` detached, stop is a SIGTERM the
 serve path reads as deliberate, and status answers from the pid record alone. Unlike the
 port-serving daemons, browser carries no port record: the handover registers the `browser`
 service private for its own lifetime, the daemon deregisters it at startup, and status
@@ -19,12 +19,12 @@ import subprocess
 import sys
 import time
 
-from . import serve
+from .client import ping
 from .runtime_paths import Paths
 
 NAME = "browser"
 USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
-POLL_SECS = 0.5
+POLL_SECS = 0.1
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_WAIT_SECS = 3
 # One hung connection must not eat the whole readiness budget.
@@ -119,7 +119,7 @@ def _await_ready(child: subprocess.Popen[bytes], paths: Paths) -> int:
     while time.monotonic() < deadline:
         if child.poll() is not None:
             return _abandon(child, f"{NAME} exited during startup; see {paths.log}", paths)
-        if serve.ping(paths, PROBE_TIMEOUT_SECS):
+        if ping(paths, PROBE_TIMEOUT_SECS):
             print(json.dumps({"status": "started"}))
             return 0
         time.sleep(POLL_SECS)
@@ -160,18 +160,16 @@ def _claim_start(paths: Paths) -> int | None:
 
 
 def _start(paths: Paths) -> int:
-    if live_pid(paths) is not None:
-        print(json.dumps({"status": "already_running"}))
-        return 0
     paths.daemons_dir.mkdir(parents=True, exist_ok=True)
     paths.log.parent.mkdir(parents=True, exist_ok=True)
     answer = _claim_start(paths)
     if answer is not None:
         return answer
+    # The daemon entry point is installed beside this command, so neither PATH nor a re-import of
+    # the whole daemon into this client decides which one runs.
+    serve_bin = pl.Path(sys.argv[0]).with_name("browser-serve")
     with paths.log.open("ab") as log:
-        child = subprocess.Popen(
-            [sys.argv[0], "serve"], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
-        )
+        child = subprocess.Popen([str(serve_bin)], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log)
     _pidfile(paths).write_text(_record(child.pid))
     return _await_ready(child, paths)
 
@@ -198,8 +196,7 @@ def _stop(paths: Paths) -> int:
     with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGTERM)
     # Two thirds of the budget in, a daemon that has not honoured SIGTERM is killed instead, and
-    # the remainder is what reaps it. Read here, not at import, so the budget in force is the one
-    # the caller set.
+    # the remainder is what reaps it.
     if not _await_gone(started + STOP_TIMEOUT_SECS * 2 // 3, paths):
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)

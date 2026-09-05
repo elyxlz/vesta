@@ -78,7 +78,7 @@ _SHIM_SIGNED_OUT = """#!/usr/bin/env python3
 import json, sys
 code = sys.stdin.read()
 if "maps/search/coffee" in code:
-    stdout = json.dumps({"session_token": "", "pool": []})  # no token: writes read signed-out
+    stdout = json.dumps({"signed_in": False, "status": 0, "body": ""})  # no tokens: the write program prints signed-out
 else:
     stdout = json.dumps({"signed_in": False, "status": 302, "body": ""})
 envelope = {"schema": "browser.result.v1", "ok": True, "warnings": [],

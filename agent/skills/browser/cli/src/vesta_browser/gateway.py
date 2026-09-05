@@ -7,10 +7,9 @@ those scripts.
 
 from __future__ import annotations
 
-import asyncio
 import json
 
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import run_capture
 
 GATEWAY_TIMEOUT_SECS = 35
 
@@ -21,20 +20,14 @@ class GatewayError(Exception):
 
 async def _run(*argv: str, timeout: float = GATEWAY_TIMEOUT_SECS) -> str:
     try:
-        process = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True
-        )
+        code, out, err = await run_capture(list(argv), timeout)
     except OSError as exc:
         raise GatewayError(f"{argv[0]} could not be run: {exc}") from exc
-    try:
-        out, err = await asyncio.wait_for(process.communicate(), timeout)
-    except TimeoutError as exc:
-        # The group, not the process: a helper shells out to curl, which would outlive its parent.
-        await kill_group(process, KILL_GRACE_SECS)
-        raise GatewayError(f"{argv[0]} did not answer within {timeout}s") from exc
-    if process.returncode != 0:
-        raise GatewayError(err.decode(errors="replace").strip() or f"{argv[0]} exited with {process.returncode}")
-    return out.decode(errors="replace").strip()
+    if code is None:
+        raise GatewayError(f"{argv[0]} did not answer within {timeout}s")
+    if code != 0:
+        raise GatewayError(err or f"{argv[0]} exited with {code}")
+    return out
 
 
 async def register_service(name: str, timeout: float = GATEWAY_TIMEOUT_SECS) -> int:

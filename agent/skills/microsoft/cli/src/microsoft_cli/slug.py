@@ -1,7 +1,7 @@
 """The one slug rule: reduce a value to alphanumerics and underscores.
 
-Every name this CLI derives from an address or a subject line (a save directory, a browser session)
-goes through it, so one account maps to exactly one name wherever the name is built.
+Every save directory this CLI derives from an address or a subject line goes through it. The browser
+session name is a separate contract, `capture.session_name`, shaped by the browser daemon.
 """
 
 from __future__ import annotations

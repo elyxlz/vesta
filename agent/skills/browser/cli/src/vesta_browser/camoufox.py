@@ -16,28 +16,42 @@ import typing as tp
 
 from . import protocol as p
 from .presets import fit_to_screen, select_preset
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import KILL_GRACE_SECS, kill_group, reaped_on_failure
 from .runtime_paths import CAMOUFOX_FF_MAJOR, Paths
-from .runtimes import CamoufoxRuntime, ExecOutcome, HeadedDisplay
+from .runtimes import CamoufoxRuntime, ExecOutcome, HeadedDisplay, elapsed_ms
 from .sessions import Session
 
 CAMOUFOX_READY_TIMEOUT_SECS = 90
 WORKER_STOP_GRACE_SECS = 5
-
-
-def _unavailable(message: str) -> p.BrowserError:
-    return p.BrowserError(p.error("engine_unavailable", "launch", message, retryable=True, suggested_action="run: browser doctor"))
+READY_LINE = {"ready": True}
 
 
 async def _fail_startup(process: asyncio.subprocess.Process, message: str) -> tp.NoReturn:
     await kill_group(process, KILL_GRACE_SECS)
-    raise _unavailable(message) from None
+    raise p.BrowserError(p.unavailable(message)) from None
 
 
 def _page_info(raw: p.JsonValue) -> p.PageInfo:
     if not isinstance(raw, dict):
         return p.page_unavailable()
-    return {"state": "ready", "tab_id": str(raw["tab_id"]), "url": str(raw["url"]), "title": str(raw["title"]), "observed_at": p.now_iso()}
+    return p.page_ready(str(raw["tab_id"]), str(raw["url"]), str(raw["title"]))
+
+
+def _is_ready_line(line: bytes) -> bool:
+    try:
+        return json.loads(line) == READY_LINE
+    except ValueError:
+        return False
+
+
+def missing(paths: Paths) -> list[str]:
+    """Every file the stealth route needs and this box does not have, each named with its path."""
+    needed = (
+        (paths.camoufox_python, "camoufox venv python"),
+        (paths.camoufox_exe, "camoufox browser"),
+        (paths.worker_script, "worker script"),
+    )
+    return [f"{label} missing at {path}" for path, label in needed if not path.is_file()]
 
 
 def worker_argv(paths: Paths, session: Session, config_path: pl.Path, headed: HeadedDisplay) -> list[str]:
@@ -60,21 +74,15 @@ def worker_argv(paths: Paths, session: Session, config_path: pl.Path, headed: He
 
 
 async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> CamoufoxRuntime:
-    binaries = (
-        (paths.camoufox_python, "camoufox venv python"),
-        (paths.camoufox_exe, "camoufox browser"),
-        (paths.worker_script, "worker script"),
-    )
-    for binary, label in binaries:
-        if not binary.is_file():
-            raise _unavailable(f"{label} missing at {binary}")
+    gaps = missing(paths)
+    if gaps:
+        raise p.BrowserError(p.unavailable("; ".join(gaps)))
     config_path = session.scratch_dir / "camou-config.json"
     preset = select_preset(session.profile_dir)
     preset = fit_to_screen(preset, headed.width, headed.height)
     # Camoufox's WebRender falls back to software rendering on Xvfb's dummy driver; without
     # these prefs the worker paints no frame at all on the session's display.
     (session.profile_dir / "user.js").write_text('user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n')
-    preset = {key: value for key, value in preset.items() if not key.startswith("_")}
     config_path.write_text(json.dumps(preset))
     paths.log.parent.mkdir(parents=True, exist_ok=True)
     worker_env = {**os.environ, "DISPLAY": headed.display, "LIBGL_ALWAYS_SOFTWARE": "1"}
@@ -92,24 +100,17 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Cam
     if process.stdout is None:
         raise RuntimeError("camoufox worker has no pipe")
     try:
-        line = await asyncio.wait_for(process.stdout.readline(), CAMOUFOX_READY_TIMEOUT_SECS)
+        async with reaped_on_failure(process, KILL_GRACE_SECS):
+            line = await asyncio.wait_for(process.stdout.readline(), CAMOUFOX_READY_TIMEOUT_SECS)
     except TimeoutError:
-        await _fail_startup(process, f"camoufox worker did not report ready within {CAMOUFOX_READY_TIMEOUT_SECS}s")
-    except asyncio.CancelledError:
-        await kill_group(process, KILL_GRACE_SECS)
-        raise
+        raise p.BrowserError(p.unavailable(f"camoufox worker did not report ready within {CAMOUFOX_READY_TIMEOUT_SECS}s")) from None
     except Exception as exc:
-        await _fail_startup(process, f"camoufox worker failed during startup: {exc}")
+        raise p.BrowserError(p.unavailable(f"camoufox worker failed during startup: {exc}")) from exc
     if not line:
         await _fail_startup(process, f"camoufox worker exited during startup (code {process.returncode})")
-    try:
-        ready = json.loads(line)
-    except ValueError:
+    if not _is_ready_line(line):
         await _fail_startup(process, f"camoufox worker sent a malformed first line: {line[:80]!r}")
-    else:
-        if ready != {"ready": True}:
-            await _fail_startup(process, f"camoufox worker exited during startup (code {process.returncode})")
-    return CamoufoxRuntime(process=process, config_path=config_path, last_page=p.page_unavailable())
+    return CamoufoxRuntime(process=process)
 
 
 async def _ask(runtime: CamoufoxRuntime, payload: dict[str, p.JsonValue], timeout_s: float) -> dict[str, p.JsonValue]:
@@ -132,20 +133,21 @@ async def exec_code(runtime: CamoufoxRuntime, _session: Session, _paths: Paths, 
         answer = await _ask(runtime, {"op": "exec", "code": code}, timeout_s)
     except TimeoutError:
         await kill_group(runtime.process, KILL_GRACE_SECS)
-        return ExecOutcome("", "", None, int((time.monotonic() - started) * 1000), timed_out=True)
+        return ExecOutcome("", "", None, elapsed_ms(started), timed_out=True)
     except asyncio.CancelledError:
         await kill_group(runtime.process, KILL_GRACE_SECS)
         raise
     except (ConnectionError, ValueError) as exc:
+        # A lost or garbled pipe is a worker this exec cannot trust: it is reaped here, and the
+        # exit code it leaves is what queues the session's restart.
         await kill_group(runtime.process, KILL_GRACE_SECS)
-        return ExecOutcome("", str(exc), None, int((time.monotonic() - started) * 1000), warnings=["worker_restarted"])
-    runtime.last_page = _page_info(answer["page"])
+        return ExecOutcome("", str(exc), None, elapsed_ms(started))
     mismatch = answer["capability_mismatch"]
     return ExecOutcome(
         str(answer["stdout"]),
         str(answer["stderr"]),
         int(str(answer["exit_code"])),
-        int((time.monotonic() - started) * 1000),
+        elapsed_ms(started),
         capability_mismatch=str(mismatch) if isinstance(mismatch, str) else None,
     )
 
@@ -157,8 +159,7 @@ async def observe(runtime: CamoufoxRuntime) -> p.PageInfo:
         answer = await _ask(runtime, {"op": "observe"}, 5)
     except (TimeoutError, ConnectionError, ValueError):
         return p.page_unavailable()
-    runtime.last_page = _page_info(answer["page"])
-    return runtime.last_page
+    return _page_info(answer["page"])
 
 
 async def stop(runtime: CamoufoxRuntime, _session: Session) -> None:

@@ -39,18 +39,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     apt-get update && apt-get install -y --no-install-recommends gh && \
     rm -rf /var/lib/apt/lists/*
 
-# ── browser handover: stream a headed Camoufox to the user so they sign in by hand ──
-# The browser skill's primary fallback when a site gates on account trust. handover.py shells out
-# to Xvfb -> openbox -> x11vnc -> websockify and symlinks noVNC's assets, so without these a box
-# can only report the gap, never escalate. novnc pulls websockify in as a hard dependency. Baked in
-# rather than apt-installed on demand: a runtime install dies with the next container rebuild.
+# ── browser daemon: every session's own X display, the handover stream, and the standard route's
+# Chromium. display.py runs Xvfb -> openbox -> x11vnc -> websockify and symlinks noVNC's assets, so
+# without these a box can only report the gap, never escalate. novnc pulls websockify in as a hard
+# dependency. Baked in rather than apt-installed on demand: a runtime install dies with the next
+# container rebuild. install-engines.sh applies the same package list on the fleet.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb x11vnc openbox novnc && \
-    rm -rf /var/lib/apt/lists/*
-
-# ── browser daemon engines: Debian chromium for the standard route, the pinned Camoufox bundle for
-# stealth. install-engines.sh is the one owner (the migration runs the same script on the fleet).
-RUN apt-get update && apt-get install -y --no-install-recommends chromium && \
+    xvfb x11vnc openbox novnc chromium && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Go toolchain + CGO link deps for the whatsapp skill's on-box builds ───

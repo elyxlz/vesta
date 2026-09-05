@@ -9,12 +9,11 @@ import dataclasses
 import pathlib as pl
 import typing as tp
 
+from .camoufox_install import CAMOUFOX_RELEASE_TAG, INSTALL_ROOT
+
 SKILL_DIR = pl.Path(__file__).resolve().parents[3]
 ENGINES_DIR = SKILL_DIR / "engines"
-CAMOUFOX_INSTALL_ROOT = pl.Path("/opt/camoufox")
-# Duplicated in camoufox_install.py, which runs standalone under the system python and cannot
-# import this package; test_camoufox_install.py pins the two values equal.
-CAMOUFOX_RELEASE_TAG = "v150.0.2-beta.25"
+DEFAULT_X11_SOCKET_DIR = pl.Path("/tmp/.X11-unix")
 # The bundle's Firefox major, handed to the Camoufox library so it never looks for a managed install.
 CAMOUFOX_FF_MAJOR = int(CAMOUFOX_RELEASE_TAG[1:].split(".", 1)[0])
 
@@ -58,10 +57,10 @@ def load_paths(env: tp.Mapping[str, str], home: pl.Path) -> Paths:
         chromium_exe=_override(env, "VESTA_BROWSER_CHROMIUM", pl.Path("/usr/bin/chromium")),
         browser_use_bin=_override(env, "VESTA_BROWSER_BROWSER_USE", ENGINES_DIR / "chromium/.venv/bin/browser-use"),
         camoufox_python=_override(env, "VESTA_BROWSER_CAMOUFOX_PYTHON", ENGINES_DIR / "camoufox/.venv/bin/python"),
-        camoufox_exe=_override(env, "VESTA_BROWSER_CAMOUFOX_EXE", CAMOUFOX_INSTALL_ROOT / CAMOUFOX_RELEASE_TAG / "camoufox"),
+        camoufox_exe=_override(env, "VESTA_BROWSER_CAMOUFOX_EXE", INSTALL_ROOT / CAMOUFOX_RELEASE_TAG / "camoufox"),
         worker_script=ENGINES_DIR / "camoufox/worker.py",
         novnc_dir=_override(env, "VESTA_BROWSER_NOVNC_DIR", pl.Path("/usr/share/novnc")),
-        x11_socket_dir=_override(env, "VESTA_BROWSER_X11_DIR", pl.Path("/tmp/.X11-unix")),
+        x11_socket_dir=_override(env, "VESTA_BROWSER_X11_DIR", DEFAULT_X11_SOCKET_DIR),
         handover_web=root / "handover-web",
         assets=SKILL_DIR / "cli/src/vesta_browser/assets/handover",
     )
