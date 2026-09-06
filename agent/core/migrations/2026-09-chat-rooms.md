@@ -1,4 +1,4 @@
-The app's chat skill is named `chat`: its directory is `~/agent/skills/chat/`, its command is `chat`, its data lives in `~/.chat/`, its notifications carry `source=chat`, and its daemon line is `chat daemon start`. Your box still holds the installed tool, the data directory, the service registration, the daemon line, and any notification rules under the old name `app-chat`. Every step reads disk state first, so this is safe to run more than once.
+The app's chat skill is named `chat`: its directory is `~/agent/skills/chat/`, its command is `chat`, its data lives in `~/.chat/`, its notifications carry `source=chat`, and its daemon line is `chat daemon start`. The daemon serves no port and registers no service, so a registration under the old name `app-chat` has to go. Your box still holds the installed tool, the data directory, that registration, the daemon line, and any notification rules under the old name. Every step reads disk state first, so this is safe to run more than once.
 
 ### 1. Move the data directory
 
@@ -32,7 +32,7 @@ chat import
 
 It prints one JSON line. `"rows": 0` or `"status": "no_events_db"` both mean nothing was left to import. Existing rows are kept, so this is safe to run more than once. Run it before the daemon starts.
 
-### 4. Re-register the service and fix the daemon line
+### 4. Drop the old service registration and fix the daemon line
 
 ```bash
 deregister-service app-chat 2>/dev/null; touch ~/agent/skills/restart/daemons.sh; sed -i 's/^app-chat daemon start/chat daemon start/' ~/agent/skills/restart/daemons.sh; grep -c '^chat daemon start' ~/agent/skills/restart/daemons.sh

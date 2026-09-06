@@ -15,16 +15,16 @@ uv tool install --editable ~/agent/skills/chat/cli
 ```
 
 **Daemon**: `chat daemon start|stop|restart|status`:
-- Start is idempotent (a running daemon is a no-op) and owns the port registration with vestad
+- Start is idempotent (a running daemon is a no-op) and returns once the daemon answers on its socket
 - Stop is the deliberate shutdown, so it doesn't fire the `daemon_died` notification every other exit fires
-- Status reports whether the daemon is up and on which port, read from `~/agent/data/daemons/chat.pid` and `chat.port`
+- Status reports whether the daemon is up, read from `~/agent/data/daemons/chat.pid`. It serves no port, so `port` is always null
 
 Manage the daemon through these commands, not by launching `chat serve` yourself. Startup output lands in `~/agent/logs/chat.log`.
 **Restart**: So it survives restarts, read the `restart` skill and add this line to your restart daemons:
 ```
 chat daemon start
 ```
-`chat daemon start` registers the `chat` service (getting its port), starts the HTTP server (intake, history, and the live `/ws` chat socket), and opens the room socket that replicates every room you are in.
+`chat daemon start` opens the socket `chat send` talks to (`~/.chat/chat.sock`) and the room socket that replicates every room you are in.
 
 ## Quick Reference
 ```bash

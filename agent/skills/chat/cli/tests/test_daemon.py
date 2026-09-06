@@ -1,6 +1,6 @@
-"""Tests for the chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, the
-start/stop/restart/status verbs against the pid and port records, and the send path that posts through
-the node and leaves the local row to the replica."""
+"""Tests for the chat daemon lifecycle: defaults, the SIGTERM/daemon_died contract, readiness by the
+CLI socket, the start/stop/restart/status verbs against the pid record, and the send path that posts
+through the node and leaves the local row to the replica."""
 
 import argparse
 import asyncio
@@ -16,8 +16,7 @@ import pytest
 from chat_cli import attachments, commands, daemon
 from chat_cli.node_client import NODE_UNREACHABLE
 from chat_cli.replica import ReplicaState, run_replica
-from chat_cli.service import ServiceState
-from chat_cli.store import Store, StoredEvent, direct_room_id, store_path
+from chat_cli.store import Store, direct_room_id, store_path
 
 from .attachment_fixture import stored_attachment
 from .fake_node import FakeNode, connected_client
@@ -28,12 +27,11 @@ DIRECT = direct_room_id(AGENT)
 
 @pytest.fixture
 def records(tmp_path, monkeypatch):
-    """Redirects the pid and port records into a tmpdir, the way a hermetic HOME would."""
+    """Redirects the pid record into a tmpdir, the way a hermetic HOME would."""
     daemons_dir = tmp_path / "daemons"
     daemons_dir.mkdir()
     monkeypatch.setattr(daemon, "DAEMONS_DIR", daemons_dir)
     monkeypatch.setattr(daemon, "PIDFILE", daemons_dir / "chat.pid")
-    monkeypatch.setattr(daemon, "PORTFILE", daemons_dir / "chat.port")
     monkeypatch.setattr(daemon, "LOG", tmp_path / "logs" / "chat.log")
     return daemons_dir
 
@@ -67,7 +65,7 @@ def test_a_sigterm_is_the_one_shutdown_that_stays_quiet(tmp_path):
 
     assert state.asked_to_stop is True
     assert state.shutdown.is_set()
-    state.service.store.close()
+    state.store.close()
 
 
 def test_any_other_signal_leaves_the_death_report_armed(tmp_path):
@@ -77,7 +75,7 @@ def test_any_other_signal_leaves_the_death_report_armed(tmp_path):
 
     assert state.asked_to_stop is False
     assert state.shutdown.is_set()
-    state.service.store.close()
+    state.store.close()
 
 
 def test_the_replica_stays_off_without_a_node_in_the_environment(tmp_path, monkeypatch):
@@ -87,7 +85,7 @@ def test_the_replica_stays_off_without_a_node_in_the_environment(tmp_path, monke
     asyncio.run(daemon._replica_loop(state))
 
     assert state.replica is None
-    state.service.store.close()
+    state.store.close()
 
 
 def test_live_pid_is_none_without_a_record(records):
@@ -112,33 +110,42 @@ def test_start_is_a_no_op_while_the_recorded_process_is_alive(records, monkeypat
     assert json.loads(capsys.readouterr().out) == {"status": "already_running"}
 
 
-def test_start_fails_closed_when_registration_fails(records, monkeypatch, capsys):
-    monkeypatch.setattr(daemon, "_register_port", lambda: None)
-    monkeypatch.setattr(daemon.subprocess, "Popen", lambda *a, **k: pytest.fail("must not launch without a port"))
-
-    assert daemon.daemon_cmd("start") == 1
-    assert "register" in json.loads(capsys.readouterr().err)["error"]
-    assert not daemon.PIDFILE.exists()
-
-
-def test_start_records_the_pid_and_port_of_a_daemon_that_answers(records, monkeypatch, capsys):
+def test_start_records_the_pid_of_a_daemon_whose_socket_answers(records, monkeypatch, capsys):
     launched = []
 
     def fake_popen(argv, **kwargs):
         launched.append(argv)
         return types.SimpleNamespace(pid=4321, poll=lambda: None)
 
-    monkeypatch.setattr(daemon, "_register_port", lambda: "5150")
-    monkeypatch.setattr(daemon, "_ready", lambda port: True)
+    monkeypatch.setattr(daemon, "_ready", lambda sock_path: True)
     monkeypatch.setattr(daemon.subprocess, "Popen", fake_popen)
 
     assert daemon.daemon_cmd("start") == 0
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
-    assert launched[0][1:] == ["serve", "--port", "5150"]
+    assert launched[0][1:] == ["serve"]
     # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is
     # there at all depends on the fake pid happening to exist on this machine.
     assert daemon.PIDFILE.read_text().split()[0] == "4321"
-    assert daemon.PORTFILE.read_text() == "5150"
+
+
+def test_a_start_whose_socket_never_answers_leaves_no_record(records, monkeypatch, capsys):
+    """A daemon that is alive and unreachable would read as running and turn every later start into a
+    no-op, so the start that gives up takes the child and the record with it."""
+    killed = []
+    monkeypatch.setattr(daemon, "READY_TIMEOUT_SECS", 0)
+    monkeypatch.setattr(daemon, "_ready", lambda sock_path: pytest.fail("the budget is spent before a probe"))
+    monkeypatch.setattr(
+        daemon.subprocess,
+        "Popen",
+        lambda *a, **k: types.SimpleNamespace(
+            pid=4321, poll=lambda: None, terminate=lambda: killed.append("term"), wait=lambda timeout=None: 0
+        ),
+    )
+
+    assert daemon.daemon_cmd("start") == 1
+    assert "never answered" in json.loads(capsys.readouterr().err)["error"]
+    assert killed == ["term"]
+    assert not daemon.PIDFILE.exists()
 
 
 def test_stop_is_idempotent_when_nothing_is_recorded(records, capsys):
@@ -146,9 +153,8 @@ def test_stop_is_idempotent_when_nothing_is_recorded(records, capsys):
     assert json.loads(capsys.readouterr().out) == {"status": "already_stopped"}
 
 
-def test_stop_sends_a_sigterm_and_clears_both_records(records, monkeypatch, capsys):
+def test_stop_sends_a_sigterm_and_clears_the_record(records, monkeypatch, capsys):
     daemon.PIDFILE.write_text("4321")
-    daemon.PORTFILE.write_text("5150")
     signals = []
     monkeypatch.setattr(daemon.os, "kill", lambda pid, sig: signals.append((pid, sig)))
     # alive for the signal, gone on the first poll after it
@@ -158,7 +164,6 @@ def test_stop_sends_a_sigterm_and_clears_both_records(records, monkeypatch, caps
     assert signals == [(4321, signal.SIGTERM)]
     assert json.loads(capsys.readouterr().out) == {"status": "stopped"}
     assert not daemon.PIDFILE.exists()
-    assert not daemon.PORTFILE.exists()
 
 
 def test_restart_prints_one_line_and_skips_the_start_when_the_stop_fails(records, monkeypatch, capsys):
@@ -178,12 +183,12 @@ def test_status_reports_not_running_without_a_record(records, capsys):
     assert json.loads(capsys.readouterr().out) == {"running": False, "port": None}
 
 
-def test_status_reads_the_port_start_recorded(records, capsys):
+def test_status_reports_a_running_daemon_with_no_port(records, capsys):
+    """The daemon serves no port, so `port` is null whether it is up or down."""
     daemon.PIDFILE.write_text(str(os.getpid()))
-    daemon.PORTFILE.write_text("5150")
 
     assert daemon.daemon_cmd("status") == 0
-    assert json.loads(capsys.readouterr().out) == {"running": True, "port": 5150}
+    assert json.loads(capsys.readouterr().out) == {"running": True, "port": None}
 
 
 def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
@@ -195,13 +200,11 @@ def test_the_help_forms_succeed_and_an_unknown_verb_does_not(records, capsys):
 
 
 def _daemon_state(tmp_path) -> daemon.DaemonState:
-    service = ServiceState(Store(store_path(tmp_path), AGENT), tmp_path / "notifications", tmp_path / "attachments")
     return daemon.DaemonState(
         sock_path=tmp_path / "chat.sock",
-        data_dir=tmp_path,
         notifications_dir=tmp_path / "notifications",
-        port=1,
-        service=service,
+        store=Store(store_path(tmp_path), AGENT),
+        attachments_root=tmp_path / "attachments",
     )
 
 
@@ -211,17 +214,16 @@ async def _node_daemon(fake, tmp_path):
     async with connected_client(fake) as client:
         state = _daemon_state(tmp_path)
         state.replica = ReplicaState(
-            store=state.service.store,
+            store=state.store,
             client=client,
-            attachments_root=state.service.attachments_root,
+            attachments_root=state.attachments_root,
             notifications_dir=state.notifications_dir,
             agent=fake.agent,
-            echo=state.service.emit,
         )
         try:
             yield state
         finally:
-            state.service.store.close()
+            state.store.close()
 
 
 def _with_node(fake, tmp_path, scenario):
@@ -256,15 +258,32 @@ async def _socket_command(state: daemon.DaemonState, request: dict[str, object])
         return json.loads(data.decode())
 
 
+def test_readiness_is_the_socket_answering_status(tmp_path):
+    """A start returns once the socket answers, so the caller's next `chat send` has somewhere to go.
+    A path nothing is listening on is not ready."""
+    state = _daemon_state(tmp_path)
+
+    async def scenario():
+        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+        async with server:
+            return await asyncio.to_thread(daemon._ready, state.sock_path)
+
+    try:
+        assert asyncio.run(scenario()) is True
+        assert daemon._ready(tmp_path / "absent.sock") is False
+    finally:
+        state.store.close()
+
+
 def test_send_posts_to_the_direct_room_and_leaves_the_local_row_to_the_replica(tmp_path):
-    # The send owns the node post alone. The row and the echo belong to the replica's ingest of the
-    # frame that comes back, so a reply is never written twice and the unique node-id index never fires.
+    # The send owns the node post alone. The row belongs to the replica's ingest of the frame that
+    # comes back, so a reply is never written twice and the unique node-id index never fires.
     fake = FakeNode()
     fake.seed_room([AGENT])
 
     async def scenario(state):
         response = await _socket_command(state, {"command": "send", "message": "hey there"})
-        return response, state.service.store.page()[0]
+        return response, state.store.page()[0]
 
     response, stored = _with_node(fake, tmp_path, scenario)
 
@@ -341,7 +360,7 @@ def test_a_node_failure_is_reported_and_nothing_is_stored(tmp_path):
 
     async def scenario(state):
         response = await _socket_command(state, {"command": "send", "message": "hello?"})
-        return response, state.service.store.page()[0]
+        return response, state.store.page()[0]
 
     response, stored = _with_node(fake, tmp_path, scenario)
 
@@ -356,101 +375,53 @@ def test_send_without_a_node_names_the_environment_it_needs(tmp_path):
 
     assert response == {"error": "the chat node is unreachable: AGENT_NAME, AGENT_TOKEN, BOX_HOST, VESTAD_PORT must be set"}
     assert response["error"] == NODE_UNREACHABLE
-    state.service.store.close()
+    state.store.close()
 
 
-def test_the_replica_writes_the_row_the_send_did_not_and_echoes_it_to_the_old_socket(tmp_path):
+def test_the_replica_writes_the_row_the_send_did_not(tmp_path):
     # The ownership rule end to end: the reply comes back on the node's socket, the replica persists it
-    # with its node id, the old service's subscribers still see it, and no notification is written for
-    # this agent's own message.
+    # with its node id, and no notification is written for this agent's own message.
     fake = FakeNode()
     fake.seed_room([AGENT])
 
     async def scenario(state):
-        queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
-        state.service.subscribers.add(queue)
         shutdown = asyncio.Event()
         task = asyncio.create_task(run_replica(state.replica, shutdown))
         try:
             await _wait_for(lambda: state.replica.connected)
             response = await _socket_command(state, {"command": "send", "message": "on my way"})
-            await _wait_for(lambda: queue.qsize() == 1)
-            return response, state.service.store.page()[0], queue.get_nowait()
+            await _wait_for(lambda: state.store.page()[0] != [])
+            return response, state.store.page()[0]
         finally:
             shutdown.set()
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    response, stored, fanned = _with_node(fake, tmp_path, scenario)
+    response, stored = _with_node(fake, tmp_path, scenario)
 
     assert response["id"] == 1
     assert [(event["type"], event["text"], event["node_id"]) for event in stored] == [("chat", "on my way", 1)]
-    assert fanned["node_id"] == 1 and fanned["sender"] == AGENT
     assert list((tmp_path / "notifications").glob("*-chat-message.json")) == []
-
-
-def test_send_is_refused_while_the_user_is_talking(tmp_path):
-    # The live-voice gate answers before the node is dialed at all.
-    state = _daemon_state(tmp_path)
-    speaking_conn: asyncio.Queue[StoredEvent] = asyncio.Queue()
-    state.service.speaking.add(speaking_conn)
-
-    refused = asyncio.run(_socket_command(state, {"command": "send", "message": "mid-turn reply"}))
-
-    assert refused == {
-        "error": "the user is talking right now: drop this reply, wait for their next message, then answer the whole thought",
-        "user_speaking": True,
-    }
-    assert state.service.store.page()[0] == []
-    state.service.store.close()
-
-
-def test_refused_send_rewakes_the_agent_when_the_floor_clears(tmp_path, monkeypatch):
-    # The refusal promises a follow-up notification, and a turn can end without producing one
-    # (an empty transcript), so the floor clearing after a refusal must write it itself.
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    state = _daemon_state(tmp_path)
-    speaking_conn: asyncio.Queue[StoredEvent] = asyncio.Queue()
-    state.service.set_speaking(speaking_conn, True)
-
-    asyncio.run(_socket_command(state, {"command": "send", "message": "mid-turn reply"}))
-    state.service.set_speaking(speaking_conn, False)
-
-    files = list((tmp_path / "notifications").glob("*-chat-user_finished_talking.json"))
-    assert len(files) == 1
-    fields = json.loads(files[0].read_text())
-    assert fields["source"] == "chat" and fields["type"] == "user_finished_talking" and fields["interrupt"] is True
-
-    # A turn with no refusal clears silently: the marker was consumed by the one nudge above.
-    state.service.set_speaking(speaking_conn, True)
-    state.service.set_speaking(speaking_conn, False)
-    assert len(list((tmp_path / "notifications").glob("*-chat-user_finished_talking.json"))) == 1
-    state.service.store.close()
 
 
 def test_send_command_rejects_empty_message(tmp_path):
     state = _daemon_state(tmp_path)
-    queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
-    state.service.subscribers.add(queue)
 
     response = asyncio.run(_socket_command(state, {"command": "send", "message": "   "}))
 
     assert response == {"error": "empty message"}
-    assert state.service.store.page()[0] == []
-    assert queue.qsize() == 0
-    state.service.store.close()
+    assert state.store.page()[0] == []
+    state.store.close()
 
 
-def test_status_command_reports_port_clients_and_the_node(tmp_path):
+def test_status_command_reports_the_node_connection(tmp_path):
     state = _daemon_state(tmp_path)
-    state.service.subscribers.add(asyncio.Queue())
-    state.service.subscribers.add(asyncio.Queue())
 
     response = asyncio.run(_socket_command(state, {"command": "status"}))
 
-    assert response == {"ok": True, "port": 1, "clients": 2, "node_connected": False}
-    state.service.store.close()
+    assert response == {"ok": True, "node_connected": False}
+    state.store.close()
 
 
 def test_status_reports_a_replica_that_holds_the_node(tmp_path):
@@ -503,8 +474,8 @@ def test_the_replica_does_not_fetch_back_a_blob_this_agent_just_sent(tmp_path):
         try:
             await _wait_for(lambda: state.replica.connected)
             await _socket_command(state, {"command": "send", "message": "here", "attach": [str(source)]})
-            await _wait_for(lambda: state.service.store.page()[0] != [])
-            return state.service.store.page()[0]
+            await _wait_for(lambda: state.store.page()[0] != [])
+            return state.store.page()[0]
         finally:
             shutdown.set()
             task.cancel()
@@ -730,27 +701,27 @@ def test_send_attach_must_be_a_list_of_paths(tmp_path):
     response = asyncio.run(_socket_command(state, {"command": "send", "message": "hi", "attach": "/tmp/x"}))
 
     assert response == {"error": "attach must be a list of paths"}
-    state.service.store.close()
+    state.store.close()
 
 
 def test_run_sweep_uses_structured_references(tmp_path, monkeypatch):
     state = _daemon_state(tmp_path)
-    root = state.service.attachments_root
+    root = state.attachments_root
     referenced = stored_attachment(root, _seed_file(tmp_path, "keep.bin"), None)
     orphan = stored_attachment(root, _seed_file(tmp_path, "orphan.bin"), None)
-    state.service.store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "", "attachments": [referenced]})
+    state.store.append({"type": "chat", "ts": "2026-01-01T00:00:00", "text": "", "attachments": [referenced]})
     ancient = 1000
     for directory in (root / referenced["id"], root / orphan["id"]):
         for child in directory.iterdir():
             os.utime(child, (ancient, ancient))
         os.utime(directory, (ancient, ancient))
 
-    swept = daemon._run_sweep(state.service)
+    swept = daemon._run_sweep(state)
 
     assert swept == 1
     assert attachments.read_meta(root, referenced["id"]) is not None
     assert attachments.read_meta(root, orphan["id"]) is None
-    state.service.store.close()
+    state.store.close()
 
 
 def _seed_file(tmp_path, name):

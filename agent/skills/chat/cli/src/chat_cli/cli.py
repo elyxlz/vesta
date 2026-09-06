@@ -1,8 +1,8 @@
 """Chat CLI entry point.
 
 Commands:
-  serve   — daemon: runs the chat HTTP service (intake, history, live chat socket), accepts CLI commands via Unix socket
-  daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports whether it is up and on which port)
+  serve   — daemon: replicates every room from the node, accepts CLI commands via Unix socket
+  daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports whether it is up)
   send    — send a message into a room (via daemon Unix socket)
   rooms   — list the rooms this agent is in, or open a new one
   peers   — list the other agents on this gateway
@@ -62,15 +62,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     serve_p = sub.add_parser("serve", help="Run the chat daemon in the foreground")
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes
-    # --notifications-dir): accepted and ignored. Intake is owned by the HTTP service; kept so
-    # existing launch lines don't break argparse.
+    # --notifications-dir): accepted and ignored. The daemon writes notifications under
+    # ~/agent/notifications; kept so existing launch lines don't break argparse.
     serve_p.add_argument("--notifications-dir", default=None, help=argparse.SUPPRESS)
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes --ws-url):
-    # accepted and ignored. The daemon does not connect to core's /ws; the live echo fans out
-    # in-process to the service's /ws subscribers. Kept so an existing launch line doesn't break argparse.
+    # accepted and ignored. The daemon reads the node address from the environment; kept so an
+    # existing launch line doesn't break argparse.
     serve_p.add_argument("--ws-url", default=None, help=argparse.SUPPRESS)
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.chat)")
-    serve_p.add_argument("--port", type=int, default=None, help="Service port (default: resolved via register-service)")
 
     daemon_p = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
     daemon_p.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")

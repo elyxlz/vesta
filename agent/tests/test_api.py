@@ -700,30 +700,6 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
         await runner.cleanup()
 
 
-@pytest.mark.anyio
-async def test_history_rejects_the_retired_chat_channel_with_410(event_bus):
-    """Chat history lives on the chat skill's service: core /history rejects the retired channel value
-    with 410 so a stale client fails loud rather than silently getting the full stream. Other channels
-    are untouched."""
-    from core.api import _history_handler
-
-    app = web.Application()
-    app["event_bus"] = event_bus
-    app.router.add_get("/history", _history_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _pick_port()
-    await web.TCPSite(runner, "127.0.0.1", port).start()
-    try:
-        async with ClientSession() as session:
-            async with session.get(f"http://127.0.0.1:{port}/history?channel=app-chat") as resp:
-                assert resp.status == 410
-            async with session.get(f"http://127.0.0.1:{port}/history?channel=notifications") as resp:
-                assert resp.status == 200
-    finally:
-        await runner.cleanup()
-
-
 def test_snapshot_config_includes_presence_toggle(config):
     """The connect snapshot's config dict carries the presence toggle vestad's status tap reads."""
     from core.api import _snapshot_config
