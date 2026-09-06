@@ -24,10 +24,32 @@ import { usePendingNotifications } from "./use-pending-notifications";
 import type { NotificationEvent } from "@vesta/core";
 import { httpClient } from "@/api/client";
 
+// A pending notification the history page does not carry gets a row of its own, above the page: the
+// pending list grows at its end as notifications land, so reversing it puts the newest first. A
+// pending entry vestad only knows by id carries no timestamp, so a row key alone would not match
+// the stored arrival; the notif_id it always carries is what says the page already shows it.
+function mergePending(
+  history: NotificationEvent[],
+  pending: NotificationEvent[],
+): NotificationEvent[] {
+  const keys = new Set(history.map(notificationRowKey));
+  const ids = new Set(
+    history.flatMap((event) => (event.notif_id ? [event.notif_id] : [])),
+  );
+  const missing = pending.filter(
+    (event) =>
+      !keys.has(notificationRowKey(event)) &&
+      !(event.notif_id != null && ids.has(event.notif_id)),
+  );
+  return missing.length === 0
+    ? history
+    : [...[...missing].reverse(), ...history];
+}
+
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
-// the rules cards beside it stay sticky. The row list comes from the REST history (paginated), while
-// "pending" is the live set of ids still on disk, read off the replica. No disk-state polling; a
-// reconnect re-sends the snapshot, which re-seeds the set for free.
+// the rules cards beside it stay sticky. The row list comes from the REST history (paginated) merged
+// with the pending set the replica carries: the notifications still on disk, whole events. No
+// disk-state polling; a reconnect re-sends the snapshot, which re-seeds the set for free.
 export function NotificationsCard() {
   const { name: agentName } = useSelectedAgent();
   const pending = usePendingNotifications();
@@ -41,7 +63,7 @@ export function NotificationsCard() {
     error: string | null;
   }>({ agent: agentName, items: null, cursor: null, error: null });
   const forAgent = page.agent === agentName;
-  const items = forAgent ? page.items : null;
+  const historyItems = forAgent ? page.items : null;
   const cursor = forAgent ? page.cursor : null;
   const error = forAgent ? page.error : null;
   const [loadingMore, setLoadingMore] = useState(false);
@@ -50,7 +72,17 @@ export function NotificationsCard() {
   const currentAgent = useRef(agentName);
   // Pending = on disk, not yet processed. A row is marked by id, so a notification the agent has
   // since worked through loses its mark on the next replica delta.
-  const pendingIds = useMemo(() => new Set(pending), [pending]);
+  const pendingIds = useMemo(
+    () =>
+      new Set(
+        pending.flatMap((event) => (event.notif_id ? [event.notif_id] : [])),
+      ),
+    [pending],
+  );
+  const items = useMemo(
+    () => (historyItems === null ? null : mergePending(historyItems, pending)),
+    [historyItems, pending],
+  );
 
   // Load the newest page of the row list for the selected agent.
   useEffect(() => {
@@ -112,8 +144,8 @@ export function NotificationsCard() {
           recent notifications
         </CardTitle>
         <CardDescription>
-          everything the agent has received, and whether each interrupted the
-          agent or was snoozed until it was free.
+          everything the agent has received, whether each interrupted the agent
+          or was snoozed until it was free, and which are still waiting.
         </CardDescription>
       </CardHeader>
       <CardContent>
