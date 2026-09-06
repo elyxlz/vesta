@@ -81,8 +81,8 @@ def write_fakes(bin_dir: pl.Path) -> dict[str, str]:
 
 
 # The display stack's four binaries. Each fake bakes the X socket dir in at write time, because the
-# real launches hand every child a closed env (PATH, HOME, DISPLAY, MOZ_ENABLE_WAYLAND) that no
-# test variable can ride into. X11_DIR is that hole.
+# real launches hand every child a closed env (PATH, HOME, TZ, LANG, DISPLAY, MOZ_ENABLE_WAYLAND)
+# that no test variable can ride into. X11_DIR is that hole.
 X11_DIR = "@@X11_DIR@@"
 
 # Both socket fakes accept and drop what connects, exactly as the servers they stand in for do: a

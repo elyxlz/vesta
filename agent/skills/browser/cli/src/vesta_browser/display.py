@@ -92,7 +92,9 @@ def child_env(display: str) -> dict[str, str]:
     x11vnc 0.9.x exits outright when WAYLAND_DISPLAY is set and Gecko prefers a Wayland session over
     the X display we just claimed, so the env is built from nothing rather than inherited.
     """
-    return {**base_env(), "DISPLAY": display, "MOZ_ENABLE_WAYLAND": "0"}
+    # The browser's clock and language follow the agent's configuration, as on a person's machine.
+    inherited = {name: os.environ[name] for name in ("TZ", "LANG") if name in os.environ}
+    return {**base_env(), **inherited, "DISPLAY": display, "MOZ_ENABLE_WAYLAND": "0"}
 
 
 def missing_display_binaries() -> list[str]:

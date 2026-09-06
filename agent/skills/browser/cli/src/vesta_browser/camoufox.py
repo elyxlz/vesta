@@ -80,6 +80,9 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Cam
     config_path = session.scratch_dir / "camou-config.json"
     preset = select_preset(session.profile_dir)
     preset = fit_to_screen(preset, headed.width, headed.height)
+    # The spoofed clock follows the agent's timezone; the preset's own zone stands only without TZ.
+    if "TZ" in os.environ:
+        preset = {**preset, "timezone": os.environ["TZ"]}
     # Camoufox's WebRender falls back to software rendering on Xvfb's dummy driver; without
     # these prefs the worker paints no frame at all on the session's display.
     (session.profile_dir / "user.js").write_text('user_pref("gfx.webrender.software", true);\nuser_pref("gfx.x11-glx.enabled", false);\n')

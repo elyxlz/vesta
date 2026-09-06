@@ -53,6 +53,8 @@ def launch_argv(paths: Paths, session: Session, headed: HeadedDisplay) -> list[s
         # Remote debugging alone flips navigator.webdriver to true, an automation tell every
         # anti-bot script reads; this keeps the flag at false, as it is in a person's own Chrome.
         "--disable-blink-features=AutomationControlled",
+        # A page's WebRTC probe sees the public interface only, never the container's private address.
+        "--force-webrtc-ip-handling-policy=default_public_interface_only",
         f"--user-data-dir={session.profile_dir}",
         "--no-first-run",
         "--no-default-browser-check",

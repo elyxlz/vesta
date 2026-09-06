@@ -13,8 +13,9 @@ running this migration more than once changes nothing further.
 ~/agent/skills/browser/install-engines.sh
 ```
 
-Installs Chromium, the display packages (Xvfb, openbox, x11vnc, noVNC), and the pinned Camoufox
-bundle when missing. The Camoufox bundle lands under `/opt/camoufox/<tag>/`, and a binary already
+Installs Chromium, the display packages (Xvfb, openbox, x11vnc, noVNC), the fonts Chromium renders
+with (fonts-liberation, fonts-dejavu-core, fonts-noto-core), and the pinned Camoufox bundle when
+missing. The Camoufox bundle lands under `/opt/camoufox/<tag>/`, and a binary already
 present is left alone.
 
 ### 2. Install the browser command and build the two engine environments

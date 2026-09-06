@@ -358,6 +358,9 @@ def main() -> int:
         exclude_addons=[DefaultAddons.UBO],
         i_know_what_im_doing=True,
         window=(int(width), int(height)),
+        # WebRTC ICE is blocked so a page cannot read the container's address; every click moves the cursor along a human path.
+        block_webrtc=True,
+        humanize=True,
     ) as context:
         state = WorkerState(context, pl.Path(args.artifacts))
         _set_page(state, context.pages[0] if context.pages else context.new_page())

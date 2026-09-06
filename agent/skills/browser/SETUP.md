@@ -36,8 +36,9 @@ When either is missing, install both:
 ```
 
 The script installs Debian's chromium, the pinned Camoufox bundle under `/opt/camoufox/<tag>/`,
-and the display packages (`Xvfb`, `openbox`, `x11vnc`, `websockify`, `novnc`), verifies the
-Camoufox download, and is safe to re-run: a binary already present is left alone.
+the display packages (`Xvfb`, `openbox`, `x11vnc`, `websockify`, `novnc`), and the fonts Chromium
+renders with (`fonts-liberation`, `fonts-dejavu-core`, `fonts-noto-core`), verifies the Camoufox
+download, and is safe to re-run: a binary already present is left alone.
 
 ## 4. Start the daemon
 

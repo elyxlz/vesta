@@ -65,6 +65,7 @@ def test_launch_options_are_persistent_headed_and_pinned(worker):
     assert launch["window"] == "(1280, 800)"
     assert launch["i_know_what_im_doing"] == "True" and "navigator.userAgent" in launch["config"]
     assert launch["ff_version"] == "150" and launch["exclude_addons"] == "[<DefaultAddons.UBO: 'UBO'>]"
+    assert launch["block_webrtc"] == "True" and launch["humanize"] == "True"
 
 
 def test_exec_captures_stdout_and_observes_the_page(worker):

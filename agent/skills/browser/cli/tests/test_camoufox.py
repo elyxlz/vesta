@@ -6,6 +6,7 @@ import sys
 
 import pytest
 from vesta_browser import camoufox, sessions
+from vesta_browser.presets import select_preset
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import HEADED
@@ -75,6 +76,26 @@ def test_start_writes_the_preset_config_and_the_worker_reports_ready(rig):
     config, launch = asyncio.run(run())
     assert config["showcursor"] is False and "navigator.userAgent" in config
     assert launch["user_data_dir"] == str(session.profile_dir) and launch["executable_path"] == str(paths.camoufox_exe)
+
+
+async def _written_config(session, paths) -> dict:
+    runtime = await camoufox.start(session, paths, headed=HEADED)
+    try:
+        return json.loads((session.scratch_dir / "camou-config.json").read_text())
+    finally:
+        await camoufox.stop(runtime, session)
+
+
+def test_start_spoofs_the_agents_timezone_when_the_daemon_has_one(rig, monkeypatch):
+    paths, session = rig
+    monkeypatch.setenv("TZ", "Europe/Rome")
+    assert asyncio.run(_written_config(session, paths))["timezone"] == "Europe/Rome"
+
+
+def test_start_keeps_the_presets_timezone_when_the_daemon_has_none(rig, monkeypatch):
+    paths, session = rig
+    monkeypatch.delenv("TZ", raising=False)
+    assert asyncio.run(_written_config(session, paths))["timezone"] == select_preset(session.profile_dir)["timezone"]
 
 
 def test_exec_returns_output_and_the_page(rig):

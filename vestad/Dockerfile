@@ -42,10 +42,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # ── browser daemon: every session's own X display, the handover stream, and the standard route's
 # Chromium. display.py runs Xvfb -> openbox -> x11vnc -> websockify and symlinks noVNC's assets, so
 # without these a box can only report the gap, never escalate. novnc pulls websockify in as a hard
-# dependency. Baked in rather than apt-installed on demand: a runtime install dies with the next
-# container rebuild. install-engines.sh applies the same package list on the fleet.
+# dependency. The three font packages give Chromium a real font set to render and enumerate.
+# Baked in rather than apt-installed on demand: a runtime install dies with the next container
+# rebuild. install-engines.sh applies the same package list on the fleet.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb x11vnc openbox novnc chromium && \
+    xvfb x11vnc openbox novnc chromium fonts-liberation fonts-dejavu-core fonts-noto-core && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Go toolchain + CGO link deps for the whatsapp skill's on-box builds ───

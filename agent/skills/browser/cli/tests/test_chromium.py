@@ -28,7 +28,32 @@ def test_launch_argv_is_headed_sandboxless_and_profile_scoped(rig):
     assert "--disable-blink-features=AutomationControlled" in argv
     assert "--window-size=1280,800" in argv and "--window-position=0,0" in argv
     assert "--no-sandbox" in argv and "--remote-debugging-port=0" in argv
+    assert "--force-webrtc-ip-handling-policy=default_public_interface_only" in argv
     assert f"--user-data-dir={session.profile_dir}" in argv
+
+
+async def _browser_env(session, paths) -> dict[str, str]:
+    runtime = await chromium.start(session, paths, headed=HEADED)
+    try:
+        return json.loads((session.profile_dir / "env.json").read_text())
+    finally:
+        await chromium.stop(runtime, session)
+
+
+def test_browser_env_carries_the_agents_timezone_and_language(rig, monkeypatch):
+    paths, session = rig
+    monkeypatch.setenv("TZ", "Europe/Rome")
+    monkeypatch.setenv("LANG", "it_IT.UTF-8")
+    env = asyncio.run(_browser_env(session, paths))
+    assert env["TZ"] == "Europe/Rome" and env["LANG"] == "it_IT.UTF-8" and env["DISPLAY"] == ":101"
+
+
+def test_browser_env_omits_timezone_and_language_the_daemon_does_not_have(rig, monkeypatch):
+    paths, session = rig
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.delenv("LANG", raising=False)
+    env = asyncio.run(_browser_env(session, paths))
+    assert "TZ" not in env and "LANG" not in env
 
 
 def test_child_env_is_minimal_and_points_the_harness_at_the_session(rig, monkeypatch):
