@@ -69,21 +69,59 @@ fi
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
+# An undated log cannot be time-bounded: the awk below starts recent=1, so for a log whose lines
+# carry no date at all every error in the tail counts as "the last 2 days" however old it is. That
+# reports a permanent RED nobody can act on, which trains the reader to ignore the probe. For those
+# logs count the DELTA since the previous run instead, which the dream's own cadence time-bounds,
+# and say plainly that the window is the gap between runs rather than two days.
+state="$HOME/agent/data/reality_check_logcounts.tsv"
+mkdir -p "$(dirname "$state")" 2>/dev/null
+newstate=$(mktemp) || newstate="/tmp/rc_logcounts.$$"
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+    name=$(basename "$log")
+    stripped=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g")
+    dated=$(printf '%s\n' "$stripped" | grep -cE '^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+    errors=$(printf '%s\n' "$stripped" | awk -v today="$today" -v yesterday="$yesterday" '
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
-    if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
+    if [ "$dated" -gt 0 ]; then
+        if [ "$errors" -gt 200 ]; then
+            bad "$name: $errors error lines in the last 2 days; read it and find the producer"
+        else
+            ok "$name: $errors error lines in the last 2 days"
+        fi
+        continue
+    fi
+    # Undated log: report the change since the previous run, and carry the raw count forward.
+    printf '%s\t%s\n' "$name" "$errors" >> "$newstate"
+    prev=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' "$state" 2>/dev/null | tail -n 1)
+    if [ -z "$prev" ]; then
+        ok "$name: $errors error lines total, undated log with no baseline yet; counting from here"
     else
-        ok "$(basename "$log"): $errors error lines in the last 2 days"
+        delta=$((errors - prev))
+        if [ "$delta" -lt 0 ]; then
+            # The file shrank, so it rotated or self-truncated and the baseline is gone. Counting the
+            # whole tail as new would RED on a routine rotation, so reset the baseline instead.
+            ok "$name: log rotated or truncated since the last run ($errors in the tail); baseline reset"
+            continue
+        fi
+        if [ "$delta" -gt 200 ]; then
+            bad "$name: $delta new error lines since the last run (undated log, $errors in the tail); read it and find the producer"
+        else
+            ok "$name: $delta new error lines since the last run (undated log, $errors in the tail)"
+        fi
     fi
 done
+# Carry forward untouched entries for logs not examined this run, so a quiet log keeps its baseline.
+if [ -f "$state" ]; then
+    awk -F'\t' 'NR==FNR { seen[$1]=1; next } !($1 in seen)' "$newstate" "$state" >> "$newstate" 2>/dev/null
+fi
+mv "$newstate" "$state" 2>/dev/null
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
