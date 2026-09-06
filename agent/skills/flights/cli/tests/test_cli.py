@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import types
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import fli.search
 import pytest
 from fli.models import Airline, Airport, FlightLeg, FlightResult
 from flights_cli import cli as cli_mod
+
+
+# FlightSegment validates that the travel date is not in the past, and _search_flights catches that
+# ValidationError and returns an {"error": ...} row. A hardcoded literal date therefore does not fail
+# this suite on the day it is written; it fails silently at midnight on that date, in every PR against
+# master, as a KeyError on a key the error row does not carry. Keep every date here relative to today.
+_TRAVEL_DATE = date.today() + timedelta(days=30)
+_DEPARTS = datetime.combine(_TRAVEL_DATE, datetime.min.time()).replace(hour=10)
 
 
 def _flight(price: float = 114.0, stops: int = 0) -> FlightResult:
@@ -17,8 +25,8 @@ def _flight(price: float = 114.0, stops: int = 0) -> FlightResult:
         flight_number="BA123",
         departure_airport=Airport.FCO,
         arrival_airport=Airport.LHR,
-        departure_datetime=datetime(2026, 9, 5, 10, 0),
-        arrival_datetime=datetime(2026, 9, 5, 12, 0),
+        departure_datetime=_DEPARTS,
+        arrival_datetime=_DEPARTS.replace(hour=12),
         duration=120,
     )
     return FlightResult(legs=[leg], price=price, currency="GBP", duration=120, stops=stops)
@@ -26,7 +34,7 @@ def _flight(price: float = 114.0, stops: int = 0) -> FlightResult:
 
 def _search(monkeypatch: pytest.MonkeyPatch, results: list[FlightResult]) -> list[dict]:
     monkeypatch.setattr(fli.search, "SearchFlights", lambda: types.SimpleNamespace(search=lambda filters, currency: results))
-    return cli_mod._search_flights(cli_mod.FlightSearchQuery(origin="FCO", destination="LHR", date="2026-09-05", max_results=10))
+    return cli_mod._search_flights(cli_mod.FlightSearchQuery(origin="FCO", destination="LHR", date=_TRAVEL_DATE.isoformat(), max_results=10))
 
 
 def test_search_keeps_the_cheapest_nonstop_when_the_page_would_drop_every_nonstop(monkeypatch, capsys):
