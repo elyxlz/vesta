@@ -7,8 +7,8 @@ export const BUBBLE_GROUP_TIME_GAP_MS = 5 * 60 * 1000;
 
 export type ChatMessageSide = "user" | "agent";
 
-// The conversational side a chat row belongs to. Only user/chat rows carry a side; error and
-// rate_limited rows have none, so they never open or close a bubble group.
+// The conversational side a chat row belongs to. Only user and chat rows carry a side; any other
+// row has none, so it never opens or closes a bubble group.
 export function chatMessageSide(message: ChatMessage): ChatMessageSide | null {
   if (message.type === "user") return "user";
   if (message.type === "chat") return "agent";
@@ -17,7 +17,7 @@ export function chatMessageSide(message: ChatMessage): ChatMessageSide | null {
 
 // Who wrote a row. A room stamps the member's name on every message; a row from a chat that names
 // nobody answers its side, so a one-agent conversation groups exactly as it always did. A sideless
-// row (error, rate_limited) answers the agent side and never reaches a grouping decision.
+// row answers the agent side and never reaches a grouping decision.
 export function senderOf(message: ChatMessage): string {
   const named =
     message.type === "user" || message.type === "chat"
@@ -36,7 +36,7 @@ function timestampMillis(ts: string | undefined): number | null {
 // `prev`? A change of side, a change of sender (a second agent speaking in a room), or a
 // >= BUBBLE_GROUP_TIME_GAP_MS same-sender gap starts a new group; same-sender rows within the
 // threshold group tight. An absent or unparseable timestamp falls back to tight (never throws),
-// and a sideless prev/curr (error, rate_limited) never starts a group.
+// and a sideless prev/curr never starts a group.
 export function startsNewBubbleGroup(
   prev: ChatMessage | null,
   curr: ChatMessage,

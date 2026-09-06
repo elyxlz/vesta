@@ -25,16 +25,8 @@ describe("chatMessageSide", () => {
     expect(chatMessageSide(agent())).toBe("agent");
   });
 
-  it("gives sideless rows no side", () => {
-    expect(chatMessageSide({ type: "error", text: "boom" })).toBeNull();
-    expect(
-      chatMessageSide({
-        type: "rate_limited",
-        text: "slow down",
-        window: null,
-        resets_at: null,
-      }),
-    ).toBeNull();
+  it("gives a sideless row no side", () => {
+    expect(chatMessageSide({ type: "status", state: "idle" })).toBeNull();
   });
 });
 
@@ -125,7 +117,7 @@ describe("startsNewBubbleGroup", () => {
 
   it("never starts a group off a sideless row", () => {
     expect(
-      startsNewBubbleGroup({ type: "error", text: "boom" }, agent(base)),
+      startsNewBubbleGroup({ type: "status", state: "idle" }, agent(base)),
     ).toBe(false);
   });
 });

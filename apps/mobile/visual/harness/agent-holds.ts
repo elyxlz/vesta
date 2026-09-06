@@ -17,9 +17,9 @@ import { visualConnection } from "./session-provider";
 export * from "../../src/holds/agent-holds";
 
 // visualChat picks aria's transcript: the default short exchange, `delivery`
-// (a bubble still sending and one the gateway refused), `errors` (the snag and
-// rate-limit lines), `markdown` (a rich reply), or `long` (days of history, for
-// the scroll-to-bottom control and date headers).
+// (a bubble still sending and one the gateway refused), `markdown` (a rich
+// reply), or `long` (days of history, for the scroll-to-bottom control and date
+// headers).
 const chatVariant = visualSwitch("visualChat");
 const conversation: ChatMessage[] = [
   {
@@ -67,28 +67,6 @@ const deliveryTail: ChatMessage[] = [
     ts: "2026-08-01T09:21:30.000Z",
     intent_id: "visual-failed",
     send_state: "failed",
-  },
-];
-const errorTail: ChatMessage[] = [
-  {
-    id: 106,
-    type: "user",
-    text: "Summarise the launch thread.",
-    ts: "2026-08-01T09:22:00.000Z",
-  },
-  {
-    id: 107,
-    type: "error",
-    text: "turn failed",
-    ts: "2026-08-01T09:22:05.000Z",
-  },
-  {
-    id: 108,
-    type: "rate_limited",
-    text: "rate limited",
-    window: "5h",
-    resets_at: Date.UTC(2026, 7, 1, 11, 0),
-    ts: "2026-08-01T09:22:06.000Z",
   },
 ];
 const markdownTail: ChatMessage[] = [
@@ -227,17 +205,15 @@ const degradedTail: ChatMessage[] = [
 const events: ChatMessage[] =
   chatVariant === "delivery"
     ? [...conversation, ...deliveryTail]
-    : chatVariant === "errors"
-      ? [...conversation, ...errorTail]
-      : chatVariant === "markdown"
-        ? [...conversation, ...markdownTail]
-        : chatVariant === "long"
-          ? [...longHistory, ...conversation]
-          : chatVariant === "attachments"
-            ? [...conversation, ...attachmentsTail]
-            : chatVariant === "attachments-degraded"
-              ? [...conversation, ...degradedTail]
-              : conversation;
+    : chatVariant === "markdown"
+      ? [...conversation, ...markdownTail]
+      : chatVariant === "long"
+        ? [...longHistory, ...conversation]
+        : chatVariant === "attachments"
+          ? [...conversation, ...attachmentsTail]
+          : chatVariant === "attachments-degraded"
+            ? [...conversation, ...degradedTail]
+            : conversation;
 const chatState: ChatState = seedTail(initialChatState(), {
   events,
   cursor: null,

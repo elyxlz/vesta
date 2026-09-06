@@ -46,29 +46,4 @@ export type VestaEvent =
       room?: string;
       sender?: string;
     })
-  | (EventBase & {
-      type: "tool_start";
-      tool: string;
-      input: string;
-      subagent?: boolean;
-    })
-  | (EventBase & { type: "tool_end"; tool: string; subagent?: boolean })
-  | (EventBase & { type: "error"; text: string })
-  | (EventBase & {
-      type: "rate_limited";
-      text: string;
-      window: string | null;
-      resets_at: number | null;
-    })
-  | NotificationEvent
-  | (EventBase & { type: "notification_cleared"; notif_id: string })
-  | (EventBase & {
-      type: "subagent_start";
-      agent_id: string;
-      agent_type: string;
-    })
-  | (EventBase & {
-      type: "subagent_stop";
-      agent_id: string;
-      agent_type: string;
-    });
+  | NotificationEvent;

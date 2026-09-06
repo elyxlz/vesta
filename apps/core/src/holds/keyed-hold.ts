@@ -2,8 +2,9 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 
 // Keyed stale-while-remounting holds: one cell per key, an agent or a room paired with its
 // gateway, living above navigation so that view state survives screen pops, route unmounts, and
-// controller epochs. A bounded LRU keeps memory flat. The cells live in a zustand store so a React consumer can subscribe to one
-// key (`useHeld` in the react entry) while imperative readers seed from `read`.
+// controller epochs. A bounded LRU keeps memory flat. The cells live in a zustand store so a React
+// consumer can subscribe to one key (`useHeld` in the react entry) while imperative readers seed
+// from `read`.
 const MAX_HOLD_CELLS = 12;
 
 interface HeldCells<T> {

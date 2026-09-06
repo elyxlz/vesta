@@ -145,18 +145,11 @@ describe("senderCaption", () => {
     expect(caption([userMsg("2026-06-08T10:00:00Z")])).toEqual([null]);
   });
 
-  // An error or a rate-limit row is the client speaking; senderOf answers "agent" for it, which
-  // would otherwise print a member name no room has.
-  it.each<ChatMessage>([
-    { type: "error", text: "boom", ts: "2026-06-08T10:00:00Z" },
-    {
-      type: "rate_limited",
-      text: "wait",
-      window: null,
-      resets_at: null,
-      ts: "2026-06-08T10:00:00Z",
-    },
-  ])("never captions a $type row", (event) => {
-    expect(caption([event])).toEqual([null]);
+  // A row that is not a reply names nobody; senderOf answers "agent" for it, which would
+  // otherwise print a member name no room has.
+  it("never captions a row that is not a reply", () => {
+    expect(
+      caption([{ type: "status", state: "idle", ts: "2026-06-08T10:00:00Z" }]),
+    ).toEqual([null]);
   });
 });

@@ -30,7 +30,7 @@ describe("sendMessage", () => {
   });
 
   it.each([502, 503, 504])(
-    "maps a daemon-down %i to a retryable outcome",
+    "maps a gateway-down %i to a retryable outcome",
     async (status) => {
       const json = vi
         .fn()

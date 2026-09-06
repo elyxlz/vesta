@@ -19,8 +19,8 @@ import { notifications } from "./session-provider";
 const needsGatewayUpdate = visualSwitch("visualGatewayUpdate") === "required";
 const appBehind = visualSwitch("visualSyncState") === "app_behind";
 // visualSync=open mounts a controller whose sync socket reads as open, so the
-// live edges render: an enabled composer, the typing indicator (with the
-// harness chat socket), and pending notifications (visualLive=pending).
+// live edges render: an enabled composer and pending notifications
+// (visualLive=pending).
 const syncOpen = visualSwitch("visualSync") === "open";
 const pendingNotifications =
   visualSwitch("visualLive") === "pending" ? notifications.slice(0, 2) : [];

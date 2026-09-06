@@ -17,7 +17,7 @@ export interface DecoratedRow {
 
 // Who a bubble prints above itself, null for none. Only a room with several agents names anyone,
 // only the first bubble of a group carries it, and only a reply names a member: the user is the one
-// member every room shares, and an error or rate-limit row is the client speaking, not an agent.
+// member every room shares, and no other row was written by an agent.
 export function senderCaption(
   row: DecoratedRow,
   showSenders: boolean,

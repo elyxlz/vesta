@@ -79,10 +79,6 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
     const text = str(frame.text);
     return text === null ? null : { ...base, type: "assistant", text };
   },
-  error: (frame, base) => {
-    const text = str(frame.text);
-    return text === null ? null : { ...base, type: "error", text };
-  },
   thinking: (frame, base) => {
     const text = str(frame.text);
     const signature = str(frame.signature);
@@ -94,57 +90,6 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
     if (state !== "idle" && state !== "thinking") return null;
     return { ...base, type: "status", state };
   },
-  tool_start: (frame, base) => {
-    const tool = str(frame.tool);
-    const input = str(frame.input);
-    const subagent = optionalBool(frame.subagent);
-    if (tool === null || input === null || subagent === undefined) return null;
-    return {
-      ...base,
-      type: "tool_start",
-      tool,
-      input,
-      ...(subagent === null ? {} : { subagent }),
-    };
-  },
-  tool_end: (frame, base) => {
-    const tool = str(frame.tool);
-    const subagent = optionalBool(frame.subagent);
-    if (tool === null || subagent === undefined) return null;
-    return {
-      ...base,
-      type: "tool_end",
-      tool,
-      ...(subagent === null ? {} : { subagent }),
-    };
-  },
-  rate_limited: (frame, base) => {
-    const text = str(frame.text);
-    const window = optionalStr(frame.window);
-    const resetsAt = optionalNum(frame.resets_at);
-    if (text === null || window === undefined || resetsAt === undefined)
-      return null;
-    return { ...base, type: "rate_limited", text, window, resets_at: resetsAt };
-  },
-  notification: (frame, base) => {
-    const source = str(frame.source);
-    const summary = str(frame.summary);
-    if (source === null || summary === null) return null;
-    return {
-      ...base,
-      type: "notification",
-      source,
-      summary,
-      ...notificationExtras(frame),
-    };
-  },
-  notification_cleared: (frame, base) => {
-    const notifId = str(frame.notif_id);
-    if (notifId === null) return null;
-    return { ...base, type: "notification_cleared", notif_id: notifId };
-  },
-  subagent_start: (frame, base) => subagentEvent("subagent_start", frame, base),
-  subagent_stop: (frame, base) => subagentEvent("subagent_stop", frame, base),
 };
 
 // The room a message belongs to and the member who wrote it, stamped by the chat node. Both are
@@ -162,17 +107,6 @@ function parseAddressing(
   };
 }
 
-function subagentEvent(
-  type: "subagent_start" | "subagent_stop",
-  frame: Frame,
-  base: Base,
-): ChatMessage | null {
-  const agentId = str(frame.agent_id);
-  const agentType = str(frame.agent_type);
-  if (agentId === null || agentType === null) return null;
-  return { ...base, type, agent_id: agentId, agent_type: agentType };
-}
-
 // The per-message identity: `id` is absent on an optimistic bubble but a number wherever the
 // node stamped it, and `ts` is optional on both.
 function parseBase(frame: Frame): Base | null {
@@ -180,29 +114,6 @@ function parseBase(frame: Frame): Base | null {
   const ts = optionalStr(frame.ts);
   if (id === undefined || ts === undefined) return null;
   return { ...(id === null ? {} : { id }), ...(ts === null ? {} : { ts }) };
-}
-
-function notificationExtras(
-  frame: Frame,
-): Partial<Extract<ChatMessage, { type: "notification" }>> {
-  const extras: Partial<Extract<ChatMessage, { type: "notification" }>> = {};
-  const notifType = str(frame.notif_type);
-  if (notifType !== null) extras.notif_type = notifType;
-  const sender = str(frame.sender);
-  if (sender !== null) extras.sender = sender;
-  const notifId = str(frame.notif_id);
-  if (notifId !== null) extras.notif_id = notifId;
-  const fields = record(frame.fields);
-  if (fields !== null) {
-    const entries = Object.entries(fields).flatMap(([key, item]) =>
-      typeof item === "string" ? [[key, item] as const] : [],
-    );
-    extras.fields = Object.fromEntries(entries);
-  }
-  const decided = frame.decided;
-  if (decided === "interrupt" || decided === "snooze" || decided === "trash")
-    extras.decided = decided;
-  return extras;
 }
 
 function str(value: unknown): string | null {
@@ -220,11 +131,6 @@ function optionalNum(value: unknown): number | null | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function optionalBool(value: unknown): boolean | null | undefined {
-  if (value == null) return null;
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function parseInputMethod(value: unknown): InputMethod | null | undefined {

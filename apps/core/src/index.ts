@@ -273,7 +273,6 @@ export {
   agentNeedsUser,
   agentStatusKind,
   agentStatusLabel,
-  formatResetTime,
 } from "./agent-status/agent-status";
 export type { OrbVisualState } from "./agent-status/agent-status";
 

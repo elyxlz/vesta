@@ -62,19 +62,6 @@ tags:
       SCREENSHOT: agent-chat-delivery.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=errors"
-- extendedWaitUntil:
-    visible: '.*Rate limited.*'
-    timeout: 30000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: agent-chat-errors
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-chat-errors.png
-- stopApp
-- openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=markdown"
 - extendedWaitUntil:
     visible: '.*Rotating the key.*'

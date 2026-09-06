@@ -128,13 +128,6 @@ function partitionHeld(
   return { older, newer, overlaps };
 }
 
-// Tool-call events ride the wire (Debug, agent-internal) but never appear in the chat list: the
-// conversation is the person, not the machinery. Filtered at the live-fold entry so no tool row ever
-// enters `messages`; history pages from the chat node are already pure conversation.
-function isChatRow(event: ChatMessage): boolean {
-  return event.type !== "tool_start" && event.type !== "tool_end";
-}
-
 // Fold one live event: confirm an optimistic user bubble by intent_id (clear send_state, adopt
 // id/ts), dedup a persisted row by event id, otherwise append. A live `chat` is not appended here;
 // it is flagged `paced` so the hook routes it through the typing delay and commits it on drain.
@@ -142,7 +135,6 @@ export function foldLiveEvent(
   state: ChatState,
   event: ChatMessage,
 ): { state: ChatState; paced: boolean } {
-  if (!isChatRow(event)) return { state, paced: false };
   if (
     event.type === "user" &&
     event.intent_id != null &&

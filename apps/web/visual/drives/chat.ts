@@ -11,8 +11,6 @@ import {
   attachmentStatesConversation,
   multiAttachmentConversation,
   chatRoutes,
-  errorLine,
-  rateLimitedLine,
   userMessage,
   type ChatHistoryFixture,
 } from "../harness/chat-fixtures";
@@ -30,8 +28,6 @@ const DIRECT_ROOM = directRoomId(AGENT);
 const HISTORY_PATH = `/rooms/${encodeURIComponent(DIRECT_ROOM)}/history`;
 const MESSAGE_PATH = `/rooms/${encodeURIComponent(DIRECT_ROOM)}/messages`;
 const LOGS_PATH = `/agents/${AGENT}/logs`;
-const FIXED_NOW_SECS = Math.floor(Date.parse("2026-08-18T10:00:00Z") / 1000);
-const TWO_HOURS_SECS = 2 * 60 * 60;
 
 // The first assertion of a scenario also waits out the app's initial load and
 // the chat history seed, so it gets a longer bound than the default 5s.
@@ -71,19 +67,6 @@ function chatScenario(
     settle,
   };
 }
-
-// A status line lands after the conversation: the turn it reports on failed.
-const RATE_LIMITED_HISTORY: VestaEvent[] = [
-  ...CONVERSATION,
-  userMessage("can you draft the reply to the landlord?", 3),
-  rateLimitedLine(2, FIXED_NOW_SECS + TWO_HOURS_SECS),
-];
-
-const ERROR_HISTORY: VestaEvent[] = [
-  ...CONVERSATION,
-  userMessage("can you draft the reply to the landlord?", 3),
-  errorLine("turn failed", 2),
-];
 
 // Thirty rows across a morning, oldest first, with more history behind them.
 function longHistory(): VestaEvent[] {
@@ -264,19 +247,6 @@ export const CHAT: Record<string, Scenario> = {
       page.getByRole("cell", { name: "reconnect clients" }),
     ).toBeVisible();
   }),
-  "chat-error-line": chatScenario({ events: ERROR_HISTORY }, async (page) => {
-    await expect(
-      chatText(page, "hit a snag, this may not have gone through"),
-    ).toBeVisible(LOADED);
-  }),
-  "chat-rate-limited": chatScenario(
-    { events: RATE_LIMITED_HISTORY },
-    async (page) => {
-      await expect(chatText(page, "rate limited, back in 2h")).toBeVisible(
-        LOADED,
-      );
-    },
-  ),
   "chat-send-failed": {
     state: chatState(
       { events: CONVERSATION },
