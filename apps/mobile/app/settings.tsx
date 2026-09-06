@@ -224,7 +224,7 @@ export default function SettingsScreen() {
 
   return (
     <>
-      <SheetChrome grabber title="Settings" closeLabel="Close settings" />
+      <SheetChrome title="Settings" closeLabel="Close settings" />
       <Screen contentStyle={styles.content}>
         <NativeSheetCloseButton
           accessibilityLabel="Close settings"
@@ -404,7 +404,7 @@ export default function SettingsScreen() {
             actions={
               <ButtonGroup>
                 <Button
-                  variant="cardGrouped"
+                  variant="card"
                   loading={gatewayUpdate.isPending || updateCheck.isPending}
                   onPress={
                     updateAvailable
@@ -423,19 +423,19 @@ export default function SettingsScreen() {
                           : "Check for updates"}
                 </Button>
                 <Button
-                  variant="cardGrouped"
+                  variant="card"
                   onPress={() => router.push("/gateway-logs")}
                 >
                   View gateway logs
                 </Button>
                 <Button
-                  variant="cardGrouped"
+                  variant="card"
                   onPress={() => router.push("/switch-gateway")}
                 >
                   Switch gateway
                 </Button>
                 <Button
-                  variant="cardGrouped"
+                  variant="card"
                   loading={gatewayRestart.isPending}
                   onPress={confirmGatewayRestart}
                 >
@@ -483,7 +483,6 @@ export default function SettingsScreen() {
             title="Account"
             actions={
               <Button
-                pill
                 variant="card"
                 onPress={() =>
                   void Linking.openURL("https://vesta.run/account")
@@ -510,11 +509,10 @@ export default function SettingsScreen() {
           title="Support"
           actions={
             <>
-              <Button pill variant="card" onPress={() => router.push("/debug")}>
+              <Button variant="card" onPress={() => router.push("/debug")}>
                 Diagnostics
               </Button>
               <Button
-                pill
                 variant="card"
                 onPress={() => router.push("/whats-new")}
               >
@@ -527,7 +525,6 @@ export default function SettingsScreen() {
         <FormSection
           actions={
             <Button
-              pill
               variant="cardDanger"
               onPress={() => {
                 setActiveConfirm("disconnect");

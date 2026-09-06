@@ -260,6 +260,8 @@ A skill's command reaches PATH exactly one of two ways. A `cli/` uv-project (an 
 
 ## Testing strategy
 
+For client UI work, use the page references in [`apps/visual/README.md`](apps/visual/README.md). From `apps/`, `npm run visual:capture -- web --page settings` (or runner `ios`, `android`, `android-galaxy`) refreshes that destination, and `node visual/cli.mjs refs --page settings --platform web` returns image paths an agent can open directly. `npm run visual` serves the searchable human gallery. Default coverage includes page destinations and detailed feature states; use `--suite pages` or `--suite states` only to narrow it. Page captures cover destinations, not individual cards; regression checks compare pixels and every captured scroll section. Do not add assertions about page contents to gate screenshots.
+
 - **`check.sh` is the only entry point.** CI calls the same subcommands, so local equals CI. Do not add a CI step that bypasses it.
 - **Keep the pyramid.** Fast in-process pytest and Rust `--bins` unit tests are the default loop; Docker-gated suites are the middle tier; `live` (real Claude) is the tiny apex run only on release. Do not push Docker- or Claude-dependent assertions into the fast tiers.
 - **Prefer the high-fidelity fake over mocks.** Drive cc_sdk tests through `tests/fake_claude.py` (a real fake claude TUI in real tmux) and exercise the real EventBus/SQLite. Reserve patching for true edges (file times, credentials presence). Keep `fake_claude.py` faithful to the real claude protocol.

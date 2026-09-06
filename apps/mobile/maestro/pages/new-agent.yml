@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · New agent
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://new-agent?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&visualScroll=page"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-new-agent
+- runFlow:
+    file: ../visual/capture-page.yml
+    env:
+      SCREENSHOT: page-new-agent.png

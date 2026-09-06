@@ -42,9 +42,6 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: "Try again"
-    timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: privacy-initialization-error
@@ -57,12 +54,6 @@ tags:
 - tapOn:
     text: "Try again"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Vesta is locked"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "Unlock.*"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: privacy-locked
@@ -73,9 +64,6 @@ tags:
 - tapOn:
     text: "Unlock.*"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Device authentication is temporarily locked.*"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: privacy-unlock-error
@@ -83,15 +71,13 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: privacy-unlock-error.png
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - setPermissions:
     permissions:
       camera: deny
 - openLink:
     link: "vesta-dev://connect?visualPrivacy=unlocked"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - tapOn:
@@ -104,9 +90,6 @@ tags:
 - tapOn:
     text: "Recent gateways"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Connect to home.vesta.run"
-    timeout: 10000
 - takeScreenshot: recent-gateways
 - runScript:
     file: capture-screenshot.js
@@ -123,9 +106,6 @@ tags:
     env:
       SCREENSHOT: recent-gateway-connecting.png
 
-- extendedWaitUntil:
-    visible: "Retry"
-    timeout: 20000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: recent-gateway-error
@@ -137,6 +117,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Provider and model.*'
     timeout: 30000
@@ -151,12 +132,6 @@ tags:
 
 - tapOn:
     text: "^Manage backups.*"
-- extendedWaitUntil:
-    visible: "Available backups"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "2"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-backups

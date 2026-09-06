@@ -300,6 +300,8 @@ const chipDrafts: DraftAttachment[] =
         : [];
 
 const connectionKey = connectionKeyOf(visualConnection) ?? "";
+if (visualSwitch("visualPage") === "dashboard")
+  agentHolds.page.persist(agentHoldKey("aria", connectionKey), "dashboard");
 agentHolds.chat.persist(agentHoldKey("aria", connectionKey), chatState);
 if (chipDrafts.length > 0)
   agentHolds.attachments.persist(

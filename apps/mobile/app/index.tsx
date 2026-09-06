@@ -489,7 +489,7 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
                   disconnectedColor={colors.danger}
                   reachable={reachable}
                   label="App settings"
-                  backgroundColor={colors.input}
+                  backgroundColor={colors.elevated}
                   onPress={openSettings}
                 />
               ),
@@ -564,7 +564,7 @@ function HomeHeaderButton({
   );
 
   return (
-    <View style={[styles.headerButton, { backgroundColor: colors.input }]}>
+    <View style={[styles.headerButton, { backgroundColor: colors.elevated }]}>
       {content}
     </View>
   );

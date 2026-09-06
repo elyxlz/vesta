@@ -1,5 +1,5 @@
 const SECTIONS = [
-  { key: "general", title: "General" },
+  { key: "name", title: "Rename agent" },
   { key: "provider", title: "Provider and model" },
   { key: "voice", title: "Voice" },
   { key: "notifications", title: "Notification rules" },

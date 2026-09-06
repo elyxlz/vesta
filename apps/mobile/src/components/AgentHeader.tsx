@@ -45,9 +45,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           headerTitleAlign: "center",
           headerLeft: IS_IOS
             ? undefined
-            : () => (
-                <AgentBackHeaderButton color={colors.text} onPress={goHome} />
-              ),
+            : () => <AgentBackHeaderButton onPress={goHome} />,
         }}
       />
       <Stack.Title asChild>
@@ -129,22 +127,18 @@ export function AgentIsland({
   return <GlassSurface style={styles.titlePill}>{content}</GlassSurface>;
 }
 
-function AgentBackHeaderButton({
-  color,
-  onPress,
-}: {
-  color: string;
-  onPress: () => void;
-}) {
+function AgentBackHeaderButton({ onPress }: { onPress: () => void }) {
+  const { colors } = usePreferences();
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Back to agents"
       hitSlop={10}
+      android_ripple={{ color: colors.border, radius: 22 }}
       onPress={onPress}
-      style={({ pressed }) => [styles.button, { opacity: pressed ? 0.72 : 1 }]}
+      style={[styles.button, { backgroundColor: colors.elevated }]}
     >
-      <Ionicons name="chevron-back" size={25} color={color} />
+      <Ionicons name="chevron-back" size={25} color={colors.text} />
     </Pressable>
   );
 }
@@ -168,9 +162,10 @@ const styles = StyleSheet.create({
   },
   name: { flexShrink: 1, fontSize: 18, fontWeight: "500" },
   button: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderCurve: "continuous",
     alignItems: "center",
     justifyContent: "center",
   },

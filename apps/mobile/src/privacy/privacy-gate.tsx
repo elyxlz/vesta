@@ -13,7 +13,6 @@ import { usePrivacyBlocked } from "./use-privacy-blocked";
 const PRIVACY_ROUTE = "/privacy" as Href;
 const ROOT_ROUTE = "/" as Href;
 const CONNECT_ROUTE = "/connect" as Href;
-const ESTIMATED_PRIVACY_SHEET_HEIGHT = 181;
 const NATIVE_SHEET_ROUTES = new Set([
   "connect-actions",
   "connect-link",
@@ -36,7 +35,7 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
   const presentationPending = useRef(false);
   const automaticUnlockAttempted = useRef(false);
   const blocked = usePrivacyBlocked();
-  const activeRoute = segments[0] as string | undefined;
+  const activeRoute = segments.find((segment) => !segment.startsWith("("));
   const privacyRouteActive = activeRoute === "privacy";
   const presentationReady =
     preferencesHydrated && privacy.hydrated && status !== "booting";
@@ -111,7 +110,6 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
     <BlockingSheetGateView
       blocked={blocked && privacy.hydrated}
       presented={privacyRouteActive}
-      estimatedSheetHeight={ESTIMATED_PRIVACY_SHEET_HEIGHT}
     >
       {children}
     </BlockingSheetGateView>

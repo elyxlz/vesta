@@ -3,6 +3,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 
 const React = require("react");
+const { ReadyScreen } = require("./ready-screen");
 const stackModule = require("expo-router/build/layouts/Stack");
 
 const NativeStack = stackModule.default;
@@ -41,12 +42,19 @@ function disableScreenAnimations(child) {
   return child;
 }
 
-function VisualStack({ children, screenOptions, ...props }) {
+function readyLayout({ children }) {
+  return React.createElement(ReadyScreen, null, children);
+}
+
+function VisualStack({ children, screenOptions, screenLayout, ...props }) {
   return React.createElement(
     NativeStack,
     {
       ...props,
       screenOptions: withoutAnimation(screenOptions),
+      screenLayout: screenLayout
+        ? (layoutProps) => readyLayout({ children: screenLayout(layoutProps) })
+        : readyLayout,
     },
     React.Children.map(children, disableScreenAnimations),
   );

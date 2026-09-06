@@ -6,13 +6,15 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import type { LogLine } from "@/agent/log-list-model";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-import { navHeaderHeight } from "@/theme/layout";
 
 // Visual-top chrome the pager overlays on the list (agent header + page dots).
 const PAGER_HEADER_HEIGHT = 104;
@@ -29,21 +31,34 @@ const HOLD_VIEW = { minIndexForVisible: 0 };
 
 export type LogPresentation = "pager" | "standalone";
 
-// The log tail as a list: inverted and tail-following inside the agent pager, an upright
-// end-anchored list that unfolds older lines on demand as a standalone sheet.
-export function LogList({
-  logs,
-  logError,
-  presentation,
-}: {
+interface LogListProps {
   logs: LogLine[];
   logError: string;
   presentation: LogPresentation;
-}) {
+}
+
+export function LogList(props: LogListProps) {
+  // A native sheet has its own frame and safe areas, distinct from the
+  // full-screen provider behind it. Measure here, outside the scroll view.
+  return props.presentation === "standalone" && process.env.EXPO_OS === "ios" ? (
+    <SafeAreaProvider>
+      <LogListContent {...props} />
+    </SafeAreaProvider>
+  ) : (
+    <LogListContent {...props} />
+  );
+}
+
+// The log tail as a list: inverted and tail-following inside the agent pager, an upright
+// end-anchored list that unfolds older lines on demand as a standalone sheet.
+function LogListContent({
+  logs,
+  logError,
+  presentation,
+}: LogListProps) {
   const { colors } = usePreferences();
   const insets = useSafeAreaInsets();
   const standalone = presentation === "standalone";
-  const topChrome = standalone ? navHeaderHeight : PAGER_HEADER_HEIGHT;
   // The sheet is an ordinary top-to-bottom list anchored at its end: an inverted list reads to
   // UIKit as content scrolled under the header everywhere, which blurs the whole sheet.
   const [windowLines, setWindowLines] = useState(SHEET_WINDOW_LINES);
@@ -89,7 +104,14 @@ export function LogList({
 
   if (standalone) {
     return (
-      <View style={styles.screen}>
+      <View
+        style={[
+          styles.screen,
+          {
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
         <FlatList
           ref={anchoredListRef}
           style={[
@@ -117,8 +139,9 @@ export function LogList({
             styles.listContent,
             styles.bottomAligned,
             {
-              paddingTop: insets.top + topChrome,
-              paddingBottom: insets.bottom,
+              paddingTop:
+                process.env.EXPO_OS === "android" ? 12 : insets.top + 12,
+              paddingBottom: 12,
             },
           ]}
           ListHeaderComponent={
@@ -162,7 +185,7 @@ export function LogList({
           styles.listContent,
           {
             paddingTop: insets.bottom,
-            paddingBottom: insets.top + topChrome,
+            paddingBottom: insets.top + PAGER_HEADER_HEIGHT,
           },
         ]}
         ListHeaderComponent={

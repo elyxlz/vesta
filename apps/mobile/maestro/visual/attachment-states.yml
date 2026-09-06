@@ -4,14 +4,13 @@ tags:
   - visual
   - connected
 ---
-- clearState
+- runFlow: prepare-page.yml
 - setPermissions:
     permissions:
-      location: inuse
       camera: allow
       photos: allow
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open"
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - waitForAnimationToEnd:
     timeout: 3000
 - tapOn:
@@ -52,14 +51,12 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: ".*Add attachment.*"
     timeout: 30000
 - tapOn:
     text: "Add attachment"
-- extendedWaitUntil:
-    visible: ".*Photo & Video Library.*"
-    timeout: 10000
 - takeScreenshot: agent-chat-attach-sheet
 - runScript:
     file: capture-screenshot.js
@@ -67,13 +64,8 @@ tags:
       SCREENSHOT: agent-chat-attach-sheet.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualAttachments=chips"
-- extendedWaitUntil:
-    visible: ".*quarterly-report.pdf.*"
-    timeout: 30000
-- extendedWaitUntil:
-    visible: ".*2 files.*"
-    timeout: 10000
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAttachments=chips"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-attachment-chips
@@ -83,10 +75,8 @@ tags:
       SCREENSHOT: agent-chat-attachment-chips.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualAttachments=uploading"
-- extendedWaitUntil:
-    visible: ".*walkthrough.mp4.*"
-    timeout: 30000
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAttachments=uploading"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-attachment-chips-uploading
@@ -96,10 +86,8 @@ tags:
       SCREENSHOT: agent-chat-attachment-chips-uploading.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualAttachments=waiting"
-- extendedWaitUntil:
-    visible: ".*Waiting for network.*"
-    timeout: 30000
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAttachments=waiting"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-attachment-chips-waiting
@@ -110,9 +98,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=attachments"
-- extendedWaitUntil:
-    visible: ".*quarterly-report.pdf.*"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-attachments
@@ -123,9 +109,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=attachments-degraded"
-- extendedWaitUntil:
-    visible: ".*no longer available.*"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-attachments-degraded
@@ -136,14 +120,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=attachments"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: ".*View sunset.jpg.*"
     timeout: 30000
 - tapOn:
     text: "View sunset.jpg"
-- extendedWaitUntil:
-    visible: ".*Close viewer.*"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-attachment-viewer

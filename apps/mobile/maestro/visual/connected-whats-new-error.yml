@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
 - waitForAnimationToEnd:
@@ -50,14 +47,13 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
 - openLink:
     link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
-- extendedWaitUntil:
-    visible: "Couldn’t load release notes."
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - takeScreenshot: whats-new-error
 - runScript:
     file: capture-screenshot.js
@@ -67,17 +63,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Provider and model.*'
     timeout: 30000
 - tapOn:
     text: "^Provider and model.*"
-- extendedWaitUntil:
-    visible: ".*claude-sonnet-4-5.*"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "Five-hour session"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider
@@ -88,17 +79,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Provider and model.*'
     timeout: 30000
 - tapOn:
     text: "^Voice.*"
-- extendedWaitUntil:
-    visible: "Deepgram Nova-3"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "ElevenLabs"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-voice
@@ -110,9 +96,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: ".*Share diagnostics.*"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: diagnostics

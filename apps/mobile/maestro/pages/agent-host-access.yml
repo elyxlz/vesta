@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Agent settings · host-access
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/details/host-access?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&visualScroll=page"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-agent-host-access
+- runFlow:
+    file: ../visual/capture-page.yml
+    env:
+      SCREENSHOT: page-agent-host-access.png

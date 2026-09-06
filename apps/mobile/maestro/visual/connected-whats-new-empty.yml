@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=empty"
 - waitForAnimationToEnd:
@@ -50,14 +47,13 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
 - openLink:
     link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=empty"
-- extendedWaitUntil:
-    visible: "Nothing new yet"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - takeScreenshot: whats-new-empty
 - runScript:
     file: capture-screenshot.js
@@ -67,6 +63,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Provider and model.*'
     timeout: 30000
@@ -98,27 +95,8 @@ tags:
       SCREENSHOT: agent-notification-rules.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Provider and model.*'
-    timeout: 30000
-- scrollUntilVisible:
-    element:
-      text: "^Host access.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-    centerElement: true
-
-- tapOn:
-    text: "^Host access.*"
-- extendedWaitUntil:
-    visible: "Shared folders"
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "vesta"
-    timeout: 10000
+    link: "vesta-dev://agent/aria/details/host-access?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-host-access
@@ -128,29 +106,8 @@ tags:
       SCREENSHOT: agent-host-access.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Provider and model.*'
-    timeout: 30000
-- scrollUntilVisible:
-    element:
-      text: "^Files.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-    centerElement: true
-
-- tapOn:
-    text: "^Files.*"
-- extendedWaitUntil:
-    visible: "Who aria is"
-    timeout: 10000
-- tapOn:
-    text: ".*Memory.*"
-- extendedWaitUntil:
-    visible: "Contents of MEMORY.md"
-    timeout: 10000
+    link: "vesta-dev://agent/aria/file?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&path=/root/agent/MEMORY.md"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-file-editor

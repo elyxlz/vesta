@@ -100,6 +100,7 @@ const config: ExpoConfig = {
     ],
   },
   plugins: [
+    ["expo-navigation-bar", { enforceContrast: false }],
     "expo-router",
     "expo-secure-store",
     "expo-status-bar",

@@ -80,6 +80,9 @@ export function useLiveVoice({
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  // A muted mic streams silence rather than nothing, so the STT stream stays alive.
+  const [micMuted, setMicMuted] = useState(false);
+  const micMutedRef = useRef(false);
 
   // Live-updated refs, so the session (created once per agent) always reads the current
   // callbacks and settings.
@@ -101,7 +104,11 @@ export function useLiveVoice({
     sampleRate: 16_000,
     channels: 1,
     encoding: "int16",
-    onBuffer: (buffer) => frameSinkRef.current?.(buffer.data.slice(0)),
+    onBuffer: (buffer) => {
+      const pcm = buffer.data.slice(0);
+      if (micMutedRef.current) new Uint8Array(pcm).fill(0);
+      frameSinkRef.current?.(pcm);
+    },
   });
   const streamRef = useRef(stream);
 
@@ -118,6 +125,7 @@ export function useLiveVoice({
     };
     sttStatusRef.current = sttStatus;
     ttsEnabledRef.current = ttsEnabled;
+    micMutedRef.current = micMuted;
     streamRef.current = stream;
     playerRef.current = player;
   });
@@ -237,7 +245,10 @@ export function useLiveVoice({
         onTranscript: (text) => callbacksRef.current.onTranscript(text),
         onSend: (text) => callbacksRef.current.onSend(text),
         onError: (message) => callbacksRef.current.onError(message),
-        onModeChange: setRecordingMode,
+        onModeChange: (mode) => {
+          setRecordingMode(mode);
+          if (mode === null) setMicMuted(false);
+        },
         onListeningChange: setListening,
         onSpeakingChange: setSpeaking,
         onUserSpeakingChange: (speaking) =>
@@ -278,6 +289,8 @@ export function useLiveVoice({
     listening,
     speaking,
     ttsEnabled,
+    micMuted,
+    toggleMicMuted: () => setMicMuted((muted) => !muted),
     start,
     stop,
     cancel,

@@ -194,6 +194,7 @@ function buildStyleSet(colors: AppColors): ChatMarkdownStyleSet {
     user: {
       ...base,
       body: { ...base.body, color: colors.accentText },
+      blockquote: { ...base.blockquote, color: colors.accentText },
       link: {
         ...base.link,
         color: colors.accentText,

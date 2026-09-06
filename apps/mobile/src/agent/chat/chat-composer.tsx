@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { SymbolView } from "expo-symbols";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import type { ReplyTarget } from "@/agent/message-actions";
@@ -8,6 +9,7 @@ import { QuotedBlock } from "@/agent/chat/quoted-block";
 import { CHAT_COMPOSER_CONTROL_HEIGHT } from "@/components/chat-composer-input.types";
 
 // A bare glyph button hugs its icon; the slop keeps the tap target at the control height.
+const IS_IOS = process.env.EXPO_OS === "ios";
 const GLYPH_BUTTON_WIDTH = 26;
 const GLYPH_HIT_SLOP = (CHAT_COMPOSER_CONTROL_HEIGHT - GLYPH_BUTTON_WIDTH) / 2;
 
@@ -130,11 +132,20 @@ function RoundAction({
       ]}
     >
       {kind === "conversation" ? (
-        <MaterialCommunityIcons
-          name="waveform"
-          size={22}
-          color={glyphColor[kind]}
-        />
+        IS_IOS ? (
+          <SymbolView
+            name="waveform"
+            size={20}
+            tintColor={glyphColor[kind]}
+            resizeMode="scaleAspectFit"
+          />
+        ) : (
+          <MaterialCommunityIcons
+            name="waveform"
+            size={22}
+            color={glyphColor[kind]}
+          />
+        )
       ) : (
         <Ionicons name={icon[kind]} size={24} color={glyphColor[kind]} />
       )}

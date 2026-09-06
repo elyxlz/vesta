@@ -9,12 +9,10 @@ import {
   appsRoot,
   platformsOfFamily,
 } from "../platforms.mjs";
-import {
-  excludedNote,
-  loadAllRegistries,
-  scenarioOnPlatform,
-} from "../registry.mjs";
-import { pngSize, shotEntries, storeDirectory } from "../store.mjs";
+import { excludedNote, scenarioOnPlatform } from "../registry.mjs";
+import { pngSize, shotPath, storeDirectory } from "../store.mjs";
+import { captureSelection } from "../selection.mjs";
+import { catalogShots, selectedScenarios } from "../catalog.mjs";
 
 const execFileAsync = promisify(execFile);
 const CARD_COLUMNS = 3;
@@ -70,6 +68,7 @@ function slotFor(scenario, platform, shots) {
     src: entry.src,
     mtime: entry.mtime,
     size: entry.size ?? null,
+    parts: entry.parts ?? [scenario.screenshot],
   };
 }
 
@@ -93,6 +92,8 @@ export function galleryView(scenarios, shots, options = {}) {
     };
     section.scenarios.push({
       id: scenario.id,
+      page: scenario.page ?? "",
+      route: scenario.route ?? "",
       title: scenario.title,
       description: scenario.description,
       group,
@@ -106,6 +107,7 @@ export function galleryView(scenarios, shots, options = {}) {
   }
   return {
     git: options.git ?? { revision: "unknown", dirty: false },
+    selection: options.selection ?? captureSelection(),
     reports: options.reports ?? [],
     sections: [...sections.values()],
   };
@@ -141,10 +143,12 @@ export function slotHtml(scenario, slot) {
     : `<span class="missing">${escapeHtml(slot.note)}</span>`;
   const screen = `<span class="device-screen"${ratio}>${content}</span>`;
   return `
-          <div class="shot" data-screenshot="${escapeHtml(scenario.screenshot)}" data-platform="${slot.platform}" data-state="${slot.state}" data-scenario-id="${escapeHtml(scenario.id)}" data-group="${escapeHtml(scenario.group)}" data-title="${escapeHtml(scenario.title)}" data-runner="${PLATFORMS[slot.platform].runner}" data-theme="${slot.theme}">
+          <div class="shot" data-parts="${escapeHtml(JSON.stringify(slot.parts ?? [scenario.screenshot]))}" data-page="${escapeHtml(scenario.page ?? "")}" data-local-path="${escapeHtml(shotPath(slot.platform, scenario.screenshot))}" data-screenshot="${escapeHtml(scenario.screenshot)}" data-platform="${slot.platform}" data-state="${slot.state}" data-scenario-id="${escapeHtml(scenario.id)}" data-group="${escapeHtml(scenario.group)}" data-title="${escapeHtml(scenario.title)}" data-runner="${PLATFORMS[slot.platform].runner}" data-theme="${slot.theme}">
             <button class="preview"${captured ? ` data-image="${escapeHtml(image)}"` : ""} aria-label="Open ${escapeHtml(subject)}">${frameHtml(slot.frame, screen)}</button>
             <div class="shot-meta">
               <span class="platform-tag">${escapeHtml(slot.label)}</span>
+              ${slot.state === "excluded" ? "" : '<button class="review-shot" type="button">Review</button>'}
+              ${slot.state !== "excluded" ? '<button class="refresh-page" type="button" title="Recapture this scenario">Refresh</button>' : ""}
               <button class="copy-ref" type="button" aria-label="Copy reference for ${escapeHtml(subject)}">Copy ref</button>
             </div>
           </div>`;
@@ -159,17 +163,18 @@ export function cardHtml(scenario) {
   ).length;
   const columns = Math.min(perTheme, CARD_COLUMNS);
   return `
-        <article class="card" data-themes="${themes.join(" ")}">
+        <article class="card" id="${scenario.family}-${scenario.id}" data-search="${escapeHtml(`${scenario.page} ${scenario.title} ${scenario.route}`.toLowerCase())}" data-themes="${themes.join(" ")}">
+          <div class="card-copy">
+            <div class="card-head">
+              <h3><a href="#${scenario.family}-${scenario.id}">${escapeHtml(scenario.title)}</a></h3>
+              <button class="copy-card" type="button" aria-label="Copy reference for ${escapeHtml(scenario.title)}">Copy page ↗</button>
+            </div>
+            <p>${escapeHtml(scenario.description)}</p>
+            ${scenario.route ? `<code class="page-route">${escapeHtml(scenario.route)}</code>` : ""}
+          </div>
           <div class="shots" style="--shots: ${columns}">${scenario.slots
             .map((slot) => slotHtml(scenario, slot))
             .join("")}</div>
-          <div class="card-copy">
-            <div class="card-head">
-              <h3>${escapeHtml(scenario.title)}</h3>
-              <button class="copy-card" type="button" aria-label="Copy reference for ${escapeHtml(scenario.title)}">Copy ref</button>
-            </div>
-            <p>${escapeHtml(scenario.description)}</p>
-          </div>
         </article>`;
 }
 
@@ -236,12 +241,9 @@ export function scanRowsHtml() {
     </div>`;
 }
 
-export async function composeGallery() {
-  const registries = await loadAllRegistries();
-  const scenarios = Object.values(registries).flatMap(
-    (registry) => registry.scenarios,
-  );
-  const shots = await shotEntries();
+export async function composeGallery(selection = captureSelection()) {
+  const scenarios = await selectedScenarios(selection);
+  const shots = await catalogShots(scenarios);
   await Promise.all(
     Object.values(shots)
       .flatMap((platformShots) => Object.values(platformShots))
@@ -259,5 +261,9 @@ export async function composeGallery() {
       label: `${definition.label} report`,
       href: `reports/${runner}/${definition.reportFile}`,
     }));
-  return galleryView(scenarios, shots, { git: await gitMetadata(), reports });
+  return galleryView(scenarios, shots, {
+    git: await gitMetadata(),
+    reports,
+    selection,
+  });
 }

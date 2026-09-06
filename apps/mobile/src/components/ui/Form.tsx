@@ -142,6 +142,7 @@ interface RowProps {
   valueIcon?: IconName;
   valueIconLabel?: string;
   onPress?: () => void;
+  expanded?: boolean;
   destructive?: boolean;
   destructiveIcon?: boolean;
   trailing?: ReactNode;
@@ -158,6 +159,7 @@ export function FormRow({
   valueIcon,
   valueIconLabel,
   onPress,
+  expanded,
   destructive = false,
   destructiveIcon = false,
   trailing,
@@ -226,7 +228,13 @@ export function FormRow({
       {trailing ? <View style={styles.rowTrailing}>{trailing}</View> : null}
       {onPress ? (
         <Ionicons
-          name="chevron-forward"
+          name={
+            expanded === undefined
+              ? "chevron-forward"
+              : expanded
+                ? "chevron-up"
+                : "chevron-down"
+          }
           size={17}
           color={colors.tertiaryText}
         />
@@ -236,6 +244,7 @@ export function FormRow({
   return onPress ? (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
       onPress={onPress}
       style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
     >

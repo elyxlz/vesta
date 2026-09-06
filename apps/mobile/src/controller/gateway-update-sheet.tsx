@@ -6,7 +6,6 @@ import {
   triggerGatewayUpdate,
   type GatewayOperation,
 } from "@vesta/core";
-import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoadingSpinner } from "@/components/loading-spinner";
@@ -102,15 +101,14 @@ function OperationBody({ operation }: { operation: GatewayOperation }) {
       <SheetCopy title={title} detail={detail} />
       {failed ? (
         <View style={styles.actions}>
-          <AuthPrimaryButton
+          <Button
             loading={retrying}
             loadingLabel="Retrying…"
             onPress={handleRetry}
           >
             Try again
-          </AuthPrimaryButton>
+          </Button>
           <Button
-            pill
             size="large"
             variant="secondary"
             labelStyle={styles.actionLabel}
@@ -177,18 +175,17 @@ function UpdateNeededBody() {
         detail="This version of the app needs a newer gateway. The update takes a few minutes and keeps your agents as they are."
       />
       <View style={styles.actions}>
-        <AuthPrimaryButton
+        <Button
           loading={updating}
           loadingLabel="Updating…"
           disabled={disconnecting}
           onPress={handleUpdate}
         >
           Update gateway
-        </AuthPrimaryButton>
+        </Button>
         {/* Keep disconnect available after an update starts. The gateway may return success when
             it is already current, which leaves this sheet open and the connection reachable. */}
         <Button
-          pill
           size="large"
           variant="secondary"
           icon="log-out-outline"

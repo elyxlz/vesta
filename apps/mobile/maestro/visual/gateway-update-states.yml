@@ -4,10 +4,7 @@ tags:
   - visual
   - gateway-update
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
 - waitForAnimationToEnd:
@@ -50,14 +47,12 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Disconnect gateway.*'
     timeout: 30000
 - tapOn:
     text: '.*Disconnect gateway.*'
-- extendedWaitUntil:
-    visible: '.*Disconnect from gateway\?.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-disconnect-confirm
@@ -68,9 +63,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=applying"
-- extendedWaitUntil:
-    visible: '.*installing.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-applying
@@ -81,9 +74,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=snapshotting-all"
-- extendedWaitUntil:
-    visible: '.*backing up your agents.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-snapshotting-all
@@ -94,9 +85,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=update-restarting"
-- extendedWaitUntil:
-    visible: '.*restarting.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-restarting
@@ -107,9 +96,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=failed-generic"
-- extendedWaitUntil:
-    visible: '.*Something stopped the update.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-failed-generic

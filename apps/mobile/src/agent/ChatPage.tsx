@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentHoldKey,
   TRIM_HISTORY_SETTLE_MS,
+  conversationPhase,
   fetchVoiceStatus,
+  type OrbMotion,
 } from "@vesta/core";
 import {
   StyleSheet,
@@ -126,16 +128,6 @@ export default function ChatPage() {
   const composerKeyboardOffset =
     insets.bottom + COMPOSER_CLOSED_GAP - COMPOSER_KEYBOARD_GAP;
   const keyboard = useReanimatedKeyboardAnimation();
-  const composerDockStyle = useAnimatedStyle(
-    () => ({
-      paddingHorizontal: interpolate(
-        keyboard.progress.value,
-        [0, 1],
-        [composerInsetClosed, COMPOSER_INSET_OPEN],
-      ),
-    }),
-    [composerInsetClosed],
-  );
   const {
     attachList,
     handleScroll,
@@ -242,6 +234,20 @@ export default function ChatPage() {
     onUserSpeakingChange: socket.reportSpeaking,
   });
   const recordingMode = voice.recordingMode;
+  // A conversation takes the full width the open keyboard would give the dock.
+  const conversationActive = recordingMode === "conversation";
+  const composerDockStyle = useAnimatedStyle(
+    () => ({
+      paddingHorizontal: conversationActive
+        ? COMPOSER_INSET_OPEN
+        : interpolate(
+            keyboard.progress.value,
+            [0, 1],
+            [composerInsetClosed, COMPOSER_INSET_OPEN],
+          ),
+    }),
+    [composerInsetClosed, conversationActive],
+  );
   useEffect(() => {
     modeRef.current = recordingMode;
   }, [recordingMode]);
@@ -333,11 +339,19 @@ export default function ChatPage() {
     });
   };
   const endConversation = () => voice.stop();
-  const conversationState = !voice.listening
-    ? "connecting"
-    : voice.speaking
-      ? "speaking"
-      : "listening";
+  const conversationPhaseNow = conversationPhase({
+    listening: voice.listening,
+    micMuted: voice.micMuted,
+    speaking: voice.speaking,
+    thinking: agent?.activityState === "thinking",
+  });
+  // The status decides the orb's look; the voice phase only decides its motion. A muted mic or a
+  // still-dialing session holds the orb still rather than pretending to listen.
+  const conversationMotion: OrbMotion | undefined = voice.speaking
+    ? "talking"
+    : voice.listening && !voice.micMuted
+      ? "listening"
+      : undefined;
 
   return (
     <View style={styles.screen}>
@@ -348,6 +362,7 @@ export default function ChatPage() {
         historyLoaded={socket.historyLoaded}
         loadingMore={socket.loadingMore}
         composerInset={composerInset}
+        keyboardOffset={composerKeyboardOffset}
         attachList={attachList}
         onScroll={handleScroll}
         onContentSizeChange={handleContentSizeChange}
@@ -392,9 +407,14 @@ export default function ChatPage() {
             <GlassSurface style={styles.composerSurface}>
               {recordingMode === "conversation" ? (
                 <VoiceConversationPanel
-                  state={conversationState}
+                  agent={agent}
+                  name={name}
+                  phase={conversationPhaseNow}
+                  motion={conversationMotion}
                   transcript={conversationTranscript}
+                  micMuted={voice.micMuted}
                   height={CONVERSATION_PANEL_HEIGHT}
+                  onToggleMute={voice.toggleMicMuted}
                   onEnd={endConversation}
                 />
               ) : (
@@ -460,7 +480,7 @@ export default function ChatPage() {
   );
 }
 
-const CONVERSATION_PANEL_HEIGHT = 220;
+const CONVERSATION_PANEL_HEIGHT = 264;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },

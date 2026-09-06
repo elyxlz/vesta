@@ -11,6 +11,7 @@ import {
   ThemeProvider,
 } from "expo-router/react-navigation";
 import { StatusBar } from "expo-status-bar";
+import { NavigationBar } from "expo-navigation-bar";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import * as WebBrowser from "expo-web-browser";
@@ -58,6 +59,10 @@ import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
 
 const IS_ANDROID = process.env.EXPO_OS === "android";
 
+// A cold link to a sheet needs a screen beneath it. Native-stack treats the
+// first route as a card, regardless of its requested sheet presentation.
+export const unstable_settings = { anchor: "index" };
+
 WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
 
@@ -66,7 +71,7 @@ function SessionNavigation() {
   const { agents, agentsReady, reachable } = useRoster();
   const { colors, dark } = usePreferences();
   const segments = useSegments();
-  const activeRoute = segments[0];
+  const activeRoute = segments.find((segment) => !segment.startsWith("("));
   const [bootSplashVisible, setBootSplashVisible] = useState(true);
   const [bootPageRevealed, setBootPageRevealed] = useState(false);
   const [bootTargetVisible, setBootTargetVisible] = useState(false);
@@ -147,6 +152,7 @@ function SessionNavigation() {
       <View style={[styles.appSurface, { backgroundColor: colors.background }]}>
         <ThemeProvider value={navigationTheme}>
           <StatusBar style={dark ? "light" : "dark"} />
+          <NavigationBar style={dark ? "light" : "dark"} />
           <Stack
             screenOptions={{
               contentStyle: { backgroundColor: colors.background },
@@ -164,60 +170,11 @@ function SessionNavigation() {
           >
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
-                name="connect"
+                name="(connect)"
                 options={{
                   headerShown: false,
                   animation: "fade",
                   animationDuration: 500,
-                }}
-              />
-              <Stack.Screen
-                name="connect-actions"
-                options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: "fitToContents",
-                  sheetGrabberVisible: false,
-                  sheetLargestUndimmedDetentIndex: "last",
-                  gestureEnabled: false,
-                  contentStyle: { backgroundColor: colors.card },
-                }}
-              />
-              <Stack.Screen
-                name="connect-link"
-                options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: "fitToContents",
-                  sheetGrabberVisible: true,
-                  contentStyle: { backgroundColor: colors.card },
-                }}
-              />
-              <Stack.Screen
-                name="recent-gateways"
-                options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: "fitToContents",
-                  sheetGrabberVisible: true,
-                  contentStyle: { backgroundColor: colors.card },
-                }}
-              />
-              <Stack.Screen
-                name="scan"
-                options={{
-                  title: "",
-                  headerShown: true,
-                  headerTitleAlign: "center",
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: [1],
-                  sheetGrabberVisible: false,
-                  sheetExpandsWhenScrolledToEdge: false,
-                  contentStyle: { backgroundColor: colors.background },
                 }}
               />
             </Stack.Protected>
@@ -265,9 +222,11 @@ function SessionNavigation() {
                   headerTitleAlign: "center",
                   presentation: "formSheet",
                   ...formSheetCorners,
-                  sheetAllowedDetents: [0.5, 1],
+                  // Android's collapsed multi-detent sheet can measure only
+                  // its header; use the full-height settings presentation.
+                  sheetAllowedDetents: IS_ANDROID ? [1] : [0.5, 1],
                   sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: true,
+                  sheetGrabberVisible: !IS_ANDROID,
                   sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
                 }}
@@ -290,9 +249,9 @@ function SessionNavigation() {
                   headerTitleAlign: "center",
                   presentation: "formSheet",
                   ...formSheetCorners,
-                  sheetAllowedDetents: [0.5, 1],
+                  sheetAllowedDetents: IS_ANDROID ? [1] : [0.5, 1],
                   sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: true,
+                  sheetGrabberVisible: !IS_ANDROID,
                   sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
                 }}

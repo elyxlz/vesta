@@ -7,7 +7,6 @@ import { gatewayUpdateGateDecision } from "./gateway-update-gate-model";
 
 const GATEWAY_UPDATE_ROUTE = "/gateway-update" as Href;
 const ROOT_ROUTE = "/" as Href;
-const ESTIMATED_GATEWAY_UPDATE_SHEET_HEIGHT = 286;
 const NATIVE_SHEET_ROUTES = new Set([
   "connect-actions",
   "connect-link",
@@ -32,7 +31,7 @@ export function GatewayUpdateGate({
   const router = useRouter();
   const segments = useSegments();
   const presentationPending = useRef(false);
-  const activeRoute = segments[0] as string | undefined;
+  const activeRoute = segments.find((segment) => !segment.startsWith("("));
   const privacyRouteActive = activeRoute === "privacy";
   const gatewayUpdateRouteActive = activeRoute === "gateway-update";
   const privacyBlocked = usePrivacyBlocked();
@@ -81,7 +80,6 @@ export function GatewayUpdateGate({
     <BlockingSheetGateView
       blocked={backdropBlocked}
       presented={gatewayUpdateRouteActive}
-      estimatedSheetHeight={ESTIMATED_GATEWAY_UPDATE_SHEET_HEIGHT}
     >
       {children}
     </BlockingSheetGateView>

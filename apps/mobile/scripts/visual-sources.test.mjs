@@ -39,6 +39,26 @@ describe("flow parsing", () => {
 });
 
 describe("routeFiles", () => {
+  it.each([
+    ["agent/aria/details/provider", "details/[section].tsx"],
+    ["agent/aria/logs", "logs.tsx"],
+    ["agent/aria/file", "file.tsx"],
+  ])("includes the real modal context for %s", async (route, screen) => {
+    const app = path.join(appsRoot, "mobile/app");
+    const files = (await routeFiles(app, route)).map((file) =>
+      path.relative(app, file),
+    );
+    expect(files).toEqual([
+      "_layout.tsx",
+      "index.tsx",
+      "agent/[name]/_layout.tsx",
+      "agent/[name]/index.tsx",
+      "agent/[name]/(settings)/_layout.tsx",
+      "agent/[name]/(settings)/settings.tsx",
+      `agent/[name]/(settings)/${screen}`,
+    ]);
+  });
+
   async function appTree() {
     const root = await mkdtemp(path.join(os.tmpdir(), "visual-routes-"));
     const app = path.join(root, "app");
@@ -66,6 +86,52 @@ describe("routeFiles", () => {
     expect(
       (await routeFiles(app, "settings")).map((f) => path.relative(app, f)),
     ).toEqual(["_layout.tsx", "settings.tsx"]);
+  });
+  it("resolves pathless groups with their sheet anchors", async () => {
+    const app = await appTree();
+    await mkdir(path.join(app, "(connect)"));
+    await writeFile(
+      path.join(app, "(connect)/_layout.tsx"),
+      'export const unstable_settings = { anchor: "connect" };',
+    );
+    await writeFile(
+      path.join(app, "(connect)/connect.tsx"),
+      "export default null;",
+    );
+    await writeFile(
+      path.join(app, "(connect)/scan.tsx"),
+      "export default null;",
+    );
+    expect(
+      (await routeFiles(app, "scan")).map((file) => path.relative(app, file)),
+    ).toEqual([
+      "_layout.tsx",
+      "(connect)/_layout.tsx",
+      "(connect)/connect.tsx",
+      "(connect)/scan.tsx",
+    ]);
+    expect(
+      (await routeFiles(app, "connect")).map((file) =>
+        path.relative(app, file),
+      ),
+    ).toEqual([
+      "_layout.tsx",
+      "(connect)/_layout.tsx",
+      "(connect)/connect.tsx",
+    ]);
+  });
+  it("does not include an unrelated group's layout for an unknown route", async () => {
+    const app = await appTree();
+    await mkdir(path.join(app, "(other)"));
+    await writeFile(
+      path.join(app, "(other)/_layout.tsx"),
+      "export default null;",
+    );
+    expect(
+      (await routeFiles(app, "missing")).map((file) =>
+        path.relative(app, file),
+      ),
+    ).toEqual(["_layout.tsx"]);
   });
   it("resolves dynamic segments and nested layouts", async () => {
     const app = await appTree();

@@ -1,0 +1,19 @@
+appId: ${APP_ID}
+name: Agent sheet navigation
+tags: [navigation]
+---
+# Functional navigation coverage, deliberately separate from pixel captures.
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/details/provider?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&visualProvider=unauthenticated"
+- runFlow: ../visual/wait-for-launch.yml
+- tapOn: "Close Provider and model"
+- assertVisible: "Close agent settings"
+- tapOn: "Close agent settings"
+- assertVisible: "Agent settings"
+- tapOn: "Agent settings"
+- assertVisible: "Close agent settings"
+- tapOn: "Provider and model.*"
+- assertVisible: "Close Provider and model"
+- tapOn: "Close Provider and model"
+- assertVisible: "Close agent settings"

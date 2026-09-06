@@ -9,6 +9,9 @@ import { appsRoot } from "@vesta/visual/platforms";
 // platform, so aliases, platform variants, and the harness substitutions
 // resolve exactly as they do in the bundle.
 const require = createRequire(import.meta.url);
+// Expo CLI's internal modules resolve from the expo package, the way expo itself loads them,
+// whichever node_modules the CLI landed in.
+const expoRequire = createRequire(require.resolve("expo/package.json"));
 const DEEP_LINK = /vesta-dev:\/\/([A-Za-z0-9/_\-[\].]*)/g;
 const CAPTURE = /SCREENSHOT: ([a-z0-9-]+\.png)/g;
 
@@ -25,42 +28,53 @@ export function flowShots(flowText) {
 // Every `_layout` along the way renders too, so it belongs to the route.
 export async function routeFiles(appDirectory, route) {
   const segments = route.split("/").filter(Boolean);
-  const files = [];
-  let directory = appDirectory;
+  const files = await matchRouteFiles(appDirectory, segments);
+  return [...new Set(files ?? (await layoutFiles(appDirectory)))];
+}
+
+async function layoutFiles(directory) {
   const layout = await findFile(directory, "_layout");
-  if (layout) files.push(layout);
-  for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index];
-    const last = index === segments.length - 1;
-    const entries = await readdir(directory, { withFileTypes: true });
-    const exact = entries.find(
-      (entry) => entry.name.replace(/\.tsx?$/, "") === segment,
-    );
-    const dynamic = entries.find((entry) =>
-      /^\[[^.].*\]/.test(entry.name.replace(/\.tsx?$/, "")),
-    );
-    const rest = entries.find((entry) => /^\[\.\.\./.test(entry.name));
-    const match = exact ?? dynamic ?? rest;
-    if (!match) return files;
-    const matchPath = path.join(directory, match.name);
-    if (match.isDirectory()) {
-      directory = matchPath;
-      const nested = await findFile(directory, "_layout");
-      if (nested) files.push(nested);
-      if (last) {
-        const index = await findFile(directory, "index");
-        if (index) files.push(index);
-      }
-      continue;
-    }
-    files.push(matchPath);
-    return files;
-  }
+  if (!layout) return [];
+  // Anchors stay visible beneath sheets and therefore contribute pixels too.
+  const text = await readFile(layout, "utf8");
+  const anchors = await Promise.all(
+    [...text.matchAll(/\banchor:\s*["']([^"']+)["']/g)].map((match) =>
+      findFile(directory, match[1]),
+    ),
+  );
+  return [layout, ...anchors.filter(Boolean)];
+}
+
+async function matchRouteFiles(directory, segments) {
+  const layouts = await layoutFiles(directory);
   if (segments.length === 0) {
     const index = await findFile(directory, "index");
-    if (index) files.push(index);
+    if (index) return [...layouts, index];
   }
-  return files;
+  const entries = await readdir(directory, { withFileTypes: true });
+  const segment = segments[0];
+  const exact = entries.find(
+    (entry) => entry.name.replace(/\.tsx?$/, "") === segment,
+  );
+  const groups = entries.filter(
+    (entry) => entry.isDirectory() && /^\(.+\)$/.test(entry.name),
+  );
+  const dynamic = entries.find((entry) => /^\[[^.].*\]/.test(entry.name));
+  const rest = entries.find((entry) => /^\[\.\.\./.test(entry.name));
+  for (const entry of [exact, ...groups, dynamic, rest].filter(Boolean)) {
+    const file = path.join(directory, entry.name);
+    const group = groups.includes(entry);
+    if (entry.isDirectory()) {
+      const children = await matchRouteFiles(
+        file,
+        group ? segments : segments.slice(1),
+      );
+      if (children) return [...layouts, ...children];
+    } else if (segment && (segments.length === 1 || entry === rest)) {
+      return [...layouts, file];
+    }
+  }
+  return null;
 }
 
 async function findFile(directory, stem) {
@@ -83,12 +97,12 @@ export async function metroModuleGraph(mobileRoot, metroConfigPath, platform) {
   const MetroServer = require("metro/private/Server").default;
   const splitBundleOptions =
     require("metro/private/lib/splitBundleOptions").default;
-  const {
-    loadMetroConfigAsync,
-  } = require("@expo/cli/build/src/start/server/metro/instantiateMetro");
-  const {
-    getMetroDirectBundleOptionsForExpoConfig,
-  } = require("@expo/cli/build/src/start/server/middleware/metroOptions");
+  const { loadMetroConfigAsync } = expoRequire(
+    "@expo/cli/build/src/start/server/metro/instantiateMetro",
+  );
+  const { getMetroDirectBundleOptionsForExpoConfig } = expoRequire(
+    "@expo/cli/build/src/start/server/middleware/metroOptions",
+  );
   const { getConfig } = require("@expo/config");
   const { exp } = getConfig(mobileRoot, { skipSDKVersionRequirement: true });
   let server;

@@ -1,0 +1,34 @@
+appId: ${APP_ID}
+name: Agent identity navigation
+tags: [navigation]
+---
+# Functional checks stay separate from the visual references.
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/details/general?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked"
+- runFlow: ../visual/wait-for-launch.yml
+- assertVisible: "Close agent settings"
+- tapOn: "Name, aria.*"
+- assertVisible: "Close Rename agent"
+- tapOn: "New agent name"
+- eraseText: 4
+- inputText: "Nova_Prime"
+- assertVisible: "This will be saved as nova-prime."
+- tapOn: "Close Rename agent"
+- assertVisible: "Name, aria.*"
+- scrollUntilVisible:
+    element: "Technical details.*"
+    direction: DOWN
+    centerElement: true
+- tapOn: "Technical details.*"
+- assertVisible: "Agent state.*"
+- tapOn: "Technical details.*"
+- assertNotVisible: "Agent state.*"
+- tapOn: "Close agent settings"
+- assertVisible: "Agent settings"
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/file?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&path=/root/agent/MEMORY.md"
+- runFlow: ../visual/wait-for-launch.yml
+- tapOn: "Close file"
+- assertVisible: "Close agent settings"
