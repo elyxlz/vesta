@@ -439,6 +439,43 @@ def test_a_stop_while_the_engine_starts_is_refused_and_the_start_still_lands(rig
     assert len(pids) == 4 and gone is True and held is True
 
 
+def test_stop_all_while_a_handover_claims_its_browser_ends_the_start(rig, monkeypatch):
+    """A handover still launching its browser holds no task to cancel; stop-all leaves the session a
+    stop request and answers at once, and the launch ends itself when the engine returns."""
+    launching = asyncio.Event()
+    release = asyncio.Event()
+    engine_start = chromium.start
+
+    async def _held_start(session, paths, *, headed):
+        launching.set()
+        await release.wait()
+        return await engine_start(session, paths, headed=headed)
+
+    monkeypatch.setattr(chromium, "start", _held_start)
+
+    async def run():
+        pending = asyncio.create_task(request(rig.paths, _start()))
+        await asyncio.wait_for(launching.wait(), POLL_DEADLINE_SECS)
+        answer = await request(rig.paths, p.request("stop_all", "sa"))
+        release.set()
+        started = await pending
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        listing = await request(rig.paths, p.request("sessions", "h3"))
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        gone = await wait_until_all_dead([*rig.display_pids(), browser])
+        return answer, started, status, listing, gone
+
+    answer, started, status, listing, gone = with_daemon(rig.paths, run)
+    assert answer["ok"] is True
+    assert answer["data"] == {"stopped": [], "cancelled": [], "handover_stopped": False}
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert "while its browser was starting" in started["error"]["message"]
+    assert status["data"]["state"] == "inactive"
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
+    assert gone is True
+    assert rig.keys() == [] and rig.register_lines() == ["deregister browser"]
+
+
 def test_an_engine_that_cannot_start_refuses_the_handover(rig):
     """The session's own start is what fails, so nothing is registered and nothing is left running."""
 

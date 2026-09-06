@@ -43,9 +43,10 @@ HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
 MIN_SESSION_BUDGET_SECS = 1.0
 STARTUP_DEREGISTER_TIMEOUT_SECS = 5.0
-# The fallback bound on waiting out a session start, a program in flight, or a handover teardown;
-# each settles in seconds on its own. Worst case: this wait, a 5s gateway teardown, and one
-# parallel round of session stops, which stays under the CLI's 110s wait for the answer.
+# The fallback bound on waiting out a program in flight or a handover teardown: a busy session
+# settles on the cancellation just sent, a stopping handover on its own teardown, both in under a
+# second, and a starting session is never waited on. Worst case: this bound, a 5s gateway
+# teardown, and one parallel round of session stops, under the CLI's 110s wait for the answer.
 STOP_ALL_SETTLE_SECS = 60.0
 READ_CHUNK_BYTES = 1 << 16
 
@@ -196,20 +197,19 @@ async def op_session_stop(state: State, request_id: str, request: dict[str, p.Js
 
 
 def _settling(state: State) -> bool:
-    """Whether a session is still starting or running a program, or a handover is still claiming
-    its browser (no task a stop could cancel yet) or still tearing down (its own key revoke,
-    deregister, and settle, which a stop-all must not answer over or race)."""
+    """Whether a session is still running a program, or a handover is still tearing down (its own
+    key revoke, deregister, and settle, which a stop-all must not answer over or race)."""
     live = state.handover
-    claiming = live is not None and live.state == "starting" and live.task is None
     tearing = live is not None and live.state == "stopping"
     # `ensure_running` writes `ready` and `op_exec` writes `busy` with no scheduling point between
     # them on Python 3.12+, so this read never sees an exec's session as `ready` in passing.
-    return claiming or tearing or any(session.state in ("busy", "starting") for session in state.table.sessions.values())
+    return tearing or any(session.state == "busy" for session in state.table.sessions.values())
 
 
 async def _quiesce(state: State) -> list[str]:
-    """Cancels every exec in flight, one that reaches `busy` while this waits included, and waits
-    out every session start inside one budget. Returns the request ids it cancelled."""
+    """Cancels every exec in flight, one that reaches `busy` while this waits included, asks every
+    starting session to stop itself once its engine returns, and waits out what settles on its own
+    inside one budget. Returns the request ids it cancelled."""
     cancelled: list[str] = []
     deadline = time.monotonic() + STOP_ALL_SETTLE_SECS
     while True:
@@ -217,6 +217,9 @@ async def _quiesce(state: State) -> list[str]:
             if exec_id not in cancelled:
                 cancelled.append(exec_id)
                 task.cancel()
+        for session in state.table.sessions.values():
+            if session.state == "starting":
+                session.stop_requested = True
         if not _settling(state) or time.monotonic() >= deadline:
             return cancelled
         await asyncio.sleep(handover.SETTLE_POLL_SECS)
@@ -224,14 +227,15 @@ async def _quiesce(state: State) -> list[str]:
 
 async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
     """Ends everything the daemon runs: each program in flight answers `cancelled` to its own
-    caller, the live handover is given back, and every session loses its browser and display."""
+    caller, the live handover is given back, every session loses its browser and display, and a
+    session still launching stops itself the moment its engine returns."""
     cancelled = await _quiesce(state)
     live = state.handover
     handover_stopped = False
-    if live is not None and live.state in ("starting", "live"):
+    if live is not None and (live.state == "live" or (live.state == "starting" and live.task is not None)):
         await handover.stop(state, live, reason="stopped", gateway_timeout=handover.ROLLBACK_GATEWAY_TIMEOUT_SECS)
         handover_stopped = True
-    sessions = list(state.table.sessions.values())
+    sessions = [session for session in state.table.sessions.values() if session.state != "starting"]
     stopped = [session.name for session in sessions if session.runtime is not None or session.display is not None]
     outcomes = await asyncio.gather(*[stop_session(state.paths, session, force=True) for session in sessions], return_exceptions=True)
     for session, outcome in zip(sessions, outcomes, strict=True):

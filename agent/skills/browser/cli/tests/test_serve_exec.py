@@ -555,9 +555,9 @@ def test_stop_all_stops_every_session_when_one_stop_raises(paths, monkeypatch):
     assert states == ["stopped", "stopped"]
 
 
-def test_stop_all_waits_out_a_starting_session_and_stops_it(paths, monkeypatch):
-    """A session mid-launch holds a display and no runtime yet; stop-all waits for the launch to land
-    and then takes both, instead of racing the engine for the display."""
+def test_stop_all_asks_a_starting_session_to_stop_itself_and_never_waits_on_it(paths, monkeypatch):
+    """A session mid-launch holds a display and no runtime yet. stop-all answers at once and leaves a
+    stop request behind; the start honours it the moment the engine returns, so nothing survives."""
     launching = asyncio.Event()
     release = asyncio.Event()
     engine_start = chromium.start
@@ -572,20 +572,21 @@ def test_stop_all_waits_out_a_starting_session_and_stops_it(paths, monkeypatch):
     async def run():
         exec_task = asyncio.create_task(request(paths, exec_request("research", "SLEEP", timeout_s=30)))
         await asyncio.wait_for(launching.wait(), POLL_DEADLINE_SECS)
-        stop_all = asyncio.create_task(request(paths, p.request("stop_all", "sa")))
-        await wait_for_state(paths, "research", "starting")
-        still_waiting = not stop_all.done()
+        answer = await request(paths, p.request("stop_all", "sa"))
         release.set()
-        answer = await stop_all
         exec_result = await exec_task
+        await wait_for_state(paths, "research", "stopped")
         dead = await wait_until_all_dead([*display_pids(paths.x11_socket_dir), _browser_pid(paths, "research")])
-        return still_waiting, answer, exec_result, dead
+        again = await request(paths, exec_request("research", "print(1)", request_id="r2"))
+        return answer, exec_result, dead, again
 
-    still_waiting, answer, exec_result, dead = with_daemon(paths, run)
-    assert still_waiting is True
-    assert answer["data"] == {"stopped": ["research"], "cancelled": ["r1"], "handover_stopped": False}
-    assert exec_result["error"]["code"] == "cancelled"
+    answer, exec_result, dead, again = with_daemon(paths, run)
+    assert answer["ok"] is True
+    assert answer["data"] == {"stopped": [], "cancelled": [], "handover_stopped": False}
+    assert exec_result["ok"] is False and exec_result["error"]["code"] == "cancelled"
+    assert exec_result["error"]["retryable"] is True and "while its browser was starting" in exec_result["error"]["message"]
     assert dead is True
+    assert again["ok"] is True and again["warnings"] == []
 
 
 def test_an_engine_exception_answers_execution_failed_and_the_session_recovers(paths, monkeypatch):

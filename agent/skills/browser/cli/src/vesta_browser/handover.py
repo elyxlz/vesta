@@ -160,6 +160,13 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     except TimeoutError as exc:
         state.handover = None
         raise _too_slow() from exc
+    except p.BrowserError as exc:
+        # A stop that landed while the browser was coming up ended this handover's own start; the
+        # engine's other refusals are the session's to report as they are.
+        state.handover = None
+        if exc.err["code"] == "cancelled":
+            raise _failed(exc.err["message"]) from exc
+        raise
     except BaseException:
         state.handover = None
         raise
