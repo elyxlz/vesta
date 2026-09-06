@@ -32,7 +32,15 @@ chat import
 
 It prints one JSON line. `"rows": 0` or `"status": "no_events_db"` both mean nothing was left to import. Existing rows are kept, so this is safe to run more than once. Run it before the daemon starts.
 
-### 4. Drop the old service registration and fix the daemon line
+### 4. Hand the node the conversation this box already holds
+
+```bash
+chat import-to-node
+```
+
+It prints one JSON line carrying `imported` and `skipped`. The node keeps every message it already holds, so a re-run skips those and imports only what is missing. If it prints an error instead, STOP and leave this migration unmarked.
+
+### 5. Drop the old service registration and fix the daemon line
 
 ```bash
 deregister-service app-chat 2>/dev/null; touch ~/agent/skills/restart/daemons.sh; sed -i 's/^app-chat daemon start/chat daemon start/' ~/agent/skills/restart/daemons.sh; grep -c '^chat daemon start' ~/agent/skills/restart/daemons.sh
@@ -45,14 +53,6 @@ chat daemon start
 ```
 
 It must print `{"status":"started"}` or `{"status":"already_running"}`.
-
-### 5. Hand the node the conversation this box already holds
-
-```bash
-chat import-to-node
-```
-
-It prints one JSON line carrying `imported` and `skipped`. The node keeps every message it already holds, so a re-run skips those and imports only what is missing. If it prints an error instead, STOP and leave this migration unmarked.
 
 ### 6. Drop the stale name from the active skill list
 

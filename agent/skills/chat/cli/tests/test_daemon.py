@@ -148,6 +148,21 @@ def test_a_start_whose_socket_never_answers_leaves_no_record(records, monkeypatc
     assert not daemon.PIDFILE.exists()
 
 
+def test_a_start_whose_daemon_exits_reports_it_and_leaves_no_record(records, monkeypatch, capsys):
+    """A daemon that dies inside the ready budget is reported the moment it is seen, so the start
+    names the log to read instead of spending the whole budget probing a socket nobody serves."""
+    monkeypatch.setattr(daemon, "_ready", lambda sock_path: pytest.fail("a dead child is never probed"))
+    monkeypatch.setattr(
+        daemon.subprocess,
+        "Popen",
+        lambda *a, **k: types.SimpleNamespace(pid=4321, poll=lambda: 1, terminate=lambda: None, wait=lambda timeout=None: 1),
+    )
+
+    assert daemon.daemon_cmd("start") == 1
+    assert "exited during startup" in json.loads(capsys.readouterr().err)["error"]
+    assert not daemon.PIDFILE.exists()
+
+
 def test_stop_is_idempotent_when_nothing_is_recorded(records, capsys):
     assert daemon.daemon_cmd("stop") == 0
     assert json.loads(capsys.readouterr().out) == {"status": "already_stopped"}

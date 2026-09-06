@@ -183,7 +183,8 @@ class Store:
     short-lived WAL connections. `append` stamps the next AUTOINCREMENT id and files the message under a
     room (the direct room when the caller names none); `page` reads oldest-to-newest with an id cursor;
     `search` runs FTS5 relevance ranking decayed toward recent. Every write holds the store's lock, so
-    the daemon's own send path and the replica's worker threads share one connection safely."""
+    the replica's worker threads share one connection safely; the send path posts to the node and
+    writes no row, so the replica is what files the sent message."""
 
     def __init__(self, db_path: pl.Path, agent_name: str) -> None:
         if not agent_name:
