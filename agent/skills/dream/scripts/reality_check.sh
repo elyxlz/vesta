@@ -101,7 +101,13 @@ for log in "$HOME"/agent/logs/*.log; do
     printf '%s\t%s\n' "$name" "$errors" >> "$newstate"
     prev=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' "$state" 2>/dev/null | tail -n 1)
     if [ -z "$prev" ]; then
-        ok "$name: $errors error lines total, undated log with no baseline yet; counting from here"
+        # The first run has no baseline to subtract and cannot say how far back the tail reaches,
+        # so a storm still has to be reportable there: the absolute count decides, as before.
+        if [ "$errors" -gt 200 ]; then
+            bad "$name: $errors error lines in the last 2 days or earlier, undated log with no baseline yet; read it and find the producer"
+        else
+            ok "$name: $errors error lines in the last 2 days or earlier, undated log with no baseline yet"
+        fi
     else
         delta=$((errors - prev))
         if [ "$delta" -lt 0 ]; then
