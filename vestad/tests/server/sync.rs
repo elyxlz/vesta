@@ -5,11 +5,13 @@
 //! the replay-free `/rooms/ws`, so the chat scenario here drives those. What it adds over
 //! `chat_rooms.rs`, which needs nothing running in a container, is the container itself: the skill's
 //! daemon replicates a node message into the agent's notification intake, and `chat send` posts the
-//! agent's answer back through that daemon. User notifications (a rate limit, a status change) come
-//! from the agent-side user-notification primitive looped back through vestad
-//! (`POST /agents/{name}/user-notification`, `X-Agent-Token`), which fans a `user_notification` delta
-//! to every connected session; the user-notification scenario exercises that path and the
-//! closed-kind 400, and the reauth/unknown scenarios reuse it as a liveness probe.
+//! agent's answer back through that daemon. A user notification has two producers: vestad mints its
+//! own from what it observes (a rate limit, a status change), and the agent injects the kinds
+//! `message`/`needs_user`/`task` through the loopback primitive
+//! (`POST /agents/{name}/user-notification`, `X-Agent-Token`). Either way vestad fans one
+//! `user_notification` delta to every connected session; the user-notification scenario exercises
+//! the agent's path and its closed-kind 400, and the reauth/unknown scenarios reuse it as a
+//! liveness probe.
 //!
 //! Fake-token agents settle unprovisioned and run no model, and never run the skill's setup, so the
 //! chat scenario installs the CLI and starts the daemon by hand (`start_chat_daemon`, docker exec).
@@ -42,6 +44,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const USER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long to poll (via reconnect) for a fresh agent to surface in a snapshot.
 const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
+/// How much of the chat daemon's log a timed-out chat step carries into its panic message.
+const CHAT_LOG_TAIL_LINES: u32 = 50;
 
 // D2: the served compatibility window's low end, mirrored from vestad's crate-private
 // `sync::MIN_SUPPORTED_CLIENT_VERSION` (not importable from an integration crate, so pinned to the
@@ -82,6 +86,17 @@ fn is_close_error(msg: &str) -> bool {
     msg.contains("closed") || msg.contains("ended") || msg.contains("socket error")
 }
 
+/// The tail of the chat daemon's own log, for a panic message. A daemon that starts but never
+/// reaches the node says so only here (`replica connection ended:`, `no node identity in the
+/// environment`), so a chat step that times out reads as a dial failure instead of a bare timeout.
+fn chat_log_tail(container: &str) -> String {
+    exec_in_container(
+        container,
+        &format!("tail -n {CHAT_LOG_TAIL_LINES} /root/agent/logs/chat.log 2>&1 || true"),
+    )
+    .unwrap_or_else(|error| format!("<chat.log unreadable: {error}>"))
+}
+
 /// Wait for the skill's replica to write `text` into the agent's notification intake. A model-less
 /// agent defers every message while it is unauthenticated and keeps the file, so the notification
 /// stays on disk for the poll. Bounded, never a bare sleep.
@@ -98,7 +113,8 @@ async fn expect_notification_in_intake(container: &str, text: &str) {
         }
         assert!(
             Instant::now() < deadline,
-            "the replica never wrote {text:?} into the agent's intake within {REPLICA_NOTIFICATION_TIMEOUT:?}: {intake}"
+            "the replica never wrote {text:?} into the agent's intake within {REPLICA_NOTIFICATION_TIMEOUT:?}: {intake}\nchat.log tail:\n{}",
+            chat_log_tail(container)
         );
         tokio::time::sleep(POLL_INTERVAL).await;
     }
@@ -108,6 +124,10 @@ async fn expect_notification_in_intake(container: &str, text: &str) {
 /// which posts it to the node. Retried while the daemon's replica is still dialing the node (a send
 /// before it answers reports the node unreachable rather than posting).
 async fn agent_replies(container: &str, text: &str) {
+    assert!(
+        !text.contains('\''),
+        "the reply is passed to `chat send -m` inside single quotes, so it carries none: {text:?}"
+    );
     let deadline = Instant::now() + AGENT_SEND_TIMEOUT;
     loop {
         let sent = exec_in_container(
@@ -118,7 +138,8 @@ async fn agent_replies(container: &str, text: &str) {
             Ok(answer) if answer.contains("\"ok\": true") => return,
             _ => assert!(
                 Instant::now() < deadline,
-                "`chat send` never reached the node within {AGENT_SEND_TIMEOUT:?}: {sent:?}"
+                "`chat send` never reached the node within {AGENT_SEND_TIMEOUT:?}: {sent:?}\nchat.log tail:\n{}",
+                chat_log_tail(container)
             ),
         }
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -439,17 +460,18 @@ async fn device_context_reaches_roster_agent_and_notification_intake() {
 
     // A fresh agent runs on UTC, so Tokyo is news: the notification lands in its intake. A model-less
     // agent never consumes it, so it stays for the poll.
-    let container = vesta_tests::agent_container_name(&agent.name);
+    let container = agent_container_name(&agent.name);
     let deadline = Instant::now() + USER_NOTIFICATION_TIMEOUT;
     let listing = loop {
-        let listing = vesta_tests::exec_in_container(&container, "ls /root/agent/notifications").unwrap_or_default();
+        let listing =
+            exec_in_container(&container, "ls /root/agent/notifications").unwrap_or_default();
         if listing.contains("user-timezone-") && listing.contains("user-location-") {
             break listing;
         }
         assert!(Instant::now() < deadline, "no user-timezone/user-location notification landed; intake: {listing}");
         tokio::time::sleep(Duration::from_millis(500)).await;
     };
-    let payload = vesta_tests::exec_in_container(
+    let payload = exec_in_container(
         &container,
         "cat /root/agent/notifications/user-timezone-*.json",
     )

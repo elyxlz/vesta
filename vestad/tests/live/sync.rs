@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use vesta_tests::client::direct_room;
-use vesta_tests::SERVER;
+use vesta_tests::{exec_in_container, SERVER};
 
 use super::common::lock_live_agent_a;
 
@@ -22,6 +22,10 @@ const ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
 /// agent's reply arrives as a `chat` message on the socket. Generous like the first-start settle
 /// budget; it only has to not be hit in practice.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long the settled agent's own chat daemon gets to report itself up. The reply travels through
+/// that daemon, so a dead one is read here in seconds instead of at the round-trip budget.
+const CHAT_DAEMON_TIMEOUT: Duration = Duration::from_secs(30);
+const CHAT_DAEMON_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// True when `frame` is the user echo carrying our `intent`. Only an intake message carries an
 /// `intent_id`, and the room-level frames carry no `type` of `user` at all.
@@ -36,12 +40,31 @@ fn is_agent_reply(frame: &serde_json::Value) -> bool {
         && frame["text"].as_str().is_some_and(|text| !text.trim().is_empty())
 }
 
+/// Poll the agent's own `chat daemon status` until it reports itself running. The daemon is what
+/// carries the reply back to the node, so its own answer is the fastest reading of a dead one.
+/// Bounded by `CHAT_DAEMON_TIMEOUT`, never a bare sleep.
+async fn wait_for_chat_daemon(container: &str) {
+    let deadline = Instant::now() + CHAT_DAEMON_TIMEOUT;
+    loop {
+        let status = exec_in_container(container, ". /run/vestad-env && chat daemon status")
+            .unwrap_or_else(|error| format!("<status failed: {error}>"));
+        if status.contains("\"running\": true") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the agent's chat daemon never reported itself running within {CHAT_DAEMON_TIMEOUT:?}: {status}"
+        );
+        tokio::time::sleep(CHAT_DAEMON_POLL_INTERVAL).await;
+    }
+}
+
 /// End-to-end: open the room socket for a real settled agent's direct room, post one message with
 /// an intent id, observe the echo carrying that id, then observe the real agent reply arriving on
 /// the same socket. No-ops (returns) without `CLAUDE_CREDENTIALS`.
 #[tokio::test]
 async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
-    let Some((shared, _container)) = lock_live_agent_a() else {
+    let Some((shared, container)) = lock_live_agent_a() else {
         return;
     };
     let name = shared
@@ -50,6 +73,8 @@ async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
         .0
         .name
         .clone();
+
+    wait_for_chat_daemon(&container).await;
 
     let c = SERVER.client();
     let mut chat = c
@@ -67,7 +92,16 @@ async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
     let mut attempt = 0u32;
     loop {
         let intent = format!("i-live-chat-e2e-{attempt}");
-        let _ = c.send_message(&name, text, Some(&intent));
+        let posted = c.send_message(&name, text, Some(&intent));
+        if attempt == 0 {
+            let id = posted
+                .as_ref()
+                .expect("the first post into the room is accepted");
+            assert!(
+                id.is_some(),
+                "an accepted post answers with the id it stored (only a deduped retry answers none)"
+            );
+        }
         if chat
             .expect_frame_matching(|f| is_echo(f, &intent), ECHO_ATTEMPT_TIMEOUT)
             .await
@@ -77,7 +111,7 @@ async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
         }
         assert!(
             Instant::now() < echo_deadline,
-            "no user-echo carrying an intent on the room socket within {ECHO_TIMEOUT:?}"
+            "no user-echo carrying an intent on the room socket within {ECHO_TIMEOUT:?} (last post: {posted:?})"
         );
         attempt += 1;
         tokio::time::sleep(Duration::from_millis(200)).await;

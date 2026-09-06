@@ -118,6 +118,15 @@ pub enum ProxyAuth<'cred> {
     AgentToken(&'cred str),
 }
 
+/// What one post attempt inside `drive_until_echo` answered, once the node's refusals are told
+/// apart from the failures another attempt can still win: a 4xx is the refusal, returned as the
+/// drive's own `Err`, and everything else is `Retryable`.
+#[derive(Debug, Clone)]
+enum PostOutcome {
+    Accepted,
+    Retryable(String),
+}
+
 pub struct Client {
     agent: ureq::Agent,
     base_url: String,
@@ -418,7 +427,8 @@ impl Client {
     }
 
     /// Fetch an agent's direct-room tail via `GET /rooms/dm:{name}/history?limit=`, the
-    /// `{events, cursor}` page the clients read, oldest message last. `limit` caps the page size.
+    /// `{events, cursor}` page the clients read. A limit-only page is the newest `limit` messages,
+    /// ordered oldest first and newest last.
     pub fn fetch_chat_history(&self, name: &str, limit: u32) -> Result<serde_json::Value, String> {
         let resp = self.get(&format!(
             "/rooms/{}/history?limit={limit}",
@@ -550,11 +560,44 @@ impl Client {
         .await
     }
 
+    /// One post attempt into `room`, keeping the status the shared `post_json` maps away: a 2xx is
+    /// `Accepted`, a 4xx is the node's own refusal (`Err`, carrying the status and the body it
+    /// answered), and a 5xx or a transport failure is `Retryable`.
+    fn post_room_message(
+        &self,
+        room: &str,
+        body: &serde_json::Value,
+    ) -> Result<PostOutcome, String> {
+        let response = match self
+            .agent
+            .post(&format!("{}/rooms/{room}/messages", self.base_url))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body)
+        {
+            Ok(response) => response,
+            Err(error) => return Ok(PostOutcome::Retryable(map_error(&error))),
+        };
+        let status = response.status().as_u16();
+        if (200..300).contains(&status) {
+            return Ok(PostOutcome::Accepted);
+        }
+        let detail = response.into_body().read_to_string().unwrap_or_default();
+        if (400..500).contains(&status) {
+            return Err(format!(
+                "the node refused a post to {room} with HTTP {status}: {detail}"
+            ));
+        }
+        Ok(PostOutcome::Retryable(format!("HTTP {status}: {detail}")))
+    }
+
     /// Drive user posts into `room` until one echoes on `sock`, answering that post's intent id and
     /// its echo frame. `/rooms/ws` is replay-free, so an event fanned before the session subscribed
     /// is gone: a fresh intent per attempt is what closes the registration race (a repeated one is
     /// deduped and never re-echoes), and the winning echo proves the session is live for whatever
-    /// the caller asserts next. Bounded by `ROOM_ECHO_TIMEOUT`, never a bare sleep.
+    /// the caller asserts next. Bounded by `ROOM_ECHO_TIMEOUT`, never a bare sleep. A 4xx answer is
+    /// the node refusing the post itself (an unknown room, a malformed body), which no resend
+    /// mends, so it fails on the spot with the status and the body; only a transport error or a 5xx
+    /// is retried inside the budget.
     pub async fn drive_until_echo(
         &self,
         sock: &mut SyncSocket,
@@ -568,9 +611,10 @@ impl Client {
             let intent = format!("i-{label}-{attempt}");
             let body =
                 serde_json::json!({ "text": format!("{label} {attempt}"), "intent_id": intent });
-            match self.post_json(&format!("/rooms/{room}/messages"), &body) {
-                Ok(_) => last_error = None,
-                Err(error) => last_error = Some(error),
+            match self.post_room_message(room, &body) {
+                Ok(PostOutcome::Accepted) => last_error = None,
+                Ok(PostOutcome::Retryable(error)) => last_error = Some(error),
+                Err(refusal) => return Err(refusal),
             }
             if let Ok(frame) = sock
                 .expect_frame_matching(

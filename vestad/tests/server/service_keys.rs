@@ -141,9 +141,8 @@ fn a_private_service_needs_the_api_key_or_a_live_service_key() {
 /// and can 401 before the handler looks at `Upgrade` at all, so a live key in `?token=` completes
 /// the handshake and a revoked one is refused with a 401 in place of the 101. That is what lets a
 /// browser socket authenticate with a key it can only put in the query string. The upstream here
-/// speaks plain HTTP, so the socket closes right after the handshake: the handshake IS the gate's
-/// verdict, and the data path behind a proxied service socket is driven for real in
-/// `websocket.rs`.
+/// serves no socket at all, so the proxy completes the 101 handshake before touching it: the
+/// handshake IS the gate's verdict, and it is the whole verdict this scenario reads.
 #[tokio::test]
 async fn a_service_key_opens_a_websocket_upgrade_until_it_is_revoked() {
     let client = SERVER.client();
