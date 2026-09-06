@@ -14,8 +14,10 @@ import { useRoster } from "@/session/RosterProvider";
 import { useReplica } from "@vesta/core/react";
 import {
   directRoomId,
+  samePendingNotifications,
   type AgentActivityState,
   type AgentRow,
+  type NotificationEvent,
   type Tree,
 } from "@vesta/core";
 import { writeLastUsedAgent } from "@/storage/recent-agent";
@@ -29,16 +31,13 @@ interface AgentValue {
   name: string;
   agent: AgentRow | null;
   activityState: AgentActivityState;
-  // The ids of the notifications this agent has not worked through yet.
-  pendingNotifications: string[];
+  // The notifications this agent has not worked through yet, as whole events: one the agent has
+  // not written to its history yet still has a row of its own to render.
+  pendingNotifications: NotificationEvent[];
   socket: RoomSocket;
 }
 
 const AgentContext = createContext<AgentValue | null>(null);
-
-function idsEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
 
 // The provider and socket hook stay mounted across controller epochs. Backgrounding disables the
 // live edges without replacing the nested navigation tree, so an open agent sheet retains its state.
@@ -65,15 +64,15 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     agentActivitySnapshotsEqual,
   );
   const pendingSelector = useCallback(
-    (tree: Tree | null): string[] =>
-      name
-        ? (tree?.agents[name]?.notifications.pending ?? []).flatMap((notif) =>
-            notif.notif_id ? [notif.notif_id] : [],
-          )
-        : [],
+    (tree: Tree | null): NotificationEvent[] =>
+      name ? (tree?.agents[name]?.notifications.pending ?? []) : [],
     [name],
   );
-  const pendingNotifications = useReplica(replica, pendingSelector, idsEqual);
+  const pendingNotifications = useReplica(
+    replica,
+    pendingSelector,
+    samePendingNotifications,
+  );
   const activityState = servedAgentActivity(activity, agent?.activityState);
 
   useEffect(() => {

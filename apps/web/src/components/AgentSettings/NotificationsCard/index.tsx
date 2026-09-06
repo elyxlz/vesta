@@ -16,35 +16,17 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { ItemGroup } from "@/components/ui/item";
-import { notificationRowKey, getNotificationHistory } from "@vesta/core";
+import {
+  mergePending,
+  notificationRowKey,
+  getNotificationHistory,
+} from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
 import { usePendingNotifications } from "./use-pending-notifications";
 import type { NotificationEvent } from "@vesta/core";
 import { httpClient } from "@/api/client";
-
-// A pending notification the history page does not carry gets a row of its own, above the page: the
-// pending list grows at its end as notifications land, so reversing it puts the newest first. A
-// pending entry vestad only knows by id carries no timestamp, so a row key alone would not match
-// the stored arrival; the notif_id it always carries is what says the page already shows it.
-function mergePending(
-  history: NotificationEvent[],
-  pending: NotificationEvent[],
-): NotificationEvent[] {
-  const keys = new Set(history.map(notificationRowKey));
-  const ids = new Set(
-    history.flatMap((event) => (event.notif_id ? [event.notif_id] : [])),
-  );
-  const missing = pending.filter(
-    (event) =>
-      !keys.has(notificationRowKey(event)) &&
-      !(event.notif_id != null && ids.has(event.notif_id)),
-  );
-  return missing.length === 0
-    ? history
-    : [...[...missing].reverse(), ...history];
-}
 
 // The received-notifications history. Flows at its natural height and scrolls with the settings page;
 // the rules cards beside it stay sticky. The row list comes from the REST history (paginated) merged

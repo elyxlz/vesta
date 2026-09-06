@@ -95,6 +95,11 @@ export {
 export type { NotificationView } from "./notification-content/notification-content";
 
 export {
+  mergePending,
+  samePendingNotifications,
+} from "./notifications/pending-notifications";
+
+export {
   TRIM_HISTORY_SETTLE_MS,
   beginSend,
   commitPacedChat,

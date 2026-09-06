@@ -9,6 +9,7 @@ import {
   type NotificationView,
 } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
+import { notificationRows } from "@/agent/notification-list-model";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -138,20 +139,26 @@ export default function NotificationsPage({
     queryFn: () => getNotificationHistory(api, name),
   });
   const lastReseedRevision = useRef(0);
-  const items = useMemo<NotificationView[]>(
-    () => data?.notifications ?? [],
-    [data?.notifications],
-  );
   const standalone = presentation === "standalone";
-  const displayItems = useMemo(
-    () => (standalone ? [...items].reverse() : items),
-    [items, standalone],
+  const displayItems = useMemo<NotificationView[]>(
+    () =>
+      notificationRows(
+        data?.notifications ?? [],
+        pendingNotifications,
+        standalone,
+      ),
+    [data?.notifications, pendingNotifications, standalone],
   );
   const bottomAnchor = useBottomAnchoredFeed<NotificationView>(
     displayItems.length,
   );
   const pendingIds = useMemo(
-    () => new Set(pendingNotifications),
+    () =>
+      new Set(
+        pendingNotifications.flatMap((event) =>
+          event.notif_id ? [event.notif_id] : [],
+        ),
+      ),
     [pendingNotifications],
   );
 

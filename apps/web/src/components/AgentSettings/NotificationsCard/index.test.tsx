@@ -78,26 +78,9 @@ describe("NotificationsCard", () => {
     expect(screen.queryByText("pending")).not.toBeNull();
   });
 
-  it("does not duplicate a pending notification the history page already carries", async () => {
+  // The dedup rules mergePending applies are its own; this is the card marking the row it kept.
+  it("marks a row the page carries and the pending set still names", async () => {
     mount([STORED]);
-    await waitFor(() => {
-      expect(screen.getAllByText(STORED.summary)).toHaveLength(1);
-    });
-    expect(screen.queryByText("pending")).not.toBeNull();
-  });
-
-  // vestad stubs a pending id it never saw arrive live: same notif_id, no timestamp, no content.
-  // That stub names a row the page already shows, so it must not add a second, empty one.
-  it("does not duplicate the page row a pending stub names", async () => {
-    mount([
-      {
-        id: 0,
-        type: "notification",
-        source: "",
-        summary: "",
-        notif_id: STORED.notif_id,
-      },
-    ]);
     await waitFor(() => {
       expect(screen.getAllByText(STORED.summary)).toHaveLength(1);
     });

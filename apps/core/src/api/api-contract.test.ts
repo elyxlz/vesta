@@ -145,9 +145,7 @@ describe("vestad API contract", () => {
       vestadApiFixtures.attachment_completed satisfies DeepReadonly<AttachmentCompleted>;
     expect(completed.attachment.mime).toBe("image/png");
     expect(completed.attachment.width).toBe(640);
-    const history =
-      vestadApiFixtures.chat_history satisfies DeepReadonly<HistoryPage>;
-    const [, reply] = history.events;
+    const [, reply] = vestadApiFixtures.chat_history.events;
     expect(reply.attachments).toEqual([completed.attachment]);
   });
 });
