@@ -130,8 +130,8 @@ type StreamEvent = (
 # The connect handshake: one event sent directly to a client on a successful WS connect (not via
 # the bus, so never persisted/broadcast). Each top-level key except `state` is a domain object so
 # new connect-time state is added within a domain (or as a new domain) without disturbing readers;
-# consumers read only the domains they care about (web: all; vestad: state). Chat is not here: the
-# chat skill owns it end to end on its own service socket.
+# consumers read only the domains they care about (web: all; vestad: state). Chat is not here:
+# vestad's chat node holds every room, and the chat skill replicates the ones this agent is in.
 class SnapshotNotifications(tp.TypedDict):
     pending: list[str]  # notification file stems still on disk (received but not yet processed)
 

@@ -1,91 +1,41 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage, NotificationView } from "@vesta/core";
-import {
-  getPendingNotificationIds,
-  mergeLiveNotifications,
-} from "./notification-list-model";
+import type { NotificationEvent } from "@vesta/core";
+import { notificationRows } from "./notification-list-model";
 
-function notification(notifId: string, ts: string): NotificationView {
+function notification(
+  id: number,
+  summary: string,
+  notifId: string,
+): NotificationEvent {
   return {
+    id,
     type: "notification",
-    source: "test",
-    summary: notifId,
+    source: "email",
+    summary,
     notif_id: notifId,
-    ts,
+    ts: "2026-09-05T09:00:00Z",
   };
 }
 
-describe("notification list model", () => {
-  it("prepends live arrivals newest first and deduplicates history", () => {
-    const existing = notification("existing", "2026-01-01T00:00:00Z");
-    const first = notification("first", "2026-01-01T00:01:00Z");
-    const second = notification("second", "2026-01-01T00:02:00Z");
+const STORED = notification(1, "the invoice was paid", "email-1");
+const PENDING = notification(2, "the roof is leaking", "email-2");
 
-    expect(
-      mergeLiveNotifications([existing], [existing, first, second]),
-    ).toEqual([second, first, existing]);
+describe("notification rows", () => {
+  it("gives a pending notification the loaded page does not carry a row of its own", () => {
+    expect(notificationRows([STORED], [PENDING], false)).toEqual([
+      PENDING,
+      STORED,
+    ]);
   });
 
-  it("surfaces a re-arrival of the same notif_id at a later ts", () => {
-    const first = notification(
-      "nightly_dream-2026-01-01",
-      "2026-01-01T03:00:00Z",
-    );
-    const redrop = notification(
-      "nightly_dream-2026-01-01",
-      "2026-01-01T05:00:00Z",
-    );
-
-    expect(mergeLiveNotifications([first], [redrop])).toEqual([redrop, first]);
+  it("leaves the page alone when the pending set names only rows it carries", () => {
+    expect(notificationRows([STORED], [STORED], false)).toEqual([STORED]);
   });
 
-  it("still drops a replay of the same notif_id at the same ts", () => {
-    const arrival = notification(
-      "nightly_dream-2026-01-01",
-      "2026-01-01T03:00:00Z",
-    );
-
-    expect(mergeLiveNotifications([arrival], [arrival])).toEqual([arrival]);
-  });
-
-  it("keeps two id-less events with the same ts collapsed, as before", () => {
-    const older: NotificationView = {
-      type: "notification",
-      source: "email",
-      summary: "a",
-      ts: "2026-01-01T00:00:00Z",
-    };
-    const other: NotificationView = {
-      type: "notification",
-      source: "twitter",
-      summary: "b",
-      ts: "2026-01-01T00:00:00Z",
-    };
-
-    expect(mergeLiveNotifications([older], [other])).toEqual([older]);
-  });
-
-  it("distinguishes id-less, ts-less events by their content", () => {
-    const one: NotificationView = {
-      type: "notification",
-      source: "email",
-      summary: "a",
-    };
-    const two: NotificationView = {
-      type: "notification",
-      source: "email",
-      summary: "b",
-    };
-
-    expect(mergeLiveNotifications([one], [two])).toEqual([two, one]);
-  });
-
-  it("combines the snapshot seed with live arrivals and clears", () => {
-    const events: ChatMessage[] = [
-      notification("new", "2026-01-01T00:01:00Z"),
-      { type: "notification_cleared", notif_id: "seed" },
-    ];
-
-    expect([...getPendingNotificationIds(["seed"], events)]).toEqual(["new"]);
+  it("reads the merged list oldest first for the bottom-aligned sheet", () => {
+    expect(notificationRows([STORED], [PENDING], true)).toEqual([
+      STORED,
+      PENDING,
+    ]);
   });
 });

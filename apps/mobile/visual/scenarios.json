@@ -379,12 +379,6 @@
       "group": "Chat"
     },
     {
-      "id": "agent-chat-typing",
-      "title": "Chat, typing",
-      "description": "The typing indicator while a paced reply streams in.",
-      "group": "Chat"
-    },
-    {
       "id": "agent-notifications-pending",
       "title": "Notifications, pending",
       "description": "Received notifications with pending ones highlighted.",
@@ -742,12 +736,6 @@
       "id": "agent-chat-delivery",
       "title": "Chat, delivery states",
       "description": "A bubble still sending and one the gateway refused.",
-      "group": "Chat"
-    },
-    {
-      "id": "agent-chat-errors",
-      "title": "Chat, error lines",
-      "description": "The snag and rate-limit lines.",
       "group": "Chat"
     },
     {

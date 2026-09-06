@@ -310,7 +310,7 @@ def cmd_attachments_list(args: argparse.Namespace) -> None:
         for directory in sorted(root.iterdir()) if root.exists() else []:
             meta = attachments.read_meta(root, directory.name)
             if meta is None:
-                continue  # staging sessions have nothing to list yet
+                continue  # a directory with no meta holds a download that did not finish
             reference = references[meta["id"]] if meta["id"] in references else None
             rows.append(
                 {

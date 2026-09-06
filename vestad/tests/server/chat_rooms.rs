@@ -22,13 +22,9 @@
 
 use std::time::{Duration, Instant};
 
-use vesta_tests::client::{Client, SyncSocket};
+use vesta_tests::client::{direct_room, Client};
 use vesta_tests::{unique_agent, ProxyAuth, TestAgent, SERVER};
 
-/// Budget for a fresh room-socket session to be subscribed and echo a post back.
-const SOCKET_READY_TIMEOUT: Duration = Duration::from_secs(30);
-/// Per-attempt read window inside the readiness drive.
-const ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Budget for an already-subscribed session to receive one expected frame.
 const FRAME_TIMEOUT: Duration = Duration::from_secs(15);
 /// Budget for an agent message's user notification to reach the durable feed.
@@ -87,10 +83,6 @@ fn agent_token(name: &str) -> String {
 
 fn parse(body: &str) -> serde_json::Value {
     serde_json::from_str(body).unwrap_or_else(|e| panic!("parse response body ({e}): {body}"))
-}
-
-fn direct_room(agent: &str) -> String {
-    format!("dm:{agent}")
 }
 
 fn direct_room_path(agent: &str) -> String {
@@ -233,42 +225,6 @@ fn feed_entry_for(client: &Client, agent: &str, body: &str) -> Option<serde_json
         .cloned()
 }
 
-// ── socket drives ───────────────────────────────────────────────
-
-/// Drive user posts into `room` until one echoes on `sock`, returning that post's intent id and
-/// its echo. `/rooms/ws` is replay-free, so an event fanned before the session subscribed is gone:
-/// a fresh intent per attempt is what closes the registration race, and the winning echo proves
-/// the session is live for whatever the scenario asserts next.
-async fn drive_until_echo(
-    client: &Client,
-    sock: &mut SyncSocket,
-    room: &str,
-    label: &str,
-) -> (String, serde_json::Value) {
-    let deadline = Instant::now() + SOCKET_READY_TIMEOUT;
-    let mut attempt = 0u32;
-    loop {
-        let intent = format!("i-{label}-{attempt}");
-        let body = serde_json::json!({ "text": format!("{label} {attempt}"), "intent_id": intent });
-        let (status, answer) = post_message(client, room, ProxyAuth::ApiKey, &body);
-        assert_eq!(status, 200, "user post into {room}: {answer}");
-        if let Ok(frame) = sock
-            .expect_frame_matching(
-                |frame| frame["intent_id"].as_str() == Some(intent.as_str()),
-                ECHO_ATTEMPT_TIMEOUT,
-            )
-            .await
-        {
-            return (intent, frame);
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no room-socket echo for {room} within {SOCKET_READY_TIMEOUT:?}"
-        );
-        attempt += 1;
-    }
-}
-
 // ── scenarios ───────────────────────────────────────────────────
 
 /// (1) Every agent vestad knows has its direct room the moment it exists, and the user's room
@@ -398,7 +354,10 @@ async fn a_user_post_echoes_on_the_room_socket_and_pages_back_by_id() {
         .await
         .expect("open the room socket");
 
-    let (intent, echo) = drive_until_echo(&client, &mut sock, &room, "echo").await;
+    let (intent, echo) = client
+        .drive_until_echo(&mut sock, &room, "echo")
+        .await
+        .expect("a user post echoes on the room socket");
     assert_eq!(
         echo["intent_id"].as_str(),
         Some(intent.as_str()),
@@ -468,7 +427,10 @@ async fn an_agent_post_reaches_the_user_socket_and_mints_a_message_notification(
         .expect("open the room socket");
     // A user post that echoes proves the session is subscribed, so the agent post below cannot be
     // fanned into a socket that is not listening yet.
-    drive_until_echo(&client, &mut sock, &room, "before-the-agent").await;
+    client
+        .drive_until_echo(&mut sock, &room, "before-the-agent")
+        .await
+        .expect("the user session is subscribed");
 
     let text = "the agent's answer";
     let (status, answer) = post_message(
@@ -600,8 +562,14 @@ async fn speaking_gates_agent_posts_and_the_floor_clearing_emits_turn_end() {
         .expect("open the agent's unscoped room socket");
     // Both sessions must be subscribed before the turn-end event fans, or the socket is replay-free
     // against them. An echo on each is that proof.
-    drive_until_echo(&client, &mut user_sock, &room, "user-ready").await;
-    drive_until_echo(&client, &mut agent_sock, &room, "agent-ready").await;
+    client
+        .drive_until_echo(&mut user_sock, &room, "user-ready")
+        .await
+        .expect("the user session is subscribed");
+    client
+        .drive_until_echo(&mut agent_sock, &room, "agent-ready")
+        .await
+        .expect("the agent session is subscribed");
 
     user_sock
         .send_client_frame(&serde_json::json!({ "type": "speaking", "active": true }))
@@ -728,8 +696,9 @@ fn an_agent_imports_its_history_idempotently() {
     assert_eq!(events[1]["sender"].as_str(), Some(agent.name.as_str()));
 }
 
-/// (8) A rename carries the direct room to the new name, and a direct room outlives everything but
-/// its agent: deletable once the agent is gone, refused while it lives.
+/// (8) A rename carries the direct room to the new name. A direct room lives as long as its agent:
+/// the delete is refused while the agent is there, and destroying the agent takes the room itself,
+/// while a peer room that keeps a member stays readable and stays deletable by the user.
 #[test]
 fn rename_and_delete_follow_the_agent() {
     let client = SERVER.client();
@@ -755,6 +724,17 @@ fn rename_and_delete_follow_the_agent() {
         "the old direct room id is gone: {ids:?}"
     );
 
+    let (status, body) = open_room(
+        &client,
+        ProxyAuth::ApiKey,
+        &serde_json::json!({ "agents": [new_name, bystander.name] }),
+    );
+    assert_eq!(status, 201, "the peer room is created: {body}");
+    let peer = body["room"]["id"]
+        .as_str()
+        .expect("the peer room carries an id")
+        .to_string();
+
     // A direct room lives as long as its agent: the delete is refused while the agent is there.
     let (status, raw) = client
         .proxy_delete(&direct_room_path(&bystander.name), ProxyAuth::ApiKey)
@@ -769,15 +749,30 @@ fn rename_and_delete_follow_the_agent() {
     );
 
     client.destroy_agent(&new_name).expect("destroy the agent");
-    let (status, raw) = client
-        .proxy_delete(&direct_room_path(&new_name), ProxyAuth::ApiKey)
-        .expect("delete the destroyed agent's direct room");
-    assert_eq!(status, 200, "the room goes once its agent is gone: {raw}");
-    assert_eq!(parse(&raw)["ok"].as_bool(), Some(true));
-
-    let ids = room_ids(&list_rooms(&client, ProxyAuth::ApiKey));
+    let rooms = list_rooms(&client, ProxyAuth::ApiKey);
+    let ids = room_ids(&rooms);
     assert!(
         !ids.contains(&direct_room(&new_name)),
+        "the destroyed agent's direct room goes with it: {ids:?}"
+    );
+    let survivor = rooms
+        .iter()
+        .find(|room| room["id"].as_str() == Some(peer.as_str()))
+        .unwrap_or_else(|| panic!("the peer room keeps its other member: {ids:?}"));
+    assert_eq!(
+        survivor["agents"].as_array().map(Vec::as_slice),
+        Some([serde_json::json!(bystander.name)].as_slice())
+    );
+
+    // A room that is not a direct room is the user's to delete, whoever is still in it.
+    let (status, raw) = client
+        .proxy_delete(&format!("/rooms/{peer}"), ProxyAuth::ApiKey)
+        .expect("delete the peer room");
+    assert_eq!(status, 200, "a room with no direct agent goes: {raw}");
+    assert_eq!(parse(&raw)["ok"].as_bool(), Some(true));
+    let ids = room_ids(&list_rooms(&client, ProxyAuth::ApiKey));
+    assert!(
+        !ids.contains(&peer),
         "the deleted room is out of the list: {ids:?}"
     );
 }
@@ -836,7 +831,10 @@ async fn an_upload_lands_in_chunks_and_rides_a_message() {
         .open_rooms_socket(Some(&room))
         .await
         .expect("open the room socket");
-    drive_until_echo(&client, &mut sock, &room, "before-the-upload").await;
+    client
+        .drive_until_echo(&mut sock, &room, "before-the-upload")
+        .await
+        .expect("the user session is subscribed");
 
     let (status, raw) = client
         .proxy_post_json(

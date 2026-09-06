@@ -4,7 +4,8 @@ An ordered ruleset decides an incoming notification's disposition: preempt the a
 (`interrupt`), snooze until the agent is idle (`snooze`), or drop without ever reaching
 the agent (`trash`). First matching rule wins; with no match the decision falls back to the
 notification's own `interrupt` flag — the default the producing skill ships for its own notifications
-(whatsapp/chat interrupt, email/finance snooze), so a fresh agent with no rules already behaves sensibly.
+(whatsapp interrupts, email/finance snooze, a chat message follows its sender), so a fresh agent with
+no rules already behaves sensibly.
 A notification is never trashed by default, only by an explicit user rule. The user's rules exist to
 override those defaults.
 The ruleset lives on the agent config

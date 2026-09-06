@@ -39,7 +39,7 @@ function harness(): Harness {
     buildUrl: () => {
       builds += 1;
       return Promise.resolve(
-        `wss://vestad.test/agents/ada/chat/ws?token=key-${String(builds)}`,
+        `wss://vestad.test/rooms/ws?room=dm%3Aada&token=key-${String(builds)}`,
       );
     },
     createSocket: (url: string) => {
@@ -145,8 +145,8 @@ describe("createChatSocket", () => {
     await reconnect();
 
     expect(h.urls).toEqual([
-      "wss://vestad.test/agents/ada/chat/ws?token=key-1",
-      "wss://vestad.test/agents/ada/chat/ws?token=key-2",
+      "wss://vestad.test/rooms/ws?room=dm%3Aada&token=key-1",
+      "wss://vestad.test/rooms/ws?room=dm%3Aada&token=key-2",
     ]);
   });
 

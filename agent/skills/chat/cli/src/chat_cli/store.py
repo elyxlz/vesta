@@ -1,8 +1,8 @@
-"""The chat skill's own durability: every room's messages, the conversation the app shows and the
-rooms the agent replicates from the node. A private sqlite db (~/.chat/chat.db) the daemon owns, and
-the one source of chat history + search. Ids are skill-assigned (AUTOINCREMENT) and passed through to
-the live echo verbatim, so a client cursor stays coherent across the live edge and paged history. A
-message the node also holds carries that node id, which is what makes replication idempotent."""
+"""The chat skill's own durability: the messages of every room this agent replicates from the node. A
+private sqlite db (~/.chat/chat.db) the daemon owns, and the one source of `chat history` and its
+search. Row ids are skill-assigned (AUTOINCREMENT), so an imported row keeps the id it carried and
+`import-to-node` names it as the origin. A message the node also holds carries that node id, which is
+what makes replication idempotent."""
 
 import json
 import pathlib as pl
@@ -14,8 +14,8 @@ from .attachments import AttachmentMeta
 
 PAGE_SIZE = 50
 
-# The conversation the app renders: the user's messages and the agent's replies. Tool events are not
-# shown in chat at all (they ride the wire for Debug only), so this store is pure conversation.
+# What a conversation is made of: the user's messages and the agent's replies. Tool events are not
+# chat at all (they ride the wire for Debug only), so this store is pure conversation.
 _CONVERSATION_TYPES: tuple[str, ...] = ("user", "chat")
 
 # Relevance decays toward recent so `--search` favors newer matches, mirroring events.py.
@@ -183,7 +183,8 @@ class Store:
     short-lived WAL connections. `append` stamps the next AUTOINCREMENT id and files the message under a
     room (the direct room when the caller names none); `page` reads oldest-to-newest with an id cursor;
     `search` runs FTS5 relevance ranking decayed toward recent. Every write holds the store's lock, so
-    the daemon's own send path and the replica's worker threads share one connection safely."""
+    the replica's worker threads share one connection safely; the send path posts to the node and
+    writes no row, so the replica is what files the sent message."""
 
     def __init__(self, db_path: pl.Path, agent_name: str) -> None:
         if not agent_name:
@@ -389,7 +390,8 @@ class Store:
 
     def bump_sequence_above(self, max_id: int) -> None:
         """Keep AUTOINCREMENT strictly above an imported id set (D3): a freshly imported store must
-        never re-mint an id a client already cached as a cursor."""
+        never re-mint an id an imported row already holds, since `import-to-node` names a row's id as
+        the origin the node dedups on."""
         with self._lock:
             self._conn.execute("INSERT OR IGNORE INTO sqlite_sequence(name, seq) VALUES ('events', 0)")
             self._conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'events'", (max_id,))

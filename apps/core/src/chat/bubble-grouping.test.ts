@@ -19,22 +19,19 @@ function from(sender: string, ts?: string): ChatMessage {
   return { type: "chat", text: "hello", sender, ts };
 }
 
+// The one row a chat surface holds that no member wrote: a notification page row.
+function sideless(): ChatMessage {
+  return { type: "notification", source: "whatsapp", summary: "2 new" };
+}
+
 describe("chatMessageSide", () => {
   it("maps user to the user side and chat to the agent side", () => {
     expect(chatMessageSide(user())).toBe("user");
     expect(chatMessageSide(agent())).toBe("agent");
   });
 
-  it("gives sideless rows no side", () => {
-    expect(chatMessageSide({ type: "error", text: "boom" })).toBeNull();
-    expect(
-      chatMessageSide({
-        type: "rate_limited",
-        text: "slow down",
-        window: null,
-        resets_at: null,
-      }),
-    ).toBeNull();
+  it("gives a sideless row no side", () => {
+    expect(chatMessageSide(sideless())).toBeNull();
   });
 });
 
@@ -124,8 +121,6 @@ describe("startsNewBubbleGroup", () => {
   });
 
   it("never starts a group off a sideless row", () => {
-    expect(
-      startsNewBubbleGroup({ type: "error", text: "boom" }, agent(base)),
-    ).toBe(false);
+    expect(startsNewBubbleGroup(sideless(), agent(base))).toBe(false);
   });
 });

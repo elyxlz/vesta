@@ -58,24 +58,6 @@ export function agentMessage(
   };
 }
 
-export function errorLine(text: string, minutesAgo: number): VestaEvent {
-  return { id: nextEventId++, type: "error", text, ts: stamp(minutesAgo) };
-}
-
-export function rateLimitedLine(
-  minutesAgo: number,
-  resetsAt: number,
-): VestaEvent {
-  return {
-    id: nextEventId++,
-    type: "rate_limited",
-    text: "rate limited",
-    window: "5h",
-    resets_at: resetsAt,
-    ts: stamp(minutesAgo),
-  };
-}
-
 const FIXED_NOW_MS = Date.parse("2026-08-18T10:00:00Z");
 
 function stamp(minutesAgo: number): string {

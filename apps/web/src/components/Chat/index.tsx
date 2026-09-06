@@ -184,14 +184,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     inConversation,
   });
   const chatMessages = useMemo(
-    () =>
-      messages.filter(
-        (m) =>
-          m.type === "user" ||
-          m.type === "chat" ||
-          m.type === "error" ||
-          m.type === "rate_limited",
-      ),
+    () => messages.filter((m) => m.type === "user" || m.type === "chat"),
     [messages],
   );
 

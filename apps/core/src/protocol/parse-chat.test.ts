@@ -75,3 +75,23 @@ describe("parseChatEvent room addressing", () => {
     ).toBeNull();
   });
 });
+
+// The chat node stores only user and chat messages, so a frame naming any other kind is a shape no
+// producer emits. It drops at the boundary instead of reaching the view as a row nothing renders.
+describe("parseChatEvent on a kind the node never emits", () => {
+  it.each([
+    { type: "tool_start", id: 10, tool: "Bash", input: "ls" },
+    { type: "tool_end", id: 11, tool: "Bash" },
+    { type: "error", id: 12, text: "boom" },
+    { type: "rate_limited", id: 13, text: "wait", window: "5h", resets_at: 1 },
+    { type: "notification", id: 14, source: "chat", summary: "hi" },
+    { type: "notification_cleared", id: 15, notif_id: "n-1" },
+    { type: "subagent_start", id: 16, agent_id: "a-1", agent_type: "explore" },
+    { type: "subagent_stop", id: 17, agent_id: "a-1", agent_type: "explore" },
+    { type: "status", id: 18, state: "idle" },
+    { type: "assistant", id: 19, text: "hey" },
+    { type: "thinking", id: 20, text: "hmm", signature: "sig" },
+  ])("drops a $type frame", (frame) => {
+    expect(parseChatEvent(frame)).toBeNull();
+  });
+});

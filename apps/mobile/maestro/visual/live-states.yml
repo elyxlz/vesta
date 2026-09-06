@@ -75,19 +75,6 @@ tags:
       SCREENSHOT: agent-chat-connected-draft.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualLive=typing"
-- extendedWaitUntil:
-    visible: "aria is typing"
-    timeout: 30000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: agent-chat-typing
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: agent-chat-typing.png
-- stopApp
-- openLink:
     link: "vesta-dev://agent/aria/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualLive=pending"
 - extendedWaitUntil:
     visible: "pending"

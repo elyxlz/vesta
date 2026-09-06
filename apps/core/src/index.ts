@@ -95,6 +95,11 @@ export {
 export type { NotificationView } from "./notification-content/notification-content";
 
 export {
+  mergePending,
+  samePendingNotifications,
+} from "./notifications/pending-notifications";
+
+export {
   TRIM_HISTORY_SETTLE_MS,
   beginSend,
   commitPacedChat,
@@ -273,7 +278,6 @@ export {
   agentNeedsUser,
   agentStatusKind,
   agentStatusLabel,
-  formatResetTime,
 } from "./agent-status/agent-status";
 export type { OrbVisualState } from "./agent-status/agent-status";
 
@@ -314,5 +318,4 @@ export type {
 
 export { createController } from "./controller/controller";
 export type { Controller, ControllerDeps } from "./controller/controller";
-export type { SocketLike } from "./transport/websocket";
 export type { ProviderInfoWire } from "./provider/provider";

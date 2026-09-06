@@ -16,7 +16,6 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as WebBrowser from "expo-web-browser";
 import Svg, { Path } from "react-native-svg";
-import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, ChatMessage, InputMethod } from "@vesta/core";
 import contentCopyIcon from "../../../assets/menu-icons/content-copy.xml";
 import editIcon from "../../../assets/menu-icons/edit.xml";
@@ -301,19 +300,6 @@ export const ChatEvent = memo(function ChatEvent({
     },
     [messageText, onEditAndResend, onReadAloud, onReply, sender, user],
   );
-  if (event.type === "error" || event.type === "rate_limited") {
-    const text =
-      event.type === "rate_limited"
-        ? event.resets_at != null
-          ? `Rate limited. Vesta will be back ${formatResetTime(event.resets_at)}.`
-          : "Rate limited. Vesta will be back soon."
-        : "This message may not have gone through.";
-    return (
-      <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>
-        {text}
-      </Text>
-    );
-  }
   if (event.type !== "user" && event.type !== "chat") return null;
   const bubbleColor = user ? colors.accent : colors.card;
   const attachments = event.attachments ?? [];
@@ -601,7 +587,6 @@ const styles = StyleSheet.create({
   finalMarkdownParagraph: { marginBottom: 0 },
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
-  systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
   sendStatus: { fontSize: 11, marginTop: 3, marginRight: 4 },
   sendRetry: {
     flexDirection: "row",

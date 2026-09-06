@@ -1,10 +1,8 @@
 """The attachment blob store: files the user sends from the app and files the agent sends back, each
-under one id directory at <root>/<id>/. Uploads stage into an offset-addressed .part file described by
-session.json; finalize verifies the declared size and renames the blob to its sanitized filename beside
-meta.json, which from then on is the single truth the serve route and the CLI read. A file that landed
-elsewhere first is copied in whole under the id it already carries. A removed blob
-keeps its meta.json (the app renders "no longer available" off the resulting 410), so removal never
-breaks chat history. Everything is a pure function over the root path; no daemon state is involved."""
+under one id directory at <root>/<id>/. A file is copied in whole under the id the node minted for it,
+beside a meta.json, which from then on is the single truth the CLI reads. A removed blob keeps its
+meta.json, so the app renders "no longer available" and removal never breaks chat history. Everything
+is a pure function over the root path; no daemon state is involved."""
 
 import json
 import os
@@ -12,18 +10,14 @@ import pathlib as pl
 import re
 import shutil
 import typing as tp
-import uuid
 
-MAX_CHUNK_BYTES = 8 * 1024 * 1024
 MAX_ATTACHMENT_BYTES = 512 * 1024 * 1024
 MAX_ATTACHMENTS_PER_MESSAGE = 10
-STALE_SESSION_MAX_AGE_SECS = 24 * 3600
+STALE_ATTACHMENT_MAX_AGE_SECS = 24 * 3600
 
-# Control files are dot-prefixed and sanitize_filename strips leading dots, so a user file can never
-# collide with (and clobber) the store's own records, whatever it is named.
-_SESSION_FILE = ".session.json"
+# The record file is dot-prefixed and sanitize_filename strips leading dots, so a user file can never
+# collide with (and clobber) the store's own record, whatever it is named.
 _META_FILE = ".meta.json"
-_PART_FILE = ".part"
 _FILENAME_MAX_CHARS = 120
 FALLBACK_MIME = "application/octet-stream"
 
@@ -39,23 +33,11 @@ class AttachmentMeta(tp.TypedDict, total=False):
 
 
 class SizeError(Exception):
-    """The declared or staged size exceeds what the store accepts."""
-
-
-class SizeMismatchError(Exception):
-    """Finalize found staged bytes that do not add up to the declared size."""
+    """The file is larger than the store accepts."""
 
 
 class UnknownAttachmentError(Exception):
-    """No session or finalized attachment exists under this id."""
-
-
-class OffsetMismatchError(Exception):
-    """An append arrived at an offset other than the staged size; `received` is the truth to resync to."""
-
-    def __init__(self, received: int) -> None:
-        super().__init__(f"offset mismatch, received {received}")
-        self.received = received
+    """No attachment exists under this id."""
 
 
 def sanitize_filename(name: str) -> str:
@@ -85,8 +67,8 @@ def attachments_root(data_dir: pl.Path) -> pl.Path:
     return data_dir / "attachments"
 
 
-# Ids are server-minted uuid4 hex. Everything client-supplied flows through this gate before it is
-# joined to a path, so a hostile id (`../x`) can never escape the store root.
+# Ids are node-minted uuid4 hex. Every id from outside flows through this gate before it is joined to
+# a path, so a hostile id (`../x`) can never escape the store root.
 _ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
@@ -119,76 +101,6 @@ def _write_json(path: pl.Path, record: AttachmentMeta) -> None:
     tmp.replace(path)
 
 
-def create_session(root: pl.Path, name: str, mime: str, size: int, extra: AttachmentMeta) -> str:
-    """Open an upload session: mint the id, record the declared metadata, create the empty stage."""
-    if size < 0 or size > MAX_ATTACHMENT_BYTES:
-        raise SizeError(f"size {size} exceeds the {MAX_ATTACHMENT_BYTES} byte limit")
-    attachment_id = uuid.uuid4().hex
-    directory = _dir(root, attachment_id)
-    directory.mkdir(parents=True)
-    session: AttachmentMeta = {"id": attachment_id, "name": sanitize_filename(name), "mime": mime, "size": size}
-    if "width" in extra:
-        session["width"] = extra["width"]
-    if "height" in extra:
-        session["height"] = extra["height"]
-    if "duration_secs" in extra:
-        session["duration_secs"] = extra["duration_secs"]
-    _write_json(directory / _SESSION_FILE, session)
-    (directory / _PART_FILE).touch()
-    return attachment_id
-
-
-def _session(root: pl.Path, attachment_id: str) -> AttachmentMeta:
-    session = _read_json(_dir(root, attachment_id) / _SESSION_FILE)
-    if session is None:
-        raise UnknownAttachmentError(attachment_id)
-    return session
-
-
-def _part_size(root: pl.Path, attachment_id: str) -> int:
-    part = _dir(root, attachment_id) / _PART_FILE
-    return part.stat().st_size if part.exists() else 0
-
-
-def staged_size(root: pl.Path, attachment_id: str) -> int:
-    _session(root, attachment_id)
-    return _part_size(root, attachment_id)
-
-
-def append_at(root: pl.Path, attachment_id: str, offset: int, data: bytes) -> int:
-    """Append one chunk at an explicit offset. Only the exact staged size is accepted, so a client that
-    lost a response resyncs off OffsetMismatchError.received instead of corrupting the stage; a replay whose
-    bytes already landed reads received == offset + len(data) as delivered."""
-    session = _session(root, attachment_id)
-    current = _part_size(root, attachment_id)
-    if offset != current:
-        raise OffsetMismatchError(current)
-    if offset + len(data) > session["size"]:
-        raise SizeError(f"append past the declared size {session['size']}")
-    part = _dir(root, attachment_id) / _PART_FILE
-    with part.open("ab") as stage:
-        stage.write(data)
-    return current + len(data)
-
-
-def finalize(root: pl.Path, attachment_id: str) -> AttachmentMeta:
-    """Verify the staged bytes match the declared size, publish the blob under its filename, and write
-    the metadata record (the finalized marker). Idempotent: a finalized id returns its meta unchanged,
-    so a lost complete response is retried safely."""
-    already = read_meta(root, attachment_id)
-    if already is not None:
-        return already
-    session = _session(root, attachment_id)
-    directory = _dir(root, attachment_id)
-    staged = _part_size(root, attachment_id)
-    if staged != session["size"]:
-        raise SizeMismatchError(f"staged {staged} of declared {session['size']} bytes")
-    (directory / _PART_FILE).replace(directory / session["name"])
-    _write_json(directory / _META_FILE, session)
-    (directory / _SESSION_FILE).unlink()
-    return session
-
-
 def blob_destination(root: pl.Path, meta: AttachmentMeta) -> pl.Path:
     """Where a blob copied from elsewhere lands, its id directory created. The name is sanitized here
     too, so a file named by another node cannot reach outside the id directory."""
@@ -198,35 +110,26 @@ def blob_destination(root: pl.Path, meta: AttachmentMeta) -> pl.Path:
 
 
 def record_meta(root: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
-    """Publish the metadata beside a blob that already landed, which is what makes it finalized: from
-    here on `read_meta`, the serve route and `attachments list` all see the attachment. Answers the
-    record as stored, so the caller names the file this store really holds."""
+    """Publish the metadata beside a blob that already landed, which is what makes the attachment
+    complete: from here on `read_meta` and `attachments list` both see it. Answers the record as
+    stored, so the caller names the file this store really holds."""
     stored: AttachmentMeta = {**meta, "name": sanitize_filename(meta["name"])}
     _write_json(_dir(root, meta["id"]) / _META_FILE, stored)
     return stored
 
 
 def store_copy(root: pl.Path, source: pl.Path, meta: AttachmentMeta) -> AttachmentMeta:
-    """Copy a file that already reached another store into this one, finalized, under the id it carries
-    there. The sender's own history then renders the same blob the room holds."""
+    """Copy a file that already reached another store into this one, under the id it carries there.
+    The sender's own history then renders the same blob the room holds."""
     shutil.copyfile(source, blob_destination(root, meta))
     return record_meta(root, meta)
 
 
 def read_meta(root: pl.Path, attachment_id: str) -> AttachmentMeta | None:
-    """The finalized metadata, or None while the id is malformed, unknown, or still staging."""
+    """The stored metadata, or None while the id is malformed or unknown to this store."""
     if not is_valid_id(attachment_id):
         return None
     return _read_json(_dir(root, attachment_id) / _META_FILE)
-
-
-def upload_status(root: pl.Path, attachment_id: str) -> tuple[int, int, bool]:
-    """(received, declared size, finalized): the resume probe a reconnecting uploader asks."""
-    meta = read_meta(root, attachment_id)
-    if meta is not None:
-        return meta["size"], meta["size"], True
-    session = _session(root, attachment_id)
-    return staged_size(root, attachment_id), session["size"], False
 
 
 def blob_path(root: pl.Path, attachment_id: str) -> pl.Path:
@@ -237,7 +140,8 @@ def blob_path(root: pl.Path, attachment_id: str) -> pl.Path:
 
 
 def is_removed(root: pl.Path, attachment_id: str) -> bool:
-    """Meta present but blob gone: the state a cleaned-up attachment serves as 410."""
+    """Meta present but blob gone: what `attachments rm` leaves behind, and what the app renders as
+    "no longer available"."""
     meta = read_meta(root, attachment_id)
     return meta is not None and not (_dir(root, attachment_id) / meta["name"]).exists()
 
@@ -256,8 +160,8 @@ def remove_blob(root: pl.Path, attachment_id: str) -> int:
 
 
 def _last_activity(directory: pl.Path) -> float:
-    """The newest mtime inside the id directory: appending chunks touches .part but never the parent
-    dir, so aging off the directory's own mtime would reap a slow upload still making progress."""
+    """The newest mtime inside the id directory: a file rewritten in place leaves the directory's own
+    mtime untouched, so aging off the directory alone would reap an attachment just refreshed."""
     newest = directory.stat().st_mtime
     for child in directory.iterdir():
         newest = max(newest, child.stat().st_mtime)
@@ -265,22 +169,20 @@ def _last_activity(directory: pl.Path) -> float:
 
 
 def sweep(root: pl.Path, now: float, referenced: tp.Callable[[str], bool]) -> list[str]:
-    """Garbage-collect abandoned disk: staging sessions and finalized-but-unreferenced attachments with
-    no activity for the max age. Removed-blob directories are tombstones for chat history and are
-    always kept."""
+    """Garbage-collect abandoned disk: every id directory no message references, with no activity for
+    the max age. A directory with no meta.json is one nothing finished writing, so it goes the same
+    way. Removed-blob directories are tombstones for chat history and are always kept."""
     if not root.exists():
         return []
     swept: list[str] = []
-    cutoff = now - STALE_SESSION_MAX_AGE_SECS
+    cutoff = now - STALE_ATTACHMENT_MAX_AGE_SECS
     for directory in root.iterdir():
         if not directory.is_dir() or not is_valid_id(directory.name):
             continue
         attachment_id = directory.name
         if _last_activity(directory) > cutoff:
             continue
-        staging = (directory / _SESSION_FILE).exists()
-        orphaned = not staging and not is_removed(root, attachment_id) and not referenced(attachment_id)
-        if staging or orphaned:
+        if not is_removed(root, attachment_id) and not referenced(attachment_id):
             shutil.rmtree(directory)
             swept.append(attachment_id)
     return swept

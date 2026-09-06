@@ -236,7 +236,7 @@ SKILLS = [
     Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "chat/cli"), "chat"],
         name="chat",
-        serves_port=True,
+        serves_port=False,
         emits_daemon_died=True,
         # The name vestad writes into the container names the room the conversation is filed under, and
         # the daemon refuses to serve without it.

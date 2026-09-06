@@ -1,14 +1,14 @@
 """Chat daemon.
 
-Owns the chat channel: it runs the skill's HTTP service (POST /message intake, GET /history, and
-GET /ws, the replay-free live chat stream), replicates every room vestad's chat node holds this agent
-in, and accepts CLI commands via a Unix socket to send replies (`chat send` -> upload each attachment
-to the node, post the message, answer the node's id). The local row and the live echo of a reply belong
-to the replica, which persists the frame the node sends back, so a reply is written exactly once.
+Owns the chat channel: it replicates every room vestad's chat node holds this agent in, and accepts
+CLI commands over a Unix socket to send replies (`chat send` -> upload each attachment to the node,
+post the message, answer the node's id). The local row of a reply belongs to the replica, which
+persists the frame the node sends back, so a reply is written exactly once. It serves no port and
+registers no service: the node holds the rooms the app reads.
 
-`chat daemon start|stop|restart|status` owns the process lifecycle: start registers the port with
-vestad and records it beside the pid, stop is a SIGTERM the serve path reads as deliberate, and status
-answers from those two records alone.
+`chat daemon start|stop|restart|status` owns the process lifecycle: start returns once the socket
+answers `status`, stop is a SIGTERM the serve path reads as deliberate, and status answers from the
+pid record alone.
 """
 
 import argparse
@@ -21,6 +21,7 @@ import mimetypes
 import os
 import pathlib as pl
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -28,27 +29,23 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from aiohttp import web
-
 from . import attachments
 from .node_client import NODE_UNREACHABLE, BurstRefusedError, NodeClient, NodeError, SpeakingRefusedError, new_session, node_config_from_env
 from .replica import ReplicaState, run_replica
-from .service import ServiceState, create_app
 from .store import Store, direct_room_id, store_path
 
 NAME = "chat"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
-PORTFILE = DAEMONS_DIR / f"{NAME}.port"
 LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
-# The service answers /health with nothing connected to it, so it doubles as the readiness probe.
-READY_URL_PATH = "health"
 USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
 POLL_SECS = 0.5
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_WAIT_SECS = 3
-# One hung connection must not eat the whole readiness budget.
+# One hung probe must not eat the whole readiness budget.
 PROBE_TIMEOUT_SECS = 2
+# The readiness answer is one small JSON line; anything longer is not the daemon.
+PROBE_ANSWER_BYTES = 4096
 
 
 def _budget(name: str, default: int) -> int:
@@ -60,13 +57,13 @@ def _budget(name: str, default: int) -> int:
 # `_abandon` TERMs then KILLs a child that `child.poll()` just showed to be ALIVE, so a daemon that
 # is merely slow to import is destroyed and the caller is handed an error that reads like a crash.
 # This is a user-facing channel, so a boot that silently loses it is the expensive failure.
-# Raising the ceiling costs a healthy start nothing: it returns the moment the port answers,
+# Raising the ceiling costs a healthy start nothing: it returns the moment the socket answers,
 # in about a second.
 READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 120)
 STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
 
-# Attachment GC cadence: soon after start (off the readiness path), then a few times a day. Uploads
-# abandoned mid-stage age out at attachments.STALE_SESSION_MAX_AGE_SECS.
+# Attachment GC cadence: soon after start (off the readiness path), then a few times a day. A blob
+# nothing references ages out at attachments.STALE_ATTACHMENT_MAX_AGE_SECS.
 SWEEP_STARTUP_DELAY_SECS = 60.0
 SWEEP_INTERVAL_SECS = 6 * 3600.0
 
@@ -101,10 +98,9 @@ def _sock_path(data_dir: pl.Path) -> pl.Path:
 @dataclass
 class DaemonState:
     sock_path: pl.Path
-    data_dir: pl.Path
     notifications_dir: pl.Path
-    port: int
-    service: ServiceState
+    store: Store
+    attachments_root: pl.Path
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
     asked_to_stop: bool = False
     # The node replica, from the moment the loop builds it. None while the environment names no node.
@@ -114,18 +110,11 @@ class DaemonState:
 def cmd_serve(args: argparse.Namespace) -> None:
     data_dir = pl.Path(args.data_dir or default_data_dir())
     data_dir.mkdir(parents=True, exist_ok=True)
-    port = str(args.port) if args.port is not None else _register_port()
-    if port is None:
-        sys.exit(_fail(f"could not register {NAME} with vestad"))
-
-    store = Store(store_path(data_dir), agent_name())
-    service = ServiceState(store, default_notifications_dir(), attachments.attachments_root(data_dir))
     state = DaemonState(
         sock_path=_sock_path(data_dir),
-        data_dir=data_dir,
         notifications_dir=default_notifications_dir(),
-        port=int(port),
-        service=service,
+        store=Store(store_path(data_dir), agent_name()),
+        attachments_root=attachments.attachments_root(data_dir),
     )
     asyncio.run(_run(state))
 
@@ -142,11 +131,6 @@ async def _run(state: DaemonState) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, functools.partial(_begin_shutdown, state, sig))
 
-    runner = web.AppRunner(create_app(state.service))
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=state.port)
-    await site.start()
-    _log(f"service on port {state.port}")
     tasks = [asyncio.create_task(_socket_server(state)), asyncio.create_task(_sweep_loop(state)), asyncio.create_task(_replica_loop(state))]
     try:
         await state.shutdown.wait()
@@ -154,8 +138,7 @@ async def _run(state: DaemonState) -> None:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        await runner.cleanup()
-        state.service.store.close()
+        state.store.close()
         state.sock_path.unlink(missing_ok=True)
         if not state.asked_to_stop:
             write_death_notification(state.notifications_dir)
@@ -172,12 +155,11 @@ async def _replica_loop(state: DaemonState) -> None:
     session = new_session(config)
     try:
         state.replica = ReplicaState(
-            store=state.service.store,
+            store=state.store,
             client=NodeClient(config, session),
-            attachments_root=state.service.attachments_root,
+            attachments_root=state.attachments_root,
             notifications_dir=state.notifications_dir,
             agent=config["agent"],
-            echo=state.service.emit,
         )
         await run_replica(state.replica, state.shutdown)
     finally:
@@ -186,24 +168,24 @@ async def _replica_loop(state: DaemonState) -> None:
         await asyncio.shield(session.close())
 
 
-def _run_sweep(service: ServiceState) -> int:
-    """One GC pass: abandoned staging sessions and finalized-but-never-sent attachments older than the
-    max age. Referenced ids come from one structured scan of the store."""
-    references = service.store.attachment_references()
-    swept = attachments.sweep(service.attachments_root, time.time(), lambda attachment_id: attachment_id in references)
+def _run_sweep(state: DaemonState) -> int:
+    """One GC pass: attachment directories no message references, older than the max age. Referenced
+    ids come from one structured scan of the store."""
+    references = state.store.attachment_references()
+    swept = attachments.sweep(state.attachments_root, time.time(), lambda attachment_id: attachment_id in references)
     return len(swept)
 
 
 async def _sweep_loop(state: DaemonState) -> None:
-    """Periodic GC, first pass shortly after start (never before the port binds: a large history scan
-    or a big rmtree must not delay readiness), then every interval while the daemon lives. One bad
+    """Periodic GC, first pass shortly after start (never before the socket answers: a large history
+    scan or a big rmtree must not delay readiness), then every interval while the daemon lives. One bad
     pass (db busy, a raced rmtree) is logged and the loop lives on; the next pass reconciles."""
     delay = SWEEP_STARTUP_DELAY_SECS
     while True:
         await asyncio.sleep(delay)
         delay = SWEEP_INTERVAL_SECS
         try:
-            swept = await asyncio.to_thread(_run_sweep, state.service)
+            swept = await asyncio.to_thread(_run_sweep, state)
         except (OSError, sqlite3.Error, json.JSONDecodeError) as exc:
             _log(f"attachment sweep failed: {exc}")
             continue
@@ -290,33 +272,29 @@ async def _target_room(replica: ReplicaState, room: str | None, to: str | None) 
     return opened["id"]
 
 
-def _send_refusal(service: ServiceState, message: str, attach: list[str], room: str | None, to: str | None) -> dict[str, object] | None:
-    """What refuses a send before the node is dialed: nothing to send, two rooms named at once, or the
-    user's live turn."""
+def _send_shape_error(message: str, attach: list[str], room: str | None, to: str | None) -> str | None:
+    """What refuses a send before the node is dialed: nothing to send, or two rooms named at once."""
     if not message and not attach:
-        return {"error": "empty message"}
+        return "empty message"
     if room is not None and to is not None:
-        return {"error": "name one room: --room or --to, not both"}
-    refusal = service.refuse_send_while_speaking()
-    if refusal is None:
-        return None
-    # `user_speaking` marks the one refusal the sender must treat as "floor yielded", not an error:
-    # `send` stops the rest of a paced reply on it and exits clean.
-    return {"error": refusal, "user_speaking": True}
+        return "name one room: --room or --to, not both"
+    return None
 
 
 async def _handle_send(state: DaemonState, message: str, attach: list[str], room: str | None, to: str | None) -> dict[str, object]:
-    """One validated send: gate on the user's live turn, upload the attachments, post to the node. The
-    local row and the live echo are the replica's, which persists the frame the node sends back, so the
-    reply is written once however it arrives."""
-    refused = _send_refusal(state.service, message, attach, room, to)
-    if refused is not None:
-        return refused
+    """One send: upload the attachments, then post to the node, which owns the speaking gate and the
+    burst guard. The local row is the replica's, which persists the frame the node sends back, so the
+    reply is written once however it arrives. `user_speaking` marks the one refusal the sender must
+    treat as "floor yielded", not an error: `send` stops the rest of a paced reply on it and exits
+    clean."""
+    shape_error = _send_shape_error(message, attach, room, to)
+    if shape_error is not None:
+        return {"error": shape_error}
     if state.replica is None:
         return {"error": NODE_UNREACHABLE}
     try:
         target = await _target_room(state.replica, room, to)
-        ids, upload_error = await _upload_attachments(state.replica, state.service.attachments_root, attach)
+        ids, upload_error = await _upload_attachments(state.replica, state.attachments_root, attach)
         if upload_error is not None:
             return {"error": upload_error}
         node_id = await state.replica.client.post(target, message, ids)
@@ -346,7 +324,7 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
                 response = await _handle_send(state, message, attach, room, to)
         elif command == "status":
             connected = state.replica is not None and state.replica.connected
-            response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers), "node_connected": connected}
+            response = {"ok": True, "node_connected": connected}
         else:
             response = {"error": f"unknown command: {command}"}
 
@@ -392,7 +370,7 @@ def live_pid() -> int | None:
     os.kill(pid, 0) answers "does some process hold this pid", never "is this still mine". The
     records outlive the container while a fresh pid namespace renumbers from low values, so a
     reused pid otherwise reads as a healthy daemon, every idempotent start skips it, and the
-    service is silently down with its one health check reporting health it never measured.
+    channel is silently down while `status` keeps reporting it up.
     """
     try:
         record = PIDFILE.read_text().split()
@@ -412,24 +390,24 @@ def live_pid() -> int | None:
     return pid
 
 
-def _register_port() -> str | None:
-    result = subprocess.run(["register-service", NAME], capture_output=True, text=True, check=False)
-    port = result.stdout.strip()
-    return port if result.returncode == 0 and port else None
-
-
-def _ready(port: str) -> bool:
-    probe = subprocess.run(
-        ["curl", "-m", str(PROBE_TIMEOUT_SECS), "-fsS", "-o", "/dev/null", f"http://localhost:{port}/{READY_URL_PATH}"],
-        capture_output=True,
-        check=False,
-    )
-    return probe.returncode == 0
+def _ready(sock_path: pl.Path) -> bool:
+    """The daemon is up once its socket answers `status`, which is the surface `chat send` uses, so a
+    start that returns hands the caller a socket it can send on."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(PROBE_TIMEOUT_SECS)
+            probe.connect(str(sock_path))
+            probe.sendall(json.dumps({"command": "status"}).encode())
+            probe.shutdown(socket.SHUT_WR)
+            answer = json.loads(probe.recv(PROBE_ANSWER_BYTES).decode())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(answer, dict) and "ok" in answer
 
 
 def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
-    """A start that gives up takes its child and both records with it: a daemon nothing can reach,
-    with records that say it is up, reads as running and turns every later start into a no-op."""
+    """A start that gives up takes its child and its record with it: a daemon nothing can reach, with
+    a record that says it is up, reads as running and turns every later start into a no-op."""
     child.terminate()
     try:
         child.wait(timeout=STOP_TIMEOUT_SECS)
@@ -437,22 +415,21 @@ def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
         child.kill()
         child.wait()
     PIDFILE.unlink(missing_ok=True)
-    PORTFILE.unlink(missing_ok=True)
     return _fail(message)
 
 
-def _await_ready(child: subprocess.Popen[bytes], port: str) -> int:
-    """Holds the start open until the daemon it spawned answers on its port, which is what lets
-    the caller's next line use the service."""
+def _await_ready(child: subprocess.Popen[bytes], sock_path: pl.Path) -> int:
+    """Holds the start open until the daemon it spawned answers on its socket, which is what lets
+    the caller's next line send a message."""
     deadline = time.monotonic() + READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
         if child.poll() is not None:
             return _abandon(child, f"{NAME} exited during startup; see {LOG}")
-        if _ready(port):
+        if _ready(sock_path):
             print(json.dumps({"status": "started"}))
             return 0
         time.sleep(POLL_SECS)
-    return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
+    return _abandon(child, f"{NAME} never answered on {sock_path}; see {LOG}")
 
 
 def _claim(pid: int) -> bool:
@@ -496,17 +473,12 @@ def _start() -> int:
     answer = _claim_start()
     if answer is not None:
         return answer
-    port = _register_port()
-    if port is None:
-        PIDFILE.unlink(missing_ok=True)
-        return _fail(f"could not register {NAME} with vestad; not launching")
-    PORTFILE.write_text(port)
     with LOG.open("ab") as log:
         child = subprocess.Popen(
-            [sys.argv[0], "serve", "--port", port], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
+            [sys.argv[0], "serve"], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
         )
     PIDFILE.write_text(_record(child.pid))
-    return _await_ready(child, port)
+    return _await_ready(child, _sock_path(default_data_dir()))
 
 
 def _await_gone(deadline: float) -> bool:
@@ -539,17 +511,14 @@ def _stop() -> int:
         if not _await_gone(started + STOP_TIMEOUT_SECS):
             return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM then SIGKILL (pid={pid})")
     PIDFILE.unlink(missing_ok=True)
-    PORTFILE.unlink(missing_ok=True)
     print(json.dumps({"status": "stopped"}))
     return 0
 
 
 def _status() -> int:
-    """Reads the port start recorded, never registration, so status answers instantly and
-    truthfully while vestad is down."""
-    running = live_pid() is not None
-    port = PORTFILE.read_text().strip() if running and PORTFILE.exists() else ""
-    print(json.dumps({"running": running, "port": int(port) if port else None}))
+    """Reads the pid record alone, never vestad, so status answers instantly and truthfully while
+    vestad is down. The daemon serves no port, so `port` is always null."""
+    print(json.dumps({"running": live_pid() is not None, "port": None}))
     return 0
 
 

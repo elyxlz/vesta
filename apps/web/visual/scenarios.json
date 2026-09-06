@@ -447,18 +447,6 @@
       "group": "Chat"
     },
     {
-      "id": "chat-error-line",
-      "title": "Chat, error line",
-      "description": "The centred snag line after a failed turn.",
-      "group": "Chat"
-    },
-    {
-      "id": "chat-rate-limited",
-      "title": "Chat, rate limited",
-      "description": "The rate-limit line with its reset time.",
-      "group": "Chat"
-    },
-    {
       "id": "chat-send-failed",
       "title": "Chat, not sent",
       "description": "A user bubble the gateway refused, offering retry.",

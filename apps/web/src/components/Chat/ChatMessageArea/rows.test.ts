@@ -62,7 +62,12 @@ describe("buildDecorated", () => {
     const rows = buildDecorated([
       userMsg("2026-06-08T10:00:00"),
       userMsg("2026-06-08T10:01:00"),
-      { type: "assistant", text: "hey", ts: "2026-06-08T10:02:00" },
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "2 new",
+        ts: "2026-06-08T10:02:00",
+      },
       userMsg("2026-06-08T10:03:00"),
     ]);
     expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
@@ -145,18 +150,18 @@ describe("senderCaption", () => {
     expect(caption([userMsg("2026-06-08T10:00:00Z")])).toEqual([null]);
   });
 
-  // An error or a rate-limit row is the client speaking; senderOf answers "agent" for it, which
-  // would otherwise print a member name no room has.
-  it.each<ChatMessage>([
-    { type: "error", text: "boom", ts: "2026-06-08T10:00:00Z" },
-    {
-      type: "rate_limited",
-      text: "wait",
-      window: null,
-      resets_at: null,
-      ts: "2026-06-08T10:00:00Z",
-    },
-  ])("never captions a $type row", (event) => {
-    expect(caption([event])).toEqual([null]);
+  // A row that is not a reply names nobody; senderOf answers "agent" for it, which would
+  // otherwise print a member name no room has.
+  it("never captions a row that is not a reply", () => {
+    expect(
+      caption([
+        {
+          type: "notification",
+          source: "whatsapp",
+          summary: "2 new",
+          ts: "2026-06-08T10:00:00Z",
+        },
+      ]),
+    ).toEqual([null]);
   });
 });

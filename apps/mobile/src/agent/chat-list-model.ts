@@ -45,11 +45,7 @@ function calendarDay(timestamp: string | undefined): string | null {
 
 function eventRows(events: ChatMessage[]): EventChatRow[] {
   const visible = events.filter(
-    (event) =>
-      event.type === "user" ||
-      event.type === "chat" ||
-      event.type === "error" ||
-      event.type === "rate_limited",
+    (event) => event.type === "user" || event.type === "chat",
   );
   const seen = new Map<string, number>();
   let previousSided: ChatMessage | null = null;

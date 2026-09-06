@@ -1,17 +1,22 @@
 //! `/sync` WebSocket integration scenarios, driven end-to-end against a real vestad + agent
 //! container through the T1 harness `SyncSocket`. The state plane carries roster + snapshot + pending
 //! notifications + `reauth` + the always-on `user_notification` delta; it no longer transports chat.
-//! Chat lives wholly on the `chat` service: its echo streams on the per-connection chat socket
-//! (`GET /agents/{name}/chat/ws` through the proxy, `open_chat_socket`), replay-free, so the
-//! send/echo scenario opens that socket and reads the echo carrying its `intent_id` there. User
-//! notifications (a new reply, a rate limit) come from the agent-side user-notification primitive
-//! looped back through vestad (`POST /agents/{name}/user-notification`, `X-Agent-Token`), which fans a
-//! `user_notification` delta to every connected session; the user-notification scenario exercises that
-//! path and the closed-kind 400, and the reauth/unknown scenarios reuse it as a liveness probe.
+//! Chat lives on vestad's own chat node: intake is `POST /rooms/{id}/messages` and the live edge is
+//! the replay-free `/rooms/ws`, so the chat scenario here drives those. What it adds over
+//! `chat_rooms.rs`, which needs nothing running in a container, is the container itself: the skill's
+//! daemon replicates a node message into the agent's notification intake, and `chat send` posts the
+//! agent's answer back through that daemon. A user notification has two producers: vestad mints its
+//! own from what it observes (a rate limit, a status change), and the agent injects the kinds
+//! `message`/`needs_user`/`task` through the loopback primitive
+//! (`POST /agents/{name}/user-notification`, `X-Agent-Token`). Either way vestad fans one
+//! `user_notification` delta to every connected session; the user-notification scenario exercises
+//! the agent's path and its closed-kind 400, and the reauth/unknown scenarios reuse it as a
+//! liveness probe.
 //!
-//! Fake-token agents settle unprovisioned and run no model, so a helper starts their chat daemon
-//! by hand (`start_chat_daemon`, docker exec); that daemon owns the skill service the sends target
-//! and fans the live echo the chat socket reads, so no real model is needed.
+//! Fake-token agents settle unprovisioned and run no model, and never run the skill's setup, so the
+//! chat scenario installs the CLI and starts the daemon by hand (`start_chat_daemon`, docker exec).
+//! The reply it asserts is the agent's own `chat send`, so no real model is needed; the real-model
+//! round trip is the live tier's (`tests/live/sync.rs`).
 //!
 //! Two spec sub-scenarios are deliberately absent: below-window client rejection (D2, dropped, since
 //! the server never rejects; the served version window is a client-side gate) and the reauth
@@ -20,22 +25,27 @@
 
 use std::time::{Duration, Instant};
 
-use vesta_tests::client::{Client, SyncSocket};
-use vesta_tests::{inject_fake_token, unique_agent, TestAgent, SERVER, SHARED_RO_AGENT};
+use vesta_tests::client::{direct_room, Client, SyncSocket};
+use vesta_tests::{
+    agent_container_name, exec_in_container, inject_fake_token, unique_agent, TestAgent, SERVER,
+    SHARED_RO_AGENT,
+};
 
 const AGENT_RUNNING_TIMEOUT_SECS: u64 = 90;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
-/// Total budget for a chat-socket echo to round-trip (HTTP intake -> daemon persist -> chat-socket).
-const CHAT_ECHO_TIMEOUT: Duration = Duration::from_secs(45);
-/// Per-resend read window inside `drive_and_expect_echo`.
-const CHAT_ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
-/// The proxy 404s the chat-socket upgrade until `register-service` records the daemon's port, so the
-/// open is retried briefly over this window.
-const CHAT_SOCKET_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+/// Budget for the daemon's replica to turn a node message into a notification file in the intake.
+const REPLICA_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Budget for `chat send` to reach the node through a daemon that may still be dialing it.
+const AGENT_SEND_TIMEOUT: Duration = Duration::from_secs(60);
+/// Budget for an already-subscribed room session to receive one expected frame.
+const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Budget for a user notification to fan its `user_notification` delta to a connected session (loopback POST -> broadcast).
 const USER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long to poll (via reconnect) for a fresh agent to surface in a snapshot.
 const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
+/// How much of the chat daemon's log a timed-out chat step carries into its panic message.
+const CHAT_LOG_TAIL_LINES: u32 = 50;
 
 // D2: the served compatibility window's low end, mirrored from vestad's crate-private
 // `sync::MIN_SUPPORTED_CLIENT_VERSION` (not importable from an integration crate, so pinned to the
@@ -45,17 +55,14 @@ const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 const EXPECT_MIN_SUPPORTED: &str = "0.3.5";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
-/// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The
-/// echo the chat socket reads is fanned by the skill daemon, which a model-less agent never
-/// boots itself, so start it by hand once the agent is up.
+/// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed).
+/// The chat skill is not part of that: the one scenario that needs it starts its daemon itself.
 fn running_agent<'a>(c: &'a Client, prefix: &str) -> TestAgent<'a> {
     let agent = TestAgent::create(c, &unique_agent(prefix)).expect("create agent");
     inject_fake_token(c, &agent.name);
     c.start_agent(&agent.name).expect("start agent");
     c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running");
-    c.start_chat_daemon(&agent.name)
-        .expect("start chat daemon");
     agent
 }
 
@@ -79,56 +86,63 @@ fn is_close_error(msg: &str) -> bool {
     msg.contains("closed") || msg.contains("ended") || msg.contains("socket error")
 }
 
-/// Open the agent's chat socket, retrying briefly past a still-registering service: the proxy
-/// 404s the ws upgrade until `register-service` records the daemon's port. Bounded, never a bare sleep.
-async fn open_chat_socket(c: &Client, agent: &str) -> SyncSocket {
-    let deadline = Instant::now() + CHAT_SOCKET_OPEN_TIMEOUT;
-    loop {
-        match c.open_chat_socket(agent).await {
-            Ok(sock) => return sock,
-            Err(e) => assert!(
-                Instant::now() < deadline,
-                "the chat socket never opened for {agent}: {e}"
-            ),
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+/// The tail of the chat daemon's own log, for a panic message. A daemon that starts but never
+/// reaches the node says so only here (`replica connection ended:`, `no node identity in the
+/// environment`), so a chat step that times out reads as a dial failure instead of a bare timeout.
+fn chat_log_tail(container: &str) -> String {
+    exec_in_container(
+        container,
+        &format!("tail -n {CHAT_LOG_TAIL_LINES} /root/agent/logs/chat.log 2>&1 || true"),
+    )
+    .unwrap_or_else(|error| format!("<chat.log unreadable: {error}>"))
 }
 
-/// Drive one chat message onto `agent` and return the intent id it used plus the echo the chat
-/// socket delivered for it. A fresh intent each attempt: the daemon dedups a repeated intent whole (no
-/// re-echo), so a retry that closes the subscriber-registration race must carry a new id. The winning
-/// echo proves both the send landed and the socket was subscribed for the reply that follows.
-async fn drive_and_expect_echo(
-    c: &Client,
-    sock: &mut SyncSocket,
-    agent: &str,
-    text: &str,
-) -> (String, serde_json::Value) {
-    let deadline = Instant::now() + CHAT_ECHO_TIMEOUT;
-    let mut attempt = 0u32;
-    let mut last_send_err: Option<String>;
+/// Wait for the skill's replica to write `text` into the agent's notification intake. A model-less
+/// agent defers every message while it is unauthenticated and keeps the file, so the notification
+/// stays on disk for the poll. Bounded, never a bare sleep.
+async fn expect_notification_in_intake(container: &str, text: &str) {
+    let deadline = Instant::now() + REPLICA_NOTIFICATION_TIMEOUT;
     loop {
-        let intent = format!("i-chat-echo-{attempt}");
-        match c.send_message(agent, text, Some(&intent)) {
-            Ok(()) => last_send_err = None,
-            Err(e) => last_send_err = Some(e),
-        }
-        if let Ok(frame) = sock
-            .expect_frame_matching(
-                |f| f["intent_id"].as_str() == Some(intent.as_str()),
-                CHAT_ECHO_ATTEMPT_TIMEOUT,
-            )
-            .await
-        {
-            return (intent, frame);
+        let intake = exec_in_container(
+            container,
+            "cat /root/agent/notifications/*-chat-message.json 2>/dev/null || true",
+        )
+        .unwrap_or_default();
+        if intake.contains(text) {
+            return;
         }
         assert!(
             Instant::now() < deadline,
-            "no chat-socket echo for {agent} within {CHAT_ECHO_TIMEOUT:?} (last send error: {last_send_err:?})"
+            "the replica never wrote {text:?} into the agent's intake within {REPLICA_NOTIFICATION_TIMEOUT:?}: {intake}\nchat.log tail:\n{}",
+            chat_log_tail(container)
         );
-        attempt += 1;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Answer as the agent does, from inside its container: `chat send` hands the reply to the daemon,
+/// which posts it to the node. Retried while the daemon's replica is still dialing the node (a send
+/// before it answers reports the node unreachable rather than posting).
+async fn agent_replies(container: &str, text: &str) {
+    assert!(
+        !text.contains('\''),
+        "the reply is passed to `chat send -m` inside single quotes, so it carries none: {text:?}"
+    );
+    let deadline = Instant::now() + AGENT_SEND_TIMEOUT;
+    loop {
+        let sent = exec_in_container(
+            container,
+            &format!(". /run/vestad-env && chat send -m '{text}'"),
+        );
+        match &sent {
+            Ok(answer) if answer.contains("\"ok\": true") => return,
+            _ => assert!(
+                Instant::now() < deadline,
+                "`chat send` never reached the node within {AGENT_SEND_TIMEOUT:?}: {sent:?}\nchat.log tail:\n{}",
+                chat_log_tail(container)
+            ),
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -250,31 +264,86 @@ async fn marking_the_feed_seen_projects_the_watermark_on_the_gateway_branch() {
     sock.close().await.ok();
 }
 
-/// (3) `POST /chat/message` with an explicit intent id round-trips end-to-end: the echo on the
-/// replay-free chat socket carries the SAME `intent_id` the HTTP intake was given (the delivery-truth
-/// contract clients dedup and confirm on), and `GET /chat/history` then returns that message.
+/// (3) A message the user posts to the node reaches the agent in its container, and the agent's own
+/// answer comes back on the same room socket. The post echoes as a `user` frame carrying the SAME
+/// `intent_id` the intake was given (the delivery-truth contract clients dedup and confirm on); the
+/// skill's replica turns it into a notification in the agent's intake; `chat send` from inside the
+/// container arrives as a `chat` frame from that agent; and history then holds both, oldest first.
+/// Room-level frames (`room_created`, `room_deleted`, `user_finished_talking`) may interleave on the
+/// socket, so every read here matches on what it wants rather than on frame order.
 #[tokio::test]
-async fn send_message_intent_id_echoes_on_the_chat_socket() {
+async fn a_post_reaches_the_agent_and_its_reply_comes_back_on_the_room_socket() {
     let c = SERVER.client();
     let agent = running_agent(&c, "chat-intent");
-    let mut chat = open_chat_socket(&c, &agent.name).await;
+    c.start_chat_daemon(&agent.name).expect("start chat daemon");
+    let container = agent_container_name(&agent.name);
+    let room = direct_room(&agent.name);
+    let mut sock = c
+        .open_rooms_socket(Some(&room))
+        .await
+        .expect("open the room socket");
 
-    let (intent, echo) = drive_and_expect_echo(&c, &mut chat, &agent.name, "carry my intent").await;
+    let (intent, echo) = c
+        .drive_until_echo(&mut sock, &room, "chat-intent")
+        .await
+        .expect("a user post echoes on the room socket");
+    assert_eq!(
+        echo["type"].as_str(),
+        Some("user"),
+        "a user post is a user message"
+    );
     assert_eq!(
         echo["intent_id"].as_str(),
         Some(intent.as_str()),
-        "the chat-socket echo carries the exact intent id the send was given"
+        "the echo carries the exact intent id the post was given"
     );
-    assert!(echo.get("id").is_some(), "the echoed event carries an id");
+    let posted_id = echo["id"]
+        .as_u64()
+        .expect("the echoed message carries an id");
+    let posted_text = echo["text"]
+        .as_str()
+        .expect("the echoed message carries its text")
+        .to_string();
 
-    // The durable copy is in the store: history returns the same message keyed by its intent id.
-    let history = c.fetch_chat_history(&agent.name, 50).expect("fetch history");
-    let events = history["events"].as_array().expect("history events array");
-    assert!(
-        events.iter().any(|e| e["intent_id"].as_str() == Some(intent.as_str())),
-        "history returns the sent message carrying {intent}: {history}"
+    expect_notification_in_intake(&container, &posted_text).await;
+
+    let reply = "the answer from inside the container";
+    agent_replies(&container, reply).await;
+    let frame = sock
+        .expect_frame_matching(
+            |f| f["sender"].as_str() == Some(agent.name.as_str()),
+            FRAME_TIMEOUT,
+        )
+        .await
+        .expect("the agent's reply on the room socket");
+    assert_eq!(
+        frame["type"].as_str(),
+        Some("chat"),
+        "an agent post is a chat message"
     );
-    chat.close().await.ok();
+    assert_eq!(frame["text"].as_str(), Some(reply));
+    let reply_id = frame["id"].as_u64().expect("the reply carries an id");
+
+    // The durable copy is the node's: one page holds both messages, the post before the answer.
+    let history = c
+        .fetch_chat_history(&agent.name, 50)
+        .expect("fetch the room history");
+    let events = history["events"].as_array().expect("history events array");
+    let position = |id: u64| events.iter().position(|e| e["id"].as_u64() == Some(id));
+    let posted_at =
+        position(posted_id).unwrap_or_else(|| panic!("history holds the user post: {history}"));
+    let replied_at =
+        position(reply_id).unwrap_or_else(|| panic!("history holds the agent reply: {history}"));
+    assert!(
+        posted_at < replied_at,
+        "history returns the post before the reply: {history}"
+    );
+    assert_eq!(
+        events[posted_at]["intent_id"].as_str(),
+        Some(intent.as_str()),
+        "the stored post keeps its intent id"
+    );
+    sock.close().await.ok();
 }
 
 /// (4, D3) A garbage `reauth` on a raw-key socket closes it; a valid `reauth` on a JWT socket keeps
@@ -391,17 +460,18 @@ async fn device_context_reaches_roster_agent_and_notification_intake() {
 
     // A fresh agent runs on UTC, so Tokyo is news: the notification lands in its intake. A model-less
     // agent never consumes it, so it stays for the poll.
-    let container = vesta_tests::agent_container_name(&agent.name);
+    let container = agent_container_name(&agent.name);
     let deadline = Instant::now() + USER_NOTIFICATION_TIMEOUT;
     let listing = loop {
-        let listing = vesta_tests::exec_in_container(&container, "ls /root/agent/notifications").unwrap_or_default();
+        let listing =
+            exec_in_container(&container, "ls /root/agent/notifications").unwrap_or_default();
         if listing.contains("user-timezone-") && listing.contains("user-location-") {
             break listing;
         }
         assert!(Instant::now() < deadline, "no user-timezone/user-location notification landed; intake: {listing}");
         tokio::time::sleep(Duration::from_millis(500)).await;
     };
-    let payload = vesta_tests::exec_in_container(
+    let payload = exec_in_container(
         &container,
         "cat /root/agent/notifications/user-timezone-*.json",
     )

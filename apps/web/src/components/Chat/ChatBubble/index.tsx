@@ -3,7 +3,6 @@ import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
-import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, InputMethod, ChatMessage } from "@vesta/core";
 import { cn } from "@/lib/utils";
 import { AttachmentContent, type OpenViewerRequest } from "./AttachmentContent";
@@ -22,16 +21,6 @@ function formatBubbleTime(ts: string | undefined): string {
     minute: "2-digit",
     hour12: false,
   });
-}
-
-function statusLineText(
-  event: Extract<ChatMessage, { type: "error" | "rate_limited" }>,
-): string {
-  if (event.type === "error")
-    return "hit a snag, this may not have gone through";
-  return event.resets_at
-    ? `rate limited, back ${formatResetTime(event.resets_at)}`
-    : "rate limited, retrying later";
 }
 
 export const ChatBubble = memo(function ChatBubble({
@@ -55,23 +44,6 @@ export const ChatBubble = memo(function ChatBubble({
 }) {
   // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
   const large = !isMobile;
-  if (event.type === "status") return null;
-
-  if (event.type === "error" || event.type === "rate_limited") {
-    return (
-      <div className={cn("flex justify-center", className)}>
-        <span
-          className={cn(
-            "text-muted-foreground/60 select-none",
-            large ? "text-sm" : "text-[11px]",
-          )}
-        >
-          {statusLineText(event)}
-        </span>
-      </div>
-    );
-  }
-
   if (event.type !== "user" && event.type !== "chat") return null;
 
   const ts = formatBubbleTime(event.ts);

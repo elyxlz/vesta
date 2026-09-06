@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { HttpClient } from "../transport/http";
 import {
   createRoom,
-  deleteRoom,
   fetchRoomHistory,
   roomAttachmentPath,
   roomAttachmentsPath,
@@ -58,19 +57,6 @@ describe("createRoom", () => {
       agents: ["ada", "ben"],
     });
     expect(opened.room).toEqual(room);
-  });
-});
-
-describe("deleteRoom", () => {
-  it("deletes the room by id, escaping it", async () => {
-    const request = vi.fn().mockResolvedValue(new Response(null));
-    const http: HttpClient = { request, json: vi.fn() };
-
-    await deleteRoom(http, "dm:scout");
-
-    expect(request).toHaveBeenCalledWith("/rooms/dm%3Ascout", {
-      method: "DELETE",
-    });
   });
 });
 
