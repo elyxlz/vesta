@@ -19,6 +19,11 @@ function from(sender: string, ts?: string): ChatMessage {
   return { type: "chat", text: "hello", sender, ts };
 }
 
+// The one row a chat surface holds that no member wrote: a notification page row.
+function sideless(): ChatMessage {
+  return { type: "notification", source: "whatsapp", summary: "2 new" };
+}
+
 describe("chatMessageSide", () => {
   it("maps user to the user side and chat to the agent side", () => {
     expect(chatMessageSide(user())).toBe("user");
@@ -26,7 +31,7 @@ describe("chatMessageSide", () => {
   });
 
   it("gives a sideless row no side", () => {
-    expect(chatMessageSide({ type: "status", state: "idle" })).toBeNull();
+    expect(chatMessageSide(sideless())).toBeNull();
   });
 });
 
@@ -116,8 +121,6 @@ describe("startsNewBubbleGroup", () => {
   });
 
   it("never starts a group off a sideless row", () => {
-    expect(
-      startsNewBubbleGroup({ type: "status", state: "idle" }, agent(base)),
-    ).toBe(false);
+    expect(startsNewBubbleGroup(sideless(), agent(base))).toBe(false);
   });
 });

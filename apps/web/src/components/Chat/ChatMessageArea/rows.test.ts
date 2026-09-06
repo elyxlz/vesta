@@ -62,7 +62,12 @@ describe("buildDecorated", () => {
     const rows = buildDecorated([
       userMsg("2026-06-08T10:00:00"),
       userMsg("2026-06-08T10:01:00"),
-      { type: "assistant", text: "hey", ts: "2026-06-08T10:02:00" },
+      {
+        type: "notification",
+        source: "whatsapp",
+        summary: "2 new",
+        ts: "2026-06-08T10:02:00",
+      },
       userMsg("2026-06-08T10:03:00"),
     ]);
     expect(rows.map((r) => r.isGroupEnd)).toEqual([false, true, true, true]);
@@ -149,7 +154,14 @@ describe("senderCaption", () => {
   // otherwise print a member name no room has.
   it("never captions a row that is not a reply", () => {
     expect(
-      caption([{ type: "status", state: "idle", ts: "2026-06-08T10:00:00Z" }]),
+      caption([
+        {
+          type: "notification",
+          source: "whatsapp",
+          summary: "2 new",
+          ts: "2026-06-08T10:00:00Z",
+        },
+      ]),
     ).toEqual([null]);
   });
 });

@@ -90,10 +90,15 @@ describe("chat-stream-model", () => {
   });
 
   it("appends a non-chat live event immediately", () => {
-    const status: VestaEvent = { type: "status", state: "idle", id: 9 };
-    const { state, paced } = foldLiveEvent(initialChatState(), status);
+    const notification: VestaEvent = {
+      type: "notification",
+      id: 9,
+      source: "whatsapp",
+      summary: "2 new",
+    };
+    const { state, paced } = foldLiveEvent(initialChatState(), notification);
     expect(paced).toBe(false);
-    expect(state.messages.map((m) => m.type)).toEqual(["status"]);
+    expect(state.messages.map((m) => m.type)).toEqual(["notification"]);
   });
 
   it("seedTail keeps an in-flight optimistic bubble and a raced live row, merging not replacing", () => {

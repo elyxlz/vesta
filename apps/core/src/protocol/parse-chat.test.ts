@@ -88,6 +88,9 @@ describe("parseChatEvent on a kind the node never emits", () => {
     { type: "notification_cleared", id: 15, notif_id: "n-1" },
     { type: "subagent_start", id: 16, agent_id: "a-1", agent_type: "explore" },
     { type: "subagent_stop", id: 17, agent_id: "a-1", agent_type: "explore" },
+    { type: "status", id: 18, state: "idle" },
+    { type: "assistant", id: 19, text: "hey" },
+    { type: "thinking", id: 20, text: "hmm", signature: "sig" },
   ])("drops a $type frame", (frame) => {
     expect(parseChatEvent(frame)).toBeNull();
   });

@@ -75,21 +75,6 @@ const VARIANTS: Record<string, VariantParser | undefined> = {
       ...addressing,
     };
   },
-  assistant: (frame, base) => {
-    const text = str(frame.text);
-    return text === null ? null : { ...base, type: "assistant", text };
-  },
-  thinking: (frame, base) => {
-    const text = str(frame.text);
-    const signature = str(frame.signature);
-    if (text === null || signature === null) return null;
-    return { ...base, type: "thinking", text, signature };
-  },
-  status: (frame, base) => {
-    const state = frame.state;
-    if (state !== "idle" && state !== "thinking") return null;
-    return { ...base, type: "status", state };
-  },
 };
 
 // The room a message belongs to and the member who wrote it, stamped by the chat node. Both are

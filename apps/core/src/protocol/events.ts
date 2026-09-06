@@ -2,9 +2,9 @@ import type { ChatAttachment } from "../attachments/attachment-model";
 
 export type InputMethod = "voice" | "typed";
 
-// Every event carries the events.db rowid as `id`; the snapshot is a frame, not
-// an event, so it is absent from this union. Field names mirror the agent's
-// Python wire verbatim (snake_case), which vestad relays unchanged.
+// The rows a chat surface holds: the chat node's stored messages, whose `id` is the node's
+// message id, and the agent's own notification rows from `GET /history?channel=notifications`,
+// whose `id` is the events.db rowid. Field names mirror each producer's snake_case wire.
 interface EventBase {
   id: number;
   ts?: string;
@@ -24,7 +24,6 @@ interface NotificationFields {
 export type NotificationEvent = EventBase & NotificationFields;
 
 export type VestaEvent =
-  | (EventBase & { type: "status"; state: "idle" | "thinking" })
   | (EventBase & {
       type: "user";
       text: string;
@@ -37,8 +36,6 @@ export type VestaEvent =
       room?: string;
       sender?: string;
     })
-  | (EventBase & { type: "assistant"; text: string })
-  | (EventBase & { type: "thinking"; text: string; signature: string })
   | (EventBase & {
       type: "chat";
       text: string;
