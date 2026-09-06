@@ -10,6 +10,7 @@ import pathlib as pl
 import typing as tp
 
 from .camoufox_install import CAMOUFOX_RELEASE_TAG, INSTALL_ROOT
+from .procs import LEDGER_NAME
 
 SKILL_DIR = pl.Path(__file__).resolve().parents[3]
 ENGINES_DIR = SKILL_DIR / "engines"
@@ -22,6 +23,7 @@ CAMOUFOX_FF_MAJOR = int(CAMOUFOX_RELEASE_TAG[1:].split(".", 1)[0])
 class Paths:
     root: pl.Path
     socket: pl.Path
+    children_ledger: pl.Path
     profiles: pl.Path
     sessions: pl.Path
     artifacts: pl.Path
@@ -48,6 +50,7 @@ def load_paths(env: tp.Mapping[str, str], home: pl.Path) -> Paths:
     return Paths(
         root=root,
         socket=root / "browser.sock",
+        children_ledger=root / LEDGER_NAME,
         profiles=root / "profiles",
         sessions=root / "sessions",
         artifacts=root / "artifacts",

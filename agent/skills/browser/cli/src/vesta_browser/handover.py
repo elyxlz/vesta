@@ -71,9 +71,9 @@ def _env(name: str) -> str:
 
 async def _start_stream(paths: Paths, display_name: str, webroot: pl.Path, web_port: int, vnc_port: int) -> display.StreamStack:
     """The stream on the display `display_name` names, torn back down if either process fails."""
-    x11vnc = await display.start_x11vnc(display_name, vnc_port)
+    x11vnc = await display.start_x11vnc(paths.children_ledger, display_name, vnc_port)
     async with reaped_on_failure(x11vnc, KILL_GRACE_SECS):
-        websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
+        websockify = await display.start_websockify(paths.children_ledger, webroot, web_port, vnc_port, paths.log)
     return display.StreamStack(x11vnc, websockify, vnc_port, web_port, webroot)
 
 

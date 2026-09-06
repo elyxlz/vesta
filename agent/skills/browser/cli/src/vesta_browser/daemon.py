@@ -20,6 +20,7 @@ import sys
 import time
 
 from .client import ping
+from .procs import starttime
 from .runtime_paths import Paths
 
 NAME = "browser"
@@ -48,22 +49,6 @@ def _pidfile(paths: Paths) -> pl.Path:
     return paths.daemons_dir / f"{NAME}.pid"
 
 
-def _starttime(pid: int) -> int | None:
-    """Field 22 of /proc/<pid>/stat: the process start time in clock ticks since boot.
-
-    A recycled pid cannot share the original's starttime, because the process that took the pid
-    necessarily started later, so (pid, starttime) is a stable identity. Returns None where /proc
-    is unreadable, which drops the caller back to a bare pid-existence check.
-    """
-    try:
-        stat = pl.Path(f"/proc/{pid}/stat").read_text()
-        # comm is a bracketed field that may itself contain spaces and parentheses, so the
-        # numbered fields resume after the LAST ')'.
-        return int(stat[stat.rindex(")") + 2 :].split()[19])
-    except (OSError, ValueError, IndexError):
-        return None
-
-
 def _record(pid: int) -> str:
     """The pid record: "<pid> <starttime>", or a bare pid where the starttime is unavailable.
 
@@ -71,7 +56,7 @@ def _record(pid: int) -> str:
     rather than as a mismatch. Writing the string "None" into the record would mean the same thing
     while looking like data.
     """
-    started = _starttime(pid)
+    started = starttime(pid)
     return f"{pid} {started}" if started is not None else str(pid)
 
 
@@ -93,7 +78,7 @@ def live_pid(paths: Paths) -> int | None:
     # rather than read as a mismatch: comparing a real starttime against nothing would declare a
     # live daemon dead and let a second stack rise beside it.
     if len(record) > 1 and record[1].isdigit():
-        current = _starttime(pid)
+        current = starttime(pid)
         if current is not None and current != int(record[1]):
             return None
     return pid

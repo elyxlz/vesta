@@ -78,6 +78,20 @@ def test_start_writes_the_preset_config_and_the_worker_reports_ready(rig):
     assert launch["user_data_dir"] == str(session.profile_dir) and launch["executable_path"] == str(paths.camoufox_exe)
 
 
+def test_start_records_the_worker_in_the_children_ledger(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await camoufox.start(session, paths, headed=HEADED)
+        try:
+            return paths.children_ledger.read_text().split()[0], str(runtime.process.pid)
+        finally:
+            await camoufox.stop(runtime, session)
+
+    recorded, worker = asyncio.run(run())
+    assert recorded == worker
+
+
 async def _written_config(session, paths) -> dict:
     runtime = await camoufox.start(session, paths, headed=HEADED)
     try:

@@ -18,11 +18,11 @@ import sys
 import time
 import typing as tp
 
-from . import artifacts, doctor, gateway, handover
+from . import artifacts, chromium, doctor, gateway, handover
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import ENGINES, State, identity, own, routes
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import KILL_GRACE_SECS, kill_group, reap
 from .runtime_paths import Paths, load_paths
 from .runtimes import ExecOutcome, elapsed_ms
 from .session_control import ensure_running, settle, stop_session
@@ -307,6 +307,12 @@ async def serve(paths: Paths) -> int:
 
     for signum in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(signum, on_signal, signum)
+    # A SIGKILLed daemon leaves its browsers, displays, and harness daemons running, each holding a
+    # display number, a port, or a profile lock this daemon is about to claim.
+    reaped = await asyncio.to_thread(reap, paths.children_ledger, KILL_GRACE_SECS)
+    reaped += await asyncio.to_thread(chromium.reap_harness_daemons, paths)
+    if reaped:
+        logger.info("reaped %d orphaned processes from a previous daemon", reaped)
     # A SIGKILLed daemon leaves its route registered, and vestad would then proxy the next handover's
     # page to a port nothing serves. Deregistering here is the one place that route is reconciled;
     # vestad answers a route it does not have with a 404 and the helper exits 0.

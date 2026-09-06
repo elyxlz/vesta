@@ -21,7 +21,7 @@ import urllib.request
 
 from . import display
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, base_env, kill_group, reaped_on_failure
+from .procs import KILL_GRACE_SECS, base_env, end_processes, kill_group, reaped_on_failure, spawn, starttime
 from .runtime_paths import Paths
 from .runtimes import ChromiumRuntime, ExecOutcome, HeadedDisplay, elapsed_ms
 from .sessions import Session
@@ -113,10 +113,10 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Chr
     port_file = session.profile_dir / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
     await asyncio.to_thread(pin_startup_pref, session.profile_dir)
-    process = await asyncio.create_subprocess_exec(
+    process = await spawn(
+        paths.children_ledger,
         *launch_argv(paths, session, headed),
         env=display.child_env(headed.display),
-        start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -183,13 +183,14 @@ async def observe(runtime: ChromiumRuntime) -> p.PageInfo:
     return p.page_unavailable()
 
 
-def _harness_pid(session: Session) -> int | None:
-    """The recorded harness pid, but only while it is still the harness daemon that was recorded.
+def harness_pid(runtime_dir: pl.Path) -> int | None:
+    """The harness pid `runtime_dir` records, but only while it is still the harness daemon that
+    was recorded.
 
     The scratch dir outlives the container, so a record can name a pid the kernel has since handed
     to something else; signalling on the record alone would kill that stranger.
     """
-    record = session.scratch_dir / "runtime" / "bu.pid"
+    record = runtime_dir / "bu.pid"
     if not record.is_file():
         return None
     text = record.read_text().strip()
@@ -200,6 +201,17 @@ def _harness_pid(session: Session) -> int | None:
     except (ValueError, KeyError, OSError):
         return None
     return pid if HARNESS_MARKER in cmdline else None
+
+
+def reap_harness_daemons(paths: Paths) -> int:
+    """Ends every harness daemon a session's record still names and drops every record. Blocking:
+    a daemon start runs it off the loop. Returns how many daemons were running."""
+    records = sorted(paths.sessions.glob("*/runtime/bu.pid"))
+    pids = [pid for record in records if (pid := harness_pid(record.parent)) is not None]
+    count = end_processes([(pid, starttime(pid)) for pid in pids], HARNESS_STOP_GRACE_SECS)
+    for record in records:
+        record.unlink(missing_ok=True)
+    return count
 
 
 def _pid_alive(pid: int) -> bool:
@@ -253,7 +265,7 @@ async def _close_over_cdp(runtime: ChromiumRuntime) -> None:
 
 
 async def stop(runtime: ChromiumRuntime, session: Session) -> None:
-    pid = _harness_pid(session)
+    pid = harness_pid(session.scratch_dir / "runtime")
     if pid is not None:
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGTERM)

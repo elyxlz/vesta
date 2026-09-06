@@ -1,13 +1,17 @@
+import asyncio
+import json
 import sys
 
 import pytest
-from vesta_browser import client
+from vesta_browser import client, procs, serve
 from vesta_browser import protocol as p
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import write_display_fakes, write_fakes
 from .hermetic import isolated_path
-from .waiting import request, with_daemon
+from .waiting import request, wait_for_socket, wait_until_all_dead, with_daemon
+
+SLEEPER = "import time; time.sleep(60)"
 
 BINARY_KEYS = {"VESTA_BROWSER_CHROMIUM", "VESTA_BROWSER_BROWSER_USE", "VESTA_BROWSER_CAMOUFOX_PYTHON", "VESTA_BROWSER_CAMOUFOX_EXE"}
 
@@ -115,3 +119,34 @@ def test_the_daemon_starts_with_no_gateway_helpers_on_path(tmp_path, monkeypatch
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
 
     assert _status(load_paths({}, tmp_path))["ok"] is True
+
+
+def test_the_daemon_ends_what_a_dead_daemon_left_running_before_it_listens(paths):
+    """The ledger names a dead daemon's children and a session's record names its harness daemon;
+    both are ended before the socket answers, so no display, port, or profile lock is still held."""
+
+    async def run():
+        orphan = await asyncio.create_subprocess_exec(sys.executable, "-c", SLEEPER, start_new_session=True)
+        harness = await asyncio.create_subprocess_exec(sys.executable, "-c", SLEEPER, "browser_harness", start_new_session=True)
+        await asyncio.to_thread(procs.record, paths.children_ledger, orphan.pid)
+        record = paths.sessions / "research" / "runtime" / "bu.pid"
+        record.parent.mkdir(parents=True)
+        record.write_text(json.dumps({"pid": harness.pid}))
+        server = asyncio.create_task(serve.serve(paths))
+        try:
+            await wait_for_socket(paths)
+            dead = await wait_until_all_dead([orphan.pid, harness.pid])
+            return dead, paths.children_ledger.read_text(), record.exists()
+        finally:
+            server.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await server
+            for process in (orphan, harness):
+                if process.returncode is None:
+                    process.kill()
+                await process.wait()
+
+    dead, ledger, record_kept = asyncio.run(run())
+    assert dead is True
+    assert ledger == ""
+    assert record_kept is False

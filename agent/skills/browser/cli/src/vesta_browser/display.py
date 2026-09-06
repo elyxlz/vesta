@@ -24,7 +24,7 @@ import time
 import typing as tp
 
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, base_env, kill_group, reaped_on_failure
+from .procs import KILL_GRACE_SECS, base_env, kill_group, reaped_on_failure, spawn
 from .runtime_paths import DEFAULT_X11_SOCKET_DIR, Paths
 
 # The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
@@ -222,7 +222,8 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
         display = f":{number}"
         _clear_stale_records(paths, number)
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await spawn(
+                paths.children_ledger,
                 "Xvfb",
                 display,
                 "-screen",
@@ -231,7 +232,6 @@ async def claim_display(paths: Paths) -> tuple[str, asyncio.subprocess.Process]:
                 "-nolisten",
                 "tcp",
                 env=child_env(display),
-                start_new_session=True,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -261,12 +261,12 @@ def _openbox_rc(paths: Paths) -> pl.Path:
 
 async def start_openbox(paths: Paths, display: str) -> asyncio.subprocess.Process:
     rc_path = await asyncio.to_thread(_openbox_rc, paths)
-    return await asyncio.create_subprocess_exec(
+    return await spawn(
+        paths.children_ledger,
         "openbox",
         "--config-file",
         str(rc_path),
         env=child_env(display),
-        start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -320,17 +320,17 @@ async def _x11vnc_settles(process: asyncio.subprocess.Process, vnc_port: int) ->
     return process.returncode is None
 
 
-async def start_x11vnc(display: str, vnc_port: int) -> asyncio.subprocess.Process:
+async def start_x11vnc(ledger: pl.Path, display: str, vnc_port: int) -> asyncio.subprocess.Process:
     """x11vnc serving `vnc_port`, with shm first and -noshm as the fallback.
 
     Shared memory makes the framebuffer reads roughly 25x faster, so it is always tried first; some
     hosts deny X_ShmAttach and x11vnc dies on its first grab there.
     """
     for noshm in (False, True):
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn(
+            ledger,
             *x11vnc_argv(display, vnc_port, noshm=noshm),
             env=child_env(display),
-            start_new_session=True,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -361,23 +361,18 @@ def build_webroot(paths: Paths) -> pl.Path:
     return webroot
 
 
-async def start_websockify(webroot: pl.Path, web_port: int, vnc_port: int, log: pl.Path) -> asyncio.subprocess.Process:
+async def start_websockify(ledger: pl.Path, webroot: pl.Path, web_port: int, vnc_port: int, log: pl.Path) -> asyncio.subprocess.Process:
     """The bridge from the page's WebSocket to x11vnc, bound on every interface for vestad to proxy."""
-    # vestad hands this daemon the port, so anything answering on it now is a bridge a killed daemon
-    # left behind, still forwarding to its own old display: a new websockify would fail to bind
-    # while the port probe below read the stranger as ready.
-    if await asyncio.to_thread(port_serving, web_port):
-        raise DisplayError(f"port {web_port} is already served by a process this daemon does not own; end it and retry")
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("ab") as handle:
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn(
+            ledger,
             "websockify",
             "--web",
             str(webroot),
             f"0.0.0.0:{web_port}",
             f"localhost:{vnc_port}",
             env=base_env(),
-            start_new_session=True,
             stdout=handle,
             stderr=asyncio.subprocess.STDOUT,
         )
