@@ -10,7 +10,7 @@ export default defineConfig([
     languageOptions: { globals: globals.node },
   },
   {
-    files: ["gallery/client.js"],
+    files: ["gallery/client.js", "gallery/review.js"],
     extends: [js.configs.recommended],
     languageOptions: { globals: globals.browser },
   },

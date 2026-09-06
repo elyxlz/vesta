@@ -4,10 +4,7 @@ tags:
   - visual
   - onboarding
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - setPermissions:
     permissions:
       camera: deny
@@ -53,9 +50,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: "Connect with Vesta Cloud"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - takeScreenshot: connect-actions
 - runScript:
     file: capture-screenshot.js
@@ -65,9 +60,6 @@ tags:
 - tapOn:
     text: "Connect with Vesta Cloud"
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Sign-in failed"
-    timeout: 10000
 - takeScreenshot: cloud-sign-in-error
 - runScript:
     file: capture-screenshot.js
@@ -134,57 +126,26 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: scan-permission.png
-- tapOn: "Close scanner"
-- extendedWaitUntil:
-    visible: "Connection link"
-    timeout: 10000
-
+# Invalid-link pixels must not depend on a prior scanner dismissing. The
+# scanner round trip is covered separately by navigation/connect-scanner.yml.
+- stopApp
+- openLink:
+    link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- runFlow: wait-for-launch.yml
 - tapOn: "Connection link"
 - inputText: "not-a-link"
+# Finish keyboard/layout work before triggering the short-lived error toast.
+- runScript:
+    file: capture-screenshot.js
+    env:
+      ACTION: show-software-keyboard
+- waitForAnimationToEnd:
+    timeout: 3000
 - tapOn:
     text: "^Connect$"
     waitToSettleTimeoutMs: 1
-- waitForAnimationToEnd:
-    timeout: 1000
-- takeScreenshot: connect-link-invalid
 - runScript:
     file: capture-screenshot.js
     env:
       SCREENSHOT: connect-link-invalid.png
-
-- stopApp
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
-- setPermissions:
-    permissions:
-      camera: allow
-- openLink:
-    link: "vesta-dev://connect?visualPrivacy=unlocked"
-- tapOn:
-    text: "^Open$"
-    optional: true
-    waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Connect with Vesta Cloud"
-    timeout: 30000
-- tapOn:
-    text: "Connect to self-hosted Vesta"
-    waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Connect your gateway"
-    timeout: 10000
-- tapOn:
-    text: "Scan connection QR code"
-    waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Close scanner"
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: scan-ready
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: scan-ready.png
+- takeScreenshot: connect-link-invalid

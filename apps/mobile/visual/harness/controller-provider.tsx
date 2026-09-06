@@ -15,13 +15,14 @@ import { ControllerContext } from "../../src/controller/context";
 import { visualSwitch } from "./launch-query";
 import { fixtureAgents, fixtureDevices } from "./roster-provider";
 import { notifications } from "./session-provider";
+import { ReadyScreen } from "./ready-screen";
 
 const needsGatewayUpdate = visualSwitch("visualGatewayUpdate") === "required";
 const appBehind = visualSwitch("visualSyncState") === "app_behind";
-// visualSync=open mounts a controller whose sync socket reads as open, so the
-// live edges render: an enabled composer, the typing indicator (with the
-// harness chat socket), and pending notifications (visualLive=pending).
-const syncOpen = visualSwitch("visualSync") === "open";
+// A connected session mounts a controller whose sync socket reads as open, as in production,
+// so the live edges render: an enabled composer, the typing indicator (with the harness chat
+// socket), and pending notifications (visualLive=pending). Connect screens never read it.
+const startsConnected = visualSwitch("visualSession") === "connected";
 const pendingNotifications =
   visualSwitch("visualLive") === "pending" ? notifications.slice(0, 2) : [];
 
@@ -80,6 +81,7 @@ function createOpenController(): Controller {
     getFocused: () => true,
     subscribeFocused: unsubscribe,
     getViewing: () => null,
+    getDevice: () => null,
     subscribeViewing: unsubscribe,
     getAnyFocused: () => false,
     subscribeAnyFocused: unsubscribe,
@@ -87,7 +89,7 @@ function createOpenController(): Controller {
   };
 }
 
-const controller = syncOpen ? createOpenController() : null;
+const controller = startsConnected ? createOpenController() : null;
 
 // The gateway operation /sync would carry, one fixed value per launch. The tree holds at most one
 // operation at a time and no public action moves it from one phase to the next, so each state is
@@ -204,7 +206,9 @@ export function ControllerProvider({ children }: { children: ReactNode }) {
         value={{ operation, updatedTo, restarted: false }}
       >
         {appBehind ? (
-          <AppBehindScreen />
+          <ReadyScreen>
+            <AppBehindScreen />
+          </ReadyScreen>
         ) : (
           <GatewayUpdateGate blocked={needsGatewayUpdate}>
             {children}

@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Chat
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-chat
+- runScript:
+    file: ../visual/capture-screenshot.js
+    env:
+      SCREENSHOT: page-chat.png

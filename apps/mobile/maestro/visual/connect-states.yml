@@ -4,10 +4,7 @@ tags:
   - visual
   - connect
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://connect-actions?visualPrivacy=unlocked&visualRecentGateways=none&visualDelay=60000"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: '.*Connect with Vesta Cloud.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-actions-no-recent
@@ -72,6 +67,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Paste your connection link.*'
     timeout: 30000
@@ -83,9 +79,6 @@ tags:
       platform: Android
     commands:
       - hideKeyboard
-- extendedWaitUntil:
-    visible: '.*Show connection link.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-link-filled
@@ -108,9 +101,6 @@ tags:
                 visible: '.*Hide connection link.*'
                 timeout: 4000
                 optional: true
-      - extendedWaitUntil:
-          visible: '.*Hide connection link.*'
-          timeout: 10000
       - waitForAnimationToEnd:
           timeout: 3000
       - takeScreenshot: connect-link-revealed
@@ -120,9 +110,6 @@ tags:
             SCREENSHOT: connect-link-revealed.png
 - tapOn:
     text: 'Connect'
-- extendedWaitUntil:
-    visible: '.*Could not reach this Vesta gateway.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-link-unreachable
@@ -133,6 +120,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Paste your connection link.*'
     timeout: 30000
@@ -141,9 +129,6 @@ tags:
 - inputText: "https://studio.vesta.run/"
 - tapOn:
     text: 'Connect'
-- extendedWaitUntil:
-    visible: '.*This connection link has no key.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-link-no-key
@@ -154,6 +139,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Paste your connection link.*'
     timeout: 30000
@@ -162,9 +148,6 @@ tags:
 - inputText: "http://studio.local/#k=abc"
 - tapOn:
     text: 'Connect'
-- extendedWaitUntil:
-    visible: '.*trusted HTTPS tunnel.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-link-http
@@ -175,6 +158,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://connect-link?visualPrivacy=unlocked&visualDelay=60000"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Paste your connection link.*'
     timeout: 30000
@@ -183,9 +167,6 @@ tags:
 - inputText: "https://studio.vesta.run/#k=abc123"
 - tapOn:
     text: 'Connect'
-- extendedWaitUntil:
-    visible: '.*Connecting.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-link-connecting
@@ -196,9 +177,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://connect?visualPrivacy=unlocked&link=https%3A%2F%2Fstudio.vesta.run%2F%23k%3Dabc123"
-- extendedWaitUntil:
-    visible: '.*Clear connection link.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: connect-prefilled-link
@@ -209,9 +188,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://recent-gateways?visualPrivacy=unlocked&visualRecentGateways=none"
-- extendedWaitUntil:
-    visible: '.*No saved gateways.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: recent-gateways-empty

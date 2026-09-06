@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion as m } from "motion/react";
+import { composerExpandedNext } from "@vesta/core";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +29,7 @@ import type { VoiceMode } from "@/stores/use-voice";
 import type { AttachmentDrafts } from "@/stores/use-attachment-drafts";
 import { AttachmentChips } from "../AttachmentChips";
 import { AttachMenu } from "./AttachMenu";
-import { type MicHandlers, expandedNext } from "./mic-handlers";
+import type { MicHandlers } from "./mic-handlers";
 
 export interface ComposerControls {
   voiceConfigured: boolean;
@@ -107,7 +108,7 @@ export function FloatingComposer({
   useLayoutEffect(() => {
     const span = measureRef.current;
     if (!span) return;
-    const next = expandedNext(
+    const next = composerExpandedNext(
       expanded,
       value,
       collapsedWidthRef.current,

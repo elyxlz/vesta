@@ -15,7 +15,7 @@ import {
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
-import { loadRegistry, scenariosForPlatform } from "@vesta/visual/registry";
+import { loadRegistry } from "@vesta/visual/registry";
 import { publishRunStatus } from "@vesta/visual/run-status";
 import { captureAllRequested } from "@vesta/visual/fingerprint";
 import { putShot, shotDriftWarning } from "@vesta/visual/store";
@@ -23,7 +23,7 @@ import {
   activeShardCount,
   assertHarnessBoundary,
   atomicWriteFile,
-  captureBothThemes,
+  createPageCapture,
   exists,
   filesBelow,
   flowFailureError,
@@ -37,6 +37,7 @@ import {
   recordJsBundle,
   run,
   setGentleMode,
+  selectMobileRegistry,
   startScreenshotBridge,
   visualDirectory,
 } from "./visual-runner.mjs";
@@ -794,11 +795,7 @@ async function runMaestro(manifest, simulators, tools, records) {
 async function prepareCaptureSession(options) {
   await recoverGeneratedIosSwap();
   await assertHarnessBoundary();
-  const registry = await loadRegistry("mobile");
-  const manifest = {
-    ...registry,
-    scenarios: scenariosForPlatform(registry, "ios"),
-  };
+  const manifest = selectMobileRegistry(await loadRegistry("mobile"), "ios");
   const tools = await requireCaptureTools();
   await mkdir(visualDirectory, { recursive: true });
   const simulators = await prepareSimulators(
@@ -826,11 +823,7 @@ async function prepareCaptureSession(options) {
 
 async function runCaptureIteration(options, session, onPhase = async () => {}) {
   await assertHarnessBoundary();
-  const registry = await loadRegistry("mobile");
-  const manifest = {
-    ...registry,
-    scenarios: scenariosForPlatform(registry, "ios"),
-  };
+  const manifest = selectMobileRegistry(await loadRegistry("mobile"), "ios");
   if (manifest.appId !== session.appId) {
     throw new Error(
       "The visual appId changed. Restart the capture command before continuing.",
@@ -1046,28 +1039,32 @@ async function grabSimulatorScreen(udid) {
 // The shared bridge with the iOS handlers: a simctl framebuffer grab in both
 // appearances, and the hidden Simulator host for the real software keyboard.
 async function startIosBridge(simulators, records) {
+  const capturePage = createPageCapture();
   const createdKeyboardHostPids = new Set();
   return startScreenshotBridge(simulators, {
-    capture: (simulator, screenshot) =>
-      captureBothThemes({
-        platform: "ios",
-        name: screenshot,
-        record: records.get(screenshot),
-        grab: () => grabSimulatorScreen(simulator.udid),
-        setDark: (dark) =>
-          run(
-            "xcrun",
-            [
-              "simctl",
-              "ui",
-              simulator.udid,
-              "appearance",
-              dark ? "dark" : "light",
-            ],
-            { capture: true, quiet: true },
-          ),
-        store: putShot,
-      }),
+    capture: (simulator, screenshot, pageStep) =>
+      capturePage(
+        {
+          platform: "ios",
+          name: screenshot,
+          record: records.get(screenshot),
+          grab: () => grabSimulatorScreen(simulator.udid),
+          setDark: (dark) =>
+            run(
+              "xcrun",
+              [
+                "simctl",
+                "ui",
+                simulator.udid,
+                "appearance",
+                dark ? "dark" : "light",
+              ],
+              { capture: true, quiet: true },
+            ),
+          store: putShot,
+        },
+        pageStep,
+      ),
     action: async (simulator, action) => {
       if (action !== "show-software-keyboard") return;
       const host = await showSimulatorSoftwareKeyboard(simulator.udid);
@@ -1093,11 +1090,7 @@ function reportShotDrift(seen, manifest) {
 }
 
 async function plan(options) {
-  const registry = await loadRegistry("mobile");
-  const manifest = {
-    ...registry,
-    scenarios: scenariosForPlatform(registry, "ios"),
-  };
+  const manifest = selectMobileRegistry(await loadRegistry("mobile"), "ios");
   printPlan(
     "ios",
     await planFlows(manifest, {

@@ -20,5 +20,6 @@ export function fingerprintInputs(
   sourceFiles: readonly string[],
   extras?: readonly string[],
 ): Promise<FingerprintResult>;
+export function createFingerprinter(): typeof fingerprintInputs;
 export function toAppsRelative(file: string): string;
 export function captureAllRequested(argv?: readonly string[]): boolean;

@@ -1,1 +1,1 @@
-export { default } from "./recent-gateways";
+export { default } from "./(connect)/recent-gateways";

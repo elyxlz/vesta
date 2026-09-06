@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion as m } from "motion/react";
 import { Mic, MicOff, X } from "lucide-react";
+import { conversationPhase, splitSpokenTail } from "@vesta/core";
 import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
 import { sheetEase } from "@/lib/motion";
@@ -9,24 +10,6 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
 
 const ORB_SIZE = 168;
-
-function phaseLabel({
-  listening,
-  micMuted,
-  isSpeaking,
-  thinking,
-}: {
-  listening: boolean;
-  micMuted: boolean;
-  isSpeaking: boolean;
-  thinking: boolean;
-}): string {
-  if (!listening) return "connecting…";
-  if (isSpeaking) return "speaking";
-  if (micMuted) return "muted";
-  if (thinking) return "thinking";
-  return "listening";
-}
 
 // The live conversation surface the composer morphs into: the agent's real status orb with
 // voice motion overlaid, and one row of controls. Same width as the composer by construction.
@@ -65,7 +48,12 @@ export function ConversationPanel() {
   // Your words take the pill over as you speak, the freshest one bold so the eye can ride the
   // stream; between turns the pill falls back to the phase.
   const transcript = liveTranscript.trim();
-  const livePhase = phaseLabel({ listening, micMuted, isSpeaking, thinking });
+  const livePhase = conversationPhase({
+    listening,
+    micMuted,
+    speaking: isSpeaking,
+    thinking,
+  });
   // The status decides the look; the voice phase only decides the motion. A muted mic or a
   // still-dialing session holds the orb still rather than pretending to listen.
   const liveMotion = isSpeaking
@@ -85,11 +73,9 @@ export function ConversationPanel() {
     ? { transcript, phase: livePhase, motion: liveMotion }
     : lastShown;
   const motion = shown.motion;
-  const lastSpace = shown.transcript.lastIndexOf(" ");
-  const spokenHead =
-    lastSpace === -1 ? "" : shown.transcript.slice(0, lastSpace + 1);
-  const spokenTail =
-    lastSpace === -1 ? shown.transcript : shown.transcript.slice(lastSpace + 1);
+  const { head: spokenHead, tail: spokenTail } = splitSpokenTail(
+    shown.transcript,
+  );
 
   return (
     <div className="flex h-full flex-col items-center justify-end gap-4 px-4 pt-3 pb-4">

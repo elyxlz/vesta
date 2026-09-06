@@ -145,6 +145,7 @@ export function fakeController(
       return () => focusListeners.delete(listener);
     },
     getViewing: () => viewing,
+    getDevice: () => null,
     subscribeViewing: (listener) => {
       viewingListeners.add(listener);
       return () => viewingListeners.delete(listener);

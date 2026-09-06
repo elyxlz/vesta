@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · File editor
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/file?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&path=/root/agent/MEMORY.md"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-file-editor
+- runScript:
+    file: ../visual/capture-screenshot.js
+    env:
+      SCREENSHOT: page-file-editor.png

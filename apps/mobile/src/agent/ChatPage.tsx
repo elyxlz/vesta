@@ -2,9 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentHoldKey,
   TRIM_HISTORY_SETTLE_MS,
+  conversationPhase,
   fetchVoiceStatus,
+  type OrbMotion,
 } from "@vesta/core";
-import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
+import {
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
   KeyboardStickyView,
@@ -14,7 +21,6 @@ import Animated, {
   interpolate,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,6 +37,7 @@ import { useLiveVoice } from "@/voice/useLiveVoice";
 import { createInvertedChatRows, type ChatRow } from "@/agent/chat-list-model";
 import { quotedReply, type ReplyTarget } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
+import { ComposerRow } from "@/agent/chat/composer-row";
 import { usePagerScrollLock } from "@/agent/pager-scroll-lock";
 import { GlassSurface } from "@/components/ui/glass-surface";
 import {
@@ -50,7 +57,6 @@ import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-hapti
 import { agentHolds } from "@/holds/agent-holds";
 import { connectionKeyOf } from "@/session/session-model";
 
-const COMPOSER_RESIZE_DURATION = 250;
 const CHAT_COMPOSER_GAP = 6;
 const COMPOSER_SURFACE_PADDING = 8;
 // Space kept below the composer: above the home indicator while the keyboard
@@ -59,11 +65,15 @@ const COMPOSER_CLOSED_GAP = 6;
 const COMPOSER_KEYBOARD_GAP = 10;
 // The dock sits further inset while the keyboard is closed and widens to
 // the chat list edge once it is open, in step with the keyboard's own motion.
-const COMPOSER_INSET_CLOSED = 48;
+// The closed inset is a share of the screen width, so the pill keeps one
+// proportion from a small phone to a tablet.
+const COMPOSER_INSET_CLOSED_FRACTION = 0.08;
 const COMPOSER_INSET_OPEN = 12;
 
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
+  const composerInsetClosed =
+    useWindowDimensions().width * COMPOSER_INSET_CLOSED_FRACTION;
   const { agent, socket, name } = useAgent();
   const { api, connection } = useSession();
   const { showError } = useToast();
@@ -118,13 +128,6 @@ export default function ChatPage() {
   const composerKeyboardOffset =
     insets.bottom + COMPOSER_CLOSED_GAP - COMPOSER_KEYBOARD_GAP;
   const keyboard = useReanimatedKeyboardAnimation();
-  const composerDockStyle = useAnimatedStyle(() => ({
-    paddingHorizontal: interpolate(
-      keyboard.progress.value,
-      [0, 1],
-      [COMPOSER_INSET_CLOSED, COMPOSER_INSET_OPEN],
-    ),
-  }));
   const {
     attachList,
     handleScroll,
@@ -156,12 +159,9 @@ export default function ChatPage() {
       }
 
       measuredComposerHeight.current = height;
-      const inset = height + CHAT_COMPOSER_GAP;
-      composerInset.set(
-        previousHeight === null
-          ? inset
-          : withTiming(inset, { duration: COMPOSER_RESIZE_DURATION }),
-      );
+      // Set, never tweened: the list compensates each inset delta against its last known scroll
+      // position, which lags an animated inset by a frame and loses a sliver per step.
+      composerInset.set(height + CHAT_COMPOSER_GAP);
     },
     [composerInset],
   );
@@ -234,6 +234,20 @@ export default function ChatPage() {
     onUserSpeakingChange: socket.reportSpeaking,
   });
   const recordingMode = voice.recordingMode;
+  // A conversation takes the full width the open keyboard would give the dock.
+  const conversationActive = recordingMode === "conversation";
+  const composerDockStyle = useAnimatedStyle(
+    () => ({
+      paddingHorizontal: conversationActive
+        ? COMPOSER_INSET_OPEN
+        : interpolate(
+            keyboard.progress.value,
+            [0, 1],
+            [composerInsetClosed, COMPOSER_INSET_OPEN],
+          ),
+    }),
+    [composerInsetClosed, conversationActive],
+  );
   useEffect(() => {
     modeRef.current = recordingMode;
   }, [recordingMode]);
@@ -325,11 +339,19 @@ export default function ChatPage() {
     });
   };
   const endConversation = () => voice.stop();
-  const conversationState = !voice.listening
-    ? "connecting"
-    : voice.speaking
-      ? "speaking"
-      : "listening";
+  const conversationPhaseNow = conversationPhase({
+    listening: voice.listening,
+    micMuted: voice.micMuted,
+    speaking: voice.speaking,
+    thinking: agent?.activityState === "thinking",
+  });
+  // The status decides the orb's look; the voice phase only decides its motion. A muted mic or a
+  // still-dialing session holds the orb still rather than pretending to listen.
+  const conversationMotion: OrbMotion | undefined = voice.speaking
+    ? "talking"
+    : voice.listening && !voice.micMuted
+      ? "listening"
+      : undefined;
 
   return (
     <View style={styles.screen}>
@@ -340,6 +362,7 @@ export default function ChatPage() {
         historyLoaded={socket.historyLoaded}
         loadingMore={socket.loadingMore}
         composerInset={composerInset}
+        keyboardOffset={composerKeyboardOffset}
         attachList={attachList}
         onScroll={handleScroll}
         onContentSizeChange={handleContentSizeChange}
@@ -384,9 +407,14 @@ export default function ChatPage() {
             <GlassSurface style={styles.composerSurface}>
               {recordingMode === "conversation" ? (
                 <VoiceConversationPanel
-                  state={conversationState}
+                  agent={agent}
+                  name={name}
+                  phase={conversationPhaseNow}
+                  motion={conversationMotion}
                   transcript={conversationTranscript}
+                  micMuted={voice.micMuted}
                   height={CONVERSATION_PANEL_HEIGHT}
+                  onToggleMute={voice.toggleMicMuted}
                   onEnd={endConversation}
                 />
               ) : (
@@ -400,41 +428,48 @@ export default function ChatPage() {
                     onRetry={attachments.retry}
                     onRemove={attachments.remove}
                   />
-                  <View style={styles.composerRow}>
-                    <AttachButton
-                      disabled={!canSend}
-                      onPress={openAttachMenu}
-                    />
-                    <ChatComposerInput
-                      ref={inputRef}
-                      maxLength={20_000}
-                      onChangeText={setInput}
-                      placeholder={
-                        recordingMode === "dictation"
-                          ? "Listening…"
-                          : !canSend
-                            ? "Waiting for agent…"
-                            : hasChips && input.length === 0
-                              ? "Add a caption…"
-                              : `Message ${name}`
-                      }
-                      placeholderTextColor={colors.tertiaryText}
-                      selectionColor={colors.accent}
-                      textColor={colors.text}
-                      value={input}
-                    />
-                    <ComposerActions
-                      canSend={canSend}
-                      hasDraft={hasDraft}
-                      recordingMode={recordingMode}
-                      voiceEnabled={voiceEnabled}
-                      onSend={send}
-                      onDictate={startDictation}
-                      onConfirm={confirmDictation}
-                      onCancel={cancelDictation}
-                      onConversation={startConversation}
-                    />
-                  </View>
+                  <ComposerRow
+                    value={input}
+                    attach={
+                      <AttachButton
+                        disabled={!canSend}
+                        onPress={openAttachMenu}
+                      />
+                    }
+                    input={
+                      <ChatComposerInput
+                        ref={inputRef}
+                        maxLength={20_000}
+                        onChangeText={setInput}
+                        placeholder={
+                          recordingMode === "dictation"
+                            ? "Listening…"
+                            : !canSend
+                              ? "Waiting for agent…"
+                              : hasChips && input.length === 0
+                                ? "Add a caption…"
+                                : `Message ${name}`
+                        }
+                        placeholderTextColor={colors.tertiaryText}
+                        selectionColor={colors.accent}
+                        textColor={colors.text}
+                        value={input}
+                      />
+                    }
+                    actions={
+                      <ComposerActions
+                        canSend={canSend}
+                        hasDraft={hasDraft}
+                        recordingMode={recordingMode}
+                        voiceEnabled={voiceEnabled}
+                        onSend={send}
+                        onDictate={startDictation}
+                        onConfirm={confirmDictation}
+                        onCancel={cancelDictation}
+                        onConversation={startConversation}
+                      />
+                    }
+                  />
                 </>
               )}
             </GlassSurface>
@@ -445,7 +480,7 @@ export default function ChatPage() {
   );
 }
 
-const CONVERSATION_PANEL_HEIGHT = 220;
+const CONVERSATION_PANEL_HEIGHT = 264;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
@@ -472,5 +507,4 @@ const styles = StyleSheet.create({
     zIndex: 3,
     alignItems: "center",
   },
-  composerRow: { flexDirection: "row", alignItems: "flex-end" },
 });

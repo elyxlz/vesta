@@ -4,7 +4,7 @@ Runner details for the web family. The system, the gallery, and the registry con
 
 ## How a capture runs
 
-The untouched app renders at its real route on the plain vite dev server (`HTTPS=false`, port 1430). Determinism is injected at the network boundary by Playwright:
+The untouched app renders at its real route on a dedicated plain vite dev server (`HTTPS=false`, `127.0.0.1:1431`). Playwright owns the server and refuses an occupied port, so captures cannot accidentally use another checkout's dev server. Determinism is injected at the network boundary by Playwright:
 
 - `harness/storage.ts` seeds the connection and the `system` theme in `localStorage`.
 - `harness/sync-fixtures.ts` answers the `/sync` WebSocket with typed fixture frames.
@@ -31,11 +31,13 @@ Install the browser once: `npx playwright install chromium` in `apps/web`. The H
 
 ## Boundary
 
-Nothing under `src/` changes for capture. No scenario flags, no capture env checks, no bot-only test ids. Selectors are visible text and roles. Every scenario waits on a `settle` assertion, never a bare sleep.
+Nothing under `src/` changes for capture. No scenario flags, no capture env checks, no bot-only test ids. Selectors are visible text and roles used to drive navigation. Final content assertions are not part of a scenario: the runner waits for fonts, short pending browser timers, and stable pixels, then the gallery compares those pixels against the baseline. Failure screenshots and traces diagnose an unreachable state. Unchanged scenarios skip before creating a browser page.
 
 ## Add a scenario
 
+For ordinary UI development, refresh an existing page instead: `npm run visual:capture -- web --page settings` from `apps/`. `drives/pages.ts` owns the destination references, reusing fixture data and only the navigation needed to reach the page. `scroll: "page"` discovers a long page's scroll surface and captures overlapping viewports in both themes; no card labels or counts are involved. `node visual/cli.mjs refs --page settings --platform web` lists the actual local images. Default captures include pages and detailed states. Use `--suite pages` / `--suite states` to narrow coverage on the shared CLI, or `VISUAL_SUITE` on the direct runner.
+
 1. Add the entry to `scenarios.json`: `id`, `title`, `description`, `group`, plus the state the fixtures need (`route`, `agentStatus`, `createResponse`, `deltas`, `hang`, `agentName`, `provider`).
-2. Add `drive` and `settle` under the same id in `drives.ts`.
+2. Add `state` and `drive` under the same id in `drives/`. Fixtures with transitions advance on the relevant request (`jsonAfterRequest`), never on an assumed number of status reads.
 3. Extend `http-fixtures.ts` or `sync-fixtures.ts` if the flow touches a new endpoint. Keep `harness/fixtures.test.ts` and `registry.test.ts` green.
 4. Run one project, then the full matrix, and inspect the pixels in the gallery.

@@ -1,10 +1,73 @@
 const dialog = document.querySelector("#lightbox");
+const selectionQuery = new URLSearchParams({
+  suite: document.body.dataset.suite || "",
+  page: document.body.dataset.page || "",
+}).toString();
+document.querySelector("#page-search").addEventListener("input", (event) => {
+  const query = event.target.value.trim().toLowerCase();
+  let matches = 0;
+  document.querySelectorAll(".card").forEach((card) => {
+    card.hidden = !card.dataset.search.includes(query);
+    if (!card.hidden) matches += 1;
+  });
+  document.querySelectorAll(".scenario-section").forEach((section) => {
+    section.hidden = !section.querySelector(".card:not([hidden])");
+    if (query && !section.hidden) section.open = true;
+  });
+  document.querySelector("#search-count").textContent =
+    `${matches} ${{ pages: "pages", states: "states" }[document.body.dataset.suite] || "scenarios"}${query ? " found" : ""}`;
+  document.querySelector("#search-empty").hidden = matches > 0;
+});
+document.querySelectorAll(".refresh-page").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const shot = button.closest(".shot");
+    button.disabled = true;
+    try {
+      const query = new URLSearchParams({
+        page: shot.dataset.page || shot.dataset.scenarioId,
+        suite: "all",
+        gentle: "1",
+      });
+      const response = await fetch(`capture/${shot.dataset.runner}?${query}`, {
+        method: "POST",
+      });
+      button.textContent = response.ok ? "Queued" : "Runner busy";
+    } catch {
+      button.textContent = "Refresh failed";
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
 const dialogImage = dialog.querySelector("img");
+let pageImages = [];
+let pageImageIndex = 0;
+function showPageImage(index) {
+  pageImageIndex = Math.max(0, Math.min(index, pageImages.length - 1));
+  dialogImage.src = pageImages[pageImageIndex];
+  document.querySelector("#image-position").textContent =
+    `${pageImageIndex + 1} / ${pageImages.length}`;
+  document.querySelector("#image-previous").disabled = pageImageIndex === 0;
+  document.querySelector("#image-next").disabled =
+    pageImageIndex === pageImages.length - 1;
+  document.querySelector("#image-file").href = dialogImage.src;
+}
+document
+  .querySelector("#image-previous")
+  .addEventListener("click", () => showPageImage(pageImageIndex - 1));
+document
+  .querySelector("#image-next")
+  .addEventListener("click", () => showPageImage(pageImageIndex + 1));
 document.querySelectorAll(".preview").forEach((button) => {
   button.addEventListener("click", () => {
     const image = button.querySelector("img");
     if (!image || !button.dataset.image) return;
-    dialogImage.src = button.dataset.image;
+    const shot = button.closest(".shot");
+    pageImages = JSON.parse(shot.dataset.parts).map(
+      (name) =>
+        `shots/${shot.dataset.platform}/${name}?v=${image.dataset.stamp}`,
+    );
+    showPageImage(0);
     dialogImage.alt = image.alt;
     dialog.showModal();
   });
@@ -39,7 +102,9 @@ function refHeader(shot) {
   ];
 }
 function shotImage(shot) {
-  return shot.querySelector(".preview").dataset.image || "not captured";
+  return shot.dataset.state === "captured"
+    ? shot.dataset.localPath
+    : "not captured";
 }
 async function copyWithFeedback(copyButton, lines) {
   const label = copyButton.textContent;
@@ -60,6 +125,10 @@ document.querySelectorAll(".copy-ref").forEach((copyButton) => {
         "]",
       ...refHeader(shot),
       "image: " + shotImage(shot),
+      "page images: " +
+        JSON.parse(shot.dataset.parts)
+          .map((name) => shot.dataset.localPath.replace(/[^/]+$/, name))
+          .join(", "),
     ]);
   });
 });
@@ -303,7 +372,7 @@ async function loadPlan() {
     : "Checking what changed…";
   try {
     const response = await fetch(
-      "plan.json?all=" + (planAll.checked ? "1" : "0"),
+      "plan.json?" + selectionQuery + "&all=" + (planAll.checked ? "1" : "0"),
     );
     const payload = await response.json();
     if (request !== planRequest) return;
@@ -343,9 +412,19 @@ planStart.addEventListener("click", async () => {
   const all = planAll.checked ? "1" : "0";
   await Promise.all(
     runners.map((runner) =>
-      fetch("capture/" + runner + "?gentle=" + gentle + "&all=" + all, {
-        method: "POST",
-      }).catch(() => undefined),
+      fetch(
+        "capture/" +
+          runner +
+          "?" +
+          selectionQuery +
+          "&gentle=" +
+          gentle +
+          "&all=" +
+          all,
+        {
+          method: "POST",
+        },
+      ).catch(() => undefined),
     ),
   );
   planDialog.close();
@@ -357,6 +436,9 @@ function applyShots(payload) {
       shot.dataset.screenshot
     ];
     if (!entry) return;
+    shot.dataset.parts = JSON.stringify(
+      entry.parts ?? [shot.dataset.screenshot],
+    );
     const button = shot.querySelector(".preview");
     const screen = shot.querySelector(".device-screen");
     let image = screen.querySelector("img");
@@ -464,12 +546,16 @@ function markRefreshing(statuses, payload) {
   });
 }
 let lastStatuses = [];
-window.setInterval(async () => {
-  if (document.visibilityState === "hidden") return;
+async function pollGallery() {
+  let delay = 5000;
+  if (document.visibilityState === "hidden") {
+    window.setTimeout(pollGallery, delay);
+    return;
+  }
   try {
     const [statusResponse, shotsResponse] = await Promise.all([
       fetch("status.json", { cache: "no-store" }),
-      fetch("shots.json", { cache: "no-store" }),
+      fetch("shots.json?" + selectionQuery, { cache: "no-store" }),
     ]);
     if (statusResponse.ok) {
       lastStatuses = (await statusResponse.json()).statuses || [];
@@ -479,8 +565,13 @@ window.setInterval(async () => {
       applyShots(payload);
       updateScanRows(payload, lastStatuses);
       markRefreshing(lastStatuses, payload);
+      if (Object.values(payload.runs ?? {}).some((run) => run.running))
+        delay = 1000;
     }
   } catch {
     // The local server may be between restarts.
+  } finally {
+    window.setTimeout(pollGallery, delay);
   }
-}, 500);
+}
+pollGallery();

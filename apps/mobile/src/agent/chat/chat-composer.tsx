@@ -1,11 +1,17 @@
 import { memo, useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { SymbolView } from "expo-symbols";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import type { ReplyTarget } from "@/agent/message-actions";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
 import { CHAT_COMPOSER_CONTROL_HEIGHT } from "@/components/chat-composer-input.types";
+
+// A bare glyph button hugs its icon; the slop keeps the tap target at the control height.
+const IS_IOS = process.env.EXPO_OS === "ios";
+const GLYPH_BUTTON_WIDTH = 26;
+const GLYPH_HIT_SLOP = (CHAT_COMPOSER_CONTROL_HEIGHT - GLYPH_BUTTON_WIDTH) / 2;
 
 export const ReplyPreview = memo(function ReplyPreview({
   target,
@@ -62,17 +68,14 @@ export function AttachButton({
       accessibilityLabel="Add attachment"
       accessibilityRole="button"
       disabled={disabled}
-      hitSlop={6}
+      hitSlop={GLYPH_HIT_SLOP}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.roundButton,
-        {
-          backgroundColor: colors.input,
-          opacity: disabled ? 0.38 : pressed ? 0.72 : 1,
-        },
+        styles.glyphButton,
+        { opacity: disabled ? 0.38 : pressed ? 0.72 : 1 },
       ]}
     >
-      <Ionicons name="add" size={20} color={colors.text} />
+      <Ionicons name="add" size={26} color={colors.text} />
     </Pressable>
   );
 }
@@ -89,13 +92,21 @@ function RoundAction({
   onPress: () => void;
 }) {
   const { colors } = usePreferences();
-  const primary = kind === "confirm" || kind === "conversation";
-  const danger = kind === "cancel";
+  // Only the conversation button keeps a filled disc; the rest are bare glyphs whose color
+  // carries the meaning.
+  const filled = kind === "conversation";
+  const glyphColor: Record<ActionKind, string> = {
+    dictate: colors.text,
+    confirm: colors.accent,
+    cancel: colors.danger,
+    conversation: colors.accentText,
+    send: colors.text,
+  };
   const icon: Record<ActionKind, keyof typeof Ionicons.glyphMap> = {
     dictate: "mic",
     confirm: "checkmark",
     cancel: "close",
-    conversation: "chatbubbles",
+    conversation: "pulse",
     send: "arrow-up",
   };
   const label: Record<ActionKind, string> = {
@@ -110,25 +121,34 @@ function RoundAction({
       accessibilityLabel={label[kind]}
       accessibilityRole="button"
       disabled={disabled}
-      hitSlop={6}
+      hitSlop={filled ? 6 : GLYPH_HIT_SLOP}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.roundButton,
+        filled ? styles.roundButton : styles.glyphButton,
         {
-          backgroundColor: primary
-            ? colors.accent
-            : danger
-              ? colors.danger
-              : colors.input,
+          backgroundColor: filled ? colors.accent : "transparent",
           opacity: disabled ? 0.38 : pressed ? 0.72 : 1,
         },
       ]}
     >
-      <Ionicons
-        name={icon[kind]}
-        size={kind === "send" || kind === "confirm" ? 17 : 16}
-        color={primary ? colors.accentText : danger ? "white" : colors.text}
-      />
+      {kind === "conversation" ? (
+        IS_IOS ? (
+          <SymbolView
+            name="waveform"
+            size={20}
+            tintColor={glyphColor[kind]}
+            resizeMode="scaleAspectFit"
+          />
+        ) : (
+          <MaterialCommunityIcons
+            name="waveform"
+            size={22}
+            color={glyphColor[kind]}
+          />
+        )
+      ) : (
+        <Ionicons name={icon[kind]} size={24} color={glyphColor[kind]} />
+      )}
     </Pressable>
   );
 }
@@ -190,7 +210,7 @@ export function ComposerActions({
 }
 
 const styles = StyleSheet.create({
-  actionCluster: { flexDirection: "row", alignItems: "center", gap: 6 },
+  actionCluster: { flexDirection: "row", alignItems: "center", gap: 12 },
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
   replyClose: {
@@ -207,6 +227,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+  },
+  glyphButton: {
+    width: GLYPH_BUTTON_WIDTH,
+    height: CHAT_COMPOSER_CONTROL_HEIGHT,
+    alignItems: "center",
+    justifyContent: "center",
   },
   composerActionSurface: {
     position: "absolute",

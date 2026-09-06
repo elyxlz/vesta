@@ -11,14 +11,15 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 
-import { loadRegistry, scenariosForPlatform } from "@vesta/visual/registry";
+import { loadRegistry } from "@vesta/visual/registry";
 import { publishRunStatus } from "@vesta/visual/run-status";
 import { captureAllRequested } from "@vesta/visual/fingerprint";
 import { putShot, shotDriftWarning } from "@vesta/visual/store";
 import {
   assertHarnessBoundary,
   atomicWriteFile,
-  captureBothThemes,
+  createPageCapture,
+  grabUntilStable,
   exists,
   flowFailureError,
   gentleSpawnPlan,
@@ -30,6 +31,7 @@ import {
   recordJsBundle,
   run,
   setGentleMode,
+  selectMobileRegistry,
   startScreenshotBridge,
   visualDirectory,
 } from "./visual-runner.mjs";
@@ -416,6 +418,13 @@ async function normalizeEmulator(tools, serial, navOverlay) {
     ],
     { allowFailure: true },
   );
+  // SystemUI can retain its pre-cutout clipping bounds until a configuration
+  // change. Refresh both appearances before demo mode so the first capture
+  // has the same complete status bar as every subsequent capture.
+  for (const mode of ["yes", "no"]) {
+    await adb(tools, serial, ["shell", "cmd", "uimode", "night", mode]);
+    await grabUntilStable(() => grabEmulatorScreen(tools, serial));
+  }
   await demoModeCommand(tools, serial, "enter");
   await demoModeCommand(tools, serial, "clock", [
     "-e",
@@ -430,6 +439,18 @@ async function normalizeEmulator(tools, serial, navOverlay) {
     "plugged",
     "false",
   ]);
+  await normalizeNetworkIcons(tools, serial);
+  await demoModeCommand(tools, serial, "notifications", [
+    "-e",
+    "visible",
+    "false",
+  ]);
+}
+
+async function normalizeNetworkIcons(tools, serial) {
+  // OS activity icons can change without an app change and look like another
+  // scroll section. Pin Wi-Fi to full strength and omit cellular activity.
+  // Hiding both makes Android 16 show its delayed satellite fallback icon.
   await demoModeCommand(tools, serial, "network", [
     "-e",
     "wifi",
@@ -437,22 +458,18 @@ async function normalizeEmulator(tools, serial, navOverlay) {
     "-e",
     "level",
     "4",
-  ]);
-  await demoModeCommand(tools, serial, "network", [
+    "-e",
+    "fully",
+    "true",
     "-e",
     "mobile",
-    "show",
+    "hide",
     "-e",
-    "datatype",
-    "none",
+    "satellite",
+    "hide",
     "-e",
-    "level",
-    "4",
-  ]);
-  await demoModeCommand(tools, serial, "notifications", [
-    "-e",
-    "visible",
-    "false",
+    "connection",
+    "off",
   ]);
 }
 
@@ -638,6 +655,8 @@ async function buildAndInstall(tools, serial, appId, options) {
         path.join(androidDirectory, "gradlew"),
         [
           ":app:assembleRelease",
+          "-Dorg.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError",
+          "--max-workers=4",
           `-PreactNativeArchitectures=${ANDROID_BUILD_ABI}`,
           "--console=plain",
         ],
@@ -699,24 +718,32 @@ async function grabEmulatorScreen(tools, serial) {
 // The shared bridge with the Android handlers: a screencap grab in both night
 // modes. The keyboard renders inside the framebuffer, so there is no action.
 function startAndroidBridge(tools, serial, variant, records) {
+  const capturePage = createPageCapture();
   return startScreenshotBridge([serial], {
-    capture: (target, screenshot) =>
-      captureBothThemes({
-        platform: variant,
-        name: screenshot,
-        record: records.get(screenshot),
-        grab: () => grabEmulatorScreen(tools, target),
-        setDark: (dark) =>
-          adb(
-            tools,
-            target,
-            ["shell", "cmd", "uimode", "night", dark ? "yes" : "no"],
-            {
-              quiet: true,
-            },
-          ),
-        store: putShot,
-      }),
+    capture: async (target, screenshot, pageStep) => {
+      await normalizeNetworkIcons(tools, target);
+      return capturePage(
+        {
+          platform: variant,
+          name: screenshot,
+          record: records.get(screenshot),
+          grab: () => grabEmulatorScreen(tools, target),
+          setDark: async (dark) => {
+            await adb(
+              tools,
+              target,
+              ["shell", "cmd", "uimode", "night", dark ? "yes" : "no"],
+              {
+                quiet: true,
+              },
+            );
+            await normalizeNetworkIcons(tools, target);
+          },
+          store: putShot,
+        },
+        pageStep,
+      );
+    },
   });
 }
 
@@ -778,11 +805,7 @@ async function capture(options) {
   const phase = (message) =>
     publishRunStatus("capturing", { message, startedAt, runner: variant });
   await assertHarnessBoundary();
-  const registry = await loadRegistry("mobile");
-  const manifest = {
-    ...registry,
-    scenarios: scenariosForPlatform(registry, variant),
-  };
+  const manifest = selectMobileRegistry(await loadRegistry("mobile"), variant);
   const tools = await requireCaptureTools();
   await mkdir(androidVisualDirectory, { recursive: true });
   // Everything after the first "capturing" phase publishes its outcome, so an
@@ -795,6 +818,9 @@ async function capture(options) {
       ? await avdNameOf(tools, serial)
       : options.avd;
     console.log(`\nUsing Android emulator ${serial} (${avdName}).`);
+    // Normalize SystemUI against the launcher, not whichever animated scene
+    // or focused input the previous capture left open. Stop only our visual app.
+    await adb(tools, serial, ["shell", "am", "force-stop", manifest.appId]);
     await normalizeEmulator(tools, serial, androidVariants[variant].navOverlay);
     await phase(
       options.skipBuild
@@ -865,11 +891,10 @@ async function capture(options) {
 }
 
 async function plan(options) {
-  const registry = await loadRegistry("mobile");
-  const manifest = {
-    ...registry,
-    scenarios: scenariosForPlatform(registry, options.variant),
-  };
+  const manifest = selectMobileRegistry(
+    await loadRegistry("mobile"),
+    options.variant,
+  );
   printPlan(
     options.variant,
     await planFlows(manifest, {

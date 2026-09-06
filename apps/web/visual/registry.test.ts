@@ -3,6 +3,7 @@ import { loadRegistry } from "@vesta/visual/registry";
 import { SCENARIOS } from "./drives";
 
 const GROUPS = [
+  "Pages",
   "Onboarding",
   "Home",
   "Gateway update",

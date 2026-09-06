@@ -4,12 +4,9 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open"
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - waitForAnimationToEnd:
     timeout: 3000
 - tapOn:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: "Message aria"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-connected
@@ -63,9 +58,6 @@ tags:
 - tapOn:
     text: "Message aria"
 - inputText: "Can you also book the room?"
-- extendedWaitUntil:
-    visible: "Send message"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-connected-draft
@@ -75,10 +67,8 @@ tags:
       SCREENSHOT: agent-chat-connected-draft.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualLive=typing"
-- extendedWaitUntil:
-    visible: "aria is typing"
-    timeout: 30000
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualLive=typing"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-typing
@@ -88,10 +78,8 @@ tags:
       SCREENSHOT: agent-chat-typing.png
 - stopApp
 - openLink:
-    link: "vesta-dev://agent/aria/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSync=open&visualLive=pending"
-- extendedWaitUntil:
-    visible: "pending"
-    timeout: 30000
+    link: "vesta-dev://agent/aria/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualLive=pending"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-notifications-pending

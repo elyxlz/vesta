@@ -1,8 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { BackHandler, StyleSheet, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { VestaBrand } from "@/components/VestaBrand";
+import { BrandBackdrop } from "@/components/brand-backdrop";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 
@@ -15,7 +14,6 @@ const SCRIM_COLOR_LIGHT = "rgba(0, 0, 0, 0.2)";
 const SCRIM_COLOR_DARK = "rgba(0, 0, 0, 0.45)";
 
 export function SheetGateScreen({ children }: { children: ReactNode }) {
-  const insets = useSafeAreaInsets();
   const { colors, dark } = usePreferences();
   // The hardware back button must not pop a blocking gate: the owning gate would only re-push it
   // with animation "none", blinking the screen. Programmatic dismissal stays untouched.
@@ -32,9 +30,7 @@ export function SheetGateScreen({ children }: { children: ReactNode }) {
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       <StatusBar style={dark ? "light" : "dark"} />
-      <View style={[styles.hero, { paddingTop: insets.top }]}>
-        <VestaBrand />
-      </View>
+      <BrandBackdrop />
       <View
         pointerEvents="none"
         style={[
@@ -50,14 +46,7 @@ export function SheetGateScreen({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  hero: {
-    flex: 1,
-    minHeight: 220,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
+  root: { flex: 1, justifyContent: "flex-end" },
   card: {
     borderTopLeftRadius: radii.card,
     borderTopRightRadius: radii.card,

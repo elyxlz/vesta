@@ -6,6 +6,7 @@ import {
   readdir,
   rename,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -20,7 +21,8 @@ export function platformShotsDirectory(
   platform,
   baseDirectory = storeDirectory,
 ) {
-  if (!PLATFORMS[platform]) throw new Error(`Unknown platform: ${platform}`);
+  if (!Object.hasOwn(PLATFORMS, platform))
+    throw new Error(`Unknown platform: ${platform}`);
   return path.join(baseDirectory, "shots", platform);
 }
 
@@ -42,6 +44,22 @@ export async function putShot(
   source,
   baseDirectory = storeDirectory,
 ) {
+  const target = shotPath(platform, name, baseDirectory);
+  const directory = path.dirname(target);
+  await mkdir(directory, { recursive: true });
+  temporaryFileCounter += 1;
+  const temporary = `${target}.tmp-${process.pid}-${temporaryFileCounter}`;
+  if (Buffer.isBuffer(source)) await writeFile(temporary, source);
+  else await copyFile(source, temporary);
+  // Replacing light invalidates the pair until both themes finish. A failed
+  // forced recapture must not reuse the previous run's freshness record.
+  await unlink(shotRecordPath(platform, name, baseDirectory)).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  await rename(temporary, target);
+}
+
+export function shotPath(platform, name, baseDirectory = storeDirectory) {
   if (
     typeof name !== "string" ||
     path.basename(name) !== name ||
@@ -49,18 +67,12 @@ export async function putShot(
   ) {
     throw new Error(`Invalid shot name: ${name}`);
   }
-  const directory = platformShotsDirectory(platform, baseDirectory);
-  await mkdir(directory, { recursive: true });
-  const target = path.join(directory, name);
-  const temporary = `${target}.tmp-${process.pid}`;
-  if (Buffer.isBuffer(source)) await writeFile(temporary, source);
-  else await copyFile(source, temporary);
-  await rename(temporary, target);
+  return path.join(platformShotsDirectory(platform, baseDirectory), name);
 }
 
 // Index of the shot files on disk: platform -> filename -> {src, mtime}, with src
 // relative to the store root so the page can load and cache-bust it.
-export async function shotEntries(baseDirectory = storeDirectory) {
+export async function shotEntries(baseDirectory = storeDirectory, names) {
   const platforms = Object.keys(PLATFORMS);
   const entries = Object.fromEntries(
     platforms.map((platform) => [platform, {}]),
@@ -68,11 +80,15 @@ export async function shotEntries(baseDirectory = storeDirectory) {
   await Promise.all(
     platforms.map(async (platform) => {
       const directory = path.join(baseDirectory, "shots", platform);
-      const names = (await readdir(directory).catch(() => [])).filter((name) =>
-        name.endsWith(".png"),
+      const files = (await readdir(directory).catch(() => [])).filter(
+        (name) =>
+          name.endsWith(".png") &&
+          (!names ||
+            names.has(name) ||
+            names.has(name.replace(/--\d+\.png$/, ".png"))),
       );
       await Promise.all(
-        names.map(async (name) => {
+        files.map(async (name) => {
           // A shot replaced between readdir and stat is simply absent this tick.
           const info = await stat(path.join(directory, name)).catch(() => null);
           if (!info) return;
@@ -127,10 +143,7 @@ export function shotDriftWarning(producedNames, scenarios) {
 // inputs that produced it and the source files the fingerprint covers. A
 // scan recaptures a shot only when that fingerprint no longer matches.
 export function shotRecordPath(platform, name, baseDirectory = storeDirectory) {
-  return path.join(
-    platformShotsDirectory(platform, baseDirectory),
-    name.replace(/\.png$/, ".fp"),
-  );
+  return shotPath(platform, name, baseDirectory).replace(/\.png$/, ".fp");
 }
 
 export async function putShotRecord(
@@ -156,8 +169,20 @@ export async function readShotRecord(
       "utf8",
     );
     const record = JSON.parse(text);
-    return typeof record.fingerprint === "string" &&
-      Array.isArray(record.sources)
+    return record !== null &&
+      typeof record.fingerprint === "string" &&
+      Array.isArray(record.sources) &&
+      record.sources.every((source) => typeof source === "string") &&
+      (record.parts === undefined ||
+        (Array.isArray(record.parts) &&
+          record.parts.length > 0 &&
+          record.parts[0] === name &&
+          record.parts.every(
+            (part) =>
+              typeof part === "string" &&
+              path.basename(part) === part &&
+              part.endsWith(".png"),
+          )))
       ? record
       : null;
   } catch {
@@ -178,9 +203,8 @@ export async function shotIsFresh(
   if (!record || record.fingerprint !== fingerprint) return false;
   for (const platform of platforms) {
     try {
-      await stat(
-        path.join(platformShotsDirectory(platform, baseDirectory), name),
-      );
+      for (const part of record.parts ?? [name])
+        await stat(shotPath(platform, part, baseDirectory));
     } catch {
       return false;
     }

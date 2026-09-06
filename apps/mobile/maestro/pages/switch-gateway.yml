@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Switch gateway
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://switch-gateway?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&visualScroll=page"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-switch-gateway
+- runFlow:
+    file: ../visual/capture-page.yml
+    env:
+      SCREENSHOT: page-switch-gateway.png

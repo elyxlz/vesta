@@ -21,6 +21,11 @@ function validateScenario(entry, family, familyPlatforms, ids, screenshots) {
   requireText(entry, "title");
   requireText(entry, "description");
   requireText(entry, "group");
+  if (entry.page !== undefined) {
+    if (!SCENARIO_ID.test(entry.page))
+      throw new Error(`Invalid page: ${entry.page}`);
+    requireText(entry, "route");
+  }
   const screenshot = entry.screenshot ?? `${entry.id}.png`;
   if (
     path.basename(screenshot) !== screenshot ||

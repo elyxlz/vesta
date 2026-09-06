@@ -7,6 +7,7 @@ import {
   Pressable,
   StyleSheet,
   View,
+  useWindowDimensions,
 } from "react-native";
 import Markdown, {
   MarkdownIt,
@@ -193,6 +194,7 @@ export const ChatEvent = memo(function ChatEvent({
 }) {
   const { colors } = usePreferences();
   const { api } = useSession();
+  const { width } = useWindowDimensions();
   // Android's menu wrapper loses the long-press to a pressable attachment block, so blocks get
   // a handler that reopens the menu; iOS's native interaction needs none.
   const menuRef = useRef<MessageMenuHandle | null>(null);
@@ -251,7 +253,11 @@ export const ChatEvent = memo(function ChatEvent({
         </View>
       ),
       blockquote: (node, children) => (
-        <QuotedBlock key={node.key} style={styles.markdownBlockquote}>
+        <QuotedBlock
+          key={node.key}
+          style={styles.markdownBlockquote}
+          onAccent={user}
+        >
           {children}
         </QuotedBlock>
       ),
@@ -317,6 +323,9 @@ export const ChatEvent = memo(function ChatEvent({
       accessibilityHint="Long press for message actions"
       style={[
         styles.bubble,
+        // Compose's menu trigger measures its RN child independently; the
+        // outer percentage maxWidth cannot constrain that measurement.
+        USES_NATIVE_BUBBLE_SHAPE ? null : { maxWidth: (width - 24) * 0.88 },
         USES_NATIVE_BUBBLE_SHAPE
           ? null
           : [

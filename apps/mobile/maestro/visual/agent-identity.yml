@@ -1,0 +1,36 @@
+appId: ${APP_ID}
+name: Agent identity
+tags: [visual, connected]
+---
+- runFlow: prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
+- scrollUntilVisible:
+    element: "Technical details.*"
+    direction: DOWN
+    centerElement: true
+- tapOn: "Technical details.*"
+- waitForAnimationToEnd
+- takeScreenshot: agent-technical-details
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-technical-details.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/name?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
+- tapOn: "New agent name"
+- eraseText: 4
+- inputText: "Nova_Prime"
+- runScript:
+    file: capture-screenshot.js
+    env:
+      ACTION: show-software-keyboard
+- waitForAnimationToEnd
+- takeScreenshot: agent-rename
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-rename.png

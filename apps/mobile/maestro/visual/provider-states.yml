@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=none"
 - waitForAnimationToEnd:
@@ -50,6 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Authentication.*'
     timeout: 30000
@@ -70,14 +68,6 @@ tags:
       SCREENSHOT: agent-provider-none.png
 - tapOn:
     text: 'OpenRouter'
-- scrollUntilVisible:
-    element:
-      text: '.*Connect OpenRouter.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-key-entry
@@ -115,6 +105,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=unauthenticated"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Authentication.*'
     timeout: 30000
@@ -153,6 +144,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=openrouter"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Authentication.*'
     timeout: 30000
@@ -174,9 +166,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=openai"
-- extendedWaitUntil:
-    visible: '.*Plan.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-openai
@@ -187,14 +177,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Model.*'
     timeout: 30000
 - tapOn:
     text: '^Model,.*'
-- extendedWaitUntil:
-    visible: '.*Choose model.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-choose-model
@@ -206,9 +194,6 @@ tags:
     text: 'Cancel'
 - tapOn:
     text: '^Context,.*'
-- extendedWaitUntil:
-    visible: '.*Context window.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-context-picker
@@ -228,9 +213,6 @@ tags:
     centerElement: true
 - tapOn:
     text: '.*Sign out provider.*'
-- extendedWaitUntil:
-    visible: '.*Sign out provider\?.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-sign-out-confirm
@@ -241,9 +223,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDelay=60000"
-- extendedWaitUntil:
-    visible: '.*Loading provider.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-loading
@@ -254,9 +234,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
-- extendedWaitUntil:
-    visible: '.*Something went wrong.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-error

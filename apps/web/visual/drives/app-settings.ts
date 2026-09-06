@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import type { DeviceInfo } from "@vesta/core";
 import { AGENT, type RouteFixture } from "../harness/http-fixtures";
 import {
@@ -177,14 +177,10 @@ async function openWhatsNew(page: Page): Promise<void> {
   await page.getByRole("button", { name: "What's new" }).click();
 }
 
-function whatsNew(
-  releases: RouteFixture,
-  settle: Scenario["settle"],
-): Scenario {
+function whatsNew(releases: RouteFixture): Scenario {
   return {
     state: settingsState({ routes: [releases] }),
     drive: openWhatsNew,
-    settle,
   };
 }
 
@@ -195,9 +191,8 @@ async function toLinkForm(page: Page): Promise<void> {
     name: "self-hosting? connect with a link",
   });
   const linkInput = page.getByPlaceholder("paste your connect link");
-  await expect(linkInput.or(selfHost).first()).toBeVisible();
+  await linkInput.or(selfHost).first().waitFor({ state: "visible" });
   if (await selfHost.isVisible()) await selfHost.click();
-  await expect(linkInput).toBeVisible();
 }
 
 async function submitLink(page: Page): Promise<void> {
@@ -241,37 +236,14 @@ export const APP_SETTINGS: Record<string, Scenario> = {
   "app-settings": {
     state: settingsState(),
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      await expect(
-        page.getByRole("heading", { name: "appearance" }),
-      ).toBeVisible();
-      await expect(page.getByText("lan access")).toBeVisible();
-      await expect(page.getByText("remote access")).toBeVisible();
-    },
   },
   "app-settings-managed": {
     state: settingsState({ sync: { gateway: { managed: true } } }),
     drive: (page) => scrollTo(page, "manage account & billing"),
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "manage account & billing" }),
-      ).toBeVisible();
-    },
   },
   "app-settings-devices": {
     state: settingsState({ sync: { devices: DEVICES } }),
     drive: (page) => scrollTo(page, "share this device's location"),
-    settle: async (page) => {
-      await expect(page.getByText("present now")).toBeVisible();
-      await expect(page.getByText("last seen 3h ago")).toBeVisible();
-      await expect(page.getByText("last seen 12m ago")).toBeVisible();
-      await expect(
-        page.getByText("Lisbon, Portugal · Europe/Lisbon"),
-      ).toBeVisible();
-      await expect(
-        page.getByText("share this device's location"),
-      ).toBeVisible();
-    },
   },
   "app-settings-lan-tunnel": {
     state: {
@@ -286,10 +258,6 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       routes: gatewayRoutes(GATEWAY_INFO_EXPOSED),
     },
     drive: (page) => scrollTo(page, "remote access"),
-    settle: async (page) => {
-      await expect(page.getByText(LAN_URL)).toBeVisible();
-      await expect(page.getByText(TUNNEL_URL)).toBeVisible();
-    },
   },
   "app-settings-check-updates": {
     state: settingsState({
@@ -298,11 +266,6 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     drive: async (page) => {
       await scrollTo(page, "check for updates");
       await page.getByRole("button", { name: "check for updates" }).click();
-    },
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "check for updates" }),
-      ).toBeDisabled();
     },
   },
   "app-settings-updates": {
@@ -314,25 +277,11 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     },
     drive: (page) =>
       page.getByText("Vesta desktop", { exact: true }).scrollIntoViewIfNeeded(),
-    settle: async (page) => {
-      await expect(page.getByText("Vesta gateway")).toBeVisible();
-      // Both rows expose an "update" action (Vesta desktop and the gateway pill).
-      await expect(
-        page.getByRole("button", { name: "update", exact: true }),
-      ).toHaveCount(2);
-    },
   },
   "app-settings-restart-dialog": {
     state: settingsState(),
     drive: async (page) => {
       await page.getByRole("button", { name: "restart", exact: true }).click();
-    },
-    settle: async (page) => {
-      const dialog = page.getByRole("alertdialog");
-      await expect(dialog.getByText("restart the gateway?")).toBeVisible();
-      await expect(
-        dialog.getByRole("button", { name: "cancel" }),
-      ).toBeVisible();
     },
   },
   "app-settings-gateway-logs": {
@@ -340,49 +289,17 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     drive: async (page) => {
       await page.getByRole("button", { name: "view logs" }).click();
     },
-    settle: async (page) => {
-      const dialog = page.getByRole("dialog", { name: "Gateway logs" });
-      await expect(dialog.getByText("listening on 0.0.0.0:4111")).toBeVisible();
-      await expect(dialog.getByText("client web focused")).toBeVisible();
-    },
   },
-  "whats-new-loading": whatsNew(
-    { path: RELEASES_URL, hang: true },
-    async (page) => {
-      const dialog = page.getByRole("dialog", { name: "What's new" });
-      await expect(dialog.getByRole("status")).toBeVisible();
-    },
-  ),
-  "whats-new-error": whatsNew(
-    { path: RELEASES_URL, status: 500, json: { message: "rate limited" } },
-    async (page) => {
-      await expect(page.getByText("Couldn't load release notes")).toBeVisible();
-    },
-  ),
-  "whats-new-notes": whatsNew(
-    { path: RELEASES_URL, json: RELEASES },
-    async (page) => {
-      const dialog = page.getByRole("dialog", { name: "What's new" });
-      await expect(dialog.getByText("v0.2.3")).toBeVisible();
-      await expect(dialog.getByText("v0.2.2")).toBeVisible();
-      await expect(
-        dialog.getByText("faster reconnects after a gateway restart", {
-          exact: false,
-        }),
-      ).toBeVisible();
-    },
-  ),
+  "whats-new-loading": whatsNew({ path: RELEASES_URL, hang: true }),
+  "whats-new-error": whatsNew({
+    path: RELEASES_URL,
+    status: 500,
+    json: { message: "rate limited" },
+  }),
+  "whats-new-notes": whatsNew({ path: RELEASES_URL, json: RELEASES }),
   "connect-form": {
     state: SIGNED_OUT,
     drive: toLinkForm,
-    settle: async (page) => {
-      await expect(
-        page.getByPlaceholder("paste your connect link"),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "connect", exact: true }),
-      ).toBeVisible();
-    },
   },
   "connect-recent-gateways": {
     state: {
@@ -393,86 +310,36 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     },
     drive: async (page) => {
       const trigger = page.getByRole("button", { name: "recent gateways" });
-      await expect(trigger).toBeVisible();
       await trigger.click();
-    },
-    settle: async (page) => {
-      const dialog = page.getByRole("dialog", { name: "recent gateways" });
-      await expect(dialog).toBeVisible();
-      await expect(dialog.getByText("luna.example.com")).toBeVisible();
-      await expect(dialog.getByText("home.example.com")).toBeVisible();
     },
   },
   "connect-connecting": {
     state: { ...SIGNED_OUT, routes: [{ path: "/health", hang: true }] },
     drive: submitLink,
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "connecting..." }),
-      ).toBeDisabled();
-    },
   },
   "connect-error": {
     state: { ...SIGNED_OUT, routes: [{ path: "/health", status: 503 }] },
     drive: submitLink,
-    settle: async (page) => {
-      await expect(page.getByRole("alert")).toHaveText(
-        "could not reach server",
-      );
-    },
   },
   "connect-managed-desktop": {
     state: SIGNED_OUT,
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "continue with vesta account" }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "self-hosting? connect with a link" }),
-      ).toBeVisible();
-    },
   },
   "callback-error": {
     state: { route: "/cb", connection: false },
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      await expect(page.getByText("missing code")).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "back to sign-in" }),
-      ).toBeVisible();
-    },
   },
   "disconnected-overlay": {
     state: { route: "/", sync: { mode: "refuse" } },
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      const overlay = page.getByRole("alertdialog", {
-        name: "disconnected from gateway",
-      });
-      await expect(
-        overlay.getByText("attempting to reconnect to vestad.local..."),
-      ).toBeVisible();
-    },
   },
   "debug-page": {
     state: { route: "/debug" },
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      await expect(
-        page.getByRole("heading", { name: "orb states" }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "chat bubbles" }),
-      ).toBeVisible();
-    },
   },
   "keybinds-windows": {
     state: { ...settingsState(), native: { platform: "win32" } },
     drive: (page) =>
       page.getByText("keybinds", { exact: true }).scrollIntoViewIfNeeded(),
-    settle: async (page) => {
-      await expect(page.getByText("Ctrl").first()).toBeVisible();
-    },
   },
 };

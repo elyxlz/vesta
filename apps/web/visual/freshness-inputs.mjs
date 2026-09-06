@@ -26,6 +26,8 @@ export async function alwaysOnInputs() {
     path.join(appsRoot, "web/src/index.css"),
     path.join(appsRoot, "web/src/design-tokens.css"),
     path.join(appsRoot, "package-lock.json"),
+    path.join(appsRoot, "visual/stability.mjs"),
+    path.join(appsRoot, "visual/platforms.mjs"),
   ];
 }
 
@@ -43,7 +45,11 @@ export async function drivesFileFor(id) {
 
 export async function scenarioInputs(id, card) {
   return {
-    files: [...(await alwaysOnInputs()), await drivesFileFor(id)],
+    files: [
+      ...(await alwaysOnInputs()),
+      await drivesFileFor(id),
+      ...(card.reference ? [await drivesFileFor(card.reference)] : []),
+    ],
     extras: [JSON.stringify(card)],
   };
 }

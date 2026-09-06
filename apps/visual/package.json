@@ -5,6 +5,14 @@
   "description": "Vesta visual QA: the shared platform table, registry contract, shot store, and gallery for every app",
   "type": "module",
   "exports": {
+    "./selection": {
+      "types": "./selection.d.mts",
+      "default": "./selection.mjs"
+    },
+    "./stability": {
+      "types": "./stability.d.mts",
+      "default": "./stability.mjs"
+    },
     "./platforms": {
       "types": "./platforms.d.mts",
       "default": "./platforms.mjs"
@@ -37,5 +45,9 @@
     "eslint": "^10.7.0",
     "globals": "^17.11.0",
     "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0"
   }
 }

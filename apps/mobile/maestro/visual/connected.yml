@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: "Open aria"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - takeScreenshot: home-agents
 - runScript:
     file: capture-screenshot.js
@@ -60,9 +55,6 @@ tags:
       SCREENSHOT: home-agents.png
 
 - tapOn: "Open aria"
-- extendedWaitUntil:
-    visible: "Done. I prioritized the visual regressions first.*"
-    timeout: 10000
 - takeScreenshot: agent-chat
 - runScript:
     file: capture-screenshot.js
@@ -82,9 +74,6 @@ tags:
           visible: "Your dashboard"
           timeout: 5000
           optional: true
-- extendedWaitUntil:
-    visible: "Your dashboard"
-    timeout: 5000
 - takeScreenshot: agent-dashboard-empty
 - runScript:
     file: capture-screenshot.js
@@ -97,12 +86,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Provider and model.*'
-    timeout: 30000
-- extendedWaitUntil:
-    visible: "Close agent settings"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings
@@ -122,9 +106,6 @@ tags:
 
 - tapOn:
     text: "^Notifications.*"
-- extendedWaitUntil:
-    visible: "Design review"
-    timeout: 10000
 - takeScreenshot: agent-notifications
 - runScript:
     file: capture-screenshot.js
@@ -136,9 +117,7 @@ tags:
     commands:
       - openLink:
           link: "vesta-dev://agent/aria/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-      - extendedWaitUntil:
-          visible: ".*boot step.*settled.*"
-          timeout: 10000
+      - runFlow: wait-for-launch.yml
       - takeScreenshot: agent-logs
       - runScript:
           file: capture-screenshot.js
@@ -146,6 +125,7 @@ tags:
             SCREENSHOT: agent-logs.png
 - openLink:
     link: "vesta-dev://agent/aria/settings"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Close agent settings"
     timeout: 10000
@@ -160,9 +140,6 @@ tags:
 
 - tapOn:
     text: "^Files.*"
-- extendedWaitUntil:
-    visible: "Who aria is"
-    timeout: 10000
 - takeScreenshot: agent-files
 - runScript:
     file: capture-screenshot.js
@@ -171,14 +148,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 10000
 
 - tapOn: "Create agent"
-- extendedWaitUntil:
-    visible: ".*coming to mobile.*"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: new-agent
@@ -186,33 +161,12 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: new-agent.png
-# Dismissing is proven by the sheet's own copy going away: on Android the home
-# underneath stays visible to accessibility through the in-app sheet.
-- repeat:
-    times: 3
-    while:
-      visible: ".*coming to mobile.*"
-    commands:
-      - swipe:
-          start: "50%,45%"
-          end: "50%,95%"
-          duration: 500
-      - extendedWaitUntil:
-          notVisible: "Coming soon"
-          timeout: 5000
-          optional: true
-- extendedWaitUntil:
-    notVisible: "Coming soon"
-    timeout: 5000
-- extendedWaitUntil:
-    visible: "Open aria"
-    timeout: 5000
-
-- tapOn:
-    text: "App settings.*"
-- extendedWaitUntil:
-    visible: "App Lock"
-    timeout: 10000
+# Each sheet gets clean presentation history. Dismissing a preceding form
+# sheet can leave Android's next sheet with stale status-bar insets.
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-overview
@@ -221,11 +175,22 @@ tags:
     env:
       SCREENSHOT: settings-overview.png
 
-- tapOn:
-    text: "Appearance.*"
-- extendedWaitUntil:
-    visible: "System"
-    timeout: 10000
+# Maestro's default scroll starts at screen center, above the half-height
+# iOS sheet. Expand from inside the sheet before looking for its controls.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: "50%,58%"
+          end: "50%,10%"
+          duration: 500
+- scrollUntilVisible:
+    element:
+      text: "^Dark$"
+    direction: DOWN
+    timeout: 15000
+    centerElement: true
 - takeScreenshot: settings-appearance
 - runScript:
     file: capture-screenshot.js
@@ -239,22 +204,26 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: settings-dark.png
-- tapOn:
-    text: "Appearance.*"
-- tapOn: "Light"
+- tapOn: "System"
 - waitForAnimationToEnd:
     timeout: 1000
 
+# Return to the top before capturing gateway controls.
+- stopApp
+- openLink:
+    link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 # Expand before capturing gateway controls and its full-detent close button.
-- swipe:
-    start: "50%,58%"
-    end: "50%,10%"
-    duration: 500
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: "50%,58%"
+          end: "50%,10%"
+          duration: 500
 - waitForAnimationToEnd:
     timeout: 3000
-- extendedWaitUntil:
-    visible: "Close settings"
-    timeout: 10000
 
 - scrollUntilVisible:
     element:
@@ -287,20 +256,19 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
 - openLink:
     link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 10000
 - tapOn:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "View release v0.2.0 on GitHub"
-    timeout: 30000
 - takeScreenshot: whats-new
 - runScript:
     file: capture-screenshot.js
