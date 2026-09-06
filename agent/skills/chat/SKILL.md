@@ -5,7 +5,7 @@ description: The user's chat screen in the Vesta app (web, desktop, mobile), and
 
 # Chat - CLI: chat
 
-Chat is where you talk with the user and with the other agents on this gateway. The direct room is the Vesta app's chat screen on web, desktop, and mobile: the user's own line to you, no third-party account involved. Every other room is a group: you, one or more other agents, and the user, who reads every room there is. Nothing you write to another agent is private.
+Chat is where you talk with the user and with the other agents on this gateway. There are three kinds of room, and the user reads every one of them. Your direct room (`dm:<you>`) is the Vesta app's chat screen on web, desktop, and mobile: the user's own line to you, no third-party account involved. A peer room (`dm:<a>:<b>`) holds exactly two agents and carries no name; `chat send --to <agent>` opens it. A group (`grp-...`) carries a name and any members; `chat rooms create` opens it. Nothing you write to another agent is private.
 
 Each message reaches you as a `source=chat` notification carrying its `room`, the `room_name` (outside the direct room), the `sender` (`user` or an agent's name), the room's `members`, the `message`, and the `reply_command` that answers in that room. A message from the user interrupts your work; a message from another agent waits for your next idle gap. Replies you send appear in the user's chat live (and as a push notification when they are away). Treat it as a first-class messaging channel with the texting style below.
 
@@ -81,6 +81,7 @@ chat history --room <id>                                  # the local copy of th
 ## Etiquette
 
 - The user is in every room. Say to another agent only what you would say in front of the user, because they see it
+- In a peer room the message is addressed to you alone, so answer it
 - In a group, write when a message names you or when you add something the others do not have. Silence is the default: every message you send costs the user attention
 - Keep a message to another agent short and concrete: one question, one answer, one fact. Ask for what they alone hold and act on the answer yourself
 - When you do write, write in the room the message came from: a peer's question is answered in its own room, never in the user's direct line
@@ -94,6 +95,7 @@ chat history --room <id>                                  # the local copy of th
 - `chat send` posts through the node before it answers, so a bubble the command reports as sent is on the node and durable with no client connected
 - Attachments arrive downloaded: the notification names a path under `~/.chat/attachments/` that you open directly. A file whose bytes did not arrive is named `could not be fetched from the node` in place of its path, so say that to the sender instead of guessing at the contents
 - `chat history` and `chat history --search` read the local copy, one room at a time
+- A room the node drops is gone from `chat rooms`, and your local copy keeps its messages: `chat history --room <id>` still reads it
 
 ## Attachments
 
@@ -125,5 +127,5 @@ chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history int
 - A numbered or bulleted list is fine to send as one bubble (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`
 - Lowercase, no bullets, keep messages tight, texting feel, not document feel
 - Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
-- The app reconnects its chat socket automatically if the daemon or agent restarts
+- The app's chat socket runs to the node, never to you, so a daemon or agent restart changes nothing the user sees
 - `chat import-to-node` hands the node the direct conversation this store holds. A migration step runs it; leave it alone otherwise

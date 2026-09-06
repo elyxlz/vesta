@@ -510,6 +510,25 @@ def test_an_attachment_id_this_store_cannot_hold_is_an_error_not_a_crash(tmp_pat
     assert fake.messages == []
 
 
+def test_an_oversize_attachment_is_refused_before_any_byte_reaches_the_node(tmp_path, monkeypatch):
+    # The daemon measures the file itself, so the whole send fails on the sender's own disk read and
+    # the node is never handed an upload it would only reject.
+    fake = FakeNode()
+    fake.seed_room([AGENT])
+    source = tmp_path / "huge.bin"
+    source.write_bytes(b"0123456789")
+    monkeypatch.setattr(attachments, "MAX_ATTACHMENT_BYTES", 4)
+
+    async def scenario(state):
+        return await _socket_command(state, {"command": "send", "message": "here", "attach": [str(source)]})
+
+    response = _with_node(fake, tmp_path, scenario)
+
+    assert response == {"error": f"{source} is 10 bytes, over the 4 byte limit"}
+    assert fake.attachments == {}
+    assert fake.messages == []
+
+
 def test_send_with_missing_attach_path_errors_and_posts_nothing(tmp_path):
     fake = FakeNode()
     fake.seed_room([AGENT])
