@@ -72,8 +72,14 @@ esc=$(printf '\033')
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
-        BEGIN { recent = 1 }
+    # A dated log's leading lines above its first date are stragglers of an older event (a Python
+    # traceback prints its frames before the dated record), so they start non-recent and an aged-out
+    # event stops inflating the count; a log that never dates its lines has no anchor, so it keeps the
+    # recent=1 default and its errors still count.
+    dated=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | grep -cE '^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+    [ "$dated" -gt 0 ] && start=0 || start=1
+    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" -v start="$start" '
+        BEGIN { recent = start }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
