@@ -5,7 +5,7 @@ Two fully public, no-auth APIs. Everything is a direct HTTP call — never need 
 - **Nominatim**: geocoding (place name → lat/lon and reverse). Rate limit: 1 req/s.
 - **Overpass API**: spatial query engine over the full OSM dataset. Rate limit: 2 concurrent slots per IP on the public instance.
 
-**Do not use `http_get` without overriding `User-Agent`** — its default `Mozilla/5.0` is blocked by both APIs with HTTP 403. Pass `headers={"User-Agent": "browser-harness/1.0"}` on every call.
+**Do not use `http_get` without overriding `User-Agent`** — its default `Mozilla/5.0` is blocked by both APIs with HTTP 403. Pass `headers={"User-Agent": "vesta-browser/1.0"}` on every call.
 
 ---
 
@@ -15,7 +15,7 @@ Two fully public, no-auth APIs. Everything is a direct HTTP call — never need 
 import json, urllib.parse
 from helpers import http_get
 
-UA = {"User-Agent": "browser-harness/1.0"}
+UA = {"User-Agent": "vesta-browser/1.0"}
 
 
 def geocode(query: str, limit: int = 3) -> list[dict]:
@@ -50,7 +50,7 @@ results = geocode("Eiffel Tower")
 import json, urllib.parse
 from helpers import http_get
 
-UA = {"User-Agent": "browser-harness/1.0"}
+UA = {"User-Agent": "vesta-browser/1.0"}
 
 raw = http_get("https://nominatim.openstreetmap.org/search?q=Eiffel+Tower&format=json&limit=3&addressdetails=1", headers=UA)
 results = json.loads(raw)
@@ -142,7 +142,7 @@ Overpass is a read-only query engine over the full OSM planet. It supports findi
 **Backup instances** (use when main is overloaded, which happens often):
 - `https://overpass.openstreetmap.fr/api/interpreter` — requires non-Mozilla User-Agent
 
-**http_get works for GET requests** — pass `headers={"User-Agent": "browser-harness/1.0"}`. For POST, use `urllib` directly (see example below).
+**http_get works for GET requests** — pass `headers={"User-Agent": "vesta-browser/1.0"}`. For POST, use `urllib` directly (see example below).
 
 ### GET query (simplest for http_get)
 
@@ -150,7 +150,7 @@ Overpass is a read-only query engine over the full OSM planet. It supports findi
 import json, urllib.parse
 from helpers import http_get
 
-UA = {"User-Agent": "browser-harness/1.0"}
+UA = {"User-Agent": "vesta-browser/1.0"}
 OVERPASS = "https://overpass.openstreetmap.fr/api/interpreter"
 
 
@@ -200,7 +200,7 @@ def overpass_post(query: str) -> dict:
         data=data,
         method="POST",
         headers={
-            "User-Agent": "browser-harness/1.0",
+            "User-Agent": "vesta-browser/1.0",
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept-Encoding": "gzip",
         },
@@ -335,7 +335,7 @@ url = f"https://a.tile.openstreetmap.org/14/{x}/{y}.png"
 
 **Check your Overpass quota**:
 ```python
-raw = http_get("https://overpass-api.de/api/status", headers={"User-Agent": "browser-harness/1.0"})
+raw = http_get("https://overpass-api.de/api/status", headers={"User-Agent": "vesta-browser/1.0"})
 print(raw)
 # Connected as: 1728118854
 # Rate limit: 2
@@ -351,7 +351,7 @@ import time
 def overpass_get_with_retry(query: str, max_retries: int = 3) -> dict:
     for attempt in range(max_retries):
         url = f"https://overpass.openstreetmap.fr/api/interpreter?data={urllib.parse.quote(query)}"
-        raw = http_get(url, headers={"User-Agent": "browser-harness/1.0"})
+        raw = http_get(url, headers={"User-Agent": "vesta-browser/1.0"})
         if raw.startswith("{"):
             return json.loads(raw)
         if "rate_limited" in raw or "too busy" in raw:
@@ -370,7 +370,7 @@ def overpass_get_with_retry(query: str, max_retries: int = 3) -> dict:
 import json, time, urllib.parse, urllib.request, gzip
 from helpers import http_get
 
-UA = {"User-Agent": "browser-harness/1.0"}
+UA = {"User-Agent": "vesta-browser/1.0"}
 NOMINATIM = "https://nominatim.openstreetmap.org"
 OVERPASS = "https://overpass.openstreetmap.fr/api/interpreter"
 
@@ -404,7 +404,7 @@ def overpass_post(query: str) -> list[dict]:
         OVERPASS,
         data=data,
         method="POST",
-        headers={"User-Agent": "browser-harness/1.0", "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "gzip"},
+        headers={"User-Agent": "vesta-browser/1.0", "Content-Type": "application/x-www-form-urlencoded", "Accept-Encoding": "gzip"},
     )
     with urllib.request.urlopen(req, timeout=30) as r:
         body = r.read()
@@ -458,9 +458,9 @@ print(f"Found {len(rests)} restaurants near Paris center")
 
 ## Gotchas
 
-**`http_get` default UA (`Mozilla/5.0`) is blocked by both APIs.** Always pass `headers={"User-Agent": "browser-harness/1.0"}`. The `headers` kwarg in `http_get` does a `.update()` so it properly overrides the default. Confirmed: Mozilla/5.0 → 403 on Nominatim; `browser-harness/1.0` → 200.
+**`http_get` default UA (`Mozilla/5.0`) is blocked by both APIs.** Always pass `headers={"User-Agent": "vesta-browser/1.0"}`. The `headers` kwarg in `http_get` does a `.update()` so it properly overrides the default. Confirmed: Mozilla/5.0 → 403 on Nominatim; `vesta-browser/1.0` → 200.
 
-**Blocked User-Agent patterns on Nominatim**: `Mozilla/5.0`, `python-requests/*`, `Wget/*`. Accepted: any non-generic app-style UA like `browser-harness/1.0`, `MyApp/2.0`, `curl/7.x`. Nominatim policy requires a descriptive UA with contact info, but in practice any non-library string passes.
+**Blocked User-Agent patterns on Nominatim**: `Mozilla/5.0`, `python-requests/*`, `Wget/*`. Accepted: any non-generic app-style UA like `vesta-browser/1.0`, `MyApp/2.0`, `curl/7.x`. Nominatim policy requires a descriptive UA with contact info, but in practice any non-library string passes.
 
 **Nominatim lat/lon are strings, Overpass lat/lon are floats.** Always convert Nominatim coordinates: `float(result['lat'])`. Overpass element `lat`/`lon` are native Python floats — no conversion needed.
 

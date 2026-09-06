@@ -22,7 +22,6 @@ EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service"}
 # service key.
 EXPECTED_DIRECT_PUBLIC = {
     "agentmail/cli/src/agentmail_bridge/daemon.py",  # the webhook an external mail sender posts to
-    "browser/cli/src/vesta_browser/handover.py",  # the handover page opens with no credential
     "file-host/file-host",  # the share link is fetched from outside the tunnel
     "whatsapp/cli/link.go",  # the QR link page a stranger's phone opens
 }

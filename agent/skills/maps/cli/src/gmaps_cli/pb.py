@@ -18,7 +18,7 @@ from pathlib import Path
 
 ENVELOPE_PREFIX = ")]}'"
 _TEMPLATE_PATH = Path(__file__).with_name("search_pb.txt")
-_TOKEN_RE = re.compile(r'"([A-Za-z0-9_-]{22,24})"')
+SESSION_TOKEN_RE = re.compile(r'"([A-Za-z0-9_-]{22,24})"')
 
 
 def strip_envelope(raw: str) -> str:
@@ -84,7 +84,7 @@ def extract_session_token(page_html: str) -> str:
     if not isinstance(section, str):
         raise ValueError("session-token section is not a string")
     meta = json.loads(strip_envelope(section))
-    match = _TOKEN_RE.search(json.dumps(meta))
+    match = SESSION_TOKEN_RE.search(json.dumps(meta))
     if match is None:
         raise ValueError("no session token found in page")
     return match.group(1)

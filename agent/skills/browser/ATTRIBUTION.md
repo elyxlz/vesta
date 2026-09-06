@@ -5,6 +5,11 @@ imported from [browser-use/browser-harness](https://github.com/browser-use/brows
 licensed MIT. Command invocations were rewritten to match Vesta's `browser` CLI;
 content is otherwise unmodified from the upstream snapshot at import time.
 
+## Runtime dependencies
+
+- Browser Use (`browser-use` 0.13.10, MIT, https://github.com/browser-use/browser-use) and Browser Harness (`browser-harness` 0.1.13, MIT, https://github.com/browser-use/browser-harness) run the Chromium route in `engines/chromium/`.
+- Camoufox Python library (`camoufox` 0.5.6b1, MIT, https://github.com/daijro/camoufox/tree/main/pythonlib) runs the stealth route in `engines/camoufox/`; the Camoufox browser bundle installed at `/opt/camoufox/<tag>/` is Mozilla Public License 2.0 (https://github.com/daijro/camoufox/blob/main/LICENSE).
+
 Subsequent edits and new skills are authored by Vesta agents and committed
 under the Vesta repository license.
 

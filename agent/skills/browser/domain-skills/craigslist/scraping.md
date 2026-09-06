@@ -15,7 +15,7 @@ real browsers. For scraping purposes, this means:
 
 - One `http_get` call per search query returns the full result set (no pagination loop needed).
 - For broader searches, narrow via `query=`, `min_price=`, `max_price=`, and category code in the URL.
-- If you need more than ~360 results, you must use a headless browser with JS. For most tasks,
+- If you need more than ~360 results, you must drive a JS-capable browser session. For most tasks,
   one request is sufficient.
 
 ## URL patterns

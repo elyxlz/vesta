@@ -113,7 +113,7 @@ stories = re.findall(r'class="titleline"><a href="([^"]+)"[^>]*>([^<]+)<', html)
 
 ### BBC (`bbc.com/news`)
 
-No consent banner in headless browser (US region served; GDPR banner only appears for EU IP). Articles use `article h2` selectors.
+No consent banner (US region served; GDPR banner only appears for EU IP). Articles use `article h2` selectors.
 
 ```python
 goto("https://www.bbc.com/news")
