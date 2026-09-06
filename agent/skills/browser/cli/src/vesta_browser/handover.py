@@ -71,9 +71,9 @@ def _env(name: str) -> str:
 
 async def _start_stream(paths: Paths, display_name: str, webroot: pl.Path, web_port: int, vnc_port: int) -> display.StreamStack:
     """The stream on the display `display_name` names, torn back down if either process fails."""
-    x11vnc = await display.start_x11vnc(display_name, vnc_port)
+    x11vnc = await display.start_x11vnc(paths.children_ledger, display_name, vnc_port)
     async with reaped_on_failure(x11vnc, KILL_GRACE_SECS):
-        websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
+        websockify = await display.start_websockify(paths.children_ledger, webroot, web_port, vnc_port, paths.log)
     return display.StreamStack(x11vnc, websockify, vnc_port, web_port, webroot)
 
 
@@ -160,6 +160,13 @@ async def start(state: State, *, session_name: str, mode: p.Mode | None, url: st
     except TimeoutError as exc:
         state.handover = None
         raise _too_slow() from exc
+    except p.BrowserError as exc:
+        # A stop that landed while the browser was coming up ended this handover's own start; the
+        # engine's other refusals are the session's to report as they are.
+        state.handover = None
+        if exc.err["code"] == "cancelled":
+            raise _failed(exc.err["message"]) from exc
+        raise
     except BaseException:
         state.handover = None
         raise

@@ -146,6 +146,19 @@ def test_the_handover_verbs_wait_past_the_daemon_bring_up_budget(monkeypatch, tm
     assert cli.HANDOVER_RPC_TIMEOUT_SECS > handover.HANDOVER_START_BUDGET_SECS
 
 
+def test_stop_all_waits_past_the_session_start_budget(monkeypatch, tmp_path):
+    """stop-all waits out a session start before it stops that session, so the client must outlive
+    that budget or read a working daemon as dead."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(
+        cli, "send", lambda _p, _payload, timeout: seen.update(timeout=timeout) or serve.p.result(request_id="x", op="stop_all", ok=True)
+    )
+    assert cli.main(["stop-all"]) == 0
+    assert seen["timeout"] == cli.STOP_ALL_TIMEOUT_SECS == cli.HANDOVER_RPC_TIMEOUT_SECS
+    assert cli.STOP_ALL_TIMEOUT_SECS > serve.STOP_ALL_SETTLE_SECS + handover.ROLLBACK_GATEWAY_TIMEOUT_SECS
+
+
 def test_usage_on_no_args_and_unknown_command(capsys, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli.main([]) == 0

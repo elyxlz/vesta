@@ -16,7 +16,7 @@ import typing as tp
 
 from . import protocol as p
 from .presets import fit_to_screen, select_preset
-from .procs import KILL_GRACE_SECS, kill_group, reaped_on_failure
+from .procs import KILL_GRACE_SECS, kill_group, reaped_on_failure, spawn
 from .runtime_paths import CAMOUFOX_FF_MAJOR, Paths
 from .runtimes import CamoufoxRuntime, ExecOutcome, HeadedDisplay, elapsed_ms
 from .sessions import Session
@@ -92,9 +92,9 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Cam
     # The worker's stderr is its whole diagnosis of a browser that would not come up; it belongs in
     # the daemon log beside everything else, never in /dev/null.
     with paths.log.open("ab") as log:
-        process = await asyncio.create_subprocess_exec(
+        process = await spawn(
+            paths.children_ledger,
             *worker_argv(paths, session, config_path, headed),
-            start_new_session=True,
             env=worker_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

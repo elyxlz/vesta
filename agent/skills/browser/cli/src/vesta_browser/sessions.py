@@ -33,6 +33,9 @@ class Session:
     display: SessionDisplay | None = None
     # Set when a runtime died under the session's own use, so the next start reports the restart.
     restart_pending: bool = False
+    # Set on a `starting` session by a stop that will not wait on it; the start honours it when the
+    # engine returns, stopping what it just started, so no stop path ever races a launch.
+    stop_requested: bool = False
 
 
 @dataclasses.dataclass
