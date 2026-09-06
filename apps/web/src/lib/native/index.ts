@@ -1,14 +1,33 @@
 import { createBrowserBridge } from "./browser";
 import { createElectronBridge } from "./electron";
-import type { NativeBridge, Runtime } from "./types";
+import type { NativeBridge, Runtime, VestaNativeApi } from "./types";
 import type { Platform } from "@/lib/platform";
 
 export type { NativeBridge, NativeGeolocationFix } from "./types";
 
-export const native: NativeBridge =
-  typeof window !== "undefined" && window.vestaNative
-    ? createElectronBridge(window.vestaNative)
-    : createBrowserBridge();
+// The desktop shell serves the bundle on its own scheme (apps/desktop/src/window.ts); nothing
+// else does. So a missing vestaNative there means the preload failed to inject the bridge, and
+// falling back to the browser bridge would silently render the web app inside the desktop window.
+// Throw instead, so that failure is loud and never ships.
+const DESKTOP_SHELL_PROTOCOL = "vesta:";
+
+interface ShellEnv {
+  vestaNative?: VestaNativeApi;
+  location: { protocol: string };
+}
+
+export function selectNativeBridge(env: ShellEnv | undefined): NativeBridge {
+  if (env?.vestaNative) return createElectronBridge(env.vestaNative);
+  if (env?.location.protocol === DESKTOP_SHELL_PROTOCOL)
+    throw new Error(
+      "desktop preload bridge missing: window.vestaNative was not injected",
+    );
+  return createBrowserBridge();
+}
+
+export const native: NativeBridge = selectNativeBridge(
+  typeof window === "undefined" ? undefined : window,
+);
 
 export interface RuntimeInfo {
   runtime: Runtime;

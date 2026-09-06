@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { triggerGatewayUpdate } from "@vesta/core";
 import { httpClient } from "@/api/client";
+import { UpdateProgressScreen } from "@/components/UpdateProgressScreen";
 import { useAuth } from "@/providers/AuthProvider/context";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import {
   Empty,
   EmptyHeader,
@@ -24,6 +26,7 @@ import {
 // construction: vestad serves this exact bundle, so their versions are always equal.
 export function GatewayBehindScreen() {
   const { disconnect } = useAuth();
+  const { gatewayOperation, updatedTo } = useGateway();
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +39,18 @@ export function GatewayBehindScreen() {
       setUpdating(false);
     }
   };
+
+  // Once the requested update is running, vestad reports its phases on /sync even while this app is
+  // still ahead, so hand the takeover to the same progress screen the in-window flow uses (it
+  // self-heals when the gateway reconnects newer, and a relaunch mid-update lands straight on it).
+  if (gatewayOperation !== null || updatedTo !== null) {
+    return (
+      <>
+        <Navbar center={<NavbarLogoText />} />
+        <UpdateProgressScreen />
+      </>
+    );
+  }
 
   return (
     <>

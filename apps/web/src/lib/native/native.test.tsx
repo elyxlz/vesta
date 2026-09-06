@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@/lib/connection";
 import { createBrowserBridge } from "./browser";
 import { createElectronBridge } from "./electron";
+import { selectNativeBridge } from "./index";
 import type { VestaNativeApi } from "./types";
 
 const CONFIG: ConnectionConfig = {
@@ -13,9 +14,68 @@ const CONFIG: ConnectionConfig = {
   expiresAt: 123,
 };
 
+// `satisfies` so a preload field added to the contract fails to compile here
+// until the fake grows with it.
+function fakeApi(overrides: Partial<VestaNativeApi> = {}): VestaNativeApi {
+  const noopUnsubscribe = () => {
+    /* noop */
+  };
+  const base = {
+    platform: "darwin",
+    focusWindow: vi.fn(() => Promise.resolve()),
+    setTheme: vi.fn(),
+    openExternal: vi.fn(() => Promise.resolve()),
+    getAppUpdate: vi.fn(() => Promise.resolve<unknown>(null)),
+    downloadAppUpdate: vi.fn(() => Promise.resolve()),
+    onAppUpdateProgress: vi.fn(() => noopUnsubscribe),
+    installAppUpdate: vi.fn(() => Promise.resolve()),
+    storeRead: vi.fn(() => Promise.resolve(null)),
+    storeWrite: vi.fn(() => Promise.resolve()),
+    storeClear: vi.fn(() => Promise.resolve()),
+    storeIsSecure: vi.fn(() => Promise.resolve(true)),
+    recentStoreRead: vi.fn(() => Promise.resolve(null)),
+    recentStoreWrite: vi.fn(() => Promise.resolve()),
+    recentStoreClear: vi.fn(() => Promise.resolve()),
+    oauthStart: vi.fn(() => Promise.resolve(4242)),
+    onOauthCallback: vi.fn(() => noopUnsubscribe),
+    oauthCancel: vi.fn(() => Promise.resolve()),
+    readGeolocation: vi.fn(() => Promise.resolve<unknown>(null)),
+    onWindowFocus: vi.fn(() => noopUnsubscribe),
+    windowMinimize: vi.fn(() => Promise.resolve()),
+    windowToggleMaximize: vi.fn(() => Promise.resolve()),
+    windowClose: vi.fn(() => Promise.resolve()),
+    windowIsMaximized: vi.fn(() => Promise.resolve(false)),
+    onWindowMaximizedChange: vi.fn(() => noopUnsubscribe),
+    getOpenAtLogin: vi.fn(() => Promise.resolve(false)),
+    setOpenAtLogin: vi.fn(() => Promise.resolve()),
+  } satisfies VestaNativeApi;
+  return { ...base, ...overrides };
+}
+
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+});
+
+describe("selectNativeBridge", () => {
+  it("uses the electron bridge when the preload injected the api", () => {
+    const bridge = selectNativeBridge({
+      vestaNative: fakeApi(),
+      location: { protocol: "vesta:" },
+    });
+    expect(bridge.runtime).toBe("electron");
+  });
+
+  it("uses the browser bridge in a normal browser tab", () => {
+    const bridge = selectNativeBridge({ location: { protocol: "https:" } });
+    expect(bridge.runtime).toBe("browser");
+  });
+
+  it("throws inside the desktop shell when the preload bridge is missing", () => {
+    expect(() =>
+      selectNativeBridge({ location: { protocol: "vesta:" } }),
+    ).toThrow(/preload/i);
+  });
 });
 
 describe("browser bridge", () => {
@@ -64,44 +124,6 @@ describe("browser bridge", () => {
 });
 
 describe("electron bridge", () => {
-  // `satisfies` so a preload field added to the contract fails to compile here
-  // until the fake grows with it.
-  function fakeApi(overrides: Partial<VestaNativeApi> = {}): VestaNativeApi {
-    const noopUnsubscribe = () => {
-      /* noop */
-    };
-    const base = {
-      platform: "darwin",
-      focusWindow: vi.fn(() => Promise.resolve()),
-      setTheme: vi.fn(),
-      openExternal: vi.fn(() => Promise.resolve()),
-      getAppUpdate: vi.fn(() => Promise.resolve<unknown>(null)),
-      downloadAppUpdate: vi.fn(() => Promise.resolve()),
-      onAppUpdateProgress: vi.fn(() => noopUnsubscribe),
-      installAppUpdate: vi.fn(() => Promise.resolve()),
-      storeRead: vi.fn(() => Promise.resolve(null)),
-      storeWrite: vi.fn(() => Promise.resolve()),
-      storeClear: vi.fn(() => Promise.resolve()),
-      storeIsSecure: vi.fn(() => Promise.resolve(true)),
-      recentStoreRead: vi.fn(() => Promise.resolve(null)),
-      recentStoreWrite: vi.fn(() => Promise.resolve()),
-      recentStoreClear: vi.fn(() => Promise.resolve()),
-      oauthStart: vi.fn(() => Promise.resolve(4242)),
-      onOauthCallback: vi.fn(() => noopUnsubscribe),
-      oauthCancel: vi.fn(() => Promise.resolve()),
-      readGeolocation: vi.fn(() => Promise.resolve<unknown>(null)),
-      onWindowFocus: vi.fn(() => noopUnsubscribe),
-      windowMinimize: vi.fn(() => Promise.resolve()),
-      windowToggleMaximize: vi.fn(() => Promise.resolve()),
-      windowClose: vi.fn(() => Promise.resolve()),
-      windowIsMaximized: vi.fn(() => Promise.resolve(false)),
-      onWindowMaximizedChange: vi.fn(() => noopUnsubscribe),
-      getOpenAtLogin: vi.fn(() => Promise.resolve(false)),
-      setOpenAtLogin: vi.fn(() => Promise.resolve()),
-    } satisfies VestaNativeApi;
-    return { ...base, ...overrides };
-  }
-
   it("validates the stored connection shape", async () => {
     const api = fakeApi({
       storeRead: vi.fn(() => Promise.resolve({ url: "only-url" })),

@@ -10,7 +10,8 @@ files:
 extraResources:
   - from: ../web/dist
     to: web
-beforePack: scripts/build-native.mjs
+beforePack: scripts/before-pack.mjs
+afterPack: scripts/verify-pack.mjs
 mac:
   extraResources:
     - from: native/vesta-location
