@@ -796,7 +796,7 @@ fn rename_and_delete_follow_the_agent() {
         Some([serde_json::json!(bystander.name)].as_slice())
     );
 
-    // The room the user is left alone in is theirs to delete.
+    // A room that is not a direct room is the user's to delete, whoever is still in it.
     let (status, raw) = client
         .proxy_delete(&format!("/rooms/{peer}"), ProxyAuth::ApiKey)
         .expect("delete the peer room");

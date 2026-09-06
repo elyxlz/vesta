@@ -84,6 +84,7 @@ pub(crate) struct ChatNode {
     seen_intents: Mutex<VecDeque<String>>,
     speaking: Mutex<HashMap<String, Speaking>>,
     next_connection: AtomicU64,
+    forget_generation: AtomicU64,
     rooms_tx: watch::Sender<Vec<Room>>,
     events_tx: broadcast::Sender<Arc<ChatEvent>>,
 }
@@ -106,6 +107,7 @@ impl ChatNode {
             seen_intents: Mutex::new(VecDeque::new()),
             speaking: Mutex::new(HashMap::new()),
             next_connection: AtomicU64::new(1),
+            forget_generation: AtomicU64::new(0),
             rooms_tx,
             events_tx,
         }
@@ -164,10 +166,23 @@ impl ChatNode {
         names
     }
 
+    /// The count of agents forgotten so far. A caller reads it before it takes the roster snapshot
+    /// it will reconcile from, and hands it back to `reconcile_agents`.
+    pub(crate) fn forget_generation(&self) -> u64 {
+        self.forget_generation.load(Ordering::Acquire)
+    }
+
     /// Every agent vestad knows gets its direct room; names are remembered for membership checks.
     /// The roster poll calls this every tick, so a name set matching the one already known is a
     /// no-op: nothing is claimed and the room list is not republished.
-    pub(crate) fn reconcile_agents(&self, names: &[String], now_secs: u64) {
+    ///
+    /// `generation` is the `forget_generation` the snapshot was taken under. A forget since then
+    /// means the snapshot still names a destroyed agent, so the reconcile is dropped and the next
+    /// poll reconciles from a fresh one; removal stays `forget_agent`'s alone.
+    pub(crate) fn reconcile_agents(&self, names: &[String], now_secs: u64, generation: u64) {
+        if self.forget_generation() != generation {
+            return;
+        }
         {
             let mut known = self
                 .known_agents
@@ -490,6 +505,7 @@ impl ChatNode {
     /// A deleted agent leaves every member set. A room left with no agents goes with it, messages
     /// included; a room that keeps a member stays readable.
     pub(crate) fn forget_agent(&self, name: &str) {
+        self.forget_generation.fetch_add(1, Ordering::Release);
         self.known_agents
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -539,6 +555,13 @@ mod tests {
         (tmp, node)
     }
 
+    /// Reconcile the way the poll does: read the generation, then hand it back with the snapshot.
+    fn reconcile(node: &ChatNode, names: &[&str], now_secs: u64) {
+        let generation = node.forget_generation();
+        let names: Vec<String> = names.iter().map(|name| (*name).to_string()).collect();
+        node.reconcile_agents(&names, now_secs, generation);
+    }
+
     fn draft(room: &str, kind: MessageKind, sender: &str, text: &str) -> MessageDraft {
         MessageDraft {
             room: room.into(),
@@ -572,7 +595,7 @@ mod tests {
     #[test]
     fn a_room_id_resolves_to_its_agents_and_an_unknown_id_to_nothing() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        reconcile(&node, &["alice", "bob"], 1);
         let (group, _) = node
             .open_room(
                 OpenRoom {
@@ -596,7 +619,7 @@ mod tests {
     #[test]
     fn open_room_derives_peer_and_direct_ids_and_needs_a_name_past_two_agents() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into(), "bob".into(), "cy".into()], 1);
+        reconcile(&node, &["alice", "bob", "cy"], 1);
         let (peer, created) = node
             .open_room(
                 OpenRoom {
@@ -662,7 +685,7 @@ mod tests {
     #[test]
     fn open_room_rejects_unknown_duplicate_and_empty_agents_and_long_names() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into()], 1);
+        reconcile(&node, &["alice"], 1);
         let unknown = node
             .open_room(
                 OpenRoom {
@@ -708,7 +731,7 @@ mod tests {
     #[test]
     fn delete_refuses_a_direct_room_while_its_agent_lives_and_fans_the_event() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into()], 1);
+        reconcile(&node, &["alice"], 1);
         let mut events = node.subscribe_events();
         let live = vec!["alice".to_string()];
         let refused = node.delete_room("dm:alice", &live).expect_err("alive");
@@ -895,7 +918,7 @@ mod tests {
     #[test]
     fn forget_drops_the_direct_room_and_ensure_opens_a_fresh_one() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into()], 1);
+        reconcile(&node, &["alice"], 1);
         node.forget_agent("alice");
         assert!(node.room("dm:alice").is_none(), "the direct room goes");
         let reopened = node.ensure_direct_room("alice", 9);
@@ -906,7 +929,7 @@ mod tests {
     #[test]
     fn forget_then_open_peer_restores_membership() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        reconcile(&node, &["alice", "bob"], 1);
         node.open_room(
             OpenRoom {
                 name: None,
@@ -916,7 +939,7 @@ mod tests {
         )
         .expect("peer");
         node.forget_agent("alice");
-        node.reconcile_agents(&["alice".into(), "bob".into()], 3);
+        reconcile(&node, &["alice", "bob"], 3);
         let (peer, created) = node
             .open_room(
                 OpenRoom {
@@ -934,10 +957,10 @@ mod tests {
     fn reconciling_the_same_names_publishes_nothing() {
         let (_tmp, node) = node();
         let mut rooms_rx = node.subscribe_rooms();
-        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        reconcile(&node, &["alice", "bob"], 1);
         assert!(rooms_rx.has_changed().expect("watch alive"));
         assert_eq!(rooms_rx.borrow_and_update().len(), 2);
-        node.reconcile_agents(&["alice".into(), "bob".into()], 2);
+        reconcile(&node, &["alice", "bob"], 2);
         assert!(
             !rooms_rx.has_changed().expect("watch alive"),
             "an unchanged roster is a no-op"
@@ -945,9 +968,32 @@ mod tests {
     }
 
     #[test]
+    fn a_reconcile_from_a_snapshot_older_than_a_forget_is_dropped() {
+        let (_tmp, node) = node();
+        reconcile(&node, &["alice", "bob"], 1);
+        let stale = node.forget_generation();
+        node.forget_agent("alice");
+
+        node.reconcile_agents(&["alice".into(), "bob".into()], 2, stale);
+        assert!(
+            node.room("dm:alice").is_none(),
+            "a stale snapshot cannot reopen a destroyed agent's room"
+        );
+        assert_eq!(node.known_agents(), vec!["bob".to_string()]);
+
+        let fresh = node.forget_generation();
+        node.reconcile_agents(&["bob".into(), "cy".into()], 3, fresh);
+        assert!(
+            node.room("dm:cy").is_some(),
+            "a fresh snapshot still opens a missing direct room"
+        );
+        assert!(node.room("dm:alice").is_none(), "and reopens nothing");
+    }
+
+    #[test]
     fn forget_agent_keeps_a_room_with_a_member_and_drops_an_empty_one() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        reconcile(&node, &["alice", "bob"], 1);
         node.open_room(
             OpenRoom {
                 name: None,
@@ -977,7 +1023,7 @@ mod tests {
     #[test]
     fn forget_agent_drops_a_group_only_when_its_last_agent_leaves() {
         let (_tmp, node) = node();
-        node.reconcile_agents(&["alice".into(), "bob".into()], 1);
+        reconcile(&node, &["alice", "bob"], 1);
         let (group, _) = node
             .open_room(
                 OpenRoom {

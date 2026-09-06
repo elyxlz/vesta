@@ -894,7 +894,8 @@ async fn destroy_agent_handler(
     // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
     // the same name seeds fresh instead of diffing against its predecessor.
     state.agent_status_cache.forget_agent(&name);
-    // Its rooms and messages stay readable; only its membership goes.
+    // It leaves every member set: a room left with no agents goes with it, messages included,
+    // while a room that keeps a member stays readable.
     state.chat.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
@@ -3209,6 +3210,7 @@ pub async fn run_server(cfg: ServerConfig) {
     state.chat.reconcile_agents(
         &docker::env_file_names(&state.env_config.agents_dir),
         crate::time_utils::now_epoch_secs(),
+        state.chat.forget_generation(),
     );
     recover_interrupted_update(&state);
     // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
