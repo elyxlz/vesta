@@ -10,7 +10,6 @@ import pytest
 from fli.models import Airline, Airport, FlightLeg, FlightResult
 from flights_cli import cli as cli_mod
 
-
 # FlightSegment validates that the travel date is not in the past, and _search_flights catches that
 # ValidationError and returns an {"error": ...} row. A hardcoded literal date therefore does not fail
 # this suite on the day it is written; it fails silently at midnight on that date, in every PR against
