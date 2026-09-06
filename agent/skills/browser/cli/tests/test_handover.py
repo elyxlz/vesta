@@ -245,6 +245,49 @@ def test_stop_all_ends_a_live_handover_and_its_session(rig):
     assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
 
 
+def test_stop_all_waits_out_a_handover_teardown_already_under_way(rig, monkeypatch):
+    """A `handover stop` mid-teardown owns the key revoke and the deregister; stop-all lets it finish
+    rather than answering over it or racing its settle."""
+    tearing = asyncio.Event()
+    release = asyncio.Event()
+    tear_stream = handover._tear_stream
+
+    async def _held_tear(live):
+        tearing.set()
+        await release.wait()
+        await tear_stream(live)
+
+    monkeypatch.setattr(handover, "_tear_stream", _held_tear)
+
+    async def run():
+        await request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        stopping = asyncio.create_task(request(rig.paths, p.request("handover_stop", "h2")))
+        await asyncio.wait_for(tearing.wait(), POLL_DEADLINE_SECS)
+        stop_all = asyncio.create_task(request(rig.paths, p.request("stop_all", "sa")))
+        status = await request(rig.paths, p.request("handover_status", "h3"))
+        still_waiting = not stop_all.done()
+        release.set()
+        answer = await stop_all
+        stopped = await stopping
+        gone = await wait_until_all_dead([*pids, browser])
+        again = await request(rig.paths, exec_request("research", "print(1)"))
+        return status, still_waiting, answer, stopped, gone, again
+
+    status, still_waiting, answer, stopped, gone, again = with_daemon(rig.paths, run)
+    assert status["data"]["state"] == "stopping"
+    assert still_waiting is True
+    assert answer["data"] == {"stopped": ["research"], "cancelled": [], "handover_stopped": False}
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert gone is True
+    # The teardown settled the session before stop-all took it, so nothing reads as a browser lost mid-use.
+    assert again["ok"] is True and again["warnings"] == []
+    assert rig.keys() == []
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
 def test_a_handover_whose_browser_died_gives_the_session_back_stopped(rig):
     """A runtime the user lost is reaped with its display, so the next exec starts a fresh one."""
 

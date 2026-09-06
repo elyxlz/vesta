@@ -529,6 +529,32 @@ def test_stop_all_cancels_an_exec_in_flight_and_stops_every_session(paths):
     assert dead is True
 
 
+def test_stop_all_stops_every_session_when_one_stop_raises(paths, monkeypatch):
+    original = serve.stop_session
+
+    async def _stop_then_raise(stop_paths, session, *, force=False):
+        stopped = await original(stop_paths, session, force=force)
+        if session.name == "a":
+            raise RuntimeError("stop boom")
+        return stopped
+
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        await serve.op_exec(state, "r1", exec_request("a", "print(1)"))
+        await serve.op_exec(state, "r2", exec_request("b", "print(1)", request_id="r2"))
+        pids = [*display_pids(paths.x11_socket_dir), _browser_pid(paths, "a"), _browser_pid(paths, "b")]
+        monkeypatch.setattr(serve, "stop_session", _stop_then_raise)
+        answer = await serve.handle_request(state, p.request("stop_all", "sa"))
+        dead = await wait_until_all_dead(pids)
+        return answer, dead, [session.state for session in state.table.sessions.values()]
+
+    answer, dead, states = asyncio.run(run())
+    assert answer["ok"] is True
+    assert answer["data"] == {"stopped": ["a", "b"], "cancelled": [], "handover_stopped": False}
+    assert dead is True
+    assert states == ["stopped", "stopped"]
+
+
 def test_stop_all_waits_out_a_starting_session_and_stops_it(paths, monkeypatch):
     """A session mid-launch holds a display and no runtime yet; stop-all waits for the launch to land
     and then takes both, instead of racing the engine for the display."""

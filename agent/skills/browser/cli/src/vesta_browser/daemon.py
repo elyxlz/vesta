@@ -20,7 +20,7 @@ import sys
 import time
 
 from .client import ping
-from .procs import starttime
+from .procs import alive, format_record, identity, parse_record
 from .runtime_paths import Paths
 
 NAME = "browser"
@@ -50,14 +50,8 @@ def _pidfile(paths: Paths) -> pl.Path:
 
 
 def _record(pid: int) -> str:
-    """The pid record: "<pid> <starttime>", or a bare pid where the starttime is unavailable.
-
-    A bare pid is the honest form of "identity unknown", and live_pid() reads it the legacy way
-    rather than as a mismatch. Writing the string "None" into the record would mean the same thing
-    while looking like data.
-    """
-    started = starttime(pid)
-    return f"{pid} {started}" if started is not None else str(pid)
+    """The pid record, in the one format the children ledger shares."""
+    return format_record(identity(pid))
 
 
 def live_pid(paths: Paths) -> int | None:
@@ -69,19 +63,10 @@ def live_pid(paths: Paths) -> int | None:
     service is silently down with its one health check reporting health it never measured.
     """
     try:
-        record = _pidfile(paths).read_text().split()
-        pid = int(record[0])
-        os.kill(pid, 0)
-    except (FileNotFoundError, IndexError, ValueError, ProcessLookupError, PermissionError):
+        recorded = parse_record(_pidfile(paths).read_text())
+    except FileNotFoundError:
         return None
-    # A record carrying no starttime (a hand edit, or a truncated write) is trusted as before
-    # rather than read as a mismatch: comparing a real starttime against nothing would declare a
-    # live daemon dead and let a second stack rise beside it.
-    if len(record) > 1 and record[1].isdigit():
-        current = starttime(pid)
-        if current is not None and current != int(record[1]):
-            return None
-    return pid
+    return recorded[0] if recorded is not None and alive(recorded) else None
 
 
 def _abandon(child: subprocess.Popen[bytes], message: str, paths: Paths) -> int:

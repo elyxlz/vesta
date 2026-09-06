@@ -155,8 +155,8 @@ def test_stop_all_waits_past_the_session_start_budget(monkeypatch, tmp_path):
         cli, "send", lambda _p, _payload, timeout: seen.update(timeout=timeout) or serve.p.result(request_id="x", op="stop_all", ok=True)
     )
     assert cli.main(["stop-all"]) == 0
-    assert seen["timeout"] == cli.STOP_ALL_TIMEOUT_SECS
-    assert cli.STOP_ALL_TIMEOUT_SECS > serve.STOP_ALL_SETTLE_SECS
+    assert seen["timeout"] == cli.STOP_ALL_TIMEOUT_SECS == cli.HANDOVER_RPC_TIMEOUT_SECS
+    assert cli.STOP_ALL_TIMEOUT_SECS > serve.STOP_ALL_SETTLE_SECS + handover.ROLLBACK_GATEWAY_TIMEOUT_SECS
 
 
 def test_usage_on_no_args_and_unknown_command(capsys, tmp_path, monkeypatch):

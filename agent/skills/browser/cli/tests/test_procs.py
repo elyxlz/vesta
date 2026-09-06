@@ -33,23 +33,24 @@ async def _end(*processes: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
-def test_record_drops_dead_and_recycled_lines_and_appends_the_new_child(tmp_path):
+def test_record_appends_one_line_and_leaves_every_other_line_alone(tmp_path):
+    """Appending is what lets two spawns record at once without a lock; a stale line costs nothing
+    until the reap, which is the one reader."""
     ledger = tmp_path / "children"
+    ledger.write_text("999999 1\n")
 
     async def run():
-        gone = await asyncio.create_subprocess_exec(sys.executable, "-c", "pass")
-        await gone.wait()
-        kept, mismatched, fresh = await asyncio.gather(_sleeper(), _sleeper(), _sleeper())
+        first, second = await asyncio.gather(_sleeper(), _sleeper())
         try:
-            ledger.write_text(f"{gone.pid} 1\n{mismatched.pid} 1\n{kept.pid} {procs.starttime(kept.pid)}\n")
-            await asyncio.to_thread(procs.record, ledger, fresh.pid)
-            expected = [f"{kept.pid} {procs.starttime(kept.pid)}", f"{fresh.pid} {procs.starttime(fresh.pid)}"]
+            await asyncio.gather(asyncio.to_thread(procs.record, ledger, first.pid), asyncio.to_thread(procs.record, ledger, second.pid))
+            expected = {f"{first.pid} {procs.starttime(first.pid)}", f"{second.pid} {procs.starttime(second.pid)}"}
             return ledger.read_text().splitlines(), expected
         finally:
-            await _end(kept, mismatched, fresh)
+            await _end(first, second)
 
     lines, expected = asyncio.run(run())
-    assert lines == expected
+    assert lines[0] == "999999 1"
+    assert set(lines[1:]) == expected and len(lines) == 3
 
 
 def test_reap_ends_recorded_children_by_group_trusts_a_bare_pid_and_leaves_a_recycled_pid_alone(tmp_path):
@@ -57,12 +58,14 @@ def test_reap_ends_recorded_children_by_group_trusts_a_bare_pid_and_leaves_a_rec
     grandchild_record = tmp_path / "grandchild.pid"
 
     async def run():
+        gone = await asyncio.create_subprocess_exec(sys.executable, "-c", "pass")
+        await gone.wait()
         forker = await _sleeper(FORKER, str(grandchild_record))
         bare, stranger = await asyncio.gather(_sleeper(), _sleeper())
         try:
             await wait_for_file(grandchild_record)
             grandchild = int(grandchild_record.read_text())
-            ledger.write_text(f"{forker.pid} {procs.starttime(forker.pid)}\n{bare.pid}\n{stranger.pid} 1\n")
+            ledger.write_text(f"{gone.pid} 1\n{forker.pid} {procs.starttime(forker.pid)}\n{bare.pid}\n{stranger.pid} 1\n")
             count = await asyncio.to_thread(procs.reap, ledger, REAP_GRACE_SECS)
             dead = await wait_until_all_dead([forker.pid, grandchild, bare.pid])
             return count, dead, pid_alive(stranger.pid), ledger.read_text()

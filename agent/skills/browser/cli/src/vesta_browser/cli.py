@@ -31,8 +31,9 @@ RPC_TIMEOUT_SLACK_SECS = 30
 # Past the daemon's own bring-up budget, so a slow handover answers instead of reading as a dead
 # daemon, and inside the 120s a Bash tool call allows by default.
 HANDOVER_RPC_TIMEOUT_SECS = 110.0
-# Past the daemon's wait for a session mid-launch to land, which a stop-all sits out before it stops it.
-STOP_ALL_TIMEOUT_SECS = p.SESSION_START_BUDGET_SECS + RPC_TIMEOUT_SLACK_SECS
+# stop-all waits out a session start or a handover teardown before it stops them, so its answer
+# waits the same way: past the daemon's own budgets, and inside the Bash tool's 120s.
+STOP_ALL_TIMEOUT_SECS = HANDOVER_RPC_TIMEOUT_SECS
 CANCEL_TIMEOUT_SECS = 5
 
 

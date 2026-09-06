@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fcntl
 import os
 import pathlib as pl
 import signal
-import tempfile
 import time
 import typing as tp
 
@@ -18,8 +16,8 @@ import typing as tp
 # finishes inside the daemon's own stop budget.
 KILL_GRACE_SECS = 1.0
 FALLBACK_PATH = "/usr/local/bin:/usr/bin:/bin"
-# The ledger of every child a daemon spawned, one `<pid> <starttime>` line each, under the daemon's
-# root. The daemon that starts next reads it and ends whatever the last one left running.
+# The ledger of every child a daemon spawned, one record line appended per spawn, under the
+# daemon's root. The daemon that starts next reads it, ends whatever still runs, and empties it.
 LEDGER_NAME = "children"
 REAP_POLL_SECS = 0.05
 
@@ -48,28 +46,36 @@ def starttime(pid: int) -> int | None:
         return None
 
 
-def _line(identity: Identity) -> str:
-    pid, started = identity
+def identity(pid: int) -> Identity:
+    """`pid` with the starttime it has now."""
+    return pid, starttime(pid)
+
+
+def format_record(record: Identity) -> str:
+    """The record line: "<pid> <starttime>", or the bare pid where the starttime is unavailable.
+
+    A bare pid is the honest form of "identity unknown", and `alive` reads it on pid existence
+    alone rather than as a mismatch. Writing the string "None" would mean the same while looking
+    like data.
+    """
+    pid, started = record
     return f"{pid} {started}" if started is not None else str(pid)
 
 
-def _parse(line: str) -> Identity | None:
-    fields = line.split()
+def parse_record(text: str) -> Identity | None:
+    """The identity a record line names, None for a line naming no pid. A second field that is not
+    a starttime (a hand edit, a truncated write) reads as none recorded, so the pid is trusted on
+    existence alone rather than declared dead against a starttime it never carried."""
+    fields = text.split()
     if not fields or not fields[0].isdigit():
         return None
     return int(fields[0]), (int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else None)
 
 
-def _entries(ledger: pl.Path) -> list[Identity]:
-    if not ledger.exists():
-        return []
-    return [identity for line in ledger.read_text().splitlines() if (identity := _parse(line)) is not None]
-
-
-def _alive(identity: Identity) -> bool:
-    """Whether the process recorded as `identity` still runs. A record with no starttime is trusted
+def alive(record: Identity) -> bool:
+    """Whether the process recorded as `record` still runs. A record with no starttime is trusted
     on pid existence alone, as is one whose current starttime cannot be read."""
-    pid, recorded = identity
+    pid, recorded = record
     try:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError):
@@ -78,21 +84,18 @@ def _alive(identity: Identity) -> bool:
     return recorded is None or current is None or current == recorded
 
 
-def _write(ledger: pl.Path, entries: list[Identity]) -> None:
-    handle, staged = tempfile.mkstemp(dir=ledger.parent, prefix=f"{ledger.name}-")
-    with os.fdopen(handle, "w") as staged_file:
-        staged_file.write("".join(f"{_line(identity)}\n" for identity in entries))
-    pl.Path(staged).replace(ledger)
+def _entries(ledger: pl.Path) -> list[Identity]:
+    if not ledger.exists():
+        return []
+    return [record for line in ledger.read_text().splitlines() if (record := parse_record(line)) is not None]
 
 
 def record(ledger: pl.Path, pid: int) -> None:
-    """Adds `pid` to the ledger and drops every line no live process answers to. Each write is a
-    whole file, so two spawns recording at once serialize on the lock beside it."""
+    """Appends `pid`'s record line. One short append lands whole, so two spawns recording at once
+    never mix; a stale line costs nothing until the reap, the one reader, empties the file."""
     ledger.parent.mkdir(parents=True, exist_ok=True)
-    with ledger.with_name(f"{ledger.name}.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        kept = [identity for identity in _entries(ledger) if _alive(identity)]
-        _write(ledger, [*kept, (pid, starttime(pid))])
+    with ledger.open("a") as handle:
+        handle.write(f"{format_record(identity(pid))}\n")
 
 
 def _signal(pid: int, signum: int) -> None:
@@ -108,22 +111,23 @@ def _signal(pid: int, signum: int) -> None:
 def end_processes(entries: list[Identity], grace: float) -> int:
     """SIGTERM to every entry still running, then SIGKILL to whatever still answers `grace` later.
     Blocking: run it off the loop. Returns how many entries were running."""
-    live = [identity for identity in entries if _alive(identity)]
+    live = [record for record in entries if alive(record)]
     for pid, _ in live:
         _signal(pid, signal.SIGTERM)
     deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and any(_alive(identity) for identity in live):
+    while time.monotonic() < deadline and any(alive(record) for record in live):
         time.sleep(REAP_POLL_SECS)
-    for identity in live:
-        if _alive(identity):
-            _signal(identity[0], signal.SIGKILL)
+    for record in live:
+        if alive(record):
+            _signal(record[0], signal.SIGKILL)
     return len(live)
 
 
 def reap(ledger: pl.Path, grace: float) -> int:
     """Ends every process the ledger names that still runs, then empties the ledger."""
     count = end_processes(_entries(ledger), grace)
-    _write(ledger, [])
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("")
     return count
 
 

@@ -8,7 +8,7 @@ from vesta_browser import chromium, sessions
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import HEADED, write_fakes
-from .waiting import wait_for_file, wait_until_dead
+from .waiting import pid_alive, wait_for_file, wait_until_dead
 
 
 @pytest.fixture
@@ -243,7 +243,7 @@ def test_stop_leaves_a_recycled_pid_alone(rig):
         stranger = await _spawn_marked("some-other-program")
         _write_harness_record(session, stranger.pid)
         await chromium.stop(runtime, session)
-        survived = stranger.returncode is None and chromium._pid_alive(stranger.pid)
+        survived = stranger.returncode is None and pid_alive(stranger.pid)
         stranger.terminate()
         await stranger.wait()
         return survived

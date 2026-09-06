@@ -14,21 +14,19 @@ import contextlib
 import json
 import os
 import pathlib as pl
-import signal
 import time
 import urllib.parse
 import urllib.request
 
 from . import display
 from . import protocol as p
-from .procs import KILL_GRACE_SECS, base_env, end_processes, kill_group, reaped_on_failure, spawn, starttime
+from .procs import KILL_GRACE_SECS, base_env, end_processes, identity, kill_group, reaped_on_failure, spawn
 from .runtime_paths import Paths
 from .runtimes import ChromiumRuntime, ExecOutcome, HeadedDisplay, elapsed_ms
 from .sessions import Session
 
 CHROMIUM_READY_TIMEOUT_SECS = 30
 READY_POLL_SECS = 0.1
-PID_POLL_SECS = 0.05
 OBSERVE_TIMEOUT_SECS = 5
 HARNESS_STOP_GRACE_SECS = 3
 BROWSER_STOP_GRACE_SECS = 5
@@ -208,27 +206,10 @@ def reap_harness_daemons(paths: Paths) -> int:
     a daemon start runs it off the loop. Returns how many daemons were running."""
     records = sorted(paths.sessions.glob("*/runtime/bu.pid"))
     pids = [pid for record in records if (pid := harness_pid(record.parent)) is not None]
-    count = end_processes([(pid, starttime(pid)) for pid in pids], HARNESS_STOP_GRACE_SECS)
+    count = end_processes([identity(pid) for pid in pids], HARNESS_STOP_GRACE_SECS)
     for record in records:
         record.unlink(missing_ok=True)
     return count
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
-async def _await_exit(pid: int, grace: float) -> bool:
-    deadline = time.monotonic() + grace
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return True
-        await asyncio.sleep(PID_POLL_SECS)
-    return not _pid_alive(pid)
 
 
 def _masked_text_frame(payload: bytes) -> bytes:
@@ -264,11 +245,7 @@ async def _close_over_cdp(runtime: ChromiumRuntime) -> None:
     await runtime.process.wait()
 
 
-async def stop(runtime: ChromiumRuntime, session: Session) -> None:
-    pid = harness_pid(session.scratch_dir / "runtime")
-    if pid is not None:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGTERM)
+async def _close_browser(runtime: ChromiumRuntime) -> None:
     # Chromium keeps cookies and storage in utility processes that batch their disk writes, and a
     # signal ends the browser before they flush, so a value set seconds earlier is lost; the CDP
     # close runs the browser's own shutdown, which writes them out first. The group kill that
@@ -276,7 +253,13 @@ async def stop(runtime: ChromiumRuntime, session: Session) -> None:
     with contextlib.suppress(OSError, EOFError, ValueError, KeyError, TimeoutError):
         await asyncio.wait_for(_close_over_cdp(runtime), BROWSER_STOP_GRACE_SECS)
     await kill_group(runtime.process, BROWSER_STOP_GRACE_SECS)
-    if pid is not None and not await _await_exit(pid, HARNESS_STOP_GRACE_SECS):
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGKILL)
-    (session.scratch_dir / "runtime" / "bu.pid").unlink(missing_ok=True)
+
+
+async def stop(runtime: ChromiumRuntime, session: Session) -> None:
+    """The harness daemon and the browser end together, the harness through the one TERM, wait,
+    KILL sequence and the browser through its own shutdown; the record goes once both are gone."""
+    runtime_dir = session.scratch_dir / "runtime"
+    pid = harness_pid(runtime_dir)
+    harness = [identity(pid)] if pid is not None else []
+    await asyncio.gather(asyncio.to_thread(end_processes, harness, HARNESS_STOP_GRACE_SECS), _close_browser(runtime))
+    (runtime_dir / "bu.pid").unlink(missing_ok=True)

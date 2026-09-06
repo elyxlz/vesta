@@ -3,7 +3,7 @@ name = "vesta-browser"
 version = "0.2.0"
 description = "Browser daemon and CLI for Vesta agents: one owner for sessions, both engines, artifacts, and handover."
 readme = {text = "", content-type = "text/plain"}
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
