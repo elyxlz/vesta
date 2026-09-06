@@ -1,428 +1,511 @@
-"""Handover tests: page rendering, web-root assembly, dependency checks, teardown.
+"""The handover: the session's own display streamed to one keyed URL, and one clean teardown."""
 
-Hermetic: no real x11vnc/websockify/Chrome. The transport (VNC over the vestad
-websocket proxy) is exercised end-to-end in a real container, not here.
-"""
-
-from __future__ import annotations
-
-import socket
+import asyncio
+import contextlib
+import datetime as dt
+import json
+import os
+import shutil
+import signal
+import sys
+import time
 
 import pytest
-from vesta_browser import handover
-
-
-@pytest.fixture(autouse=True)
-def isolated(tmp_path, monkeypatch):
-    """Point the module's writable paths at tmp and give each test its own session name."""
-    monkeypatch.setattr(handover, "WEBROOT", tmp_path / "web")
-    monkeypatch.setattr(handover, "HANDOVER_SESSION", "test-" + tmp_path.name)
-    return tmp_path
-
-
-def _fake_novnc(root):
-    novnc = root / "novnc"
-    (novnc / "core").mkdir(parents=True)
-    (novnc / "core" / "rfb.js").write_text("export default class RFB {}")
-    (novnc / "vendor").mkdir()
-    (novnc / "vendor" / "pako").mkdir()
-    return novnc
-
-
-# ── page rendering ────────────────────────────────────────────
-
-
-def test_page_is_generic_not_task_specific():
-    # The page names only "vesta's browser"; the agent conveys the actual task in chat.
-    page = handover.render_page()
-    assert "vesta" in page and "browser" in page
-    assert "Outlook" not in page
-
-
-def test_page_uses_vesta_cloud_fonts():
-    page = handover.render_page()
-    assert "./fonts/public-sans.woff2" in page  # bundled body font
-    assert "--serif:" in page  # wordmark uses the vesta.run logotype serif stack
-
-
-def test_page_connects_to_relative_websockify_path():
-    # The WS URL is derived from the page's own path so it works behind the
-    # vestad service proxy at /agents/<name>/<service>/handover.html.
-    page = handover.render_page()
-    assert "import RFB from './core/rfb.js'" in page
-    assert "base + 'websockify'" in page
-
-
-def test_page_is_mobile_usable():
-    # On a phone the decorative MacBook frame is dropped and the live screen fills the viewport,
-    # and a soft-keyboard affordance is present so the user can type email/password/MFA. Guard the
-    # pieces that make touch sign-in work; desktop still keeps the frame.
-    page = handover.render_page()
-    assert "@media (max-width: 820px), (pointer: coarse)" in page  # responsive breakpoint
-    assert ".frame, .engraving { display: none; }" in page  # frame dropped on mobile
-    assert 'id="kbd-button"' in page and 'id="kbdinput"' in page  # keyboard button + hidden input
-    assert "import Keyboard from './core/input/keyboard.js'" in page  # noVNC keyboard wiring
-    assert "keysyms.lookup" in page  # Android input-diff -> keysym fallback
-    assert "user-scalable=no" not in page  # pinch-zoom must stay enabled on touch
-
-
-# ── web-root assembly ─────────────────────────────────────────
-
-
-def test_build_webroot_writes_page_fonts_and_symlinks_novnc(isolated, monkeypatch):
-    novnc = _fake_novnc(isolated)
-    monkeypatch.setattr(handover, "NOVNC_DIRS", [novnc])
-    root = handover._build_webroot()
-    assert (root / "handover.html").is_file()
-    assert (root / "fonts" / "public-sans.woff2").is_file()
-    assert (root / "core" / "rfb.js").is_file()  # resolves through the symlink
-    assert (root / "vendor" / "pako").is_dir()
-
-
-def test_build_webroot_is_rebuildable(isolated, monkeypatch):
-    novnc = _fake_novnc(isolated)
-    monkeypatch.setattr(handover, "NOVNC_DIRS", [novnc])
-    handover._build_webroot()
-    root = handover._build_webroot()  # a second build wipes and recreates cleanly
-    assert (root / "handover.html").is_file()
-
-
-def test_bundled_font_exists_in_the_package():
-    assert (handover.FONTS_DIR / "public-sans.woff2").is_file()
-
-
-def test_find_novnc_dir_raises_with_install_hint(monkeypatch, tmp_path):
-    monkeypatch.setattr(handover, "NOVNC_DIRS", [tmp_path / "absent"])
-    with pytest.raises(RuntimeError, match="apt-get install"):
-        handover._find_novnc_dir()
-
-
-# ── dependency checks ─────────────────────────────────────────
-
-
-def test_require_binaries_lists_missing(monkeypatch):
-    monkeypatch.setattr(handover.shutil, "which", lambda _: None)
-    with pytest.raises(RuntimeError, match="Xvfb, x11vnc, websockify, openbox"):
-        handover._require_binaries()
-
-
-def test_missing_xvfb_alone_is_refused_not_hung(monkeypatch, isolated):
-    # _ensure_xvfb never raises, so an unguarded Xvfb leaves x11vnc with no display to open and
-    # the page spinning on "Waking" forever. The gate has to catch it up front.
-    monkeypatch.setattr(handover, "NOVNC_DIRS", [_fake_novnc(isolated)])
-    monkeypatch.setattr(handover.shutil, "which", lambda name: None if name == "Xvfb" else f"/usr/bin/{name}")
-    with pytest.raises(RuntimeError, match="missing Xvfb"):
-        handover._require_binaries()
-    assert handover.readiness() == {"ready": False, "missing": ["Xvfb"]}
-
-
-def test_install_hint_covers_every_required_binary(monkeypatch):
-    # The hint is what an agent actually runs, so a package short of the gate strands it in a
-    # state doctor calls ready. xvfb ships Xvfb, novnc ships websockify.
-    monkeypatch.setattr(handover.shutil, "which", lambda _: None)
-    with pytest.raises(RuntimeError) as excinfo:
-        handover._require_binaries()
-    hint = str(excinfo.value)
-    assert handover.HANDOVER_APT_LINE in hint
-    for package in ("xvfb", "novnc", "x11vnc", "openbox"):
-        assert package in handover.HANDOVER_APT_LINE
-
-
-def test_require_binaries_ok_when_present(monkeypatch):
-    monkeypatch.setattr(handover.shutil, "which", lambda name: f"/usr/bin/{name}")
-    handover._require_binaries()  # does not raise
-
-
-# ── teardown ──────────────────────────────────────────────────
-
-
-def _record_kills(monkeypatch):
-    killed: list[int] = []
-    monkeypatch.setattr(handover.admin, "_terminate_pid", killed.append)
-    monkeypatch.setattr(handover.admin, "stop_browser", lambda _name: None)
-    return killed
-
-
-def test_stop_reaps_the_xvfb_it_started(monkeypatch):
-    # Nothing else reaps Xvfb, and a live leftover keeps answering on its display number, so
-    # _free_display climbs to the next one and the range runs dry after enough handovers.
-    killed = _record_kills(monkeypatch)
-    for suffix, pid in (("websockify-pid", 11), ("x11vnc-pid", 22), ("openbox-pid", 33), ("xvfb-pid", 44)):
-        handover._session_file(suffix).write_text(str(pid))
-    handover.stop()
-    assert killed == [11, 22, 33, 44]  # Xvfb last: the bridge and browser are its clients
-    assert not handover._session_file("xvfb-pid").exists()
-
-
-def test_stop_is_idempotent_without_an_xvfb_pid(monkeypatch):
-    killed = _record_kills(monkeypatch)
-    assert handover.stop() == {"stopped": True}
-    assert killed == []
-
-
-# ── x11vnc bring-up ───────────────────────────────────────────
-
-
-def _stub_x11vnc(monkeypatch, *, serves_with, dies_when_refused=True):
-    """Stand in for x11vnc: it 'serves' only when launched with the arg set in `serves_with`.
-
-    `dies_when_refused=False` models the other failure shape: a process that stays up but never
-    opens the port, which only the readiness deadline can catch.
-    """
-    attempts: list[tuple[str, ...]] = []
-
-    class FakeProc:
-        def __init__(self, argv):
-            self.pid = 1000 + len(attempts)
-            self._ok = tuple(a for a in argv if a == "-noshm") == serves_with
-            self.terminated = False
-
-        def poll(self):
-            if self._ok or not dies_when_refused:
-                return None
-            return 1
-
-        def terminate(self):
-            self.terminated = True
-
-        def wait(self, timeout=None):
-            return 0
-
-    def fake_popen(argv, **_kw):
-        attempts.append(tuple(a for a in argv if a == "-noshm"))
-        return FakeProc(argv)
-
-    monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(handover, "_port_serving", lambda _p: attempts[-1] == serves_with)
-    monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
-    return attempts
-
-
-def test_x11vnc_uses_shared_memory_when_the_host_allows_it(monkeypatch, isolated):
-    # shm reads the framebuffer ~25x faster, so it must not be given up pre-emptively.
-    attempts = _stub_x11vnc(monkeypatch, serves_with=())
-    with (isolated / "log").open("w") as log:
-        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
-    assert attempts == [()]  # first try, no -noshm, done
-
-
-def test_x11vnc_falls_back_to_noshm_when_the_host_denies_shm(monkeypatch, isolated):
-    # Some hosts deny X_ShmAttach and x11vnc dies on its first grab; that must self-heal rather
-    # than hand the user a link to a page that spins on "Waking" forever.
-    attempts = _stub_x11vnc(monkeypatch, serves_with=("-noshm",))
-    with (isolated / "log").open("w") as log:
-        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
-    assert attempts == [(), ("-noshm",)]
-
-
-def test_x11vnc_raises_when_neither_mode_serves(monkeypatch, isolated):
-    attempts = _stub_x11vnc(monkeypatch, serves_with=("never",))
-    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
-    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
-        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
-    assert attempts == [(), ("-noshm",)]
-
-
-def test_x11vnc_that_stays_up_but_never_serves_hits_the_deadline(monkeypatch, isolated):
-    # The hang this whole path exists to end: the process is alive, so polling poll() alone would
-    # wait forever. Only the readiness deadline ends it, and it must still try -noshm.
-    attempts = _stub_x11vnc(monkeypatch, serves_with=("never",), dies_when_refused=False)
-    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
-    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
-        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
-    assert attempts == [(), ("-noshm",)]
-
-
-def test_x11vnc_that_binds_then_dies_is_not_taken_as_ready(monkeypatch, isolated):
-    # Binding is not survival: x11vnc grabs the framebuffer around the time it opens the port, so a
-    # host refusing shm can kill it just after the bind. Taking the port as proof would strand the
-    # user on a dead stream with the -noshm retry never fired.
-    attempts: list[tuple[str, ...]] = []
-
-    class BindsThenDies:
-        pid = 4242
-
-        def __init__(self):
-            self.polls = 0
-
-        def poll(self):
-            self.polls += 1
-            return None if self.polls <= 1 else 1  # alive at the port check, dead after the settle
-
-        def terminate(self):
-            pass
-
-        def wait(self, timeout=None):
-            return 1
-
-    def fake_popen(argv, **_kw):
-        attempts.append(tuple(a for a in argv if a == "-noshm"))
-        return BindsThenDies()
-
-    monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(handover, "_port_serving", lambda _p: True)
-    monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
-    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
-    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
-        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
-    assert attempts == [(), ("-noshm",)]  # the death after the bind still reached the fallback
-
-
-def test_readiness_reports_missing_binaries(monkeypatch):
-    monkeypatch.setattr(handover.shutil, "which", lambda _: None)
-    report = handover.readiness()
-    assert report["ready"] is False
-    assert set(handover.HANDOVER_BINARIES) <= set(report["missing"])
-
-
-def test_readiness_ok_when_all_present(monkeypatch, isolated):
-    monkeypatch.setattr(handover.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(handover, "NOVNC_DIRS", [_fake_novnc(isolated)])
-    assert handover.readiness() == {"ready": True, "missing": []}
-
-
-# ── public service registration ───────────────────────────────
-
-
-def test_register_public_service_none_off_box(monkeypatch):
-    # No public URL / agent env means dev or tests: fall back to a local port, no registration.
-    monkeypatch.delenv("VESTAD_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("AGENT_NAME", raising=False)
-    assert handover._register_public_service() is None
-
-
-def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_path):
-    monkeypatch.setenv("VESTAD_PUBLIC_URL", "https://box.vesta.run/")
-    monkeypatch.setenv("AGENT_NAME", "ada")
-    script = tmp_path / "register-service"
-    script.write_text("#!/bin/sh\necho 7431\n")
-    script.chmod(0o755)
-    monkeypatch.setattr(handover, "REGISTER_SERVICE", script)
-    port, url = handover._register_public_service()
-    assert port == 7431
-    assert url == "https://box.vesta.run/agents/ada/browser/handover.html"
-
-
-# ── ports + displays ──────────────────────────────────────────
-
-
-def test_free_port_returns_a_bindable_port():
-    port = handover._free_port(handover.VNC_PORT_START)
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("127.0.0.1", port))  # actually free
-    finally:
-        s.close()
-
-
-def test_free_display_skips_live_seats(monkeypatch):
-    # A real desktop seat (:0/:1) already has a LIVE X server; handover must never pick it, else
-    # x11vnc grabs the live seat and noVNC hangs. :99 and :100 answer; it must land on :101.
-    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in {":99", ":100"})
-    assert handover._free_display() == ":101"
-
-
-def test_claim_own_display_returns_the_display_it_actually_won(monkeypatch):
-    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda _disp: False)
-    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", lambda display, screen: 4242)
-    assert handover._claim_own_display() == (":99", 4242)
-
-
-def test_claim_own_display_advances_when_a_race_is_lost(monkeypatch):
-    # Two handovers pick the same free number and race to bind its shared abstract socket; the loser
-    # sees _ensure_xvfb return None (its Xvfb died) and must move to the next number, not proceed
-    # against the winner's server. The winner then holds :99, so the next scan lands on :100.
-    held = {":99"}
-    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in held)
-
-    def ensure(display, screen):
-        if display == ":99":  # lost the race for :99
-            return None
-        held.add(display)  # won this one
-        return 4243
-
-    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", ensure)
-    assert handover._claim_own_display() == (":100", 4243)
-
-
-def test_claim_own_display_gives_up_after_the_attempt_cap(monkeypatch):
-    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda _disp: False)
-    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", lambda display, screen: None)  # always loses
-    monkeypatch.setattr(handover, "DISPLAY_CLAIM_ATTEMPTS", 3)
-    with pytest.raises(RuntimeError, match="could not claim a free X display"):
-        handover._claim_own_display()
-
-
-# ── teardown ──────────────────────────────────────────────────
-
-
-def test_stop_is_idempotent_with_nothing_running():
-    assert handover.stop() == {"stopped": True}
-    assert handover.stop() == {"stopped": True}  # second call is a clean no-op
-
-
-def test_stop_removes_headed_prefs_from_recorded_profile(isolated):
-    # start records the profile it used; stop drops the handover-only user.js so later headless
-    # launches on that profile don't inherit software-render prefs.
-    profile = isolated / "profile"
-    profile.mkdir()
-    (profile / "user.js").write_text('user_pref("gfx.webrender.software", true);')
-    handover._session_file("profile").write_text(str(profile))
-    handover.stop()
-    assert not (profile / "user.js").exists()
-
-
-def test_status_all_false_when_idle():
-    st = handover.status()
-    assert st["browser"] is False
-    assert st["openbox"] is False
-    assert st["x11vnc"] is False
-    assert st["websockify"] is False
-    assert st["web_port"] is None
-    assert st["page"] is None
-
-
-# ── display selection: liveness, not file existence ───────────
-
-
-def test_free_display_reuses_a_dead_display(monkeypatch):
-    # Regression: _free_display judged a display taken by its /tmp/.X11-unix/Xn socket FILE, so a
-    # dead Xvfb's leftover socket (crash, or a restart that leaves /tmp intact) blocked the number
-    # and corpses eventually exhausted the range. Judging by liveness makes a dead display reusable.
-    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: False)
-    assert handover._free_display(start=99) == ":99"
-
-
-# ── the public route must not outlive the session ─────────────
-
-
-def test_stop_deregisters_the_public_service(monkeypatch, tmp_path):
-    # `start` registers a PUBLIC route. Leaving it behind advertises a public path at a port
-    # nothing is listening on, and the next handover inherits a route it never created.
-    killed = _record_kills(monkeypatch)
-    called = tmp_path / "called"
-    script = tmp_path / "deregister-service"
-    script.write_text(f'#!/bin/sh\necho "$1" >> {called}\n')
-    script.chmod(0o755)
-    monkeypatch.setattr(handover, "DEREGISTER_SERVICE", script)
-    assert handover.stop() == {"stopped": True}
-    assert called.read_text().split() == [handover.HANDOVER_SERVICE]
-    assert killed == []
-
-
-def test_stop_survives_a_missing_deregister_script(monkeypatch, tmp_path):
-    # Teardown must not fail because the helper is absent (dev boxes, older workspaces).
-    _record_kills(monkeypatch)
-    monkeypatch.setattr(handover, "DEREGISTER_SERVICE", tmp_path / "not-here")
-    assert handover.stop() == {"stopped": True}
-
-
-def test_stop_survives_a_failing_deregister(monkeypatch, tmp_path):
-    # vestad unreachable must not turn a teardown into an exception: the processes are already
-    # down by this point and raising here would strand the caller mid-cleanup.
-    _record_kills(monkeypatch)
-    script = tmp_path / "deregister-service"
-    script.write_text("#!/bin/sh\nexit 1\n")
-    script.chmod(0o755)
-    monkeypatch.setattr(handover, "DEREGISTER_SERVICE", script)
-    assert handover.stop() == {"stopped": True}
+from vesta_browser import chromium, display, handover
+from vesta_browser import protocol as p
+from vesta_browser.runtime_paths import load_paths
+
+from .fakes import display_pids, write_script
+from .hermetic import display_rig
+from .waiting import (
+    POLL_DEADLINE_SECS,
+    POLL_INTERVAL_SECS,
+    cmdline_of,
+    exec_request,
+    fetch,
+    pid_alive,
+    request,
+    wait_for_recorded_pids,
+    wait_for_state,
+    wait_until_all_dead,
+    wait_until_dead,
+    with_daemon,
+)
+
+PUBLIC_URL = "https://gw.example"
+AGENT = "luna"
+WEB_PORT_FIRST = 6180
+EXPIRY_DEADLINE_SECS = 3.0
+# Short enough to fire well inside the fake x11vnc's own readiness wait, so the budget is what answers.
+BUDGET_SECS = 2.0
+
+
+class Rig:
+    """Everything a handover test needs: the daemon's paths, the web port, and the fakes' records."""
+
+    def __init__(self, paths, tmp_path, x11_dir, web_port):
+        self.paths = paths
+        self.tmp_path = tmp_path
+        self.x11_dir = x11_dir
+        self.web_port = web_port
+
+    def keys(self):
+        record = self.tmp_path / "keys.json"
+        return json.loads(record.read_text()) if record.exists() else []
+
+    def register_lines(self):
+        """Every gateway call the run made, the daemon's own startup deregister first."""
+        record = self.tmp_path / "register.log"
+        return record.read_text().splitlines() if record.exists() else []
+
+    def display_pids(self):
+        return display_pids(self.x11_dir)
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    env, x11_dir = display_rig(tmp_path, monkeypatch, novnc=True, camoufox=True)
+    web_port = display.free_port(WEB_PORT_FIRST)
+    monkeypatch.setenv("FAKE_KEYS", str(tmp_path / "keys.json"))
+    monkeypatch.setenv("FAKE_REGISTER_LOG", str(tmp_path / "register.log"))
+    monkeypatch.setenv("FAKE_PORT", str(web_port))
+    monkeypatch.setenv("VESTAD_PUBLIC_URL", PUBLIC_URL)
+    monkeypatch.setenv("AGENT_NAME", AGENT)
+    yield Rig(load_paths(env, tmp_path), tmp_path, x11_dir, web_port)
+    shutil.rmtree(x11_dir, ignore_errors=True)
+
+
+def _start(session="research", mode=None, url=None, minutes=None, request_id="h1"):
+    return p.request("handover_start", request_id, session=session, mode=mode, url=url, minutes=minutes)
+
+
+async def _wait_for_pids(rig, wanted):
+    await wait_for_recorded_pids(rig.x11_dir / "pids", wanted)
+
+
+def _minutes_ahead(stamp):
+    when = dt.datetime.fromisoformat(stamp)
+    return (when - dt.datetime.now(dt.UTC)).total_seconds() / 60
+
+
+def test_handover_start_serves_the_page_and_hands_the_session_over(rig):
+    async def run():
+        started = await request(rig.paths, _start(url="https://example.com/"))
+        try:
+            await _wait_for_pids(rig, 4)
+            status = await request(rig.paths, p.request("handover_status", "h2"))
+            listing = await request(rig.paths, p.request("sessions", "h3"))
+            page, _ = await asyncio.to_thread(fetch, f"http://127.0.0.1:{rig.web_port}/handover.html")
+            navigate = (rig.paths.sessions / "research/tmp/code.txt").read_text()
+            return started, status, listing, page, rig.register_lines(), navigate, rig.display_pids()
+        finally:
+            await request(rig.paths, p.request("handover_stop", "h9"))
+
+    started, status, listing, page, registered, navigate, pids = with_daemon(rig.paths, run)
+    assert started["ok"] is True, started
+    assert navigate == "switch_tab(new_tab('https://example.com/'), activate=True)"
+    data = started["data"]
+    assert data["state"] == "live" and data["engine"] == "chromium" and data["session"] == "research"
+    assert data["user_url"] == f"{PUBLIC_URL}/agents/{AGENT}/browser/k/secret-browser-handover-{data['handover_id']}/handover.html"
+    assert 25 < _minutes_ahead(data["expires_at"]) <= 30
+    assert started["session"]["state"] == "handed_over"
+    assert status["data"]["state"] == "live"
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["handed_over"]
+    assert registered == ["deregister browser", "browser"]
+    assert page == 200
+    env_seen = json.loads((rig.paths.profiles / "chromium" / "research" / "env.json").read_text())
+    assert env_seen["DISPLAY"].startswith(":")
+    assert len(pids) == 4
+
+
+def test_a_handover_streams_a_running_session_and_gives_the_browser_back(rig):
+    """The display and the browser are the session's own: a handover adds a stream and drops it."""
+
+    async def run():
+        first = await request(rig.paths, exec_request("research", "print(1)"))
+        await _wait_for_pids(rig, 2)
+        display_pids = rig.display_pids()
+        started = await request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        stream_pids = rig.display_pids()[len(display_pids) :]
+        stopped = await request(rig.paths, p.request("handover_stop", "h2"))
+        await wait_for_state(rig.paths, "research", "ready")
+        gone = await wait_until_all_dead(stream_pids)
+        again = await request(rig.paths, exec_request("research", "print(2)", request_id="e2"))
+        held = all(pid_alive(pid) for pid in display_pids)
+        launched = (rig.paths.profiles / "chromium" / "research" / "launches").read_text().splitlines()
+        return first, started, stopped, again, display_pids, stream_pids, gone, held, launched
+
+    first, started, stopped, again, display_pids, stream_pids, gone, held, launched = with_daemon(rig.paths, run)
+    assert first["ok"] is True and started["ok"] is True, (first, started)
+    assert started["session"]["state"] == "handed_over"
+    assert len(display_pids) == 2 and len(stream_pids) == 2
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert gone is True and held is True
+    assert again["ok"] is True and again["session"]["state"] == "ready" and again["warnings"] == []
+    assert len(launched) == 1
+
+
+def test_a_stealth_handover_launches_camoufox_headed_for_the_requested_lifetime(rig):
+    async def run():
+        started = await request(rig.paths, _start(session="stealthy", mode="stealth", minutes=5))
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        launch = json.loads((rig.paths.profiles / "camoufox" / "stealthy" / "launch.json").read_text())
+        minted = rig.keys()
+        await request(rig.paths, p.request("handover_stop", "h9"))
+        await wait_for_state(rig.paths, "stealthy", "ready")
+        gone = await wait_until_all_dead(pids[2:])
+        return started, launch, minted, gone, all(pid_alive(pid) for pid in pids[:2])
+
+    started, launch, minted, gone, held = with_daemon(rig.paths, run)
+    assert started["ok"] is True, started
+    assert started["data"]["engine"] == "camoufox"
+    assert launch["headless"] == "False" and launch["window"] == "(1280, 800)"
+    assert [minted_key["ttl"] for minted_key in minted] == [300]
+    assert gone is True and held is True
+
+
+def test_a_handed_over_session_refuses_exec_stop_and_a_second_handover(rig):
+    async def run():
+        await request(rig.paths, _start())
+        try:
+            ran = await request(rig.paths, exec_request("research", "print(1)"))
+            stopped = await request(rig.paths, p.request("session_stop", "h4", session="research"))
+            again = await request(rig.paths, _start(request_id="h5"))
+            return ran, stopped, again
+        finally:
+            await request(rig.paths, p.request("handover_stop", "h9"))
+
+    ran, stopped, again = with_daemon(rig.paths, run)
+    assert ran["ok"] is False and ran["error"]["code"] == "handover_in_use"
+    assert stopped["ok"] is False and stopped["error"]["code"] == "invalid_request"
+    assert again["ok"] is False and again["error"]["code"] == "handover_in_use"
+
+
+def test_doctor_never_reports_the_handover_key(rig):
+    async def run():
+        started = await request(rig.paths, _start())
+        try:
+            return started, await request(rig.paths, p.request("doctor", "h8"))
+        finally:
+            await request(rig.paths, p.request("handover_stop", "h9"))
+
+    started, reported = with_daemon(rig.paths, run)
+    assert started["ok"] is True and "/k/" in started["data"]["user_url"]
+    block = reported["data"]["handover"]
+    assert block["state"] == "live" and block["handover_id"] == started["data"]["handover_id"]
+    assert "user_url" not in block
+    assert "/k/" not in json.dumps(reported)
+
+
+def test_handover_stop_releases_the_key_the_service_and_the_stream(rig):
+    async def run():
+        await request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        stopped = await request(rig.paths, p.request("handover_stop", "h2"))
+        await wait_for_state(rig.paths, "research", "ready")
+        gone = await wait_until_all_dead(pids[2:])
+        held = all(pid_alive(pid) for pid in pids[:2])
+        ran = await request(rig.paths, exec_request("research", "print(1)"))
+        status = await request(rig.paths, p.request("handover_status", "h6"))
+        return stopped, pids, gone, held, ran, status
+
+    stopped, pids, gone, held, ran, status = with_daemon(rig.paths, run)
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert len(pids) == 4 and gone is True and held is True
+    assert rig.keys() == []
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+    assert ran["ok"] is True and ran["session"]["state"] == "ready"
+    assert status["data"]["state"] == "inactive" and status["data"]["user_url"] is None
+    assert not rig.paths.handover_web.exists()
+
+
+def test_a_handover_whose_browser_died_gives_the_session_back_stopped(rig):
+    """A runtime the user lost is reaped with its display, so the next exec starts a fresh one."""
+
+    async def run():
+        await request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        os.kill(browser, signal.SIGKILL)
+        reaped = await wait_until_dead(browser)
+        stopped = await request(rig.paths, p.request("handover_stop", "h2"))
+        await wait_for_state(rig.paths, "research", "stopped")
+        gone = await wait_until_all_dead(pids)
+        again = await request(rig.paths, exec_request("research", "print(1)"))
+        return reaped, stopped, gone, again
+
+    reaped, stopped, gone, again = with_daemon(rig.paths, run)
+    assert reaped is True
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert gone is True
+    assert again["ok"] is True and again["warnings"] == ["worker_restarted"]
+
+
+def test_status_on_a_handover_whose_stream_died_reports_failed_with_no_url(rig):
+    """The keyed URL prints only while the handover is live: a dead one must not hand out a link."""
+
+    async def run():
+        started = await request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        x11vnc = next(pid for pid in rig.display_pids() if "x11vnc" in cmdline_of(pid))
+        os.kill(x11vnc, signal.SIGKILL)
+        await wait_until_dead(x11vnc)
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        await wait_for_state(rig.paths, "research", "ready")
+        return started, status
+
+    started, status = with_daemon(rig.paths, run)
+    assert started["data"]["user_url"] is not None
+    assert status["data"]["state"] == "failed" and status["data"]["user_url"] is None
+
+
+def test_a_navigation_that_kills_the_browser_fails_before_a_key_is_minted(rig, monkeypatch):
+    """Camoufox answers an overlong navigation by killing its worker; the health gate runs before
+    the mint, so a key is never made for a browser that is gone."""
+    monkeypatch.setattr(handover, "NAVIGATE_TIMEOUT_SECS", 1)
+
+    async def run():
+        res = await request(rig.paths, _start(mode="stealth", url="https://slow.example/"))
+        await wait_for_state(rig.paths, "research", "stopped")
+        return res
+
+    res = with_daemon(rig.paths, run)
+    assert res["ok"] is False and res["error"]["code"] == "handover_failed"
+    assert "not serving" in res["error"]["message"]
+    assert rig.keys() == []
+
+
+def test_a_handover_without_a_stream_binary_names_the_install_hint(rig):
+    """The stream refuses to spawn onto a gap it names, and the route it registered comes back off."""
+    (rig.tmp_path / "bin" / "x11vnc").unlink()
+
+    async def run():
+        started = await request(rig.paths, _start())
+        await wait_for_state(rig.paths, "research", "ready")
+        return started
+
+    started = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert "x11vnc" in started["error"]["message"] and display.INSTALL_HINT in started["error"]["message"]
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
+def test_a_start_whose_engine_never_comes_up_fails_inside_the_one_budget(rig, monkeypatch):
+    """The engine start is inside the budget the client waits behind, not beside it."""
+    profile = rig.paths.profiles / "chromium" / "research"
+    profile.mkdir(parents=True)
+    (profile / "no-port").write_text("")
+    monkeypatch.setattr(handover, "HANDOVER_START_BUDGET_SECS", BUDGET_SECS)
+
+    async def run():
+        began = time.monotonic()
+        started = await request(rig.paths, _start())
+        elapsed = time.monotonic() - began
+        listing = await request(rig.paths, p.request("sessions", "h7"))
+        gone = await wait_until_all_dead(rig.display_pids())
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        return started, elapsed, listing, gone, status
+
+    started, elapsed, listing, gone, status = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert f"{BUDGET_SECS}s" in started["error"]["message"]
+    assert BUDGET_SECS <= elapsed < 10
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
+    assert gone is True
+    assert status["data"]["state"] == "inactive"
+    assert rig.register_lines() == ["deregister browser"]
+
+
+def test_two_starts_at_once_leave_exactly_one_handover(rig):
+    """The handover record is claimed before the engine start, so the second caller is refused."""
+
+    async def run():
+        first, second = await asyncio.gather(
+            request(rig.paths, _start(session="one", request_id="h1")),
+            request(rig.paths, _start(session="two", request_id="h2")),
+        )
+        pids = rig.display_pids()
+        await request(rig.paths, p.request("handover_stop", "h9"))
+        gone = await wait_until_all_dead(pids[2:])
+        return first, second, pids, gone
+
+    first, second, pids, gone = with_daemon(rig.paths, run)
+    outcomes = sorted("ok" if answer["ok"] else answer["error"]["code"] for answer in (first, second))
+    assert outcomes == ["handover_in_use", "ok"], (first, second)
+    assert len(pids) == 4 and gone is True
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
+def test_a_stop_while_the_engine_starts_is_refused_and_the_start_still_lands(rig, monkeypatch):
+    """A handover still claiming its browser has nothing to tear down, so the stop waits its turn."""
+    launching = asyncio.Event()
+    release = asyncio.Event()
+    engine_start = chromium.start
+
+    async def _held_start(session, paths, *, headed):
+        launching.set()
+        await release.wait()
+        return await engine_start(session, paths, headed=headed)
+
+    monkeypatch.setattr(chromium, "start", _held_start)
+
+    async def run():
+        pending = asyncio.create_task(request(rig.paths, _start()))
+        await asyncio.wait_for(launching.wait(), POLL_DEADLINE_SECS)
+        refused = await request(rig.paths, p.request("handover_stop", "h2"))
+        release.set()
+        started = await pending
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        stopped = await request(rig.paths, p.request("handover_stop", "h9"))
+        await wait_for_state(rig.paths, "research", "ready")
+        gone = await wait_until_all_dead(pids[2:])
+        return refused, started, stopped, pids, gone, all(pid_alive(pid) for pid in pids[:2])
+
+    refused, started, stopped, pids, gone, held = with_daemon(rig.paths, run)
+    assert refused["ok"] is False and refused["error"]["code"] == "handover_in_use"
+    assert started["ok"] is True and started["data"]["state"] == "live", started
+    assert stopped["ok"] is True and stopped["warnings"] == []
+    assert len(pids) == 4 and gone is True and held is True
+
+
+def test_an_engine_that_cannot_start_refuses_the_handover(rig):
+    """The session's own start is what fails, so nothing is registered and nothing is left running."""
+
+    async def run():
+        rig.paths.chromium_exe.unlink()
+        started = await request(rig.paths, _start())
+        listing = await request(rig.paths, p.request("sessions", "h7"))
+        gone = await wait_until_all_dead(rig.display_pids())
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        return started, listing, gone, status, sorted(path.name for path in rig.x11_dir.glob("X*"))
+
+    started, listing, gone, status, sockets = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "engine_unavailable"
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
+    assert gone is True and sockets == []
+    assert status["data"]["state"] == "inactive"
+    assert rig.register_lines() == ["deregister browser"]
+
+
+def test_a_handover_expires_on_its_own(rig, monkeypatch):
+    monkeypatch.setattr(handover, "MINUTE_SECS", 0.5)
+
+    async def run():
+        await request(rig.paths, _start(minutes=1))
+        deadline = time.monotonic() + EXPIRY_DEADLINE_SECS
+        while time.monotonic() < deadline:
+            status = await request(rig.paths, p.request("handover_status", "h2"))
+            if status["data"]["state"] == "expired":
+                return status
+            await asyncio.sleep(POLL_INTERVAL_SECS)
+        raise AssertionError("the handover never expired")
+
+    status = with_daemon(rig.paths, run)
+    assert status["data"]["state"] == "expired"
+    assert rig.keys() == []
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
+def test_a_missing_public_url_fails_before_anything_is_registered(rig, monkeypatch):
+    monkeypatch.delenv("VESTAD_PUBLIC_URL")
+
+    async def run():
+        started = await request(rig.paths, _start())
+        listing = await request(rig.paths, p.request("sessions", "h7"))
+        return started, listing
+
+    started, listing = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert "VESTAD_PUBLIC_URL" in started["error"]["message"]
+    assert rig.register_lines() == ["deregister browser"]
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == []
+
+
+def test_a_mint_failure_rolls_the_whole_handover_back(rig):
+    write_script(rig.tmp_path / "bin", "service-key", f"#!{sys.executable}\nimport sys; print('no key', file=sys.stderr); sys.exit(1)\n")
+
+    async def run():
+        started = await request(rig.paths, _start())
+        pids = rig.display_pids()
+        gone = await wait_until_all_dead(pids[2:])
+        await wait_for_state(rig.paths, "research", "ready")
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        return started, pids, gone, all(pid_alive(pid) for pid in pids[:2]), status
+
+    started, pids, gone, held, status = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert "no key" in started["error"]["message"]
+    assert len(pids) == 4 and gone is True and held is True
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+    assert status["data"]["state"] == "failed"
+
+
+@pytest.mark.parametrize("minutes", [0, 241, True])
+def test_a_lifetime_outside_the_allowed_range_is_refused(rig, minutes):
+    async def run():
+        return await request(rig.paths, _start(minutes=minutes))
+
+    refused = with_daemon(rig.paths, run)
+    assert refused["ok"] is False and refused["error"]["code"] == "invalid_request"
+    assert rig.register_lines() == ["deregister browser"]
+
+
+def test_a_shutdown_during_start_leaves_no_display_behind(rig):
+    """The daemon stops while the stack is half built: it owns the bring-up, so it takes it back."""
+    (rig.x11_dir / "slow").write_text("")
+
+    async def run():
+        pending = asyncio.create_task(request(rig.paths, _start()))
+        try:
+            await wait_for_state(rig.paths, "research", "handed_over")
+            await _wait_for_pids(rig, 3)
+            browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+            return await request(rig.paths, p.request("handover_status", "h2")), rig.display_pids(), browser
+        finally:
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pending
+
+    status, pids, browser = with_daemon(rig.paths, run)
+    assert status["data"]["state"] == "starting" and status["data"]["user_url"] is None
+    assert len(pids) == 3 and asyncio.run(wait_until_all_dead([*pids, browser], EXPIRY_DEADLINE_SECS))
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
+def test_daemon_shutdown_stops_a_live_handover(rig):
+    async def run():
+        started = await request(rig.paths, _start())
+        assert started["ok"] is True, started
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        return rig.display_pids(), browser
+
+    pids, browser = with_daemon(rig.paths, run)
+    assert len(pids) == 4 and asyncio.run(wait_until_all_dead([*pids, browser], EXPIRY_DEADLINE_SECS))
+    assert rig.keys() == []
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+
+
+def test_a_bring_up_that_outlives_its_budget_fails_and_takes_the_stack_back(rig, monkeypatch):
+    """The x11vnc that never binds: the daemon answers inside its own budget, not the engine's."""
+    (rig.x11_dir / "hang").write_text("")
+    monkeypatch.setattr(handover, "HANDOVER_START_BUDGET_SECS", BUDGET_SECS)
+
+    async def run():
+        started = await request(rig.paths, _start())
+        pids = rig.display_pids()
+        gone = await wait_until_all_dead(pids[2:])
+        await wait_for_state(rig.paths, "research", "ready")
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        return started, pids, gone, all(pid_alive(pid) for pid in pids[:2]), status
+
+    started, pids, gone, held, status = with_daemon(rig.paths, run)
+    assert started["ok"] is False and started["error"]["code"] == "handover_failed"
+    assert f"{BUDGET_SECS}s" in started["error"]["message"]
+    assert len(pids) == 3 and gone is True and held is True
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+    assert status["data"]["state"] == "failed"

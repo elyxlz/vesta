@@ -11,15 +11,18 @@ The fix is to stop fighting the text field and instead spoof the browser's **geo
 the site's own **"Use my current location"** button. The site geocodes the coordinates and returns the
 right country's results directly.
 
-```python
-browser << "PY"
+`cdp` is a Chromium call, so run this on a standard session:
+
+```bash
+browser exec --session default <<'PY'
 # 1. grant the origin geolocation permission (else the browser blocks the API)
 cdp("Browser.grantPermissions", origin="https://getsupport.apple.com", permissions=["geolocation"])
 # 2. override the position to your target (lat, lon). Rome city centre here.
 cdp("Emulation.setGeolocationOverride", latitude=41.9028, longitude=12.4810, accuracy=50)
-# 3. now click the site's own "Use my current location" control
-click(472, 349)  # or click a ref
+# 3. click the site's own "Use my current location" control
+click_at_xy(472, 349)
 wait(5)
+print(page_info())
 PY
 ```
 
@@ -31,4 +34,4 @@ Notes:
 - This only helps when the site exposes a "use my location" path. If it's address-only, you still need
   the text field (try clicking the field's far-right edge first so the cursor lands at the end, then
   backspace to clear, many shadow-DOM inputs ignore Ctrl+A / JS value-set but honour real keystrokes).
-- To undo: `cdp("Emulation.clearGeolocationOverride")`.
+- To undo: `cdp("Emulation.clearGeolocationOverride")`. A stealth session answers `cdp` with `engine_capability_mismatch`, so run this technique on a standard session.

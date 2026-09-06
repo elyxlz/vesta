@@ -17,10 +17,12 @@ Verified against `hk.jobsdb.com` on 17 Jul 2026.
 
 `curl` gets **403** on `hk.jobsdb.com` regardless of User-Agent. Camoufox gets **200** first try,
 no CAPTCHA and no handover. So: don't waste a turn on `http_get`, and don't conclude the market is
-empty because a curl-based scan came back dry. Launch the browser.
+empty because a curl-based scan came back dry. Run the programs below on a stealth session:
 
 ```bash
-browser launch
+browser exec --session jobs --stealth <<'PY'
+... the program ...
+PY
 ```
 
 ---
@@ -33,7 +35,7 @@ Never type into the site's search box, that is what trips detection. Build the U
 from urllib.parse import quote_plus
 
 # Keyword search. Note: /jobs?keywords=... 302s to a slug like /business-development-jobs
-goto("https://hk.jobsdb.com/jobs?keywords=" + quote_plus("business development"))
+goto_url("https://hk.jobsdb.com/jobs?keywords=" + quote_plus("business development"))
 wait_for_load()
 wait(2)
 ```
@@ -101,7 +103,7 @@ Detail page:
 
 ```python
 def jobsdb_detail(job_id, host="hk.jobsdb.com"):
-    goto(f"https://{host}/job/{job_id}")
+    goto_url(f"https://{host}/job/{job_id}")
     wait_for_load()
     wait(2)
     return js("""(function(){
@@ -130,7 +132,7 @@ auth** and, unlike most boards, **exact ISO dates**:
 
 ```python
 # f_TPR is a lookback in seconds: r432000 = 5d, r604800 = 7d
-goto(
+goto_url(
     "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
     "?keywords=business%20development&location=Shanghai&f_TPR=r432000&start=0"
 )

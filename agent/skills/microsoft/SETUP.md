@@ -56,7 +56,7 @@ How it chooses (by the account's domain, no need to ask):
 - **Work/school account** (any custom domain, e.g. a university or company like UCL): defaults to the **browser handover** up front, because the tenant almost always blocks the default public client and would reject a device code. `auth setup` hands the user **one URL** to sign into their own webmail (SSO + MFA), then captures the token. No admin consent needed. No wasted device-code round-trip.
 - **Escape hatches**: `--browser` forces the browser route for any account; `--device` forces device code even for a work/school domain (for a permissive tenant that still allows it). If a device-code sign-in is later walled by the tenant, `auth setup --flow-cache` still **automatically pivots** to the browser handover.
 
-**Auto-refresh (locked tenants):** the user signs in **once**. The browser sign-in is saved to a per-account profile, and the daemon silently re-mints fresh tokens from it before they expire (works for weeks, until the SSO session itself ends), so there's no daily re-login. If the session finally lapses, the daemon emits a `type=auth_needed` notification to sign in again.
+**Auto-refresh (locked tenants):** the user signs in **once**. The sign-in lives in that account's own browser session, and the daemon silently re-mints fresh tokens from it before they expire (works for weeks, until the SSO session itself ends), so there's no daily re-login. If the session finally lapses, the daemon emits a `type=auth_needed` notification to sign in again.
 
 ```bash
 microsoft auth list                           # List device-flow (Graph) accounts
@@ -75,22 +75,22 @@ microsoft auth complete --flow-cache <cache>  # Complete after signing in at the
 
 If the tenant blocks Graph entirely (third-party apps disabled, missing scopes),
 use the OWA REST fallback. Locked tenants usually block device-code flow as well,
-so the default is a **browser capture**, driven by the agent on its own machine
-(the `browser` skill daemon with `DISPLAY=:99`). The agent opens Outlook on the web,
-signs in (relaying the user's credentials and MFA through chat), then captures the
-`outlook.office.com` token from the live session:
+so the default is a **browser capture**, driven by the agent through the `browser`
+skill (`browser exec`, one Chromium session per account). The capture opens Outlook
+on the web in that account's session and reads the `outlook.office.com` token the
+signed-in page holds:
 
 ```bash
 microsoft auth owa-login --account you@company.com     # captures the token, or returns sign_in_required
 microsoft email list --account you@company.com --backend owa-rest
 ```
 
-If the browser is not signed in yet, `owa-login` returns `sign_in_required` (it does
-not block); finish the sign-in with the `browser` skill and run it again. The token
-lasts about 24 h; re-run to refresh. With a token in place, `--backend auto` (the
-default) falls back to OWA REST automatically whenever Graph returns a permission
-error. Every command works on both backends **except** `block`/`unblock` (inbox
-rules), which are Graph-only.
+If that session is not signed in yet, `owa-login` returns `sign_in_required` (it
+does not block); hand the user a sign-in link with `microsoft auth setup --account
+<email> --browser`, then run it again. The token lasts about 24 h; re-run to
+refresh. With a token in place, `--backend auto` (the default) falls back to OWA
+REST automatically whenever Graph returns a permission error. Every command works
+on both backends **except** `block`/`unblock` (inbox rules), which are Graph-only.
 
 **Draft-only mode (optional safety):** set `EMAIL_DRAFT_ONLY=1` in the environment to
 hard-disable sending on this CLI. `email send`/`reply`/`forward` are then refused before

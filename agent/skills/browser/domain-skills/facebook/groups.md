@@ -178,7 +178,7 @@ print(
 ## Full example — mine one group, emit JSON for downstream tools
 
 ```bash
-cd ~/Developer/browser-harness && browser <<'PY'
+browser exec --session default <<'PY'
 import json, sys
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -186,7 +186,7 @@ GROUP = "riceLakeBoating"          # slug or numeric id
 TARGET = 50                         # how many posts to collect
 MAX_SCROLLS = 30
 
-goto(f"https://www.facebook.com/groups/{GROUP}/?sorting_setting=CHRONOLOGICAL")
+goto_url(f"https://www.facebook.com/groups/{GROUP}/?sorting_setting=CHRONOLOGICAL")
 wait_for_load()
 wait(2)
 

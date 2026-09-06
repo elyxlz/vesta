@@ -39,13 +39,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     apt-get update && apt-get install -y --no-install-recommends gh && \
     rm -rf /var/lib/apt/lists/*
 
-# ── browser handover: stream a headed Camoufox to the user so they sign in by hand ──
-# The browser skill's primary fallback when a site gates on account trust. handover.py shells out
-# to Xvfb -> openbox -> x11vnc -> websockify and symlinks noVNC's assets, so without these a box
-# can only report the gap, never escalate. novnc pulls websockify in as a hard dependency. Baked in
-# rather than apt-installed on demand: a runtime install dies with the next container rebuild.
+# ── browser daemon: every session's own X display, the handover stream, and the standard route's
+# Chromium. display.py runs Xvfb -> openbox -> x11vnc -> websockify and symlinks noVNC's assets, so
+# without these a box can only report the gap, never escalate. novnc pulls websockify in as a hard
+# dependency. The three font packages give Chromium a real font set to render and enumerate.
+# Baked in rather than apt-installed on demand: a runtime install dies with the next container
+# rebuild. install-engines.sh applies the same package list on the fleet.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb x11vnc openbox novnc && \
+    xvfb x11vnc openbox novnc chromium fonts-liberation fonts-dejavu-core fonts-noto-core && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Go toolchain + CGO link deps for the whatsapp skill's on-box builds ───
@@ -96,6 +97,9 @@ WORKDIR /root/agent
 # `uv run` would re-sync the engine venv. PATH exposes the venv instead.
 RUN UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --no-install-project --project core
 ENV PATH="/root/agent/.venv/bin:${PATH}"
+
+# Same script the browser-daemon migration runs on the fleet (fleet upgrades never rerun this file).
+RUN /root/agent/skills/browser/install-engines.sh
 
 # Install Claude Code on PATH, pinned: the fleet runs one known CLI version, and a release built
 # from a bumped pin rebuilds every agent container onto it, so upgrades are deliberate and

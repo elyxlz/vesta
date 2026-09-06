@@ -97,6 +97,6 @@ the person's phone. An address check that has already run can sit in `pending-re
 
 ## Session
 
-Profile `~/.browser/zinc`; the signed-in session persists in the profile, with no 2FA on return.
+Use the `zinc` session; its sign-in persists in that session's profile, with no 2FA on return.
 `browsingContext.create` can hang to its 60s timeout on this app; drive the existing context with
 `navigate` + `wait:"interactive"` instead.

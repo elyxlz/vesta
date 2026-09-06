@@ -32,3 +32,9 @@ max-complexity = 15
 "**/conftest.py" = ["ARG", "PLC0415"]
 # Skill CLIs lazy-import heavy deps so cold CLI startup stays fast.
 "**/skills/**" = ["PLC0415"]
+# The one wire-envelope builder names every field of the result; a container type would just rename them.
+"skills/browser/cli/src/vesta_browser/protocol.py" = ["PLR0913"]
+# Portable helpers mirror Browser Harness signatures; two knobs have no Playwright equivalent and stay accepted.
+"skills/browser/engines/camoufox/worker.py" = ["ARG001"]
+# The fake models playwright.sync_api.TimeoutError, which really is named TimeoutError, not the builtin.
+"skills/browser/cli/tests/fake_camoufox/camoufox/sync_api.py" = ["A001"]
