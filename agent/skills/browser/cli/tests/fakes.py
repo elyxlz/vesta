@@ -9,17 +9,23 @@ from vesta_browser.runtimes import HeadedDisplay
 # The display every engine test launches onto.
 HEADED = HeadedDisplay(":101", 1280, 800)
 
+# The fake answers the DevTools HTTP the daemon reads and the one websocket frame it sends: a
+# `Browser.close` leaves `closed-by-cdp` beside `DevToolsActivePort` and exits 0, the way Chromium
+# ends on its own shutdown, unless the profile carries `ignore-close`.
 FAKE_CHROMIUM = f"""#!{sys.executable}
-import http.server, json, os, pathlib, sys, threading
+import base64, hashlib, http.server, json, os, pathlib, sys, threading
 args = sys.argv[1:]
 profile = next(a.split("=", 1)[1] for a in args if a.startswith("--user-data-dir="))
 pathlib.Path(profile, "fake.pid").write_text(str(os.getpid()))
 pathlib.Path(profile, "env.json").write_text(json.dumps(dict(os.environ)))
 with open(os.path.join(profile, "launches"), "a") as f:
     f.write(str(os.getpid()) + "\\n")
+WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
+        if self.path == "/devtools/browser/x" and self.headers["Upgrade"] == "websocket":
+            return self.upgrade()
         body = {{"webSocketDebuggerUrl": "ws://127.0.0.1:%d/devtools/browser/x" % self.server.server_port}}
         if self.path == "/json/list":
             entry = {{"type": "page", "id": "T1", "url": "https://example.com/"}}
@@ -28,6 +34,17 @@ class H(http.server.BaseHTTPRequestHandler):
             body = [entry]
         data = json.dumps(body).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+    def upgrade(self):
+        accept = base64.b64encode(hashlib.sha1(self.headers["Sec-WebSocket-Key"].encode() + WS_GUID).digest()).decode()
+        self.send_response(101); self.send_header("Upgrade", "websocket"); self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept); self.end_headers(); self.wfile.flush()
+        head = self.rfile.read(2)
+        mask = self.rfile.read(4)
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(self.rfile.read(head[1] & 0x7F)))
+        if json.loads(payload)["method"] != "Browser.close" or pathlib.Path(profile, "ignore-close").exists():
+            return
+        pathlib.Path(profile, "closed-by-cdp").write_text(payload.decode())
+        os._exit(0)
 srv = http.server.HTTPServer(("127.0.0.1", 0), H)
 if not pathlib.Path(profile, "no-port").exists():
     pathlib.Path(profile, "DevToolsActivePort").write_text(f"{{srv.server_port}}\\n/devtools/browser/x\\n")

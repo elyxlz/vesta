@@ -115,7 +115,8 @@ class FakeContext:
 
 
 class Camoufox:
-    """Records launch options to `<user_data_dir>/launch.json` so a test can assert them."""
+    """Records launch options to `<user_data_dir>/launch.json` so a test can assert them, and the
+    close of the browser to `<user_data_dir>/closed.json`."""
 
     def __init__(self, **options):
         self.options = options
@@ -128,4 +129,5 @@ class Camoufox:
         return FakeContext()
 
     def __exit__(self, *exc):
+        pl.Path(self.options["user_data_dir"], "closed.json").write_text(json.dumps({"closed": True}))
         return False

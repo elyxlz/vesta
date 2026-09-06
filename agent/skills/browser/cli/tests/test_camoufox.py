@@ -191,6 +191,29 @@ def test_a_failed_start_leaves_the_workers_stderr_in_the_daemon_log(rig):
     assert "camoufox-worker-stderr-marker" in paths.log.read_text()
 
 
+def test_stop_waits_for_the_workers_own_exit_before_the_kill_fallback(rig, monkeypatch):
+    """The worker answers the stop once Firefox has closed and then exits; a kill before that exit
+    would cut the browser's own shutdown short."""
+    paths, session = rig
+    exit_codes_at_kill: list[int | None] = []
+    real_kill_group = camoufox.kill_group
+
+    async def recording_kill_group(process, grace):
+        exit_codes_at_kill.append(process.returncode)
+        await real_kill_group(process, grace)
+
+    monkeypatch.setattr(camoufox, "kill_group", recording_kill_group)
+
+    async def run():
+        runtime = await camoufox.start(session, paths, headed=HEADED)
+        await asyncio.wait_for(camoufox.stop(runtime, session), 10)
+        return runtime.process.returncode
+
+    assert asyncio.run(run()) == 0
+    assert exit_codes_at_kill == [0]
+    assert (session.profile_dir / "closed.json").is_file()
+
+
 def test_stop_does_not_ask_a_worker_that_has_already_exited(rig, monkeypatch):
     """A dead worker cannot answer, so the ask is skipped; only the group kill still has work to do."""
     paths, session = rig

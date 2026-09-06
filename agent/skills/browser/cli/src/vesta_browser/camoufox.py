@@ -164,10 +164,12 @@ async def observe(runtime: CamoufoxRuntime) -> p.PageInfo:
 
 async def stop(runtime: CamoufoxRuntime, _session: Session) -> None:
     """The graceful ask is skipped for a worker that has already exited; the group kill is not,
-    because a browser child can outlive the worker that owned it."""
+    because a browser child can outlive the worker that owned it. A worker that answers the ask
+    exits on its own once Firefox has closed, and that exit is awaited before the kill."""
     try:
         if runtime.process.returncode is None:
             with contextlib.suppress(TimeoutError, ConnectionError, ValueError):
                 await _ask(runtime, {"op": "stop"}, WORKER_STOP_GRACE_SECS)
+                await asyncio.wait_for(runtime.process.wait(), WORKER_STOP_GRACE_SECS)
     finally:
         await kill_group(runtime.process, WORKER_STOP_GRACE_SECS)

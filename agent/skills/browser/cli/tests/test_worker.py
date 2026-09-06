@@ -158,9 +158,10 @@ def test_portable_helper_list_matches_the_protocol(worker):
     assert json.loads(res["stdout"].replace("'", '"')) == sorted(p.PORTABLE_HELPERS)
 
 
-def test_stop_ends_the_worker(worker):
-    ask, _, _ = worker
+def test_stop_answers_only_after_the_browser_has_closed(worker):
+    ask, profile, _ = worker
     assert ask({"op": "stop"}) == {"stopped": True}
+    assert (profile / "closed.json").is_file()
 
 
 def test_a_child_writing_to_fd_1_cannot_corrupt_the_protocol_stream(worker):

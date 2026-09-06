@@ -306,6 +306,19 @@ def emit(channel: tp.TextIO, payload: Payload) -> None:
     channel.flush()
 
 
+def serve_requests(state: WorkerState, channel: tp.TextIO) -> bool:
+    """Answers requests until stdin closes or a stop arrives: True for the stop."""
+    for line in sys.stdin:
+        request = json.loads(line)
+        if request["op"] == "stop":
+            return True
+        if request["op"] == "exec":
+            emit(channel, run_exec(state, str(request["code"])))
+        elif request["op"] == "observe":
+            emit(channel, {"page": observe(state)})
+    return False
+
+
 def protocol_channel() -> tp.TextIO:
     """Moves the protocol stream off fd 1 and points fd 1 at stderr.
 
@@ -349,15 +362,11 @@ def main() -> int:
         state = WorkerState(context, pl.Path(args.artifacts))
         _set_page(state, context.pages[0] if context.pages else context.new_page())
         emit(channel, {"ready": True})
-        for line in sys.stdin:
-            request = json.loads(line)
-            if request["op"] == "exec":
-                emit(channel, run_exec(state, str(request["code"])))
-            elif request["op"] == "observe":
-                emit(channel, {"page": observe(state)})
-            elif request["op"] == "stop":
-                emit(channel, {"stopped": True})
-                return 0
+        stopping = serve_requests(state, channel)
+    # Firefox writes cookies and storage to the profile while the `with` block closes it, and the
+    # daemon reads the answer as the browser's end, so the answer follows the close.
+    if stopping:
+        emit(channel, {"stopped": True})
     return 0
 
 

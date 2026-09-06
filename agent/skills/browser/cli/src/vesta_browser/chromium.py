@@ -9,12 +9,14 @@ so the daemon here can find and stop it.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
 import pathlib as pl
 import signal
 import time
+import urllib.parse
 import urllib.request
 
 from . import display
@@ -215,11 +217,50 @@ async def _await_exit(pid: int, grace: float) -> bool:
     return not _pid_alive(pid)
 
 
+def _masked_text_frame(payload: bytes) -> bytes:
+    mask = os.urandom(4)
+    masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    return bytes((0x81, 0x80 | len(payload))) + mask + masked
+
+
+async def _close_over_cdp(runtime: ChromiumRuntime) -> None:
+    """Asks the browser to close itself over its DevTools socket and waits for it to exit."""
+    version = await asyncio.to_thread(_fetch_json, f"http://127.0.0.1:{runtime.port}/json/version")
+    if not isinstance(version, dict):
+        raise ValueError("DevTools /json/version is not an object")
+    path = urllib.parse.urlsplit(str(version["webSocketDebuggerUrl"])).path
+    reader, writer = await asyncio.open_connection("127.0.0.1", runtime.port)
+    try:
+        key = base64.b64encode(os.urandom(16)).decode()
+        writer.write(
+            f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{runtime.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n".encode()
+        )
+        await writer.drain()
+        head = await reader.readuntil(b"\r\n\r\n")
+        status = head.split(b" ", 2)
+        if len(status) < 2 or status[1] != b"101":
+            raise ConnectionError(f"DevTools refused the websocket upgrade: {head[:80]!r}")
+        writer.write(_masked_text_frame(json.dumps({"id": 1, "method": "Browser.close"}).encode()))
+        await writer.drain()
+    finally:
+        writer.close()
+        with contextlib.suppress(OSError):
+            await writer.wait_closed()
+    await runtime.process.wait()
+
+
 async def stop(runtime: ChromiumRuntime, session: Session) -> None:
     pid = _harness_pid(session)
     if pid is not None:
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGTERM)
+    # Chromium keeps cookies and storage in utility processes that batch their disk writes, and a
+    # signal ends the browser before they flush, so a value set seconds earlier is lost; the CDP
+    # close runs the browser's own shutdown, which writes them out first. The group kill that
+    # follows reaps a straggler and is the fallback for a browser that ignores the close.
+    with contextlib.suppress(OSError, EOFError, ValueError, KeyError, TimeoutError):
+        await asyncio.wait_for(_close_over_cdp(runtime), BROWSER_STOP_GRACE_SECS)
     await kill_group(runtime.process, BROWSER_STOP_GRACE_SECS)
     if pid is not None and not await _await_exit(pid, HARNESS_STOP_GRACE_SECS):
         with contextlib.suppress(ProcessLookupError):

@@ -212,6 +212,34 @@ def test_stop_leaves_a_recycled_pid_alone(rig):
     assert asyncio.run(run()) is True
 
 
+def test_stop_closes_the_browser_over_devtools_so_its_own_shutdown_runs(rig):
+    """A signal ends Chromium before its cookie and storage processes flush; `Browser.close` is
+    the browser's own shutdown, and an exit code of 0 is what shows no signal reached it."""
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        await asyncio.wait_for(chromium.stop(runtime, session), 10)
+        return runtime.process.returncode
+
+    assert asyncio.run(run()) == 0
+    assert json.loads((session.profile_dir / "closed-by-cdp").read_text()) == {"id": 1, "method": "Browser.close"}
+
+
+def test_stop_kills_a_browser_that_ignores_the_close_inside_the_grace(rig, monkeypatch):
+    paths, session = rig
+    monkeypatch.setattr(chromium, "BROWSER_STOP_GRACE_SECS", 0.5)
+    (session.profile_dir / "ignore-close").touch()
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        await asyncio.wait_for(chromium.stop(runtime, session), 5)
+        return runtime.process.returncode
+
+    assert asyncio.run(run()) == -signal.SIGTERM
+    assert not (session.profile_dir / "closed-by-cdp").exists()
+
+
 def test_start_passes_the_display_to_the_browser_process(rig):
     paths, session = rig
 
