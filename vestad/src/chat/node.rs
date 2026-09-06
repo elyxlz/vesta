@@ -176,14 +176,16 @@ impl ChatNode {
     /// The roster poll calls this every tick, so a name set matching the one already known is a
     /// no-op: nothing is claimed and the room list is not republished.
     ///
-    /// `generation` is the `forget_generation` the snapshot was taken under. A forget since then
-    /// means the snapshot still names a destroyed agent, so the reconcile is dropped and the next
+    /// `generation` is the `forget_generation` the snapshot was taken under, read here under the
+    /// store lock a forget bumps it under, so the two serialize on one mutex. A forget since the
+    /// snapshot means it still names a destroyed agent, so the reconcile is dropped and the next
     /// poll reconciles from a fresh one; removal stays `forget_agent`'s alone.
     pub(crate) fn reconcile_agents(&self, names: &[String], now_secs: u64, generation: u64) {
-        if self.forget_generation() != generation {
-            return;
-        }
         {
+            let _store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+            if self.forget_generation() != generation {
+                return;
+            }
             let mut known = self
                 .known_agents
                 .lock()
@@ -505,12 +507,12 @@ impl ChatNode {
     /// A deleted agent leaves every member set. A room left with no agents goes with it, messages
     /// included; a room that keeps a member stays readable.
     pub(crate) fn forget_agent(&self, name: &str) {
+        let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         self.forget_generation.fetch_add(1, Ordering::Release);
         self.known_agents
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(name);
-        let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
         for mut room in store.rooms() {
             if !room.has_agent(name) {
                 continue;
@@ -939,7 +941,15 @@ mod tests {
         )
         .expect("peer");
         node.forget_agent("alice");
-        reconcile(&node, &["alice", "bob"], 3);
+        assert_eq!(
+            node.room("dm:alice:bob")
+                .expect("the peer room stays")
+                .agents,
+            vec!["bob".to_string()]
+        );
+        node.ensure_direct_room("alice", 3);
+        let mut rooms_rx = node.subscribe_rooms();
+        rooms_rx.borrow_and_update();
         let (peer, created) = node
             .open_room(
                 OpenRoom {
@@ -951,6 +961,15 @@ mod tests {
             .expect("peer again");
         assert!(!created, "the peer id is claimed, not recreated");
         assert_eq!(peer.agents, vec!["alice".to_string(), "bob".to_string()]);
+        assert_eq!(
+            node.room("dm:alice:bob").expect("the peer room").agents,
+            vec!["alice".to_string(), "bob".to_string()],
+            "the stored room holds the re-created name too"
+        );
+        assert!(
+            rooms_rx.has_changed().expect("watch alive"),
+            "the re-seated member set is published"
+        );
     }
 
     #[test]
