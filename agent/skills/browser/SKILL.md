@@ -88,10 +88,13 @@ look at it. A success prints the line on stdout; a failure prints it on stderr a
 
 ## Handover
 
-Hand the browser to the user when the wall is account trust: a sign-in the user must complete, a
-locked tenant, a code that only their own device holds. Rule out the cheap causes first
-([interaction-skills/forms.md](interaction-skills/forms.md)), because a handover spends the user's
-time. A cold stealth session can spend most of the handover's start budget on the browser start:
+Every sign-in lives in the session's profile, across programs, idle stops, and daemon restarts, so
+a site the user signed into before answers signed in until that site itself expires the session.
+Open the page first and read it: ask for a handover only when the page shows a sign-in wall, and
+say to the user that the earlier sign-in expired. Hand the browser to the user when the wall is
+account trust: a sign-in the user must complete, a locked tenant, a code that only their own device
+holds. Rule out the cheap causes first ([interaction-skills/forms.md](interaction-skills/forms.md)),
+because a handover spends the user's time. A cold stealth session can spend most of the handover's start budget on the browser start:
 run one `browser exec` on the session first, then hand it over.
 
 ```bash
