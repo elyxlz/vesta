@@ -115,8 +115,8 @@ answer `handover_in_use`.
 
 - `browser doctor`: one report of binaries, versions, sessions, artifacts, display and handover readiness, and the last error.
 - `browser engines`: which mode routes to which engine, and whether each engine is ready.
-- `browser sessions`: every session and its state. `browser session stop <name>` stops one, `browser stop-all` stops all.
-- `error.code` of `daemon_down`: run `browser daemon start`, then rerun the program. `browser daemon status|restart|stop` handle the rest.
+- `browser sessions`: every session and its state. `browser session stop <name>` stops one. `browser stop-all` stops every session, cancels a program in flight, and ends a live handover, so no browser runs afterwards.
+- `error.code` of `daemon_down`: run `browser daemon start`, then rerun the program. `browser daemon start` also ends any browser a previous daemon left running. `browser daemon status|restart|stop` handle the rest.
 - Installation and paths: [SETUP.md](SETUP.md).
 
 ## Recipes

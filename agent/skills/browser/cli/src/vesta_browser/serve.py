@@ -43,6 +43,8 @@ HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
 MIN_SESSION_BUDGET_SECS = 1.0
 STARTUP_DEREGISTER_TIMEOUT_SECS = 5.0
+# How long a stop-all waits for a session mid-launch to land before it stops that session.
+STOP_ALL_SETTLE_SECS = p.SESSION_START_BUDGET_SECS
 READ_CHUNK_BYTES = 1 << 16
 
 
@@ -191,13 +193,44 @@ async def op_session_stop(state: State, request_id: str, request: dict[str, p.Js
     return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
 
 
+def _settling(state: State) -> bool:
+    """Whether a session is still starting or running a program, or a handover is still claiming
+    its browser and so holds no task a stop could cancel."""
+    live = state.handover
+    claiming = live is not None and live.state == "starting" and live.task is None
+    return claiming or any(session.state in ("busy", "starting") for session in state.table.sessions.values())
+
+
+async def _quiesce(state: State) -> list[str]:
+    """Cancels every exec in flight, one that reaches `busy` while this waits included, and waits
+    out every session start inside one budget. Returns the request ids it cancelled."""
+    cancelled: list[str] = []
+    deadline = time.monotonic() + STOP_ALL_SETTLE_SECS
+    while True:
+        for exec_id, task in state.inflight.items():
+            if exec_id not in cancelled:
+                cancelled.append(exec_id)
+                task.cancel()
+        if not _settling(state) or time.monotonic() >= deadline:
+            return cancelled
+        await asyncio.sleep(handover.SETTLE_POLL_SECS)
+
+
 async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
-    stopped: list[str] = []
-    for session in state.table.sessions.values():
-        was_stopped = session.state == "stopped"
-        if await stop_session(state.paths, session) and not was_stopped:
-            stopped.append(session.name)
-    return p.result(request_id=request_id, op="stop_all", ok=True, data={"stopped": stopped})
+    """Ends everything the daemon runs: each program in flight answers `cancelled` to its own
+    caller, the live handover is given back, and every session loses its browser and display."""
+    cancelled = await _quiesce(state)
+    live = state.handover
+    handover_stopped = False
+    if live is not None and live.state in ("starting", "live"):
+        await handover.stop(state, live, reason="stopped")
+        handover_stopped = True
+    sessions = list(state.table.sessions.values())
+    stopped = [session.name for session in sessions if session.runtime is not None or session.display is not None]
+    for session in sessions:
+        await stop_session(state.paths, session, force=True)
+    data: dict[str, p.JsonValue] = {"stopped": stopped, "cancelled": cancelled, "handover_stopped": handover_stopped}
+    return p.result(request_id=request_id, op="stop_all", ok=True, data=data)
 
 
 async def _idle_sweep(state: State) -> None:

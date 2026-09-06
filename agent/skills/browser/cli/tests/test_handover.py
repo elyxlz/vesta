@@ -222,6 +222,29 @@ def test_handover_stop_releases_the_key_the_service_and_the_stream(rig):
     assert not rig.paths.handover_web.exists()
 
 
+def test_stop_all_ends_a_live_handover_and_its_session(rig):
+    async def run():
+        started = await request(rig.paths, _start())
+        await _wait_for_pids(rig, 4)
+        pids = rig.display_pids()
+        browser = int((rig.paths.profiles / "chromium" / "research" / "fake.pid").read_text())
+        stop_all = await request(rig.paths, p.request("stop_all", "sa"))
+        gone = await wait_until_all_dead([*pids, browser])
+        status = await request(rig.paths, p.request("handover_status", "h2"))
+        listing = await request(rig.paths, p.request("sessions", "h3"))
+        return started, stop_all, pids, gone, status, listing
+
+    started, stop_all, pids, gone, status, listing = with_daemon(rig.paths, run)
+    assert started["ok"] is True, started
+    assert stop_all["ok"] is True
+    assert stop_all["data"] == {"stopped": ["research"], "cancelled": [], "handover_stopped": True}
+    assert len(pids) == 4 and gone is True
+    assert rig.keys() == []
+    assert rig.register_lines() == ["deregister browser", "browser", "deregister browser"]
+    assert status["data"]["state"] == "inactive" and status["data"]["user_url"] is None
+    assert [s["state"] for s in listing["data"]["sessions"] if s["name"] == "research"] == ["stopped"]
+
+
 def test_a_handover_whose_browser_died_gives_the_session_back_stopped(rig):
     """A runtime the user lost is reaped with its display, so the next exec starts a fresh one."""
 
