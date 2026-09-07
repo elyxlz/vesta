@@ -1,6 +1,6 @@
 ---
 name: hibob
-description: Drive app.hibob.com's own internal web API as the already-logged-in user, exactly as the website does. Use for Bob HR data an ordinary employee can see but the public API and MCP server cannot expose - open to-do tasks, profile, company directory, org tree, time-off balance, personal documents. CLI: hibob.
+description: Drive app.hibob.com's own internal web API as the already-logged-in user, exactly as the website does. Use for Bob HR data an ordinary employee can see but the public API and MCP server cannot expose: open to-do tasks, profile, company directory, org tree, time-off balance, personal documents. CLI: hibob.
 ---
 
 # hibob (CLI: hibob)
