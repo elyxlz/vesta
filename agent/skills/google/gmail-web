@@ -1,0 +1,504 @@
+#!/root/.local/share/uv/tools/vesta-browser/bin/python
+"""gmail-web - drive Gmail's OWN internal web (sync) API as the logged-in user.
+
+This is NOT OAuth, NOT IMAP, and NOT the public Gmail REST API. It does exactly
+what the Gmail web client does: it runs `fetch('/sync/u/0/i/...', {credentials:
+'include', headers:{...}})` from inside the already-signed-in browser page, so
+every call carries the signed-in user's real session cookie and returns exactly what
+they see in the web UI. Written for a Google Workspace tenant whose
+blocks third-party OAuth apps and disables IMAP/SMTP, but whose web session works.
+
+Auth model: the session lives in the Camoufox profile at /root/.browser/profile,
+driven through the `vesta_browser` daemon. We never read, print, or persist the
+session cookie. Gmail's sync endpoints ALSO require two per-session request headers
+(`X-Framework-Xsrf-Token` and `X-Gmail-BTAI`) that are NOT in any simple global and
+cannot be guessed; without the xsrf header the endpoint returns HTTP 400, without
+BTAI it returns HTTP 500. We harvest them the honest way: a WebDriver-BiDi main-world
+preload script intercepts the page's own bootstrap sync requests and stashes those
+exact header values on `window.__gmHdrs`, and we reuse them verbatim. They are
+CREDENTIALS: this tool never prints them and never writes them to disk.
+
+READ-ONLY. This tool lists, searches and reads mail. It never sends, replies,
+forwards, drafts, labels, archives, deletes or marks anything. See SKILL.md.
+
+The two browser-JS traps (see helpers.js): a script passed to helpers.js is wrapped
+in `( ... )`, so it must be a single EXPRESSION (an IIFE), never multiple
+statements; and returning a promise can mis-serialise, so the fetch IIFE returns
+synchronously and the result is polled off a global.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import random
+import sys
+import time
+from datetime import datetime, timezone
+
+BROWSER_SRC = "/root/agent/skills/browser/cli/src"
+
+
+def _browser():
+    """The browser tool's admin+helpers, imported on first use.
+
+    Lazy because reaching them needs a sys.path entry, and setting that at module
+    level would put code before an import.
+    """
+    if BROWSER_SRC not in sys.path:
+        sys.path.insert(0, BROWSER_SRC)
+    from vesta_browser import admin, helpers
+
+    return admin, helpers
+
+BASE = "https://mail.google.com"
+MAILBOX = "/mail/u/0/"
+
+
+class GmailError(RuntimeError):
+    pass
+
+
+# Preload interceptor: patches XHR in the main world of every new document and, when
+# the page fires one of its own sync requests, copies the request's per-session
+# headers onto window.__gmHdrs. Idempotent via the __gmHooked guard.
+_INTERCEPTOR = r"""
+() => { if (window.__gmHooked) return; window.__gmHooked = true; if (!window.__gmHdrs) window.__gmHdrs = null;
+  const grab = (h) => { try { const x = h['X-Framework-Xsrf-Token']; if (!x) return;
+      window.__gmHdrs = {xsrf: x, btai: h['X-Gmail-BTAI'], btd: h['X-Google-BTD'] || '1'}; } catch (e) {} };
+  const X = window.XMLHttpRequest, o = X.prototype.open, s = X.prototype.setRequestHeader, sd = X.prototype.send;
+  X.prototype.open = function (m, u) { this.__u = u; this.__h = {}; return o.apply(this, arguments); };
+  X.prototype.setRequestHeader = function (k, v) { try { this.__h[k] = v; } catch (e) {} return s.apply(this, arguments); };
+  X.prototype.send = function (b) { if (String(this.__u).indexOf('/sync/') > -1 && String(this.__u).indexOf('/i/') > -1) grab(this.__h); return sd.apply(this, arguments); };
+}
+"""
+
+# Single-EXPRESSION IIFE: kicks off the fetch and stashes the result on a global,
+# then returns synchronously; we poll the global (see module docstring).
+_FETCH = """(() => { window.__gm = null;
+  fetch(%(url)s, {method: 'POST', credentials: 'include', headers: %(headers)s, body: %(body)s})
+    .then(r => r.text().then(t => { window.__gm = JSON.stringify({status: r.status, body: t}); }))
+    .catch(e => { window.__gm = JSON.stringify({status: -1, body: 'fetch failed: ' + String(e)}); });
+  return 'started'; })()"""
+
+_MSG_UNREAD_LABEL = "^u"
+
+
+def _rc() -> int:
+    return random.randint(100000, 999999)
+
+
+def _on_gmail() -> bool:
+    _, helpers = _browser()
+    try:
+        host = helpers.js("location.host")
+    except (RuntimeError, OSError):
+        return False
+    return bool(host) and "mail.google.com" in host
+
+
+def _session_headers() -> dict:
+    """Ensure the daemon is up, the tab is parked on Gmail, and the per-session
+    request headers have been harvested from the page's own traffic. Returns the
+    header dict to send with each sync call. Fails LOUDLY if anything is missing."""
+    admin, helpers = _browser()
+    try:
+        admin.ensure_daemon()
+    except (RuntimeError, OSError) as exc:
+        raise GmailError(
+            "no live browser session. A logged-in Google profile lives at "
+            "/root/.browser/profile; start it with:\n"
+            "  browser launch --headless --user-data-dir /root/.browser/profile\n"
+            "then `browser navigate https://mail.google.com/mail/u/0/`.\n"
+            f"(underlying error: {exc})"
+        ) from exc
+
+    # Register the header-harvesting preload for future document loads. This is
+    # best-effort and idempotent in effect (the injected code self-guards), so a
+    # duplicate registration across runs is harmless.
+    _, helpers = _browser()
+    try:
+        helpers.bidi("script.addPreloadScript", functionDeclaration=_INTERCEPTOR)
+    except (RuntimeError, OSError):
+        # An already-registered preload script is fine; the harvest below is the check.
+        pass
+
+    # If we already have headers on the current page, reuse them.
+    _, helpers = _browser()
+    hdrs = helpers.js("window.__gmHdrs") if _on_gmail() else None
+
+    # Otherwise (or if the tab wandered off), navigate to Gmail. A fresh load makes
+    # the client fire its bootstrap sync requests, which the preload intercepts.
+    if not hdrs:
+        helpers.goto(BASE + MAILBOX)
+        hdrs = None
+        for _ in range(40):
+            helpers.wait(0.5)
+            if not _on_gmail():
+                continue
+            hdrs = helpers.js("window.__gmHdrs")
+            if hdrs:
+                break
+
+    if not _on_gmail():
+        host = helpers.js("location.host")
+        raise GmailError(
+            f"could not get the tab onto mail.google.com (currently {host!r}); "
+            "the session may be logged out or another tool is driving the tab. "
+            "Check `browser screenshot`."
+        )
+    if not hdrs or not hdrs.get("xsrf") or not hdrs.get("btai"):
+        raise GmailError(
+            "could not harvest Gmail's per-session request headers "
+            "(X-Framework-Xsrf-Token / X-Gmail-BTAI) from the page. The session may "
+            "be logged out, or Gmail served an interface that does not use the sync "
+            "API. Check `browser screenshot`."
+        )
+    return {
+        "X-Framework-Xsrf-Token": hdrs["xsrf"],
+        "X-Google-BTD": hdrs.get("btd", "1"),
+        "X-Gmail-BTAI": hdrs["btai"],
+        "Content-Type": "application/json",
+    }
+
+
+def _sync(endpoint: str, body, headers: dict, tries: int = 80):
+    """POST a JSON body to a Gmail sync endpoint from inside the page and return the
+    parsed JSON. Fails LOUDLY: a transport error, a non-2xx HTTP status, or Gmail's
+    own `["er",...,code,...]` error envelope all raise GmailError carrying the detail,
+    never a silent empty result."""
+    url = f"{BASE}/sync/u/0/i/{endpoint}?hl=en&c={_rc()}&rt=r&pt=ji"
+    _, helpers = _browser()
+    script = _FETCH % {
+        "url": json.dumps(url),
+        "headers": json.dumps(headers),
+        "body": json.dumps(json.dumps(body)),
+    }
+    helpers.js(script)
+    raw = None
+    for _ in range(tries):
+        helpers.wait(0.5)
+        raw = helpers.js("window.__gm")
+        if raw:
+            break
+    if not raw:
+        raise GmailError(f"timed out waiting for POST {endpoint}")
+    out = json.loads(raw)
+    status, bodytext = out["status"], out["body"]
+    if status == -1:
+        raise GmailError(f"POST {endpoint} failed in the browser: {bodytext}")
+    if not (200 <= status < 300):
+        raise GmailError(f"POST {endpoint} -> HTTP {status}\n{bodytext[:1500]}")
+    stripped = bodytext.lstrip()
+    if stripped.startswith('["er"'):
+        raise GmailError(f"POST {endpoint} -> Gmail error envelope: {bodytext[:400]}")
+    try:
+        data = json.loads(bodytext)
+    except json.JSONDecodeError as exc:
+        raise GmailError(
+            f"POST {endpoint} -> HTTP {status} but body was not JSON:\n{bodytext[:600]}"
+        ) from exc
+    return data
+
+
+# ── query building ────────────────────────────────────────────
+
+_LABEL_QUERY = {
+    "INBOX": "in:inbox",
+    "SENT": "in:sent",
+    "DRAFT": "in:draft",
+    "DRAFTS": "in:draft",
+    "STARRED": "is:starred",
+    "IMPORTANT": "is:important",
+    "UNREAD": "is:unread",
+    "SPAM": "in:spam",
+    "TRASH": "in:trash",
+    "ALL": "in:anywhere",
+}
+
+
+def _label_to_query(label: str) -> str:
+    key = (label or "INBOX").upper()
+    if key in _LABEL_QUERY:
+        return _LABEL_QUERY[key]
+    return f"label:{label}"
+
+
+def _bv_body(query: str, count: int):
+    """Body for the `bv` (browse view = list/search) endpoint. ViewType 123 is the
+    generic search view; the 4th element is the Gmail search query string. Shape was
+    captured verbatim from the live client; only query and count are substituted."""
+    return [
+        [123, count, None, query,
+         [None, None, None, None, 0, None, None, None, None, None, None,
+          int(time.time() * 1000), -18000000, None, None, None, None, None, None,
+          None, None, None, None, 0, 0, 0, 0],
+         "itemlist-ViewType(123)-9", 1, 2000, None, 0, None, None, None, 1, None,
+         [1, 0, 0, None, None, 0, 1, None, None, 1, None, None, 1, None, 1, None,
+          None, None, None, None, 0],
+         None, None, 1, None, None, 0, 1, 0, [[[2, count]]], 0, 0, None, None, None,
+         None, None, []],
+        None, [0, 5, None, None, 1, 1, 1],
+    ]
+
+
+# ── response parsing ──────────────────────────────────────────
+
+def _iso(ms) -> str | None:
+    if not isinstance(ms, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+    except (ValueError, OverflowError, OSError, TypeError):
+        return None
+
+
+def _msg_labels(msg: list) -> list:
+    """The label list inside a message array (e.g. ['^all','^i','^u', ...])."""
+    for el in msg:
+        if isinstance(el, list) and el and all(isinstance(x, str) for x in el) \
+                and any(str(x).startswith("^") for x in el):
+            return el
+    return []
+
+
+def _sender(msg: list) -> dict:
+    frm = msg[1] if len(msg) > 1 else None
+    if isinstance(frm, list) and len(frm) >= 3:
+        return {"email": frm[1], "name": frm[2]}
+    return {"email": None, "name": None}
+
+
+def _parse_bv(data) -> list[dict]:
+    """Extract the thread summaries from a `bv` response. The thread entries live at
+    data[-1][0][1]; each entry is [threadFields, total]; threadFields is
+    [subject, snippet, ts_ms, 'thread-f:ID', [messages], ...]."""
+    try:
+        block = data[-1][0]
+    except (IndexError, TypeError, KeyError) as exc:
+        raise GmailError(
+            f"bv response shape not understood (no result block): {json.dumps(data)[:400]}"
+        ) from exc
+    # block[0] == 2 is the item-list marker. block[1] is the thread list, which is
+    # explicitly `null` for a genuinely empty result (e.g. `[[2, null, 0, []]]`).
+    if not (isinstance(block, list) and block and block[0] == 2):
+        raise GmailError(
+            f"bv response shape not understood (missing item-list marker): "
+            f"{json.dumps(data)[:400]}"
+        )
+    entries = block[1]
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise GmailError(f"bv thread list was {type(entries).__name__}, expected list or null")
+    out = []
+    for entry in entries:
+        th = entry[0] if isinstance(entry, list) and entry else None
+        if not isinstance(th, list) or len(th) < 5:
+            continue
+        msgs = th[4] if isinstance(th[4], list) else []
+        unread = any(_MSG_UNREAD_LABEL in _msg_labels(m) for m in msgs if isinstance(m, list))
+        last = msgs[-1] if msgs else []
+        out.append({
+            "threadId": th[3],
+            "subject": th[0],
+            "snippet": th[1],
+            "date": _iso(th[2]),
+            "timestamp": th[2],
+            "from": _sender(last) if isinstance(last, list) else {"email": None, "name": None},
+            "messages": len(msgs),
+            "unread": unread,
+        })
+    return out
+
+
+def _walk_strings(node, acc):
+    if isinstance(node, str):
+        acc.append(node)
+    elif isinstance(node, list):
+        for x in node:
+            _walk_strings(x, acc)
+
+
+def _extract_body(msg_payload) -> str:
+    """Pull the readable body out of an fd message payload. The body parts sit in a
+    deeply nested structure; the largest HTML/plain string in the payload is the body.
+    We collect candidate strings and return the longest that looks like content."""
+    strings: list[str] = []
+    _walk_strings(msg_payload, strings)
+    # Body candidates: long strings, prefer ones with HTML/newlines.
+    cands = [s for s in strings if len(s) > 40]
+    if not cands:
+        return ""
+    cands.sort(key=len, reverse=True)
+    return cands[0]
+
+
+def _parse_fd_thread(data) -> dict:
+    """Parse an fd (fetch-data) response for a single thread with full message bodies.
+    Response: [0, [[ 'thread-f:ID', null, [ [ 'msg-f:MID', [msgMeta...] ], ... ] ]]]."""
+    try:
+        threads = data[1]
+    except (IndexError, TypeError):
+        raise GmailError(f"fd response shape not understood: {json.dumps(data)[:400]}")
+    if not threads:
+        raise GmailError("fd returned no thread (unknown/inaccessible id?)")
+    t = threads[0]
+    tid = t[0]
+    # A real thread is [tid, null, [messages]]. An unknown/inaccessible id echoes back
+    # only [tid] with no message array; treat that as a loud error, not an empty read.
+    if len(t) < 3 or not isinstance(t[2], list) or not t[2]:
+        raise GmailError(
+            f"no messages returned for {tid} - the thread id is unknown, not "
+            f"visible to this account, or in a section the sync API did not expand. "
+            f"Raw: {json.dumps(data)[:300]}"
+        )
+    raw_msgs = t[2]
+    messages = []
+    for m in raw_msgs:
+        if not isinstance(m, list) or len(m) < 2:
+            continue
+        mid = m[0]
+        meta = m[1] if isinstance(m[1], list) else []
+        # meta[0] = recipients block, meta[4] = subject (observed), body nested deeper.
+        subject = None
+        if len(meta) > 4 and isinstance(meta[4], str):
+            subject = meta[4]
+        body = _extract_body(meta)
+        messages.append({
+            "msgId": mid,
+            "subject": subject,
+            "body": body,
+        })
+    return {"threadId": tid, "messages": messages}
+
+
+# ── output ────────────────────────────────────────────────────
+
+def _emit(obj, as_json: bool, human) -> None:
+    if as_json:
+        print(json.dumps(obj, indent=2, ensure_ascii=False))
+    else:
+        human(obj)
+
+
+def _fmt_from(f: dict) -> str:
+    if f.get("name") and f.get("email"):
+        return f"{f['name']} <{f['email']}>"
+    return f.get("email") or f.get("name") or "(unknown)"
+
+
+# ── commands ──────────────────────────────────────────────────
+
+def cmd_list(args) -> int:
+    headers = _session_headers()
+    query = _label_to_query(args.label)
+    data = _sync("bv", _bv_body(query, args.limit), headers)
+    threads = _parse_bv(data)[: args.limit]
+
+    def human(_):
+        print(f"{len(threads)} thread(s) for {args.label} ({query}):")
+        for t in threads:
+            flag = "*" if t["unread"] else " "
+            date = (t["date"] or "")[:16].replace("T", " ")
+            print(f" {flag} {date}  {_fmt_from(t['from']):40.40}  {(t['subject'] or '(no subject)')[:60]}")
+            print(f"      id={t['threadId']}  msgs={t['messages']}")
+    _emit(threads, args.json, human)
+    return 0
+
+
+def cmd_search(args) -> int:
+    headers = _session_headers()
+    query = args.query
+    data = _sync("bv", _bv_body(query, args.limit), headers)
+    threads = _parse_bv(data)[: args.limit]
+
+    def human(_):
+        print(f"{len(threads)} thread(s) matching {query!r}:")
+        for t in threads:
+            flag = "*" if t["unread"] else " "
+            date = (t["date"] or "")[:16].replace("T", " ")
+            print(f" {flag} {date}  {_fmt_from(t['from']):40.40}  {(t['subject'] or '(no subject)')[:60]}")
+            print(f"      id={t['threadId']}  msgs={t['messages']}")
+    _emit(threads, args.json, human)
+    return 0
+
+
+def _norm_thread_id(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("thread-f:") or raw.startswith("thread-a:"):
+        return raw
+    return f"thread-f:{raw}"
+
+
+def cmd_get(args) -> int:
+    headers = _session_headers()
+    tid = _norm_thread_id(args.message_id)
+    data = _sync("fd", [[[tid, None, None]], 2], headers)
+    thread = _parse_fd_thread(data)
+
+    def human(t):
+        print(f"Thread {t['threadId']}  ({len(t['messages'])} message(s))")
+        for i, m in enumerate(t["messages"], 1):
+            print(f"\n--- message {i}/{len(t['messages'])}  id={m['msgId']} ---")
+            if m.get("subject"):
+                print(f"Subject: {m['subject']}")
+            body = m.get("body") or ""
+            print(body[: args.max_chars])
+            if len(body) > args.max_chars:
+                print(f"\n[... {len(body) - args.max_chars} more chars; use --json for full body ...]")
+    _emit(thread, args.json, human)
+    return 0
+
+
+def cmd_whoami(args) -> int:
+    _session_headers()
+    _, helpers = _browser()
+    title = helpers.js("document.title") or ""
+    m = re.search(r"[\w.+-]+@[\w.-]+", title)
+    email = m.group(0) if m else None
+
+    def human(_):
+        print(f"Signed in to Gmail web as: {email or '(could not read from page title)'}")
+        print(f"Page title: {title}")
+    _emit({"email": email, "title": title}, args.json, human)
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="gmail-web", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add(name, fn, help):
+        sp = sub.add_parser(name, help=help)
+        sp.add_argument("--json", action="store_true", help="raw JSON output")
+        sp.set_defaults(func=fn)
+        return sp
+
+    add("whoami", cmd_whoami, "show which Google account the web session is signed in as")
+
+    lp = add("list", cmd_list, "list threads in a label (default INBOX)")
+    lp.add_argument("--label", default="INBOX",
+                    help="INBOX|SENT|DRAFT|STARRED|IMPORTANT|UNREAD|SPAM|TRASH|ALL or a custom label name")
+    lp.add_argument("--limit", type=int, default=25)
+
+    spp = add("search", cmd_search, "search mail with a Gmail search query")
+    spp.add_argument("query", help="Gmail search syntax, e.g. 'from:okta subject:code'")
+    spp.add_argument("--limit", type=int, default=25)
+
+    gp = add("get", cmd_get, "read a thread's messages (bodies) by thread id")
+    gp.add_argument("--id", required=True, dest="message_id",
+                    help="thread id (numeric, or full 'thread-f:...'), as printed by list/search")
+    gp.add_argument("--max-chars", type=int, default=4000, dest="max_chars",
+                    help="truncate each body in human output (default 4000; --json is never truncated)")
+
+    args = p.parse_args()
+    try:
+        return args.func(args)
+    except GmailError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
