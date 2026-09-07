@@ -93,7 +93,7 @@ def _snapshot(t: dict) -> dict:
 def main() -> int:
     try:
         tasks = _fetch_tasks()
-    except Exception as exc:  # noqa: BLE001
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"hibob poll FAILED: {exc}", file=sys.stderr)
         return 1
 

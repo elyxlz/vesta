@@ -19,8 +19,20 @@ import argparse
 import json
 import sys
 
-sys.path.insert(0, "/root/agent/skills/browser/cli/src")
-from vesta_browser import admin, helpers  # noqa: E402
+BROWSER_SRC = "/root/agent/skills/browser/cli/src"
+
+
+def _browser():
+    """The browser tool's admin+helpers, imported on first use.
+
+    Imported lazily because reaching them needs a sys.path entry, and setting that
+    at module level puts code before an import.
+    """
+    if BROWSER_SRC not in sys.path:
+        sys.path.insert(0, BROWSER_SRC)
+    from vesta_browser import admin, helpers
+
+    return admin, helpers
 
 BASE = "https://app.hibob.com"
 
@@ -50,9 +62,10 @@ def _ensure_session() -> None:
     The fetch is same-origin: if the tab has wandered off (e.g. a Google SSO
     redirect) the call is cross-origin and the browser blocks it. So we park the
     tab on /home first."""
+    admin, helpers = _browser()
     try:
         admin.ensure_daemon()
-    except Exception as exc:  # noqa: BLE001
+    except (RuntimeError, OSError) as exc:
         raise ApiError(
             "no live browser session. A logged-in Bob profile lives at "
             "/root/.browser/profile; start it with:\n"
@@ -62,7 +75,7 @@ def _ensure_session() -> None:
         ) from exc
     try:
         host = helpers.js("location.host")
-    except Exception as exc:  # noqa: BLE001
+    except (RuntimeError, OSError) as exc:
         raise ApiError(f"browser daemon is not answering: {exc}") from exc
     if not host or "app.hibob.com" not in host:
         helpers.goto(f"{BASE}/home")
@@ -82,6 +95,7 @@ def api(path: str, method: str = "GET", body: dict | None = None, tries: int = 6
     request error (CORS, network) raises too. A 200 with an empty list is a valid,
     distinct result and is returned as-is."""
     _ensure_session()
+    _, helpers = _browser()
     url = path if path.startswith("http") else BASE + path
     headers = {"Content-Type": "application/json"} if body is not None else {}
     script = _FETCH % {
