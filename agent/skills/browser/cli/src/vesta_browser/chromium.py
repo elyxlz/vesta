@@ -14,6 +14,7 @@ import contextlib
 import json
 import os
 import pathlib as pl
+import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -33,6 +34,7 @@ BROWSER_STOP_GRACE_SECS = 5
 # The harness daemon runs as `python -m browser_harness.daemon`, so its own argv is what proves the
 # recorded pid is still that daemon.
 HARNESS_MARKER = b"browser_harness"
+AGENT_HELPERS = pl.Path(__file__).parent / "assets" / "agent_helpers.py"
 # Chromium reads a SIGTERM exit as the OS ending its session and restores every tab on the next
 # launch; pinning the startup pref to "open the new tab page" is what keeps a profile's tab count flat.
 STARTUP_OPEN_NEW_TAB_PAGE = 5
@@ -102,12 +104,20 @@ def missing(paths: Paths) -> list[str]:
     return [f"{label} missing at {path}" for path, label in needed if not path.is_file()]
 
 
+def _place_agent_helpers(session: Session) -> None:
+    """Browser Harness loads `agent_helpers.py` from the workspace under its home into every program."""
+    workspace = session.scratch_dir / "home" / "agent-workspace"
+    workspace.mkdir(exist_ok=True)
+    shutil.copyfile(AGENT_HELPERS, workspace / "agent_helpers.py")
+
+
 async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> ChromiumRuntime:
     gaps = missing(paths)
     if gaps:
         raise p.BrowserError(p.unavailable("; ".join(gaps)))
     for sub in ("tmp", "runtime", "home"):
         (session.scratch_dir / sub).mkdir(exist_ok=True)
+    await asyncio.to_thread(_place_agent_helpers, session)
     port_file = session.profile_dir / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
     await asyncio.to_thread(pin_startup_pref, session.profile_dir)

@@ -21,6 +21,7 @@ import traceback
 import typing as tp
 
 MODIFIER_NAMES = ((1, "Alt"), (2, "Control"), (4, "Meta"), (8, "Shift"))
+SCREENSHOT_MAX_PX = 32767
 PAGE_INFO_JS = (
     "() => ({url: location.href, title: document.title, w: innerWidth, h: innerHeight, "
     "sx: scrollX, sy: scrollY, pw: document.documentElement.scrollWidth, ph: document.documentElement.scrollHeight})"
@@ -62,7 +63,7 @@ class PageLike(tp.Protocol):
     def type(self, selector: str, text: str) -> None: ...
     def wait_for_load_state(self, state: str, timeout: float) -> None: ...
     def wait_for_selector(self, selector: str, state: str, timeout: float) -> None: ...
-    def screenshot(self, path: str, full_page: bool) -> None: ...
+    def screenshot(self, path: str, full_page: bool, clip: dict[str, float] | None = None) -> None: ...
     def set_input_files(self, selector: str, path: str) -> None: ...
     def bring_to_front(self) -> None: ...
     def close(self) -> None: ...
@@ -137,6 +138,10 @@ def _current_tab(state: WorkerState) -> dict[str, str]:
 
 
 def _list_tabs(state: WorkerState, include_chrome: bool = True) -> list[dict[str, str]]:
+    # The sync client learns of a page the site opened only while a call is in flight, so one
+    # round trip precedes the read of `context.pages`.
+    with contextlib.suppress(Exception):
+        state.page.evaluate("0")
     return [_tab(state, page) for page in state.context.pages if include_chrome or not page.url.startswith("about:")]
 
 
@@ -221,7 +226,14 @@ def _wait_for_network_idle(state: WorkerState, timeout: float = 10.0, idle_ms: i
 def _capture_screenshot(state: WorkerState, path: str | None = None, full: bool = False, max_dim: int | None = None) -> str:
     state.shots += 1
     target = pl.Path(path) if path else state.artifacts / f"shot-{state.shots}.png"
-    state.page.screenshot(path=str(target), full_page=full)
+    try:
+        state.page.screenshot(path=str(target), full_page=full)
+    except Exception as exc:
+        # Firefox refuses a capture taller than its raster limit; the top of the page is what fits.
+        if "larger than" not in str(exc):
+            raise
+        width = int(str(state.page.evaluate("document.documentElement.clientWidth")))
+        state.page.screenshot(path=str(target), full_page=True, clip={"x": 0, "y": 0, "width": width, "height": SCREENSHOT_MAX_PX})
     return str(target)
 
 

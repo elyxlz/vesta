@@ -173,3 +173,16 @@ def test_a_child_writing_to_fd_1_cannot_corrupt_the_protocol_stream(worker):
     assert res["exit_code"] == 0
     assert res["stdout"] == "mine\n" and "stray" not in res["stdout"]
     assert ask({"op": "exec", "code": "print('still here')"})["stdout"] == "still here\n"
+
+
+def test_list_tabs_makes_one_round_trip_before_reading_the_pages(worker):
+    ask, _, _ = worker
+    res = ask({"op": "exec", "code": "list_tabs(); print(context.log[-1])"})
+    assert res["exit_code"] == 0 and res["stdout"].strip() == str(("evaluate", "0"))
+
+
+def test_a_full_page_capture_past_the_raster_limit_keeps_the_top_of_the_page(worker):
+    ask, _, _ = worker
+    res = ask({"op": "exec", "code": "new_tab('https://example.com/tall'); capture_screenshot(full=True); print(context.log[-1])"})
+    assert res["exit_code"] == 0, res["stderr"]
+    assert res["stdout"].strip().endswith("True, {'x': 0, 'y': 0, 'width': 1280, 'height': 32767})")

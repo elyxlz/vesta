@@ -70,8 +70,10 @@ click_at_xy(point["x"], point["y"])
 ```
 
 Two traps: the control is often a `div`, not a `button`, so query broadly and filter on exact text;
-and it may sit BELOW the fold, where a click lands on nothing. `scrollIntoView({block:'center'})`
-first, then re-read the rect, because the coordinates move.
+and it may sit BELOW the fold, where a click lands on nothing. `scrollIntoView({block:'center',
+behavior:'instant'})` first, then re-read the rect, because the coordinates move. A smooth scroll
+(Firefox's default, and many sites set it) is still travelling when the same program reads the
+rect a moment later, so the click lands where the button was, on whatever now sits there.
 
 Order that works:
 
