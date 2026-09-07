@@ -291,3 +291,16 @@ def test_start_passes_the_display_to_the_browser_process(rig):
 
     env_seen = asyncio.run(run())
     assert env_seen["DISPLAY"] == ":101"
+
+
+def test_start_places_the_agent_helpers_the_harness_loads(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        await chromium.stop(runtime, session)
+
+    asyncio.run(run())
+    placed = session.scratch_dir / "home" / "agent-workspace" / "agent_helpers.py"
+    assert placed.read_text() == chromium.AGENT_HELPERS.read_text()
+    assert "def new_tab(" in placed.read_text() and "activate_tab" in placed.read_text()
