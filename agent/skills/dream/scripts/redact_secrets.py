@@ -159,6 +159,13 @@ PATTERNS = [
     r"(?-i:wak_[A-Za-z0-9._-]{20,})",  # Vesta / Double Tick WhatsApp API keys, in ~/.whatsapp/state.json
     r"(?-i:sk_[a-f0-9]{40,})",  # ElevenLabs API keys
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
+    # Bitwarden Send links. The segment AFTER the send id is the decryption key, so the URL IS the
+    # credential: whoever holds it opens the payload, and these are handed out precisely to move a
+    # password to someone. Found 7 Sep 2026 when an employer delivered a temporary account password
+    # as a one-use Send and the agent relayed the link on a chat channel, copying it into the message
+    # store, the event DB and the session transcript. That night's full scan flagged 4,568 records
+    # and not this one. Case-anchored like its neighbours; the {16,} floors keep short paths out.
+    r"(?-i:https://(?:vault|send)\.bitwarden\.(?:com|eu)/#/send/[A-Za-z0-9_-]{16,}/[A-Za-z0-9_-]{16,})",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
     # A real separator (: = or a quote) is mandatory, so prose like "password reuse" never matches;
     # the \\? bits absorb the backslash JSON puts before an escaped quote in the raw `data` blob.
