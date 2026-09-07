@@ -30,13 +30,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import random
 import sys
 import time
 from datetime import datetime, timezone
 
-sys.path.insert(0, "/root/agent/skills/browser/cli/src")
-from vesta_browser import admin, helpers  # noqa: E402
+BROWSER_SRC = "/root/agent/skills/browser/cli/src"
+
+
+def _browser():
+    """The browser tool's admin+helpers, imported on first use.
+
+    Lazy because reaching them needs a sys.path entry, and setting that at module
+    level would put code before an import.
+    """
+    if BROWSER_SRC not in sys.path:
+        sys.path.insert(0, BROWSER_SRC)
+    from vesta_browser import admin, helpers
+
+    return admin, helpers
 
 BASE = "https://mail.google.com"
 MAILBOX = "/mail/u/0/"
@@ -76,9 +89,10 @@ def _rc() -> int:
 
 
 def _on_gmail() -> bool:
+    _, helpers = _browser()
     try:
         host = helpers.js("location.host")
-    except Exception:
+    except (RuntimeError, OSError):
         return False
     return bool(host) and "mail.google.com" in host
 
@@ -87,9 +101,10 @@ def _session_headers() -> dict:
     """Ensure the daemon is up, the tab is parked on Gmail, and the per-session
     request headers have been harvested from the page's own traffic. Returns the
     header dict to send with each sync call. Fails LOUDLY if anything is missing."""
+    admin, helpers = _browser()
     try:
         admin.ensure_daemon()
-    except Exception as exc:  # noqa: BLE001
+    except (RuntimeError, OSError) as exc:
         raise GmailError(
             "no live browser session. A logged-in Google profile lives at "
             "/root/.browser/profile; start it with:\n"
@@ -101,12 +116,15 @@ def _session_headers() -> dict:
     # Register the header-harvesting preload for future document loads. This is
     # best-effort and idempotent in effect (the injected code self-guards), so a
     # duplicate registration across runs is harmless.
+    _, helpers = _browser()
     try:
         helpers.bidi("script.addPreloadScript", functionDeclaration=_INTERCEPTOR)
-    except Exception:  # noqa: BLE001
+    except (RuntimeError, OSError):
+        # An already-registered preload script is fine; the harvest below is the check.
         pass
 
     # If we already have headers on the current page, reuse them.
+    _, helpers = _browser()
     hdrs = helpers.js("window.__gmHdrs") if _on_gmail() else None
 
     # Otherwise (or if the tab wandered off), navigate to Gmail. A fresh load makes
@@ -123,7 +141,7 @@ def _session_headers() -> dict:
                 break
 
     if not _on_gmail():
-        host = helpers.js("location.host") if True else None
+        host = helpers.js("location.host")
         raise GmailError(
             f"could not get the tab onto mail.google.com (currently {host!r}); "
             "the session may be logged out or another tool is driving the tab. "
@@ -150,6 +168,7 @@ def _sync(endpoint: str, body, headers: dict, tries: int = 80):
     own `["er",...,code,...]` error envelope all raise GmailError carrying the detail,
     never a silent empty result."""
     url = f"{BASE}/sync/u/0/i/{endpoint}?hl=en&c={_rc()}&rt=r&pt=ji"
+    _, helpers = _browser()
     script = _FETCH % {
         "url": json.dumps(url),
         "headers": json.dumps(headers),
@@ -230,7 +249,7 @@ def _iso(ms) -> str | None:
         return None
     try:
         return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
-    except Exception:  # noqa: BLE001
+    except (ValueError, OverflowError, OSError, TypeError):
         return None
 
 
@@ -434,8 +453,8 @@ def cmd_get(args) -> int:
 
 def cmd_whoami(args) -> int:
     _session_headers()
+    _, helpers = _browser()
     title = helpers.js("document.title") or ""
-    import re
     m = re.search(r"[\w.+-]+@[\w.-]+", title)
     email = m.group(0) if m else None
 
