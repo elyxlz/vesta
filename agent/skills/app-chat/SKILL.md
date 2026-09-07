@@ -86,4 +86,5 @@ app-chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history
 - A numbered or bulleted list is fine to send as one bubble (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`
 - Lowercase, no bullets, keep messages tight, texting feel, not document feel
 - Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
+- **Quote the message body with SINGLE quotes.** In a double-quoted `--message "..."`, the shell expands `$`: `"$200"` becomes `00`, `"$2.2m"` drops the `$2`. That silently corrupts what the user sees. Use single quotes (`--message '$200 saved'`); if the text needs a literal apostrophe, close and reopen (`'it'\''s'`).
 - The app reconnects its chat socket automatically if the daemon or agent restarts
