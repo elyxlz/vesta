@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""hibob daemon: start|stop|restart|status. Runs `hibob-poll` on an interval.
+
+Follows the contract every other skill's daemon here follows, because the restart
+skill runs one line per daemon and reads only that contract:
+  - `start` is IDEMPOTENT and returns only once the watcher is actually up, so
+    re-running it can never stack duplicates.
+  - `stop` signals the single pid it recorded. Nothing here ever uses pkill or
+    killall, which are removed from this box for good reason.
+  - `status` answers from the pid record alone.
+
+WHY A PID FILE AND NOT A PROCESS SEARCH: a name search matches this script's own
+argv and any editor holding it open, so it reports healthy on nothing at all.
+
+The interval is deliberately slow. Bob's onboarding tasks change on the order of
+days, the poll drives a real browser page, and the Gmail and HiBob skills share one
+Firefox profile. Polling hard would buy nothing and would fight the other tools.
+"""
+from __future__ import annotations
+
+import json
+import os
+import pathlib as pl
+import signal
+import subprocess
+import sys
+import time
+
+NAME = "hibob"
+SKILL = pl.Path(__file__).resolve().parent
+POLL = str(SKILL / "hibob-poll")
+DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
+PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
+LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
+INTERVAL_SECS = 900
+TICK_TIMEOUT_SECS = 240
+STOP_TIMEOUT_SECS = 15
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _recorded_pid() -> int | None:
+    if not PIDFILE.is_file():
+        return None
+    try:
+        pid = int(PIDFILE.read_text().strip())
+    except ValueError:
+        return None
+    if not _alive(pid):
+        # A stale record is worse than none: it makes `status` lie.
+        PIDFILE.unlink(missing_ok=True)
+        return None
+    return pid
+
+
+def _watch() -> int:
+    """The supervised loop. One poll, then sleep, forever."""
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        started = time.time()
+        with LOG.open("a") as log:
+            log.write(f"[{NAME}] tick {time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
+            log.flush()
+            try:
+                subprocess.run(
+                    [POLL], stdout=log, stderr=log, timeout=TICK_TIMEOUT_SECS
+                )
+            except subprocess.TimeoutExpired:
+                log.write(f"[{NAME}] tick TIMED OUT after {TICK_TIMEOUT_SECS}s\n")
+            log.flush()
+        time.sleep(max(1.0, INTERVAL_SECS - (time.time() - started)))
+
+
+def start() -> int:
+    pid = _recorded_pid()
+    if pid:
+        print(json.dumps({"status": "already_running", "pid": pid}))
+        return 0
+    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as log:
+        proc = subprocess.Popen(
+            [sys.executable, __file__, "_watch"],
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    time.sleep(1.0)
+    if proc.poll() is not None:
+        # A failed start leaves no record behind, so a retry is always safe.
+        PIDFILE.unlink(missing_ok=True)
+        print(json.dumps({"error": f"watcher exited immediately (rc={proc.returncode})"}),
+              file=sys.stderr)
+        return 1
+    PIDFILE.write_text(str(proc.pid))
+    print(json.dumps({"status": "started", "pid": proc.pid}))
+    return 0
+
+
+def stop() -> int:
+    pid = _recorded_pid()
+    if not pid:
+        print(json.dumps({"status": "not_running"}))
+        return 0
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + STOP_TIMEOUT_SECS
+    while time.time() < deadline:
+        if not _alive(pid):
+            PIDFILE.unlink(missing_ok=True)
+            print(json.dumps({"status": "stopped", "pid": pid}))
+            return 0
+        time.sleep(0.2)
+    print(json.dumps({"error": f"pid {pid} still alive after {STOP_TIMEOUT_SECS}s"}),
+          file=sys.stderr)
+    return 1
+
+
+def status() -> int:
+    pid = _recorded_pid()
+    print(json.dumps({"running": bool(pid), "pid": pid, "interval_secs": INTERVAL_SECS}))
+    return 0
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args[:1] == ["_watch"]:
+        return _watch()
+    if args[:1] == ["daemon"]:
+        args = args[1:]
+    action = args[0] if args else ""
+    if action == "start":
+        return start()
+    if action == "stop":
+        return stop()
+    if action == "restart":
+        stop()
+        return start()
+    if action == "status":
+        return status()
+    print(f"Usage: {NAME} daemon <start|stop|restart|status>", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
