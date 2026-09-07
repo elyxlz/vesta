@@ -253,7 +253,7 @@ threads and is simpler to build.
 ## Failure behaviour
 
 Any transport error, any non-2xx HTTP status, and Gmail's own `["er",...,<code>,...]`
-error envelope all raise with the status and response body — never a silent empty
+error envelope all raise with the status and response body, never a silent empty
 result. A genuine empty result (e.g. `SENT` returned 0 threads for this brand-new
 account, same endpoint that returns 25 for `INBOX`) is a valid, distinct empty list
 and is shown as such.
