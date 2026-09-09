@@ -1,26 +1,30 @@
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { headerTitleStyle } from "@/theme/sheets";
 import type { SheetChromeProps } from "@/components/sheet-chrome.types";
 
 // Android form sheets render no native header, grabber, or toolbar item
 // (react-native-screens attaches header chrome only to non-sheet screens),
-// so the Material 3 sheet chrome renders in content: drag handle, centered
-// title, and a labeled close button.
+// so their in-content header mirrors the native iOS title and circular controls.
 export function SheetChrome({
   title,
   closeLabel,
   grabber = false,
   tintColor,
+  action,
 }: SheetChromeProps) {
   const router = useRouter();
   const { colors } = usePreferences();
-  const hasHeaderRow = Boolean(title) || Boolean(closeLabel);
+  const hasHeaderRow = Boolean(title) || Boolean(closeLabel) || Boolean(action);
+  const buttonSurface = { backgroundColor: colors.elevated };
 
   return (
-    <View pointerEvents="box-none" style={styles.chrome}>
+    <View
+      pointerEvents="box-none"
+      style={[styles.chrome, hasHeaderRow ? styles.headerSpacing : null]}
+    >
       {grabber ? (
         <View
           style={[styles.handle, { backgroundColor: colors.secondaryText }]}
@@ -31,7 +35,6 @@ export function SheetChrome({
           {title ? (
             <Text
               accessibilityRole="header"
-              family="heading"
               numberOfLines={1}
               style={[styles.title, { color: tintColor ?? colors.text }]}
             >
@@ -42,20 +45,28 @@ export function SheetChrome({
             <Pressable
               accessibilityLabel={closeLabel}
               accessibilityRole="button"
-              android_ripple={{
-                color: colors.border,
-                borderless: true,
-                radius: 20,
-              }}
+              android_ripple={{ color: colors.border, radius: 22 }}
               hitSlop={8}
-              style={styles.close}
+              style={[styles.button, styles.close, buttonSurface]}
               onPress={() => router.back()}
             >
               <Ionicons
-                name="close"
-                size={24}
-                color={tintColor ?? colors.secondaryText}
+                name="close-outline"
+                size={32}
+                color={tintColor ?? colors.text}
               />
+            </Pressable>
+          ) : null}
+          {action ? (
+            <Pressable
+              accessibilityLabel={action.accessibilityLabel}
+              accessibilityRole="button"
+              android_ripple={{ color: colors.border, radius: 22 }}
+              hitSlop={8}
+              style={[styles.button, styles.action, buttonSurface]}
+              onPress={action.onPress}
+            >
+              {action.icon}
             </Pressable>
           ) : null}
         </View>
@@ -66,6 +77,7 @@ export function SheetChrome({
 
 const styles = StyleSheet.create({
   chrome: { alignItems: "center", paddingTop: 12 },
+  headerSpacing: { paddingBottom: 8 },
   handle: { width: 32, height: 4, borderRadius: 2, opacity: 0.4 },
   headerRow: {
     alignSelf: "stretch",
@@ -73,18 +85,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   title: {
-    fontSize: 24,
-    fontWeight: "500",
+    ...headerTitleStyle,
     textAlign: "center",
-    paddingHorizontal: 56,
+    paddingHorizontal: 64,
   },
-  close: {
+  button: {
     position: "absolute",
-    top: 4,
-    left: 16,
-    width: 40,
-    height: 40,
+    top: 2,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderCurve: "continuous",
     alignItems: "center",
     justifyContent: "center",
   },
+  close: { left: 16 },
+  action: { right: 16 },
 });

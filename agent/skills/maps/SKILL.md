@@ -107,7 +107,8 @@ open ground.
 
 Read and manage the user's Google Maps saved lists: their own lists of places. These commands
 work through the agent's signed-in browser, not the public relay the other commands use. So they
-need the browser skill installed and its daemon running, and a one-time Google sign-in.
+need the browser skill active and its daemon running (`browser daemon start`), and a one-time
+Google sign-in.
 
 ```bash
 maps lists                        # every list: name and id
@@ -130,9 +131,9 @@ Sign in through the browser skill's handover, then run the command again:
 browser handover start --url "https://accounts.google.com/ServiceLogin?continue=https://www.google.com/maps"
 ```
 
-Send the user the returned link. Tell them to sign into Google, then run `browser handover stop`.
-The session stays in the browser profile, so later list commands need no new sign-in. Run
-`maps lists auth` to check the state before you start.
+This returns a `user_url`. Send that link to the user and tell them to sign into Google, then run
+`browser handover stop`. The session stays in the browser profile, so later list commands need no
+new sign-in. Run `maps lists auth` to check the state before you start.
 
 ## Keep track of a plan in a trip file
 

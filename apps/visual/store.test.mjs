@@ -7,6 +7,9 @@ import {
   platformShotsDirectory,
   pngSize,
   putShot,
+  putShotRecord,
+  readShotRecord,
+  shotIsFresh,
   shotDriftWarning,
   shotEntries,
   shotsDirectory,
@@ -35,6 +38,50 @@ describe("paths", () => {
 });
 
 describe("putShot", () => {
+  it("invalidates a previous complete capture until both replacement themes finish", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-store-"));
+    const record = { fingerprint: "same-inputs", sources: [] };
+    await putShot("ios", "home.png", pngHeader(1, 2), base);
+    await putShot("ios-dark", "home.png", pngHeader(1, 2), base);
+    await putShotRecord("ios", "home.png", record, base);
+    expect(
+      await shotIsFresh(["ios", "ios-dark"], "home.png", "same-inputs", base),
+    ).toBe(true);
+    await putShot("ios", "home.png", pngHeader(3, 4), base);
+    expect(
+      await shotIsFresh(["ios", "ios-dark"], "home.png", "same-inputs", base),
+    ).toBe(false);
+    await putShot("ios-dark", "home.png", pngHeader(3, 4), base);
+    await putShotRecord("ios", "home.png", record, base);
+    expect(
+      await shotIsFresh(["ios", "ios-dark"], "home.png", "same-inputs", base),
+    ).toBe(true);
+  });
+
+  it("rejects a malformed source list so the next scan recaptures it", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-store-"));
+    await putShotRecord(
+      "ios",
+      "home.png",
+      { fingerprint: "x", sources: [null] },
+      base,
+    );
+    expect(await readShotRecord("ios", "home.png", base)).toBeNull();
+  });
+
+  it("supports simultaneous writes without sharing a temporary file", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-store-"));
+    await Promise.all([
+      putShot("ios", "home.png", pngHeader(1, 2), base),
+      putShot("ios", "home.png", pngHeader(3, 4), base),
+    ]);
+    expect(await readdir(path.join(base, "shots", "ios"))).toEqual([
+      "home.png",
+    ]);
+    const image = await readFile(path.join(base, "shots", "ios", "home.png"));
+    expect([pngHeader(1, 2), pngHeader(3, 4)]).toContainEqual(image);
+  });
+
   it("copies a shot into the platform directory and leaves no temp file behind", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "visual-store-"));
     const source = path.join(base, "source.png");
@@ -133,6 +180,25 @@ describe("pngSize", () => {
 });
 
 describe("shotDriftWarning", () => {
+  it("requires every viewport in both themes before a page is fresh", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "visual-page-"));
+    await putShot("web", "page.png", pngHeader(10, 10), base);
+    await putShot("web-dark", "page.png", pngHeader(10, 10), base);
+    await putShot("web", "page--02.png", pngHeader(10, 10), base);
+    await putShotRecord(
+      "web",
+      "page.png",
+      { fingerprint: "v1", sources: [], parts: ["page.png", "page--02.png"] },
+      base,
+    );
+    expect(await shotIsFresh(["web", "web-dark"], "page.png", "v1", base)).toBe(
+      false,
+    );
+    await putShot("web-dark", "page--02.png", pngHeader(10, 10), base);
+    expect(await shotIsFresh(["web", "web-dark"], "page.png", "v1", base)).toBe(
+      true,
+    );
+  });
   const scenarios = [{ screenshot: "a.png" }, { screenshot: "b.png" }];
   it("is empty when the produced shots match the registry", () => {
     expect(shotDriftWarning(new Set(["a.png", "b.png"]), scenarios)).toBe("");

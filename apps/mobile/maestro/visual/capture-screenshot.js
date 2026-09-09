@@ -9,10 +9,11 @@ const shardIndex = Number(
 const captureUrl = directUrl || shardUrls[shardIndex] || "";
 const action = typeof ACTION === "string" ? ACTION : "";
 const screenshot = typeof SCREENSHOT === "string" ? SCREENSHOT : "";
+const pageStep = typeof PAGE_STEP === "string" ? PAGE_STEP : undefined;
 
 if (captureUrl) {
   const response = http.post(captureUrl, {
-    body: JSON.stringify(screenshot ? { screenshot } : { action }),
+    body: JSON.stringify(screenshot ? { screenshot, pageStep } : { action }),
     headers: { "Content-Type": "application/json" },
   });
 
@@ -21,4 +22,9 @@ if (captureUrl) {
       `Local screenshot bridge returned ${response.status}: ${response.body}`,
     );
   }
+  output.captureMore = response.body
+    ? JSON.parse(response.body).more === true
+    : false;
+} else if (pageStep) {
+  throw new Error("Page capture requires the local screenshot bridge");
 }

@@ -33,6 +33,7 @@ function fakeController(): Controller {
     getFocused: () => false,
     subscribeFocused: () => () => undefined,
     getViewing: () => null,
+    getDevice: () => null,
     subscribeViewing: () => () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,

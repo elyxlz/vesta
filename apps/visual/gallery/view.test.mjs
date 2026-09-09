@@ -131,12 +131,65 @@ describe("galleryHtml", () => {
     expect(html).toContain("abc1234 · dirty");
   });
 
+  it("provides a searchable library landmark with counts from the selected captures", () => {
+    expect(html).toContain('href="#gallery-content">Skip to screenshots');
+    expect(html).toContain('<main id="gallery-content" tabindex="-1">');
+    expect(html).toContain('Visual library<span class="title-dot">.</span>');
+    expect(html).toContain("<dt>scenarios</dt><dd>2</dd>");
+    expect(html).toContain("<dt>targets</dt><dd>12</dd>");
+    expect(html).toContain("<dt>saved captures</dt><dd>2</dd>");
+    expect(html).toContain('id="search-count" role="status"');
+    expect(html).toContain('id="search-empty" class="empty-state" hidden');
+    expect(html).toContain('href="/?suite=all" aria-current="page"');
+    expect(html).toContain('data-suite="all"');
+    expect(html).toContain('title="Recapture this scenario"');
+  });
+
+  it("labels the edge-case suite and handles an empty library", () => {
+    const empty = galleryHtml(
+      galleryView(
+        [],
+        {},
+        {
+          selection: { suite: "states" },
+        },
+      ),
+    );
+    expect(empty).toContain('Edge cases<span class="title-dot">.</span>');
+    expect(empty).toContain('href="/?suite=states" aria-current="page"');
+    expect(empty).not.toContain('href="/?suite=pages" aria-current');
+    expect(empty).toContain("<dt>states</dt><dd>0</dd>");
+    expect(empty).toContain("<dt>saved captures</dt><dd>0</dd>");
+  });
+
+  it("puts escaped page metadata before its screenshots", () => {
+    const page = galleryHtml(
+      galleryView(
+        [
+          {
+            ...mobileScenario,
+            page: "home",
+            route: '/home?name="<sample>"',
+          },
+        ],
+        shots,
+      ),
+    );
+    expect(page).toContain(
+      '<code class="page-route">/home?name=&quot;&lt;sample&gt;&quot;</code>',
+    );
+    expect(page.indexOf('class="card-copy"')).toBeLessThan(
+      page.indexOf('class="shots"'),
+    );
+    expect(page).toContain('aria-label="Copy reference for Home"');
+  });
+
   it("renders sections with family and group, and cards with one theme's columns", () => {
     expect(html).toContain('data-section-group="Mobile · Home"');
     expect(html).toContain('data-family="web"');
     expect(html).toContain('style="--shots: 3"');
     expect(
-      html.match(/<article class="card" data-themes="light dark">/g),
+      html.match(/<article class="card"[^>]+data-themes="light dark">/g),
     ).toHaveLength(2);
   });
 

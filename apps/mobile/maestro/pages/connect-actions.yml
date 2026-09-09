@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Connection options
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://connect-actions?visualPrivacy=unlocked&visualScroll=page"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-connect-actions
+- runFlow:
+    file: ../visual/capture-page.yml
+    env:
+      SCREENSHOT: page-connect-actions.png

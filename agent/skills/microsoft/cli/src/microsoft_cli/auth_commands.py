@@ -2,31 +2,11 @@
 
 import json
 import shutil
-import subprocess
 
 from . import auth, capture, owa_rest, teams
 from . import email as email_mod
 from .config import DEFAULT_CLIENT_SCOPES, OWA_REST_SCOPES, Config
 from .settings import DEFAULT_CLIENT_ID, OWA_REST_CLIENT_ID
-
-# JS that extracts the OWA access token from the browser's MSAL storage.
-# Returns the token secret (a JWT) or the string 'NONE'.
-_OWA_TOKEN_JS = """
-(() => {
-  for (const store of [localStorage, sessionStorage]) {
-    for (let i = 0; i < store.length; i++) {
-      const k = store.key(i);
-      if (/accesstoken/i.test(k)) {
-        try {
-          const v = JSON.parse(store.getItem(k));
-          if ((v.target || '').includes('outlook.office.com')) return v.secret;
-        } catch (e) {}
-      }
-    }
-  }
-  return 'NONE';
-})()
-""".strip()
 
 # One-line version to hand the user for their own browser console: it copies the
 # outlook.office.com access token to their clipboard (or prints NONE if not signed in).
@@ -262,35 +242,22 @@ def _owa_login_paste(config: Config, *, account_email: str, token: str) -> dict[
 
 
 def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
-    """Capture the OWA token from the agent's browser session, non-blocking.
+    """Capture the OWA token from this account's browser session, non-blocking.
 
-    Opens Outlook on the web in the agent's browser and reads the outlook.office.com access
-    token from its storage. If the session is not signed in yet, returns `sign_in_required`
-    (no blocking prompt) so the agent can drive the sign-in via the `browser` skill and re-run.
-    Requires the `browser` skill daemon with DISPLAY=:99."""
-    import os
+    Reads the outlook.office.com access token out of the signed-in web session. A session that
+    holds no such token returns `sign_in_required` (no blocking prompt), so the sign-in runs as a
+    handover the user completes."""
+    token = capture.capture_token(account_email, "mail")
 
-    env = dict(os.environ)
-    if "DISPLAY" not in env:
-        env["DISPLAY"] = ":99"
-
-    def _run(*args: str) -> str:
-        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, check=False)
-        return result.stdout.strip()
-
-    _run("launch", "--stealth")
-    _run("open", "https://outlook.office.com/mail/")
-    token = capture.eval_value(_run("evaluate", _OWA_TOKEN_JS))
-
-    if not capture._looks_like_jwt(token):
+    if token is None:
         return {
             "status": "sign_in_required",
             "account": account_email,
-            "url": "https://outlook.office.com/mail/",
+            "url": capture.MAIL_URL,
             "message": (
-                f"Outlook on the web is open in the browser but not signed in as {account_email}. "
-                "Drive the sign-in with the `browser` skill (navigate, enter credentials, handle MFA), "
-                "then run `microsoft auth owa-login` again to capture the token."
+                f"The browser session for {account_email} is not signed in. Hand the user a sign-in link with "
+                f"`microsoft auth setup --account {account_email} --browser`, then run `microsoft auth owa-login` "
+                "again to capture the token."
             ),
         }
 
@@ -424,29 +391,17 @@ def _teams_capture_paste(config: Config, *, account_email: str, token: str) -> d
 
 
 def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, str]:
-    import os
+    token = capture.capture_token(account_email, "teams")
 
-    env = dict(os.environ)
-    if "DISPLAY" not in env:
-        env["DISPLAY"] = ":99"
-
-    def _run(*args: str) -> str:
-        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, check=False)
-        return result.stdout.strip()
-
-    _run("launch", "--stealth")
-    _run("open", "https://teams.microsoft.com/")
-    token = capture.eval_value(_run("evaluate", capture._TEAMS_TOKEN_JS))
-
-    if not capture._looks_like_jwt(token):
+    if token is None:
         return {
             "status": "sign_in_required",
             "account": account_email,
-            "url": "https://teams.microsoft.com/",
+            "url": capture.TEAMS_URL,
             "message": (
-                f"Teams on the web is open in the browser but not signed in as {account_email}. "
-                "Drive the sign-in with the `browser` skill (navigate, enter credentials, handle MFA), "
-                "then run `microsoft auth teams-capture` again to capture the token."
+                f"The browser session for {account_email} is not signed in. Hand the user a sign-in link with "
+                f"`microsoft auth setup --account {account_email} --browser`, then run `microsoft auth teams-capture` "
+                "again to capture the token."
             ),
         }
 
@@ -523,8 +478,8 @@ def _setup_save_captured(config: Config, *, account_email: str, captured: dict) 
     }
 
 
-def _setup_begin_browser(config: Config, *, account_email: str) -> dict[str, str]:
-    user_url = capture.begin_interactive(config, account_email)
+def _setup_begin_browser(*, account_email: str) -> dict[str, str]:
+    user_url = capture.begin_interactive(account_email)
     return {
         "status": "sign_in",
         "account": account_email,
@@ -551,7 +506,7 @@ def _setup_finish_device(config: Config, *, account_email: str, flow_cache: str)
             return {"status": "pending", "message": "Sign-in is still pending; finish the code entry, then retry."}
         if _is_consent_wall(error_msg):
             # Locked tenant: device code is blocked, pivot to the browser capture with no extra ask.
-            return _setup_begin_browser(config, account_email=account_email)
+            return _setup_begin_browser(account_email=account_email)
         raise Exception(f"Sign-in failed: {error_msg}")
     cache = app.token_cache
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
@@ -605,11 +560,11 @@ def auth_setup(
     even for a work/school domain (permissive tenants). ``--capture``: after signing in via the browser, lift
     the tokens and finish."""
     if do_capture:
-        captured = capture.finish_interactive(config, account_email)
+        captured = capture.finish_interactive(account_email)
         return _setup_save_captured(config, account_email=account_email, captured=captured)
 
     if use_browser:
-        return _setup_begin_browser(config, account_email=account_email)
+        return _setup_begin_browser(account_email=account_email)
 
     if flow_cache is not None:
         return _setup_finish_device(config, account_email=account_email, flow_cache=flow_cache)
@@ -617,7 +572,7 @@ def auth_setup(
     if not force_device and not _is_personal_ms_account(account_email):
         # Work/school (custom domain): the tenant almost always blocks the public client, so skip the
         # device-code round-trip that would be rejected and hand off to the browser up front.
-        return _setup_begin_browser(config, account_email=account_email)
+        return _setup_begin_browser(account_email=account_email)
 
     app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
     flow = app.initiate_device_flow(scopes=setup_scopes_for(account_email))

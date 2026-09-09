@@ -1,0 +1,38 @@
+appId: ${APP_ID}
+name: Connection scanner navigation
+tags: [navigation]
+---
+# Functional round trip, separate from the content-independent pixel captures.
+- runFlow: ../visual/prepare-page.yml
+- setPermissions:
+    permissions:
+      camera: deny
+- openLink:
+    link: "vesta-dev://connect-link?visualPrivacy=unlocked"
+- runFlow: ../visual/wait-for-launch.yml
+- tapOn: "Connection link"
+- inputText: "not-a-link"
+- tapOn: "Scan connection QR code"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          text: "Don’t allow"
+          waitToSettleTimeoutMs: 1
+      - tapOn:
+          text: "Don’t allow"
+          optional: true
+          waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Camera access is needed"
+    timeout: 10000
+- tapOn: "Close scanner"
+- extendedWaitUntil:
+    notVisible: "Camera access is needed"
+    timeout: 10000
+- assertVisible: "Connection link"
+- tapOn: "^Connect$"
+- extendedWaitUntil:
+    visible: "Paste the complete connection link shown by vestad"
+    timeout: 10000

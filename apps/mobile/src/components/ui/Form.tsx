@@ -134,30 +134,40 @@ export function FormSection({
 
 interface RowProps {
   label: string;
+  // A short secondary note on the label's own line, after the label.
+  labelNote?: string;
   detail?: string;
   icon?: IconName;
   value?: string;
   valueIcon?: IconName;
   valueIconLabel?: string;
   onPress?: () => void;
+  expanded?: boolean;
   destructive?: boolean;
   destructiveIcon?: boolean;
   trailing?: ReactNode;
+  // A value that reads as a live positive state: a green dot before green text.
+  valueTone?: "positive";
 }
 
 export function FormRow({
   label,
+  labelNote,
   detail,
   icon,
   value,
   valueIcon,
   valueIconLabel,
   onPress,
+  expanded,
   destructive = false,
   destructiveIcon = false,
   trailing,
+  valueTone,
 }: RowProps) {
   const { colors } = usePreferences();
+  const valueColor =
+    valueTone === "positive" ? colors.success : colors.secondaryText;
   const content = (
     <View style={styles.row}>
       {icon ? (
@@ -172,14 +182,21 @@ export function FormRow({
         </View>
       ) : null}
       <View style={styles.rowText}>
-        <Text
-          style={[
-            styles.rowLabel,
-            { color: destructive ? colors.danger : colors.text },
-          ]}
-        >
-          {label}
-        </Text>
+        <View style={styles.rowLabelLine}>
+          <Text
+            style={[
+              styles.rowLabel,
+              { color: destructive ? colors.danger : colors.text },
+            ]}
+          >
+            {label}
+          </Text>
+          {labelNote ? (
+            <Text style={[styles.rowLabelNote, { color: colors.tertiaryText }]}>
+              {labelNote}
+            </Text>
+          ) : null}
+        </View>
         {detail ? (
           <Text style={[styles.rowDetail, { color: colors.tertiaryText }]}>
             {detail}
@@ -192,23 +209,32 @@ export function FormRow({
             accessibilityLabel={valueIconLabel}
             name={valueIcon}
             size={17}
-            color={colors.secondaryText}
+            color={valueColor}
           />
           {value ? (
-            <Text style={[styles.value, { color: colors.secondaryText }]}>
-              {value}
-            </Text>
+            <Text style={[styles.value, { color: valueColor }]}>{value}</Text>
+          ) : null}
+        </View>
+      ) : valueTone === "positive" ? (
+        <View style={styles.valueWithIcon}>
+          <View style={[styles.valueDot, { backgroundColor: valueColor }]} />
+          {value ? (
+            <Text style={[styles.value, { color: valueColor }]}>{value}</Text>
           ) : null}
         </View>
       ) : value ? (
-        <Text style={[styles.value, { color: colors.secondaryText }]}>
-          {value}
-        </Text>
+        <Text style={[styles.value, { color: valueColor }]}>{value}</Text>
       ) : null}
       {trailing ? <View style={styles.rowTrailing}>{trailing}</View> : null}
       {onPress ? (
         <Ionicons
-          name="chevron-forward"
+          name={
+            expanded === undefined
+              ? "chevron-forward"
+              : expanded
+                ? "chevron-up"
+                : "chevron-down"
+          }
           size={17}
           color={colors.tertiaryText}
         />
@@ -218,6 +244,7 @@ export function FormRow({
   return onPress ? (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
       onPress={onPress}
       style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
     >
@@ -324,9 +351,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  rowLabelLine: { flexDirection: "row", alignItems: "baseline", gap: 6 },
   rowLabel: { fontSize: 16, fontWeight: "500" },
+  rowLabelNote: { fontSize: 13 },
   rowDetail: { fontSize: 14, lineHeight: 20 },
   value: { fontSize: 15 },
+  valueDot: { width: 8, height: 8, borderRadius: 4 },
   valueWithIcon: {
     flexDirection: "row",
     alignItems: "center",

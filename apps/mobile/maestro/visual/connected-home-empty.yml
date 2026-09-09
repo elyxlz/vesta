@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=empty"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: "Create your agent"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - takeScreenshot: home-empty
 - runScript:
     file: capture-screenshot.js
@@ -62,6 +57,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDashboard=loaded"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
@@ -85,9 +81,6 @@ tags:
           visible: "Dashboard ready"
           timeout: 20000
           optional: true
-- extendedWaitUntil:
-    visible: "Dashboard ready"
-    timeout: 20000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-dashboard
@@ -99,9 +92,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
-- extendedWaitUntil:
-    visible: "Gateway disconnected. Trying to reconnect."
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-gateway-disconnected
@@ -113,10 +104,8 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=loading"
+- runFlow: wait-for-launch.yml
 # Android appends the busy state to the content description ("Opening Vesta, busy").
-- extendedWaitUntil:
-    visible: "Opening Vesta.*"
-    timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-loading
@@ -127,30 +116,8 @@ tags:
 
 - stopApp
 - openLink:
-    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: "Open aria"
-    timeout: 30000
-- repeat:
-    times: 3
-    while:
-      notVisible: "Open nova"
-    commands:
-      - swipe:
-          start: "85%,25%"
-          end: "15%,25%"
-          duration: 180
-      - extendedWaitUntil:
-          visible: "Open nova"
-          timeout: 5000
-          optional: true
-- extendedWaitUntil:
-    visible: "Open nova"
-    timeout: 5000
-- tapOn: "Open nova"
-- extendedWaitUntil:
-    visible: "Start a conversation"
-    timeout: 10000
+    link: "vesta-dev://agent/nova?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-empty

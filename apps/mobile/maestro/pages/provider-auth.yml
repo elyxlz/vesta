@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Provider sign-in
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://agent/aria/details/provider?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked&visualProvider=unauthenticated&visualScroll=page"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-provider-auth
+- runFlow:
+    file: ../visual/capture-page.yml
+    env:
+      SCREENSHOT: page-provider-auth.png

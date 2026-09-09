@@ -8,6 +8,7 @@ import {
   type AgentActivityState,
   type AgentOperation,
   type AgentStatus,
+  type OrbMotion,
   type RateLimitedInfo,
 } from "@vesta/core";
 import { useAgentRequest } from "@vesta/core/react";
@@ -24,6 +25,8 @@ interface AgentOrbProps {
   operation?: AgentOperation | null;
   booting?: boolean;
   rateLimited?: RateLimitedInfo | null;
+  // Live-voice overlay on the status: same colors, different breathing.
+  motion?: OrbMotion;
   size?: number;
   animated?: boolean;
   pulseScale?: number;
@@ -38,6 +41,7 @@ export function AgentOrb({
   operation = null,
   booting = false,
   rateLimited = null,
+  motion,
   size = 88,
   animated = true,
   pulseScale,
@@ -54,7 +58,7 @@ export function AgentOrb({
     request,
     activityState,
   );
-  const visual = orbVisual(orbState);
+  const visual = orbVisual(orbState, motion);
   const shouldAnimate = animated && !transitionFrozen && visual.live;
   const colors = designTokens.orb[orbState];
   // Breathing is what "the agent itself is up" looks like, so it follows the resolved orb state:

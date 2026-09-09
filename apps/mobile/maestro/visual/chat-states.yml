@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=delivery"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: '.*Retry sending message.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-delivery
@@ -63,9 +58,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=errors"
-- extendedWaitUntil:
-    visible: '.*Rate limited.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-errors
@@ -76,9 +69,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=markdown"
-- extendedWaitUntil:
-    visible: '.*Rotating the key.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-markdown
@@ -88,7 +79,19 @@ tags:
       SCREENSHOT: agent-chat-markdown.png
 - stopApp
 - openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualConversation=listening"
+- runFlow: wait-for-launch.yml
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-conversation
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-conversation.png
+- stopApp
+- openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=long"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*visual regressions.*'
     timeout: 30000
@@ -100,9 +103,6 @@ tags:
     start: "50%,30%"
     end: "50%,80%"
     duration: 250
-- extendedWaitUntil:
-    visible: '.*Status check.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-scrolled
@@ -113,9 +113,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice"
-- extendedWaitUntil:
-    visible: '.*Start voice input.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-voice-button
@@ -126,11 +124,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*visual regressions.*'
     timeout: 30000
 - tapOn:
-    text: '.*Waiting for agent.*'
+    text: '^Message aria$'
 - inputText: "Can you also book the room?"
 - waitForAnimationToEnd:
     timeout: 3000

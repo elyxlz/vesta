@@ -42,16 +42,18 @@ export default defineConfig({
   // 12-core host; 8 keeps headroom. A gentle scan passes --workers=2.
   workers: 8,
   webServer: {
-    command: "npm run dev",
+    command: "npm run dev -- --host 127.0.0.1 --port 1431 --strictPort",
     cwd: "..",
-    url: "http://localhost:1430",
-    reuseExistingServer: true,
+    url: "http://127.0.0.1:1431",
+    reuseExistingServer: false,
     timeout: 60000,
     env: { HTTPS: "false" },
   },
   use: {
-    baseURL: "http://localhost:1430",
+    baseURL: "http://127.0.0.1:1431",
     contextOptions: { reducedMotion: "reduce" },
+    screenshot: "only-on-failure",
+    trace: "retain-on-failure",
   },
   projects,
 });

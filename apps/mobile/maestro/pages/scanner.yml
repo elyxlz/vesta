@@ -1,0 +1,25 @@
+appId: ${APP_ID}
+name: Page · QR scanner
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- setPermissions:
+    permissions:
+      camera: deny
+- openLink:
+    link: "vesta-dev://scan?visualPrivacy=unlocked"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - repeat:
+          times: 2
+          commands:
+            - tapOn:
+                id: com.android.permissioncontroller:id/permission_deny(_and_dont_ask_again)?_button
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-scanner
+- runScript:
+    file: ../visual/capture-screenshot.js
+    env:
+      SCREENSHOT: page-scanner.png

@@ -22,12 +22,11 @@ export interface ScenarioState {
   };
 }
 
-// The imperative half of a scenario: how to reach the state and how to know it
-// settled. The card data lives in scenarios.json, keyed by the same id.
+// The imperative half of a scenario: how to reach its state. Screen stability
+// is shared by the runner; visual correctness is reviewed through pixel diffs.
 export interface Scenario {
   state?: ScenarioState;
   drive: (page: Page) => Promise<void>;
-  settle: (page: Page) => Promise<void>;
 }
 
 // A fixed wall clock so every relative label ("resets in 2h", "last seen 5m

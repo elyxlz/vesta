@@ -46,6 +46,7 @@ export function notificationNavigationDecision(input: {
   agentNames: readonly string[];
   routeReady: boolean;
   currentGateway: string | null;
+  viewingAgent: string | null;
 }): NotificationNavigationDecision {
   if (
     input.sessionStatus !== "connected" ||
@@ -56,6 +57,11 @@ export function notificationNavigationDecision(input: {
     return "wait";
   }
   if (input.pending.gateway && input.pending.gateway !== input.currentGateway) {
+    return "discard";
+  }
+  // The agent screen the user left is still mounted after a background; pushing it again
+  // would stack a second copy over it.
+  if (input.pending.agent === input.viewingAgent) {
     return "discard";
   }
   return input.agentNames.includes(input.pending.agent) ? "open" : "discard";

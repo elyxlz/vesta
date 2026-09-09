@@ -1,4 +1,4 @@
-import { Children, type ComponentProps, type ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -19,8 +19,6 @@ type ButtonVariant =
   | "secondary"
   | "card"
   | "cardDanger"
-  | "cardGrouped"
-  | "cardGroupedDanger"
   | "ghost"
   | "danger"
   | "plain";
@@ -47,7 +45,6 @@ interface ButtonProps {
   disabled?: boolean;
   loading?: boolean;
   loadingLabel?: ReactNode;
-  pill?: boolean;
   size?: ButtonSize;
   labelStyle?: StyleProp<TextStyle>;
   accessibilityLabel?: string;
@@ -76,28 +73,19 @@ export function Button({
   disabled = false,
   loading = false,
   loadingLabel,
-  pill = false,
   size = "default",
   labelStyle,
   accessibilityLabel,
 }: ButtonProps) {
   const { colors } = usePreferences();
-  const usesCardLayout =
-    variant === "card" ||
-    variant === "cardDanger" ||
-    variant === "cardGrouped" ||
-    variant === "cardGroupedDanger";
-  const ownsCardSurface = variant === "card" || variant === "cardDanger";
-  const isDestructive =
-    variant === "danger" ||
-    variant === "cardDanger" ||
-    variant === "cardGroupedDanger";
+  const usesCardLayout = variant === "card" || variant === "cardDanger";
+  const isDestructive = variant === "danger" || variant === "cardDanger";
   const backgroundColor =
     variant === "primary"
       ? colors.accent
       : variant === "danger"
         ? withAlpha(colors.danger, 0.7)
-        : ownsCardSurface
+        : usesCardLayout
           ? colors.card
           : variant === "secondary"
             ? colors.input
@@ -131,17 +119,13 @@ export function Button({
               ? styles.compactButton
               : null,
         usesCardLayout ? styles.cardButton : null,
-        variant === "cardGrouped" || variant === "cardGroupedDanger"
-          ? styles.groupedCardButton
-          : null,
-        pill ? styles.pill : null,
         {
           backgroundColor:
             variant === "danger" && pressed
               ? withAlpha(colors.danger, 0.8)
               : backgroundColor,
-          borderColor: ownsCardSurface ? colors.border : "transparent",
-          borderWidth: ownsCardSurface ? StyleSheet.hairlineWidth : 0,
+          borderColor: usesCardLayout ? colors.border : "transparent",
+          borderWidth: usesCardLayout ? StyleSheet.hairlineWidth : 0,
           opacity: disabled
             ? 0.45
             : pressed && variant !== "danger" && variant !== "ghost"
@@ -173,6 +157,7 @@ export function Button({
                 size === "small" || size === "compact"
                   ? styles.smallLabel
                   : null,
+                variant === "primary" ? styles.primaryLabel : null,
                 usesCardLayout ? styles.cardLabel : null,
                 labelStyle,
                 { color: contentColor },
@@ -204,31 +189,7 @@ export function Button({
 }
 
 export function ButtonGroup({ children }: ButtonGroupProps) {
-  const { colors } = usePreferences();
-  const items = Children.toArray(children);
-
-  return (
-    <View
-      style={[
-        styles.buttonGroup,
-        { backgroundColor: colors.card, borderColor: colors.border },
-      ]}
-    >
-      {items.map((child, index) => (
-        <View key={index}>
-          {index > 0 ? (
-            <View
-              style={[
-                styles.buttonGroupSeparator,
-                { backgroundColor: colors.border },
-              ]}
-            />
-          ) : null}
-          {child}
-        </View>
-      ))}
-    </View>
-  );
+  return <View style={styles.buttonGroup}>{children}</View>;
 }
 
 export function TextButton({
@@ -259,7 +220,7 @@ export function TextButton({
 const styles = StyleSheet.create({
   button: {
     minHeight: 48,
-    borderRadius: radii.button,
+    borderRadius: radii.pill,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 18,
@@ -272,21 +233,11 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingHorizontal: 16,
   },
-  groupedCardButton: { borderRadius: 0 },
-  pill: { borderRadius: radii.pill, borderCurve: "continuous" },
-  buttonGroup: {
-    borderRadius: radii.card,
-    borderCurve: "continuous",
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  buttonGroupSeparator: {
-    height: StyleSheet.hairlineWidth,
-    marginHorizontal: 16,
-  },
+  buttonGroup: { gap: 8 },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardContent: { alignSelf: "stretch" },
   label: { fontSize: 16, fontWeight: "700" },
+  primaryLabel: { fontWeight: "600" },
   smallLabel: { fontSize: 14, fontWeight: "600" },
   cardLabel: { flex: 1, fontSize: 16, fontWeight: "500" },
   textButton: { alignSelf: "center", padding: 4 },

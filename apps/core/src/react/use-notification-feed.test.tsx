@@ -66,6 +66,7 @@ function harness(
     getFocused: () => viewing.focused,
     subscribeFocused: () => () => undefined,
     getViewing: () => viewing.viewedAgent,
+    getDevice: () => null,
     subscribeViewing: () => () => undefined,
     getAnyFocused: () => false,
     subscribeAnyFocused: () => () => undefined,

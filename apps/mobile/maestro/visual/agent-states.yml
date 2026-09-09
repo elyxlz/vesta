@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=starting"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-starting
@@ -63,9 +58,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=setting_up"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-setting-up
@@ -76,9 +69,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=booting"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-booting
@@ -89,9 +80,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=thinking"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-thinking
@@ -102,9 +91,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=restarting"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-restarting
@@ -115,9 +102,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=rebuilding"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-rebuilding
@@ -128,9 +113,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=stopped"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-stopped
@@ -141,9 +124,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=dead"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-dead
@@ -154,9 +135,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=not_found"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-not-found
@@ -167,9 +146,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=not_authenticated"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-not-authenticated
@@ -180,9 +157,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=unprovisioned"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-unprovisioned
@@ -193,9 +168,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=backing_up"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-backing-up
@@ -206,9 +179,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=restoring"
-- extendedWaitUntil:
-    visible: '.*Open aria.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home-agent-restoring
@@ -219,6 +190,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=stopped"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Provider and model.*'
     timeout: 30000
@@ -244,9 +216,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=not_authenticated"
-- extendedWaitUntil:
-    visible: '.*Provider and model.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings-needs-auth
@@ -257,9 +227,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=thinking"
-- extendedWaitUntil:
-    visible: '.*Provider and model.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings-thinking
@@ -270,9 +238,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/backups?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualAgent=backing_up"
-- extendedWaitUntil:
-    visible: '.*Back up now.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-backups-busy

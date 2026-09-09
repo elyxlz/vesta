@@ -6,12 +6,16 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { RUNNERS, appsRoot } from "../platforms.mjs";
 import { currentRunStatus } from "../run-status.mjs";
-import { shotEntries, storeDirectory } from "../store.mjs";
+import { storeDirectory } from "../store.mjs";
+import { catalogShots, selectedScenarios } from "../catalog.mjs";
 import { galleryHtml } from "./page.mjs";
 import { composeGallery } from "./view.mjs";
+import { approvePage, comparePage } from "../comparison.mjs";
+import { captureSelection } from "../selection.mjs";
+import { referenceIndex } from "../references.mjs";
 
 const galleryDirectory = path.dirname(fileURLToPath(import.meta.url));
-const galleryAssets = ["styles.css", "client.js"];
+const galleryAssets = ["styles.css", "client.js", "review.js"];
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -39,7 +43,7 @@ export function isRunner(name) {
 // `all` retakes every shot; otherwise each runner skips the shots whose
 // inputs have not changed since they were taken. The flag travels as an env
 // var, the one carrier both the Playwright and the Maestro runners read.
-export function captureCommand(runner, gentle, all = false) {
+export function captureCommand(runner, gentle, all = false, selection) {
   if (!isRunner(runner)) throw new Error(`Unknown runner: ${runner}`);
   const definition = RUNNERS[runner];
   return {
@@ -54,7 +58,7 @@ export function captureCommand(runner, gentle, all = false) {
       ...(gentle ? definition.gentleArgs : []),
     ],
     cwd: appsRoot,
-    env: all ? { ...process.env, VISUAL_CAPTURE_ALL: "1" } : process.env,
+    env: selectionEnv(all, selection),
   };
 }
 
@@ -63,14 +67,14 @@ export function captureCommand(runner, gentle, all = false) {
 // so the gallery and the capture decide freshness with one code path each.
 const PLAN_TIMEOUT_MS = 120_000;
 
-export function planCommand(runner, all = false) {
+export function planCommand(runner, all = false, selection) {
   if (!isRunner(runner)) throw new Error(`Unknown runner: ${runner}`);
   const { plan } = RUNNERS[runner];
   return {
     command: "node",
     argumentsList: [plan.script, ...plan.args],
     cwd: path.join(appsRoot, plan.directory),
-    env: all ? { ...process.env, VISUAL_CAPTURE_ALL: "1" } : process.env,
+    env: selectionEnv(all, selection),
   };
 }
 
@@ -83,8 +87,18 @@ export function parsePlanOutput(stdout) {
   return plan;
 }
 
-function runPlan(runner, all) {
-  const command = planCommand(runner, all);
+function selectionEnv(all, selection) {
+  return {
+    ...process.env,
+    ...(all ? { VISUAL_CAPTURE_ALL: "1" } : {}),
+    ...(selection
+      ? { VISUAL_SUITE: selection.suite, VISUAL_PAGE: selection.page }
+      : {}),
+  };
+}
+
+function runPlan(runner, all, selection) {
+  const command = planCommand(runner, all, selection);
   return new Promise((resolve) => {
     execFile(
       command.command,
@@ -108,11 +122,11 @@ function runPlan(runner, all) {
   });
 }
 
-export async function collectPlans(all) {
+export async function collectPlans(all, selection) {
   const entries = await Promise.all(
     Object.keys(RUNNERS).map(async (runner) => [
       runner,
-      await runPlan(runner, all),
+      await runPlan(runner, all, selection),
     ]),
   );
   return Object.fromEntries(entries);
@@ -120,8 +134,8 @@ export async function collectPlans(all) {
 
 // A capture is its own detached child, logged to the store, so the gallery keeps
 // serving while it runs and a crash cannot take the server down.
-export function spawnCapture(runner, gentle, all) {
-  const plan = captureCommand(runner, gentle, all);
+export function spawnCapture(runner, gentle, all, selection) {
+  const plan = captureCommand(runner, gentle, all, selection);
   mkdirSync(storeDirectory, { recursive: true });
   const logFile = openSync(
     path.join(storeDirectory, `capture-${runner}.log`),
@@ -170,9 +184,9 @@ function createCaptureRuns() {
   const runs = Object.fromEntries(
     Object.keys(RUNNERS).map((runner) => [runner, { ...idleRun }]),
   );
-  const start = (runner, gentle, all) => {
+  const start = (runner, gentle, all, selection) => {
     if (runs[runner].running) return false;
-    const child = spawnCapture(runner, gentle, all);
+    const child = spawnCapture(runner, gentle, all, selection);
     runs[runner] = {
       running: true,
       startedAt: new Date().toISOString(),
@@ -198,18 +212,47 @@ async function routeRequest(request, response, captureRuns) {
   const url = new URL(request.url ?? "/", "http://localhost");
   const pathname = decodeURIComponent(url.pathname);
   const [, head, second, ...rest] = pathname.split("/");
+  const selection = captureSelection({
+    VISUAL_SUITE: url.searchParams.get("suite") ?? "",
+    VISUAL_PAGE: url.searchParams.get("page") ?? "",
+  });
+  if (pathname === "/references.json") {
+    sendJson(
+      response,
+      200,
+      await referenceIndex(selection, url.searchParams.get("platform") ?? ""),
+    );
+    return;
+  }
+  if (head === "comparison" && rest.length === 1) {
+    if (request.method === "POST") {
+      const hash = url.searchParams.get("hash");
+      if (!hash || !/^[a-f0-9]{64}$/.test(hash)) {
+        sendJson(response, 400, {
+          error: "A reviewed capture hash is required.",
+        });
+        return;
+      }
+      await approvePage(second, rest[0], hash);
+    } else if (request.method !== "GET") {
+      response.writeHead(405).end("GET or POST required");
+      return;
+    }
+    sendJson(response, 200, await comparePage(second, rest[0]));
+    return;
+  }
   if (pathname === "/status.json") {
     sendJson(response, 200, await currentRunStatus());
     return;
   }
   if (pathname === "/plan.json") {
     const all = url.searchParams.get("all") === "1";
-    sendJson(response, 200, { plans: await collectPlans(all) });
+    sendJson(response, 200, { plans: await collectPlans(all, selection) });
     return;
   }
   if (pathname === "/shots.json") {
     sendJson(response, 200, {
-      ...(await shotEntries()),
+      ...(await catalogShots(await selectedScenarios(selection))),
       runs: captureRuns.runs,
     });
     return;
@@ -221,7 +264,7 @@ async function routeRequest(request, response, captureRuns) {
     }
     const gentle = url.searchParams.get("gentle") !== "0";
     const all = url.searchParams.get("all") === "1";
-    const started = captureRuns.start(second, gentle, all);
+    const started = captureRuns.start(second, gentle, all, selection);
     sendJson(response, started ? 202 : 409, {
       started,
       run: captureRuns.runs[second],
@@ -230,7 +273,7 @@ async function routeRequest(request, response, captureRuns) {
   }
   if (pathname === "/" || pathname === "/index.html") {
     try {
-      const html = galleryHtml(await composeGallery());
+      const html = galleryHtml(await composeGallery(selection));
       response.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",

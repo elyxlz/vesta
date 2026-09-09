@@ -329,7 +329,6 @@ export function BootSplash({
           </Animated.View>
           <Animated.View style={[styles.disconnect, disconnectButtonStyle]}>
             <Button
-              pill
               size="small"
               variant="secondary"
               icon="log-out-outline"

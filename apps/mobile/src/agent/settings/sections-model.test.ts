@@ -7,7 +7,7 @@ import {
 
 describe("sectionTitle", () => {
   it.each([
-    ["general", "General"],
+    ["name", "Rename agent"],
     ["provider", "Provider and model"],
     ["voice", "Voice"],
     ["notifications", "Notification rules"],
@@ -32,5 +32,9 @@ describe("findSection", () => {
 
   it("returns null for an unknown deep-link key", () => {
     expect(findSection("time-travel")).toBeNull();
+  });
+
+  it("no longer lists General as a settings panel", () => {
+    expect(findSection("general")).toBeNull();
   });
 });

@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Home
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-home
+- runScript:
+    file: ../visual/capture-screenshot.js
+    env:
+      SCREENSHOT: page-home.png

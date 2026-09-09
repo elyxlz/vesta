@@ -6,9 +6,9 @@ import { fontNames } from "@/theme/typography";
 export const formSheetCorners: { sheetCornerRadius?: number } =
   process.env.EXPO_OS === "android" ? { sheetCornerRadius: radii.card } : {};
 
-// The one title style every stack header and sheet header shares: the heading serif.
+// Native stack titles and Android's in-content sheet titles share this style.
 export const headerTitleStyle = {
   fontFamily: fontNames.heading.native["500"],
-  fontSize: 24,
+  fontSize: 20,
   fontWeight: "500",
 } as const;

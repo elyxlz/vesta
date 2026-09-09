@@ -28,6 +28,8 @@ const textStyle = {
   fontWeight: "400" as const,
   lineHeight: 22,
 };
+const VERTICAL_PADDING =
+  (CHAT_COMPOSER_CONTROL_HEIGHT - textStyle.lineHeight) / 2;
 
 export function ChatComposerInput({
   ref,
@@ -79,7 +81,7 @@ export function ChatComposerInput({
         modifiers={[
           fillMaxWidth(),
           defaultMinSize({ minHeight: CHAT_COMPOSER_CONTROL_HEIGHT }),
-          padding(9, 4, 4, 4),
+          padding(9, VERTICAL_PADDING, 4, VERTICAL_PADDING),
         ]}
         onFocusChanged={lifecycle.onFocusChange}
         onValueChange={lifecycle.onNativeTextChange}
@@ -91,7 +93,9 @@ export function ChatComposerInput({
         value={nativeValue}
       >
         <BasicTextField.DecorationBox>
-          <Box contentAlignment="topStart" modifiers={[fillMaxWidth()]}>
+          {/* Center both native text layouts in the control's minimum height;
+              topStart leaves the shorter placeholder above the action icons. */}
+          <Box contentAlignment="centerStart" modifiers={[fillMaxWidth()]}>
             <BasicTextField.Placeholder>
               <Text
                 color={placeholderTextColor}

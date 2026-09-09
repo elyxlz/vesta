@@ -10,13 +10,26 @@ import { appsRoot } from "./platforms.mjs";
 // per-file hashes ride along in the record, so a later plan can name the files
 // that changed instead of only reporting a mismatch.
 export async function fingerprintInputs(sourceFiles, extras = []) {
+  return createFingerprinter()(sourceFiles, extras);
+}
+
+// One plan reads each file once, even when hundreds of shots share it. Keep
+// this cache scoped to the plan so the next scan observes edits and deletions.
+export function createFingerprinter() {
+  const files = new Map();
+  return (sourceFiles, extras = []) =>
+    fingerprintFiles(sourceFiles, extras, files);
+}
+
+async function fingerprintFiles(sourceFiles, extras, files) {
   const hash = createHash("sha256");
   const relative = [
     ...new Set(sourceFiles.map((file) => toAppsRelative(file))),
   ].sort();
   const hashes = {};
   for (const file of relative) {
-    hashes[file] = await hashFile(path.join(appsRoot, file));
+    if (!files.has(file)) files.set(file, hashFile(path.join(appsRoot, file)));
+    hashes[file] = await files.get(file);
     hash.update(`${file}\n${hashes[file]}\n`);
   }
   const extrasHash = createHash("sha256");
@@ -36,8 +49,9 @@ async function hashFile(file) {
     return createHash("sha256")
       .update(await readFile(file))
       .digest("hex");
-  } catch {
-    return "missing";
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return "missing";
+    throw error;
   }
 }
 

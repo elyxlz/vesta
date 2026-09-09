@@ -3,19 +3,7 @@ import { AgentProvider } from "@/agent/AgentProvider";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
 
-// iOS presents logs and notifications sheet-like on its own, because they
-// push from the settings form sheet's modal context; Android has no such
-// inheritance, so the sheet presentation is spelled out there.
-const androidSheetOptions =
-  process.env.EXPO_OS === "android"
-    ? {
-        presentation: "formSheet" as const,
-        ...formSheetCorners,
-        sheetAllowedDetents: [1],
-        sheetGrabberVisible: false,
-        sheetExpandsWhenScrolledToEdge: false,
-      }
-    : {};
+export const unstable_settings = { anchor: "index" };
 
 export default function AgentLayout() {
   const { colors } = usePreferences();
@@ -35,10 +23,10 @@ export default function AgentLayout() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen
-          name="settings"
+          name="(settings)"
           options={{
-            title: "Settings",
-            headerTitleAlign: "center",
+            // The modal owns every settings route, including direct links.
+            headerShown: false,
             presentation: "formSheet",
             ...formSheetCorners,
             sheetAllowedDetents: [1],
@@ -47,22 +35,6 @@ export default function AgentLayout() {
             contentStyle: { backgroundColor: colors.background },
           }}
         />
-        <Stack.Screen name="logs" options={androidSheetOptions} />
-        <Stack.Screen name="notifications" options={androidSheetOptions} />
-        <Stack.Screen
-          name="file"
-          // Android has no automatic content inset for transparent headers,
-          // so the toolbar goes opaque and lays the editor out below it.
-          options={
-            process.env.EXPO_OS === "android"
-              ? {
-                  headerTransparent: false,
-                  headerStyle: { backgroundColor: colors.background },
-                }
-              : {}
-          }
-        />
-        <Stack.Screen name="details/[section]" options={androidSheetOptions} />
       </Stack>
     </AgentProvider>
   );

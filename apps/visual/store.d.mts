@@ -1,10 +1,18 @@
 export const storeDirectory: string;
 export const shotsDirectory: string;
+export function shotPath(
+  platform: string,
+  name: string,
+  baseDirectory?: string,
+): string;
 export function platformShotsDirectory(
   platform: string,
   baseDirectory?: string,
 ): string;
-export function atomicWriteFile(target: string, contents: string): Promise<void>;
+export function atomicWriteFile(
+  target: string,
+  contents: string | Buffer,
+): Promise<void>;
 export function putShot(
   platform: string,
   name: string,
@@ -13,12 +21,17 @@ export function putShot(
 ): Promise<void>;
 export function shotEntries(
   baseDirectory?: string,
+  names?: Set<string>,
 ): Promise<
   Record<
     string,
     Record<
       string,
-      { src: string; mtime: number; size?: { width: number; height: number } | null }
+      {
+        src: string;
+        mtime: number;
+        size?: { width: number; height: number } | null;
+      }
     >
   >
 >;
@@ -31,6 +44,7 @@ export function shotDriftWarning(
 ): string;
 
 export interface ShotRecord {
+  parts?: string[];
   fingerprint: string;
   sources: string[];
   hashes?: Record<string, string>;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceInfo, Tree } from "../protocol/tree";
-import { devicesEqual, selectDevices } from "./devices";
+import { devicesEqual, selectDevices, splitSelfDevice } from "./devices";
 
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -29,6 +29,31 @@ describe("selectDevices", () => {
 
   it("returns an empty list for a null tree", () => {
     expect(selectDevices(null)).toEqual([]);
+  });
+});
+
+describe("splitSelfDevice", () => {
+  it("pins this device apart and orders the others present first, then most recent", () => {
+    const devices = [
+      device({ id: "old", present: false, lastSeen: "2026-01-01T00:00:00Z" }),
+      device({ id: "me", present: true }),
+      device({
+        id: "recent",
+        present: false,
+        lastSeen: "2026-01-02T00:00:00Z",
+      }),
+      device({ id: "here", present: true, lastSeen: "2025-12-01T00:00:00Z" }),
+    ];
+    const split = splitSelfDevice(devices, "me");
+    expect(split.self?.id).toBe("me");
+    expect(split.others.map((d) => d.id)).toEqual(["here", "recent", "old"]);
+  });
+
+  it("has no self until the gateway registers this device", () => {
+    const split = splitSelfDevice([device({ id: "other" })], "me");
+    expect(split.self).toBeNull();
+    expect(split.others.map((d) => d.id)).toEqual(["other"]);
+    expect(splitSelfDevice([device()], null).self).toBeNull();
   });
 });
 
