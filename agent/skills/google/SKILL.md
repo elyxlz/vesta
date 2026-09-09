@@ -26,6 +26,27 @@ google email reply --id <message_id> --body "Thanks!"
 google email search --query "project update"
 ```
 
+### When a sender re-sends: diff before you trust your notes
+
+```bash
+google email diff --from recruitment@example.com
+google email diff --from ucl.ac.uk --subject "Welcome Week"
+```
+
+A reminder, an updated confirmation, or a revised offer usually repeats the earlier mail with a few
+words changed, and reading the new one does not reliably surface which words. You confirm what you
+already believe the mail says, and a summary written from the first send keeps being trusted after it
+has quietly gone stale. `diff` compares the two newest matching mails and prints only what moved, with
+tracker URLs and blank lines stripped so a per-send token does not bury the change.
+
+Run it before acting on any earlier summary of a thread, and before repeating a requirement or a
+deadline you recorded the first time round.
+
+Every outcome is named in `verdict`, never inferred from an empty result: `CHANGED` (with `diff` and
+`changed_line_count`), `NO_TEXTUAL_CHANGE` when the bodies match, `ONLY_ONE_MATCH` when there is
+nothing to compare, `NO_MATCH` when the query found nothing. An unchanged mail and a failed fetch are
+otherwise indistinguishable, which is the blindness this command exists to remove.
+
 Email sends and replies wait 30 seconds by default. The delay is one persisted setting for the Google client and cannot be overridden on an individual send:
 
 ```bash
