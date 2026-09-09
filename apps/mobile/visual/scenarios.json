@@ -601,23 +601,23 @@
     },
     {
       "id": "whats-new",
-      "title": "What\u2019s new",
+      "title": "What’s new",
       "description": "Deterministic release notes available to the connected gateway version.",
-      "group": "What\u2019s new",
+      "group": "What’s new",
       "screenshot": "whats-new.png"
     },
     {
       "id": "whats-new-empty",
       "title": "No release notes",
       "description": "Empty release-note state when nothing new applies to this gateway.",
-      "group": "What\u2019s new",
+      "group": "What’s new",
       "screenshot": "whats-new-empty.png"
     },
     {
       "id": "whats-new-error",
       "title": "Release notes unavailable",
       "description": "Recoverable error state when release notes cannot be loaded.",
-      "group": "What\u2019s new",
+      "group": "What’s new",
       "screenshot": "whats-new-error.png"
     },
     {
@@ -1029,16 +1029,16 @@
       "group": "Chat"
     },
     {
-      "id": "home-chats-section",
-      "title": "Home, chats section",
-      "description": "Every conversation under the carousel, with New group in the heading.",
-      "group": "Home"
+      "id": "chats-screen",
+      "title": "Chats",
+      "description": "Every agent's orb over every conversation, busiest first.",
+      "group": "Chat"
     },
     {
       "id": "new-room",
       "title": "New group",
       "description": "Naming a group and picking the agents that answer in it.",
-      "group": "Home"
+      "group": "Chat"
     },
     {
       "id": "agent-chat-attach-sheet",
