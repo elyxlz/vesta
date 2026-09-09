@@ -24,7 +24,6 @@ import {
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
 import { Screen } from "@/components/layout/Screen";
-import { ChatsList } from "@/home/chats-list";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
@@ -44,7 +43,6 @@ const IS_IOS = process.env.EXPO_OS === "ios";
 export default function HomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
   const { status } = useSession();
   const { agents, agentsReady } = useRoster();
   const { colors } = usePreferences();
@@ -267,9 +265,6 @@ export default function HomeScreen() {
               ))}
             </View>
           </View>
-          <View style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
-            <ChatsList />
-          </View>
         </>
       )}
     </Screen>
@@ -462,6 +457,7 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
   const { reachable } = useRoster();
   const openSettings = () => router.push("/settings");
   const openCreateAgent = () => router.push("/new-agent");
+  const openChats = () => router.push("/chats");
 
   return (
     <>
@@ -475,17 +471,26 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerBackVisible: false,
-          headerLeft:
-            IS_IOS || !showCreate
-              ? undefined
-              : () => (
+          headerLeft: IS_IOS
+            ? undefined
+            : () => (
+                <View style={styles.headerButtons}>
+                  {showCreate ? (
+                    <HomeHeaderButton
+                      accessibilityLabel="Create agent"
+                      icon="add"
+                      iconSize={22}
+                      onPress={openCreateAgent}
+                    />
+                  ) : null}
                   <HomeHeaderButton
-                    accessibilityLabel="Create agent"
-                    icon="add"
-                    iconSize={22}
-                    onPress={openCreateAgent}
+                    accessibilityLabel="Chats"
+                    icon="chatbubbles-outline"
+                    iconSize={20}
+                    onPress={openChats}
                   />
-                ),
+                </View>
+              ),
           headerRight: IS_IOS
             ? undefined
             : () => (
@@ -513,6 +518,12 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
               tintColor={colors.text}
               hidden={!showCreate}
               onPress={openCreateAgent}
+            />
+            <Stack.Toolbar.Button
+              accessibilityLabel="Chats"
+              icon="message"
+              tintColor={colors.text}
+              onPress={openChats}
             />
           </Stack.Toolbar>
           <Stack.Toolbar placement="right" asChild>
@@ -635,6 +646,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.85,
     transform: [{ translateY: 3 }],
   },
+  headerButtons: { flexDirection: "row", gap: 8 },
   headerButton: {
     width: 40,
     height: 40,
