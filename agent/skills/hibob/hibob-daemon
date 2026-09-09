@@ -64,16 +64,37 @@ def _recorded_pid() -> int | None:
 def _watch() -> int:
     """The supervised loop. One poll, then sleep, forever."""
     LOG.parent.mkdir(parents=True, exist_ok=True)
+    consecutive_failures = 0
     while True:
         started = time.time()
         with LOG.open("a") as log:
             log.write(f"[{NAME}] tick {time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
             log.flush()
             try:
-                subprocess.run(
+                # The poller's exit code was DISCARDED here until 9 Sep 2026, and that is how the
+                # daemon reported healthy through 76 consecutive failed polls. `hibob daemon status`
+                # answers from the pidfile, the poller writes notifications only for TASKS, and
+                # nothing anywhere read this return value, so a dead Bob session was
+                # indistinguishable from a quiet day with no new tasks. Count consecutive failures
+                # and say so in the log, loudly, once it is clearly not a blip.
+                proc = subprocess.run(
                     [POLL], stdout=log, stderr=log, timeout=TICK_TIMEOUT_SECS
                 )
+                if proc.returncode == 0:
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    log.write(
+                        f"[{NAME}] poll exited {proc.returncode} "
+                        f"({consecutive_failures} consecutive)\n"
+                    )
+                    if consecutive_failures in (3, 12, 48):
+                        log.write(
+                            f"[{NAME}] DEGRADED: {consecutive_failures} consecutive failed polls. "
+                            f"This daemon is running and doing nothing.\n"
+                        )
             except subprocess.TimeoutExpired:
+                consecutive_failures += 1
                 log.write(f"[{NAME}] tick TIMED OUT after {TICK_TIMEOUT_SECS}s\n")
             log.flush()
         time.sleep(max(1.0, INTERVAL_SECS - (time.time() - started)))
