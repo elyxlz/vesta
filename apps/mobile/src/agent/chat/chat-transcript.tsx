@@ -18,7 +18,7 @@ import type { OpenViewerRequest } from "@/agent/chat/attachment-content";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
 import { LoadingSpinner } from "@/components/loading-spinner";
-import { Text } from "@/components/ui/Typography";
+import { ChatEmptyState } from "@/agent/chat/chat-empty-state";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import type { ChatRow } from "@/agent/chat-list-model";
 import {
@@ -43,6 +43,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   historyLoaded,
   loadingMore,
   composerInset,
+  keyboardOffset,
   attachList,
   onScroll,
   onContentSizeChange,
@@ -64,6 +65,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   historyLoaded: boolean;
   loadingMore: boolean;
   composerInset: SharedValue<number>;
+  keyboardOffset: number;
   attachList: (list: FlatList<ChatRow> | null) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onContentSizeChange: (width: number, height: number) => void;
@@ -157,24 +159,14 @@ export const ChatTranscript = memo(function ChatTranscript({
             </View>
           ) : null
         }
-        ListEmptyComponent={
-          historyLoaded ? (
-            <View style={styles.empty}>
-              <Text
-                family="heading"
-                style={[styles.emptyTitle, { color: colors.text }]}
-              >
-                Start a conversation
-              </Text>
-              <Text
-                style={[styles.emptyDetail, { color: colors.secondaryText }]}
-              >
-                Tell {label} what you want to accomplish.
-              </Text>
-            </View>
-          ) : null
-        }
       />
+      {historyLoaded && empty ? (
+        <ChatEmptyState
+          agentName={label}
+          composerInset={composerInset}
+          keyboardOffset={keyboardOffset}
+        />
+      ) : null}
       {!historyLoaded && rows.length === 0 ? (
         <Reanimated.View
           pointerEvents="none"
@@ -225,13 +217,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   loadingMore: { height: 44, alignItems: "center", justifyContent: "center" },
-  empty: {
-    minHeight: 300,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 7,
-    padding: 30,
-  },
-  emptyTitle: { fontSize: 21, fontWeight: "500" },
-  emptyDetail: { fontSize: 14, textAlign: "center" },
 });

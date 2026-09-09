@@ -1,4 +1,5 @@
 import {
+  agentHoldKey,
   directRoomId,
   initialChatState,
   roomHoldKey,
@@ -90,7 +91,7 @@ const markdownTail: ChatMessage[] = [
       "```",
       "",
       "- Every client needs the new connect link.",
-      "- Old links stop working at once.",
+      "- Old links stop working at once, so hand the new link to every phone, laptop, and desktop before you rotate on a busy day.",
       "",
       "Details in the [gateway guide](https://vesta.run/docs/gateway).",
     ].join("\n"),
@@ -329,6 +330,8 @@ agentHolds.chat.persist(
   roomHoldKey(directRoomId("aria"), connectionKey),
   chatState,
 );
+if (visualSwitch("visualPage") === "dashboard")
+  agentHolds.page.persist(agentHoldKey("aria", connectionKey), "dashboard");
 if (chipDrafts.length > 0)
   agentHolds.attachments.persist(
     roomHoldKey(directRoomId("aria"), connectionKey),

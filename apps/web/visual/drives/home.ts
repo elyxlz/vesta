@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import type {
   AgentInfo,
   AgentNode,
@@ -24,40 +24,20 @@ function homeState(agent: AgentNode): ScenarioState {
 
 const noDrive = (): Promise<void> => Promise.resolve();
 
-// The card's only status text is the orb's accessible name; the label line
-// itself renders only while an operation is in flight or a request failed.
-function orbLabelled(label: string): (page: Page) => Promise<void> {
-  return async (page) => {
-    await expect(
-      page.getByRole("img", { name: `${AGENT}: ${label}` }),
-    ).toBeVisible();
-  };
-}
-
-function card(
-  status: AgentStatus,
-  label: string,
-  info: Partial<AgentInfo> = {},
-): Scenario {
+function card(status: AgentStatus, info: Partial<AgentInfo> = {}): Scenario {
   return {
     state: homeState(agentNode(status, info)),
     drive: noDrive,
-    settle: orbLabelled(label),
   };
 }
 
 function operationCard(
   status: AgentStatus,
   operation: AgentInfo["operation"],
-  label: string,
 ): Scenario {
   return {
     state: homeState(agentNode(status, { operation })),
     drive: noDrive,
-    settle: async (page) => {
-      await orbLabelled(label)(page);
-      await expect(page.getByText(label)).toBeVisible();
-    },
   };
 }
 
@@ -77,21 +57,15 @@ function gatewayOperation(
   };
 }
 
-function updateScreen(
-  operation: GatewayOperation,
-  settle: (page: Page) => Promise<void>,
-): Scenario {
+function updateScreen(operation: GatewayOperation): Scenario {
   return {
     state: {
       route: HOME_ROUTE,
       sync: { agents: { [AGENT]: agentNode() }, gateway: { operation } },
     },
     drive: noDrive,
-    settle,
   };
 }
-
-const UPDATE_TITLE = `updating to v${LATEST_VERSION}`;
 
 // The notification history, both surfaces: the bell's popover taster and the
 // "see all" dialog over the same log. The watermark sits between entry 4 and
@@ -173,12 +147,6 @@ function openNotifications(page: Page): Promise<void> {
   return page.getByRole("button", { name: "notifications" }).click();
 }
 
-// The navbar pill repeats the operation's word, so the screen's own copy is
-// read inside the operation body.
-function operationBody(page: Page) {
-  return page.locator('[data-slot="empty-content"]');
-}
-
 // The conversation list under the carousel: the agents' own chats plus a group and a pair, each
 // with the time of its last message.
 const CHATS_AGENTS = Object.fromEntries(
@@ -216,17 +184,10 @@ export const HOME: Record<string, Scenario> = {
   "home-loading": {
     state: { route: HOME_ROUTE, sync: { mode: "hello-only" } },
     drive: noDrive,
-    settle: async (page) => {
-      await expect(page.getByText("loading agents...")).toBeVisible();
-    },
   },
   "home-one-agent": {
     state: homeState(agentNode()),
     drive: noDrive,
-    settle: async (page) => {
-      await orbLabelled("alive")(page);
-      await expect(page.getByRole("button", { name: "page 1" })).toBeHidden();
-    },
   },
   "home-many-agents": {
     state: {
@@ -244,34 +205,24 @@ export const HOME: Record<string, Scenario> = {
       },
     },
     drive: noDrive,
-    settle: async (page) => {
-      await expect(
-        page.getByRole("img", { name: "iris: alive" }),
-      ).toBeVisible();
-      await expect(page.getByRole("button", { name: "page 6" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "page 4" })).toHaveCSS(
-        "opacity",
-        "1",
-      );
-    },
   },
-  "home-card-starting": card("starting", "waking up...", {
+  "home-card-starting": card("starting", {
     buildPhase: "starting",
   }),
-  "home-card-setting-up": card("setting_up", "setting up..."),
-  "home-card-booting": card("alive", "waking up...", { booting: true }),
-  "home-card-thinking": card("alive", "thinking", {
+  "home-card-setting-up": card("setting_up"),
+  "home-card-booting": card("alive", { booting: true }),
+  "home-card-thinking": card("alive", {
     activityState: "thinking",
   }),
-  "home-card-restarting": card("restarting", "restarting..."),
-  "home-card-rebuilding": card("rebuilding", "updating..."),
-  "home-card-stopped": card("stopped", "stopped"),
-  "home-card-dead": card("dead", "broken"),
-  "home-card-not-found": card("not_found", "unavailable"),
-  "home-card-needs-sign-in": card("not_authenticated", "needs you to sign in"),
-  "home-card-unprovisioned": card("unprovisioned", "needs to be set up"),
-  "home-card-backing-up": operationCard("alive", "backing_up", "backing up..."),
-  "home-card-restoring": operationCard("stopped", "restoring", "restoring..."),
+  "home-card-restarting": card("restarting"),
+  "home-card-rebuilding": card("rebuilding"),
+  "home-card-stopped": card("stopped"),
+  "home-card-dead": card("dead"),
+  "home-card-not-found": card("not_found"),
+  "home-card-needs-sign-in": card("not_authenticated"),
+  "home-card-unprovisioned": card("unprovisioned"),
+  "home-card-backing-up": operationCard("alive", "backing_up"),
+  "home-card-restoring": operationCard("stopped", "restoring"),
   "home-card-start-failed": {
     state: {
       route: `/agent/${AGENT}`,
@@ -295,29 +246,10 @@ export const HOME: Record<string, Scenario> = {
         .click();
       await page.getByRole("button", { name: "home", exact: true }).click();
     },
-    // The island on the page being left can still carry the same line for a
-    // frame, so the assertion is the card's own copy of it.
-    settle: async (page) => {
-      // Exact: the chats list below the carousel carries an `open <agent> chat` row too.
-      const card = page.getByRole("button", {
-        name: `open ${AGENT}`,
-        exact: true,
-      });
-      await expect(card).toBeVisible();
-      await expect(card.getByText(START_REFUSED)).toBeVisible();
-    },
   },
   "home-chats-list": {
     state: chatsState(),
     drive: noDrive,
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "open lisbon trip chat" }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "open atlas & iris chat" }),
-      ).toBeVisible();
-    },
   },
   "new-room-dialog": {
     state: chatsState(),
@@ -326,17 +258,10 @@ export const HOME: Record<string, Scenario> = {
       await page.getByLabel("group name").fill("weekend plans");
       await page.getByRole("checkbox").first().click();
     },
-    settle: async (page) => {
-      await expect(page.getByRole("dialog")).toBeVisible();
-      await expect(page.getByRole("button", { name: "create" })).toBeEnabled();
-    },
   },
   "notifications-popover": {
     state: notificationsState(),
     drive: openNotifications,
-    settle: async (page) => {
-      await expect(page.getByRole("button", { name: "see all" })).toBeVisible();
-    },
   },
   "notifications-dialog": {
     state: notificationsState(),
@@ -344,50 +269,18 @@ export const HOME: Record<string, Scenario> = {
       await openNotifications(page);
       await page.getByRole("button", { name: "see all" }).click();
     },
-    settle: async (page) => {
-      await expect(page.getByRole("dialog")).toBeVisible();
-      await expect(page.getByText("earlier")).toBeVisible();
-    },
   },
-  "update-snapshotting": updateScreen(gatewayOperation(), async (page) => {
-    await expect(page.getByText(UPDATE_TITLE)).toBeVisible();
-    await expect(page.getByText("backing up your agents")).toBeVisible();
-  }),
+  "update-snapshotting": updateScreen(gatewayOperation()),
   "update-snapshotting-agent": updateScreen(
     gatewayOperation({ agent: AGENT, done: 0, total: 3 }),
-    async (page) => {
-      await expect(page.getByText(`backing up ${AGENT} 1/3`)).toBeVisible();
-    },
   ),
-  "update-applying": updateScreen(
-    gatewayOperation({ phase: "applying" }),
-    async (page) => {
-      await expect(page.getByText(UPDATE_TITLE)).toBeVisible();
-      await expect(page.getByText("installing", { exact: true })).toBeVisible();
-    },
-  ),
-  "update-restarting": updateScreen(
-    gatewayOperation({ phase: "restarting" }),
-    async (page) => {
-      await expect(page.getByText(UPDATE_TITLE)).toBeVisible();
-      await expect(page.getByText("restarting", { exact: true })).toBeVisible();
-    },
-  ),
+  "update-applying": updateScreen(gatewayOperation({ phase: "applying" })),
+  "update-restarting": updateScreen(gatewayOperation({ phase: "restarting" })),
   "update-failed": updateScreen(
     gatewayOperation({
       phase: "failed",
       error: `could not download release ${LATEST_VERSION}: connection reset by peer`,
     }),
-    async (page) => {
-      await expect(page.getByText("update failed")).toBeVisible();
-      await expect(page.getByText("connection reset by peer")).toBeVisible();
-      await expect(
-        operationBody(page).getByRole("button", { name: "retry" }),
-      ).toBeVisible();
-      await expect(
-        operationBody(page).getByRole("button", { name: "dismiss" }),
-      ).toBeVisible();
-    },
   ),
   "update-warnings": updateScreen(
     gatewayOperation({
@@ -398,11 +291,6 @@ export const HOME: Record<string, Scenario> = {
         "backup of sol failed: repository locked",
       ],
     }),
-    async (page) => {
-      await expect(page.getByText("update failed")).toBeVisible();
-      await expect(page.getByText("backup of atlas timed out")).toBeVisible();
-      await expect(page.getByText("repository locked")).toBeVisible();
-    },
   ),
   "gateway-restart-operation": updateScreen(
     gatewayOperation({
@@ -410,12 +298,6 @@ export const HOME: Record<string, Scenario> = {
       phase: "restarting",
       targetVersion: null,
     }),
-    async (page) => {
-      await expect(page.getByText("restarting the gateway")).toBeVisible();
-      await expect(
-        operationBody(page).getByText("restarting", { exact: true }),
-      ).toBeVisible();
-    },
   ),
   // The snapshot carries the running update; the delta clears it against the
   // new version, which is the resolution the notice reports.
@@ -429,10 +311,5 @@ export const HOME: Record<string, Scenario> = {
       },
     },
     drive: noDrive,
-    settle: async (page) => {
-      await expect(
-        page.getByText(`updated to v${LATEST_VERSION}`),
-      ).toBeVisible();
-    },
   },
 };

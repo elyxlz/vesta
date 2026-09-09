@@ -6,71 +6,16 @@ tags:
   - gateway-update
 # Cover the blocking screen and the optional update in Settings.
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
-- openLink:
-    link: "vesta-dev://?visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
-- tapOn:
-    text: "^Open$"
-    optional: true
-    waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: ".*While [Uu]sing.*"
-    timeout: 6000
-    optional: true
-- tapOn:
-    text: ".*While [Uu]sing.*"
-    optional: true
-- extendedWaitUntil:
-    visible: ".*[Oo]nly [Ww]hile [Uu]sing.*"
-    timeout: 4000
-    optional: true
-- tapOn:
-    text: "Keep Only While Using"
-    optional: true
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - extendedWaitUntil:
-          visible: ".*Location access.*"
-          timeout: 5000
-          optional: true
-      - runFlow:
-          when:
-            visible: ".*Location access.*"
-          commands:
-            - pressKey: Back
-      - extendedWaitUntil:
-          visible: ".*Turn on.*"
-          timeout: 5000
-          optional: true
-      - tapOn:
-          text: ".*Turn on.*"
-          optional: true
-- extendedWaitUntil:
-    visible: "Privacy unavailable"
-    timeout: 30000
-- assertNotVisible: "This version of the app needs a newer gateway.*"
-- stopApp
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
-
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=required"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - tapOn:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: ".*This version of the app needs a newer gateway.*"
-    timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-required
@@ -92,6 +37,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdate=available"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
@@ -134,9 +80,6 @@ tags:
 
 - tapOn:
     text: "^Update gateway.*"
-- extendedWaitUntil:
-    visible: "Update gateway?"
-    timeout: 10000
 - takeScreenshot: settings-gateway-update-confirm
 - runScript:
     file: capture-screenshot.js
@@ -148,16 +91,11 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=snapshotting"
+- runFlow: wait-for-launch.yml
 - tapOn:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Updating to v0.2.1"
-    timeout: 30000
-- extendedWaitUntil:
-    visible: "backing up nova 2/3"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-snapshotting
@@ -169,13 +107,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=failed"
-- extendedWaitUntil:
-    visible: ".*Update didn.t finish.*"
-    timeout: 30000
-- extendedWaitUntil:
-    visible: ".*Try again.*"
-    timeout: 10000
-- assertVisible: ".*Not now.*"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-update-failed
@@ -187,9 +119,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayOperation=restarting"
-- extendedWaitUntil:
-    visible: ".*Restarting gateway.*"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-restarting
@@ -202,10 +132,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualGatewayUpdated=0.2.1"
-- extendedWaitUntil:
-    visible: "Updated to v0.2.1"
-    timeout: 30000
-- assertVisible: ".*running the new version.*"
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: gateway-updated
@@ -218,9 +145,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualSyncState=app_behind"
-- extendedWaitUntil:
-    visible: "This app is too old for the gateway.*"
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: app-behind

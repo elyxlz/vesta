@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+---
+# A capture-infrastructure signal, not a contract on app copy or controls.
+# Native startup can show an unchanged blank surface before JS/fonts mount.
+- runFlow:
+    when:
+      platform: iOS
+      visible: "^Open$"
+    commands:
+      - tapOn:
+          text: "^Open$"
+          waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible:
+      id: visual-harness-ready
+    timeout: 30000

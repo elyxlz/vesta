@@ -18,11 +18,11 @@ import sys
 import time
 import typing as tp
 
-from . import artifacts, doctor, gateway, handover
+from . import artifacts, chromium, doctor, gateway, handover
 from . import protocol as p
 from . import sessions as sessions_mod
 from .daemon_state import ENGINES, State, identity, own, routes
-from .procs import KILL_GRACE_SECS, kill_group
+from .procs import KILL_GRACE_SECS, kill_group, reap
 from .runtime_paths import Paths, load_paths
 from .runtimes import ExecOutcome, elapsed_ms
 from .session_control import ensure_running, settle, stop_session
@@ -43,6 +43,11 @@ HANDOVER_SHUTDOWN_SECS = 2.0
 SHUTDOWN_GATEWAY_TIMEOUT_SECS = 0.6
 MIN_SESSION_BUDGET_SECS = 1.0
 STARTUP_DEREGISTER_TIMEOUT_SECS = 5.0
+# The fallback bound on waiting out a program in flight or a handover teardown: a busy session
+# settles on the cancellation just sent, a stopping handover on its own teardown, both in under a
+# second, and a starting session is never waited on. Worst case: this bound, a 5s gateway
+# teardown, and one parallel round of session stops, under the CLI's 110s wait for the answer.
+STOP_ALL_SETTLE_SECS = 60.0
 READ_CHUNK_BYTES = 1 << 16
 
 
@@ -191,13 +196,53 @@ async def op_session_stop(state: State, request_id: str, request: dict[str, p.Js
     return p.result(request_id=request_id, op="session_stop", ok=True, data={"stopped": name})
 
 
+def _settling(state: State) -> bool:
+    """Whether a session is still running a program, or a handover is still tearing down (its own
+    key revoke, deregister, and settle, which a stop-all must not answer over or race)."""
+    live = state.handover
+    tearing = live is not None and live.state == "stopping"
+    # `ensure_running` writes `ready` and `op_exec` writes `busy` with no scheduling point between
+    # them on Python 3.12+, so this read never sees an exec's session as `ready` in passing.
+    return tearing or any(session.state == "busy" for session in state.table.sessions.values())
+
+
+async def _quiesce(state: State) -> list[str]:
+    """Cancels every exec in flight, one that reaches `busy` while this waits included, asks every
+    starting session to stop itself once its engine returns, and waits out what settles on its own
+    inside one budget. Returns the request ids it cancelled."""
+    cancelled: list[str] = []
+    deadline = time.monotonic() + STOP_ALL_SETTLE_SECS
+    while True:
+        for exec_id, task in state.inflight.items():
+            if exec_id not in cancelled:
+                cancelled.append(exec_id)
+                task.cancel()
+        for session in state.table.sessions.values():
+            if session.state == "starting":
+                session.stop_requested = True
+        if not _settling(state) or time.monotonic() >= deadline:
+            return cancelled
+        await asyncio.sleep(handover.SETTLE_POLL_SECS)
+
+
 async def op_stop_all(state: State, request_id: str, _request: dict[str, p.JsonValue]) -> p.Result:
-    stopped: list[str] = []
-    for session in state.table.sessions.values():
-        was_stopped = session.state == "stopped"
-        if await stop_session(state.paths, session) and not was_stopped:
-            stopped.append(session.name)
-    return p.result(request_id=request_id, op="stop_all", ok=True, data={"stopped": stopped})
+    """Ends everything the daemon runs: each program in flight answers `cancelled` to its own
+    caller, the live handover is given back, every session loses its browser and display, and a
+    session still launching stops itself the moment its engine returns."""
+    cancelled = await _quiesce(state)
+    live = state.handover
+    handover_stopped = False
+    if live is not None and (live.state == "live" or (live.state == "starting" and live.task is not None)):
+        await handover.stop(state, live, reason="stopped", gateway_timeout=handover.ROLLBACK_GATEWAY_TIMEOUT_SECS)
+        handover_stopped = True
+    sessions = [session for session in state.table.sessions.values() if session.state != "starting"]
+    stopped = [session.name for session in sessions if session.runtime is not None or session.display is not None]
+    outcomes = await asyncio.gather(*[stop_session(state.paths, session, force=True) for session in sessions], return_exceptions=True)
+    for session, outcome in zip(sessions, outcomes, strict=True):
+        if isinstance(outcome, BaseException):
+            logger.error("stop-all could not stop session %s", session.name, exc_info=outcome)
+    data: dict[str, p.JsonValue] = {"stopped": stopped, "cancelled": cancelled, "handover_stopped": handover_stopped}
+    return p.result(request_id=request_id, op="stop_all", ok=True, data=data)
 
 
 async def _idle_sweep(state: State) -> None:
@@ -307,6 +352,12 @@ async def serve(paths: Paths) -> int:
 
     for signum in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(signum, on_signal, signum)
+    # A SIGKILLed daemon leaves its browsers, displays, and harness daemons running, each holding a
+    # display number, a port, or a profile lock this daemon is about to claim.
+    reaped = await asyncio.to_thread(reap, paths.children_ledger, KILL_GRACE_SECS)
+    reaped += await asyncio.to_thread(chromium.reap_harness_daemons, paths)
+    if reaped:
+        logger.info("reaped %d orphaned processes from a previous daemon", reaped)
     # A SIGKILLed daemon leaves its route registered, and vestad would then proxy the next handover's
     # page to a port nothing serves. Deregistering here is the one place that route is reconciled;
     # vestad answers a route it does not have with a 404 and the helper exits 0.

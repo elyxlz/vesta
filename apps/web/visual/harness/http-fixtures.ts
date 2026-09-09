@@ -208,7 +208,7 @@ export interface RouteFixture {
   query?: Record<string, string>;
   status?: number;
   json?: unknown;
-  jsonSequence?: readonly [unknown, ...unknown[]];
+  jsonAfterRequest?: { path: string; method: string; json: unknown };
   body?: string;
   // Binary payloads (fixture media blobs) ride base64 so fixtures stay plain JSON-safe strings.
   bodyBase64?: string;
@@ -305,7 +305,19 @@ function matches(fixture: RouteFixture): (url: URL) => boolean {
 }
 
 async function installRoute(page: Page, fixture: RouteFixture): Promise<void> {
-  let sequenceIndex = 0;
+  let transitioned = false;
+  const after = fixture.jsonAfterRequest;
+  if (after) {
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.origin === GATEWAY_ORIGIN &&
+        url.pathname === after.path &&
+        request.method() === after.method
+      )
+        transitioned = true;
+    });
+  }
   await page.route(matches(fixture), (route) => {
     if (fixture.method && route.request().method() !== fixture.method) {
       return route.fallback();
@@ -325,11 +337,7 @@ async function installRoute(page: Page, fixture: RouteFixture): Promise<void> {
         body: fixture.body,
       });
     }
-    const sequence = fixture.jsonSequence;
-    const json =
-      sequence === undefined
-        ? (fixture.json ?? {})
-        : sequence[Math.min(sequenceIndex++, sequence.length - 1)];
+    const json = transitioned && after ? after.json : (fixture.json ?? {});
     return route.fulfill({
       status: fixture.status ?? 200,
       json,

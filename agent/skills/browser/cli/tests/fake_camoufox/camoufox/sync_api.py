@@ -68,6 +68,8 @@ class FakePage:
         self.log.append(("evaluate", expression))
         if expression.startswith("() => ({"):
             return {"url": self.url, "title": self._title, "w": 1280, "h": 800, "sx": 0, "sy": 0, "pw": 1280, "ph": 2000}
+        if expression == "document.documentElement.clientWidth":
+            return 1280
         if expression == "1 + 1":
             return 2
         if expression == "throw":
@@ -88,9 +90,11 @@ class FakePage:
         if selector == "#never":
             raise TimeoutError("timeout")
 
-    def screenshot(self, path=None, full_page=False):
+    def screenshot(self, path=None, full_page=False, clip=None):
+        if full_page and clip is None and "tall" in self.url:
+            raise RuntimeError("Page.screenshot: Protocol error (Page.screenshot): Cannot take screenshot larger than 32767")
         pl.Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 8)
-        self.log.append(("screenshot", path, full_page))
+        self.log.append(("screenshot", path, full_page, clip))
 
     def set_input_files(self, selector, path):
         self.log.append(("upload", selector, path))

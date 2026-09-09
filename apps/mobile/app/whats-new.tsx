@@ -88,11 +88,7 @@ export default function WhatsNewScreen() {
 
   return (
     <>
-      <SheetChrome
-        grabber
-        title="What’s new"
-        closeLabel="Close release notes"
-      />
+      <SheetChrome title="What’s new" closeLabel="Close release notes" />
       <Screen contentStyle={styles.content}>
         <NativeSheetCloseButton
           accessibilityLabel="Close release notes"

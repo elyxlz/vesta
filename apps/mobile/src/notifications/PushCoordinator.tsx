@@ -6,6 +6,7 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { usePathname, useRouter } from "expo-router";
+import { useViewedAgent } from "./use-viewed-agent";
 import { registerMobileDevice, unregisterMobileDevice } from "@vesta/core";
 import { createApiClient, type ApiClient } from "@/api/client";
 import type { ConnectionConfig } from "@vesta/core";
@@ -104,6 +105,7 @@ function registrationTarget(
 function EnabledPushCoordinator() {
   const router = useRouter();
   const pathname = usePathname();
+  const viewingAgent = useViewedAgent();
   const session = useSession();
   const { reachable, agentsReady, agents } = useRoster();
   const preferences = usePreferences();
@@ -224,6 +226,7 @@ function EnabledPushCoordinator() {
       agentNames: agents.map((agent) => agent.name),
       routeReady,
       currentGateway: sessionGatewayUrl,
+      viewingAgent,
     });
     if (decision === "wait") return;
     if (processingNotification.current === pending.identifier) return;
@@ -265,6 +268,7 @@ function EnabledPushCoordinator() {
     reachable,
     agentsReady,
     agents,
+    viewingAgent,
   ]);
 
   useEffect(() => {

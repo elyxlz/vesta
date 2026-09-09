@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
 import { directRoomId } from "@vesta/core";
 import type { AgentStatus, VestaEvent } from "@vesta/core";
 import {
@@ -29,8 +29,7 @@ const HISTORY_PATH = `/rooms/${encodeURIComponent(DIRECT_ROOM)}/history`;
 const MESSAGE_PATH = `/rooms/${encodeURIComponent(DIRECT_ROOM)}/messages`;
 const LOGS_PATH = `/agents/${AGENT}/logs`;
 
-// The first assertion of a scenario also waits out the app's initial load and
-// the chat history seed, so it gets a longer bound than the default 5s.
+// Navigation into a chat section can wait for its initial history seed.
 const LOADED = { timeout: 30_000 };
 
 const CLAUDE_PROVIDER: ProviderInfoFixture = {
@@ -58,13 +57,11 @@ function chatState(
 
 function chatScenario(
   history: ChatHistoryFixture,
-  settle: (page: Page) => Promise<void>,
   options: { status?: AgentStatus; routes?: RouteFixture[] } = {},
 ): Scenario {
   return {
     state: chatState(history, options),
     drive: () => Promise.resolve(),
-    settle,
   };
 }
 
@@ -151,28 +148,6 @@ function logsState(route: RouteFixture, page = "logs"): ScenarioState {
   };
 }
 
-async function settleLogLines(page: Page): Promise<void> {
-  await expect(logText(page, "agent luna starting")).toBeVisible(LOADED);
-  await expect(logText(page, "— agent stopped —")).toBeVisible();
-}
-
-// The standalone logs pane stays mounted (hidden Activity) behind the settings
-// logs tab, so log text is scoped to the visible console.
-function logText(page: Page, text: string): Locator {
-  return page.getByText(text).filter({ visible: true });
-}
-
-// The chat also mirrors the latest agent reply into an sr-only live region, and
-// keeps a hidden height-measurement clone of the thread, so chat text is scoped
-// to the visible copy.
-function bubble(page: Page, text: string): Locator {
-  return page.getByRole("paragraph").filter({ hasText: text });
-}
-
-function chatText(page: Page, text: string): Locator {
-  return page.getByText(text).filter({ visible: true });
-}
-
 function composer(page: Page): Locator {
   return page.getByPlaceholder(`message ${AGENT}`).filter({ visible: true });
 }
@@ -193,7 +168,6 @@ async function pickFiles(
   page: Page,
   files: { name: string; mimeType: string; buffer: Buffer }[],
 ): Promise<void> {
-  await expect(composer(page)).toBeVisible(LOADED);
   await page
     .getByLabel("pick a file")
     .filter({ visible: false })
@@ -208,45 +182,14 @@ const SMALL_FILE = {
 };
 
 export const CHAT: Record<string, Scenario> = {
-  "chat-history-skeleton": chatScenario({ hang: true }, async (page) => {
-    await expect(
-      page.locator(".animate-pulse").filter({ visible: true }).first(),
-    ).toBeVisible(LOADED);
-    await expect(composer(page)).toBeVisible();
-  }),
-  "chat-empty": chatScenario({ events: [] }, async (page) => {
-    await expect(chatText(page, `${AGENT} is setting things up`)).toBeVisible(
-      LOADED,
-    );
-    await expect(composer(page)).toBeEnabled();
-  }),
+  "chat-history-skeleton": chatScenario({ hang: true }),
+  "chat-empty": chatScenario({ events: [] }),
   "chat-needs-sign-in": chatScenario(
     { events: [] },
-    async (page) => {
-      await expect(chatText(page, `${AGENT} needs to sign in`)).toBeVisible(
-        LOADED,
-      );
-      await expect(
-        page.getByPlaceholder("sign in to chat").filter({ visible: true }),
-      ).toBeDisabled();
-    },
     { status: "not_authenticated" },
   ),
-  "chat-populated": chatScenario({ events: CONVERSATION }, async (page) => {
-    await expect(bubble(page, "moved to 4:30.")).toBeVisible(LOADED);
-    await expect(chatText(page, "beginning of conversation")).toBeVisible();
-  }),
-  "chat-markdown": chatScenario({ events: MARKDOWN_REPLY }, async (page) => {
-    await expect(
-      page.getByRole("heading", { name: "Rotating the key" }),
-    ).toBeVisible(LOADED);
-    await expect(
-      page.getByRole("link", { name: "connect link" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("cell", { name: "reconnect clients" }),
-    ).toBeVisible();
-  }),
+  "chat-populated": chatScenario({ events: CONVERSATION }),
+  "chat-markdown": chatScenario({ events: MARKDOWN_REPLY }),
   "chat-send-failed": {
     state: chatState(
       { events: CONVERSATION },
@@ -262,15 +205,8 @@ export const CHAT: Record<string, Scenario> = {
       },
     ),
     drive: async (page) => {
-      await expect(bubble(page, "moved to 4:30.")).toBeVisible(LOADED);
       await typeMessage(page, "and book the table for friday at 8");
       await page.getByRole("button", { name: "send message" }).click();
-    },
-    settle: async (page) => {
-      await expect(chatText(page, "not sent · tap to retry")).toBeVisible();
-      await expect(
-        bubble(page, "and book the table for friday at 8"),
-      ).toBeVisible();
     },
   },
   "chat-has-more": {
@@ -287,54 +223,24 @@ export const CHAT: Record<string, Scenario> = {
       },
     ),
     drive: async (page) => {
-      await expect(bubble(page, "item 1 is on track")).toBeVisible(LOADED);
       await hoverMessageArea(page);
       await page.mouse.wheel(0, -600);
-    },
-    // The un-virtualized scroller keeps the top marker mounted, so "scrolled up"
-    // is proven by the active scroll-to-latest button rather than the marker
-    // leaving the DOM.
-    settle: async (page) => {
-      await expect(
-        page
-          .getByRole("button", { name: "Scroll to latest message" })
-          .filter({ visible: true }),
-      ).toHaveAttribute("data-active", "true");
     },
   },
   "chat-composer-typed": {
     state: chatState({ events: CONVERSATION }),
     drive: async (page) => {
-      await expect(bubble(page, "moved to 4:30.")).toBeVisible(LOADED);
       await typeMessage(page, "and book the table for friday at 8");
     },
-    settle: async (page) => {
-      await expect(composer(page)).toHaveValue(
-        "and book the table for friday at 8",
-      );
-      await expect(
-        page.getByRole("button", { name: "send message" }),
-      ).toBeEnabled();
-    },
   },
-  "chat-mobile-fullscreen": chatScenario(
-    { events: CONVERSATION },
-    async (page) => {
-      await expect(bubble(page, "moved to 4:30.")).toBeVisible(LOADED);
-      await expect(composer(page)).toBeVisible();
-    },
-  ),
+  "chat-mobile-fullscreen": chatScenario({ events: CONVERSATION }),
   "logs-streaming": {
     state: logsState(logsRoute({ hang: true })),
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      await expect(page.getByText("streaming logs...")).toBeVisible(LOADED);
-    },
   },
   "logs-lines": {
     state: logsState(LOG_LINES_ROUTE),
     drive: () => Promise.resolve(),
-    settle: settleLogLines,
   },
   // The empty console's notice sits at the top of the scroll area, which the
   // full-screen navbar mask hides, so the settings tab console shows it.
@@ -346,35 +252,22 @@ export const CHAT: Record<string, Scenario> = {
     drive: async (page) => {
       await page.getByRole("tab", { name: "logs" }).click(LOADED);
     },
-    settle: async (page) => {
-      await expect(logText(page, "— reconnecting —")).toBeVisible(LOADED);
-    },
   },
   "settings-logs-tab": {
     state: logsState(LOG_LINES_ROUTE, "settings"),
     drive: async (page) => {
       await page.getByRole("tab", { name: "logs" }).click(LOADED);
     },
-    settle: settleLogLines,
   },
 
   "chat-attach-menu": {
     state: chatState({ events: CONVERSATION }),
     drive: async (page) => {
-      await expect(composer(page)).toBeVisible(LOADED);
       await page
         .getByRole("button", { name: "add attachment" })
         .filter({ visible: true })
         .first()
         .click();
-    },
-    settle: async (page) => {
-      await expect(
-        page.getByRole("button", { name: "photos & videos" }).first(),
-      ).toBeVisible(LOADED);
-      await expect(
-        page.getByRole("button", { name: "file", exact: true }).first(),
-      ).toBeVisible();
     },
   },
   "chat-attachment-chips": {
@@ -385,15 +278,6 @@ export const CHAT: Record<string, Scenario> = {
         { ...SMALL_FILE, name: "summary.txt" },
       ]);
     },
-    settle: async (page) => {
-      await expect(chatText(page, "2 files ·").first()).toBeVisible(LOADED);
-      await expect(
-        page
-          .getByPlaceholder("add a caption")
-          .filter({ visible: true })
-          .first(),
-      ).toBeVisible();
-    },
   },
   "chat-attachment-chip-uploading": {
     state: chatState(
@@ -402,15 +286,6 @@ export const CHAT: Record<string, Scenario> = {
     ),
     drive: async (page) => {
       await pickFiles(page, [SMALL_FILE]);
-    },
-    settle: async (page) => {
-      await expect(chatText(page, "notes.txt").first()).toBeVisible(LOADED);
-      await expect(
-        page
-          .getByRole("button", { name: "send message" })
-          .filter({ visible: true })
-          .first(),
-      ).toBeDisabled();
     },
   },
   "chat-attachment-chip-error": {
@@ -421,15 +296,6 @@ export const CHAT: Record<string, Scenario> = {
     drive: async (page) => {
       await pickFiles(page, [SMALL_FILE]);
     },
-    settle: async (page) => {
-      await expect(chatText(page, "upload failed").first()).toBeVisible(LOADED);
-      await expect(
-        page
-          .getByRole("button", { name: "retry uploading notes.txt" })
-          .filter({ visible: true })
-          .first(),
-      ).toBeVisible();
-    },
   },
   "chat-attachment-chips-offline": {
     state: chatState(
@@ -437,14 +303,8 @@ export const CHAT: Record<string, Scenario> = {
       { routes: attachmentRoutes({ unreachableCreate: true }) },
     ),
     drive: async (page) => {
-      await expect(composer(page)).toBeVisible(LOADED);
       await page.context().setOffline(true);
       await pickFiles(page, [SMALL_FILE]);
-    },
-    settle: async (page) => {
-      await expect(chatText(page, "waiting for network").first()).toBeVisible(
-        LOADED,
-      );
     },
   },
   "chat-attachment-dropzone": {
@@ -467,45 +327,18 @@ export const CHAT: Record<string, Scenario> = {
           );
         });
     },
-    settle: async (page) => {
-      await expect(chatText(page, "drop to send to luna").first()).toBeVisible(
-        LOADED,
-      );
-    },
   },
 
   "chat-attachment-bubbles": chatScenario(
     { events: attachmentConversation() },
-    async (page) => {
-      await expect(
-        page.getByAltText("beach.png").filter({ visible: true }).first(),
-      ).toBeVisible(LOADED);
-      await expect(chatText(page, "340.3 kB").first()).toBeVisible();
-      await expect(chatText(page, "memo.wav · 52 B").first()).toBeVisible();
-    },
     { routes: attachmentServeRoutes() },
   ),
   "chat-attachment-bubble-states": chatScenario(
     { events: attachmentStatesConversation() },
-    async (page) => {
-      await expect(chatText(page, "no longer available").first()).toBeVisible(
-        LOADED,
-      );
-      await expect(
-        chatText(page, "couldn't load · tap to retry").first(),
-      ).toBeVisible();
-    },
     { routes: attachmentServeRoutes() },
   ),
   "chat-attachment-bubble-group": chatScenario(
     { events: multiAttachmentConversation() },
-    async (page) => {
-      await expect(
-        page.getByAltText("beach.png").filter({ visible: true }).first(),
-      ).toBeVisible(LOADED);
-      await expect(chatText(page, "340.3 kB").first()).toBeVisible();
-      await expect(chatText(page, "memo.wav · 52 B").first()).toBeVisible();
-    },
     { routes: attachmentServeRoutes() },
   ),
   "chat-attachment-viewer": {
@@ -520,14 +353,6 @@ export const CHAT: Record<string, Scenario> = {
         .first()
         .click();
     },
-    settle: async (page) => {
-      await expect(
-        chatText(page, "beach.png · 640×480 · 2.3 MB").first(),
-      ).toBeVisible(LOADED);
-      await expect(
-        page.getByRole("button", { name: "close viewer" }).first(),
-      ).toBeVisible();
-    },
   },
   "chat-attachment-viewer-zoomed": {
     state: chatState(
@@ -541,13 +366,7 @@ export const CHAT: Record<string, Scenario> = {
         .first()
         .click();
       const stage = page.locator("img[data-viewer-stage]").first();
-      await expect(stage).toBeVisible(LOADED);
       await stage.dblclick();
-    },
-    settle: async (page) => {
-      await expect(
-        page.locator('img[data-viewer-stage][data-zoom-scale="2"]'),
-      ).toBeVisible(LOADED);
     },
   },
   // A room with two agents: the bubbles name who wrote each run, and the composer and title read
@@ -578,9 +397,5 @@ export const CHAT: Record<string, Scenario> = {
       chatSocket: { events: [] },
     },
     drive: () => Promise.resolve(),
-    settle: async (page) => {
-      await expect(bubble(page, "table for two at 20:30")).toBeVisible(LOADED);
-      await expect(chatText(page, "atlas").first()).toBeVisible();
-    },
   },
 };

@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+---
+- clearState
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - setPermissions:
+          permissions:
+            location: inuse
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - setPermissions:
+          permissions:
+            location: allow

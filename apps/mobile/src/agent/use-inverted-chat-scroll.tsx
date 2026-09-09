@@ -19,6 +19,8 @@ import type { SharedValue } from "react-native-reanimated";
 import {
   getLatestMessageOffset,
   isNearLatestMessage,
+  shouldAnchorToLatest,
+  type AnchorTrigger,
 } from "@/agent/chat-scroll-model";
 
 type ChatScrollViewRef = ComponentRef<typeof KeyboardChatScrollView>;
@@ -50,7 +52,7 @@ export function useInvertedChatScroll<Row>(
 ) {
   const listRef = useRef<FlatList<Row>>(null);
   const isAtLatestRef = useRef(true);
-  const hasInitialInsetAnchorRef = useRef(false);
+  const anchoredRef = useRef(false);
   const hasContentRef = useRef(false);
   const latestOffsetRef = useRef(0);
   const [isAwayFromLatest, setIsAwayFromLatest] = useState(false);
@@ -59,21 +61,18 @@ export function useInvertedChatScroll<Row>(
     listRef.current = list;
   }, []);
 
-  // iOS rests an inverted list at offset 0, the screen's bottom edge, until it
-  // is told where the end lies; anchor once both the inset and content exist,
-  // whichever lands second.
-  const anchorToLatest = useCallback(() => {
-    if (
-      process.env.EXPO_OS !== "ios" ||
-      hasInitialInsetAnchorRef.current ||
-      !hasContentRef.current ||
-      latestOffsetRef.current >= 0 ||
-      !isAtLatestRef.current
-    ) {
-      return;
-    }
+  const anchorToLatest = useCallback((trigger: AnchorTrigger) => {
+    const anchor = shouldAnchorToLatest({
+      platform: process.env.EXPO_OS,
+      hasContent: hasContentRef.current,
+      latestOffset: latestOffsetRef.current,
+      atLatest: isAtLatestRef.current,
+      anchored: anchoredRef.current,
+      trigger,
+    });
+    if (!anchor) return;
 
-    hasInitialInsetAnchorRef.current = true;
+    anchoredRef.current = true;
     listRef.current?.scrollToOffset({
       offset: latestOffsetRef.current,
       animated: false,
@@ -86,7 +85,7 @@ export function useInvertedChatScroll<Row>(
         process.env.EXPO_OS,
         insets.top,
       );
-      anchorToLatest();
+      anchorToLatest("inset");
     },
     [anchorToLatest],
   );
@@ -94,7 +93,7 @@ export function useInvertedChatScroll<Row>(
   const handleContentSizeChange = useCallback(
     (_width: number, height: number) => {
       hasContentRef.current = height > 0;
-      anchorToLatest();
+      anchorToLatest("content");
     },
     [anchorToLatest],
   );

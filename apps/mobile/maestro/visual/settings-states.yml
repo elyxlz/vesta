@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -71,10 +66,7 @@ tags:
           timeout: 4000
           optional: true
 - tapOn:
-    text: '^Release channel,.*'
-- extendedWaitUntil:
-    visible: '.*Release channel.*'
-    timeout: 10000
+    text: '^Release channel.*'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-channel-picker
@@ -85,9 +77,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -107,9 +97,6 @@ tags:
           optional: true
 - tapOn:
     text: '.*Restart gateway.*'
-- extendedWaitUntil:
-    visible: '.*Restart gateway\?.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-restart-confirm
@@ -120,9 +107,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -140,13 +125,10 @@ tags:
     end: "50%,25%"
     duration: 400
 - extendedWaitUntil:
-    visible: '^Disconnect,.*'
+    visible: '^Disconnect.*'
     timeout: 10000
 - tapOn:
-    text: '^Disconnect,.*'
-- extendedWaitUntil:
-    visible: '.*Disconnect from Vesta\?.*'
-    timeout: 10000
+    text: '^Disconnect.*'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-disconnect-confirm
@@ -157,9 +139,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -179,9 +159,6 @@ tags:
           optional: true
 - tapOn:
     text: '.*Check for updates.*'
-- extendedWaitUntil:
-    visible: '.*Check again for updates.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-update-checked
@@ -192,9 +169,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -214,9 +189,6 @@ tags:
           optional: true
 - tapOn:
     text: '.*Check for updates.*'
-- extendedWaitUntil:
-    visible: '.*Retry update check.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-update-check-error
@@ -227,9 +199,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -257,9 +227,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualTunnel=unavailable"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -287,9 +255,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualManaged=true"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -306,9 +272,6 @@ tags:
     start: "50%,85%"
     end: "50%,25%"
     duration: 400
-- extendedWaitUntil:
-    visible: '.*Manage account.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-account-managed
@@ -319,9 +282,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDevices=none"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -338,9 +299,6 @@ tags:
     start: "50%,85%"
     end: "50%,25%"
     duration: 400
-- extendedWaitUntil:
-    visible: '^Disconnect,.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-no-devices
@@ -351,9 +309,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDevices=position"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -371,9 +327,6 @@ tags:
           visible: '.*iPhone 17.*'
           timeout: 4000
           optional: true
-- extendedWaitUntil:
-    visible: '.*Lisbon.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-device-position
@@ -384,9 +337,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - swipe:
     start: "50%,20%"
     end: "50%,5%"
@@ -421,9 +372,6 @@ tags:
             text: '.*Allow notifications.*'
           above:
             text: '.*Chat replies.*'
-- extendedWaitUntil:
-    visible: '.*Allow notifications.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-notifications-off
@@ -434,11 +382,23 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Appearance.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: "50%,58%"
+          end: "50%,10%"
+          duration: 500
+- scrollUntilVisible:
+    element:
+      text: '^Light$'
+    direction: DOWN
+    timeout: 15000
+    centerElement: true
 - tapOn:
-    text: '.*Light.*'
+    text: '^Light$'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-light-forced
@@ -449,9 +409,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDelay=60000"
-- extendedWaitUntil:
-    visible: '.*Loading release notes.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: whats-new-loading
@@ -462,9 +420,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualWhatsNewSeen=0.1.183"
-- extendedWaitUntil:
-    visible: '.*v0\.2\.0.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: whats-new-auto-open
@@ -475,9 +431,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChannel=beta"
-- extendedWaitUntil:
-    visible: '.*beta.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: whats-new-beta

@@ -51,6 +51,8 @@ export default defineConfig([
         MAESTRO_SHARD_INDEX: "readonly",
         ACTION: "readonly",
         SCREENSHOT: "readonly",
+        PAGE_STEP: "readonly",
+        output: "readonly",
       },
     },
   },

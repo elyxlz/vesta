@@ -38,12 +38,25 @@ async def ensure_running(state: State, session: sessions_mod.Session) -> list[st
         # display must not outlive the start it was claimed for.
         session.state = "stopped"
         session.runtime = None
+        session.stop_requested = False
         if session.display is not None:
             await display.stop_session_display(state.paths, session.display)
             session.display = None
         if isinstance(exc, display.DisplayError):
             raise p.BrowserError(p.unavailable(str(exc))) from exc
         raise
+    if session.stop_requested:
+        session.stop_requested = False
+        await stop_session(state.paths, session, force=True)
+        raise p.BrowserError(
+            p.error(
+                "cancelled",
+                "routing",
+                "the session was stopped while its browser was starting",
+                retryable=True,
+                suggested_action="rerun the program",
+            )
+        )
     session.state = "ready"
     return ["worker_restarted"] if restarted else []
 

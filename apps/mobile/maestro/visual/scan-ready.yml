@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+name: Scan a connection code
+tags: [visual, onboarding]
+---
+# The ready camera has its own permission/presentation history, independent of
+# the denied-camera and invalid-link interactions in connect.yml.
+- runFlow: prepare-page.yml
+- setPermissions:
+    permissions:
+      camera: allow
+- openLink:
+    link: "vesta-dev://scan?visualPrivacy=unlocked"
+- runFlow: wait-for-launch.yml
+- takeScreenshot: scan-ready
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: scan-ready.png

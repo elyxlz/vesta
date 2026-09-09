@@ -1,3 +1,4 @@
+import "./clock";
 import * as Linking from "expo-linking";
 
 // The one reader of the launch URL's visual switches. Every fixture module

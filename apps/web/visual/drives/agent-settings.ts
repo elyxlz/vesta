@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import { directRoomId } from "@vesta/core";
 import type {
   AgentNode,
@@ -520,175 +520,96 @@ async function openTab(page: Page, name: string): Promise<void> {
   await page.getByRole("tab", { name }).click();
 }
 async function openModelDialog(page: Page): Promise<void> {
+  await openTab(page, "provider");
   await page.getByRole("button", { name: "change model" }).click();
 }
 async function openBackupsDialog(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "backup", exact: true }).click();
+  await page.getByRole("button", { name: "backups", exact: true }).click();
 }
 async function scrollToVoice(page: Page): Promise<void> {
-  await page.getByText("speech to text").scrollIntoViewIfNeeded();
+  await openTab(page, "voice");
 }
 
 function generalScenario(
   overrides: Parameters<typeof settingsState>[0],
-  settle: (page: Page) => Promise<void>,
 ): Scenario {
-  return { state: settingsState(overrides), drive: noDrive, settle };
+  return { state: settingsState(overrides), drive: noDrive };
 }
 
-// The general tab stacks its cards on a narrow screen, so a card-focused
-// scenario brings its card into the viewport first. The provider card is the
-// second card on every layout; it is scrolled once it has settled, since the
-// loading card is swapped out for the loaded one.
+// Navigate to the owning section; its contents are checked through pixels.
 function providerScenario(
   overrides: Parameters<typeof settingsState>[0],
-  settle: (page: Page) => Promise<void>,
 ): Scenario {
   return {
     state: settingsState(overrides),
-    drive: async (page) => {
-      await settle(page);
-      await page.locator('[data-slot="card"]').nth(1).scrollIntoViewIfNeeded();
-    },
-    settle,
+    drive: (page) => openTab(page, "provider"),
   };
 }
 
-function backupsCardScenario(
-  routes: RouteFixture[],
-  settle: (page: Page) => Promise<void>,
-): Scenario {
+function backupsCardScenario(routes: RouteFixture[]): Scenario {
   return {
     state: settingsState({ routes }),
     drive: (page) => card(page, "automatic backups").scrollIntoViewIfNeeded(),
-    settle,
   };
 }
 
-function backupsDialog(routes: RouteFixture[], visibleText: string): Scenario {
+function backupsDialog(routes: RouteFixture[]): Scenario {
   return {
     state: settingsState({ routes }),
     drive: openBackupsDialog,
-    settle: async (page) => {
-      await expect(page.getByText(`backups for ${AGENT}`)).toBeVisible();
-      await expect(page.getByText(visibleText)).toBeVisible();
-    },
   };
 }
 
-function notificationsTab(
-  routes: RouteFixture[],
-  settle: (page: Page) => Promise<void>,
-): Scenario {
+function notificationsTab(routes: RouteFixture[]): Scenario {
   return {
     state: settingsState({ routes }),
     drive: (page) => openTab(page, "notifications"),
-    settle,
   };
 }
 
-function filesTab(
-  overrides: Parameters<typeof settingsState>[0],
-  settle: (page: Page) => Promise<void>,
-): Scenario {
+function filesTab(overrides: Parameters<typeof settingsState>[0]): Scenario {
   return {
     state: settingsState(overrides),
     drive: (page) => openTab(page, "files"),
-    settle,
   };
 }
 
 export const AGENT_SETTINGS: Record<string, Scenario> = {
-  "settings-general": generalScenario({}, async (page) => {
-    await expect(page.getByText("current session")).toBeVisible();
-    await expect(page.getByText("automatic backups")).toBeVisible();
-    await expect(page.getByText("speech to text")).toBeVisible();
-    await expect(page.getByText("text to speech")).toBeVisible();
+  "settings-general": generalScenario({}),
+  "settings-provider-loading": providerScenario({
+    routes: [hang("/provider")],
   }),
-  "settings-provider-loading": providerScenario(
-    { routes: [hang("/provider")] },
-    async (page) => {
-      await expect(page.getByText("automatic backups")).toBeVisible();
-      await expect(page.getByText("plan usage")).toBeHidden();
-      await expect(
-        page.locator('[data-slot="skeleton"]').first(),
-      ).toBeVisible();
-    },
-  ),
-  "settings-provider-none": providerScenario(
-    {
-      agent: settingsAgent("unprovisioned"),
-      routes: [
-        agentRoute("/provider", {
-          model: null,
-          authed: false,
-          catalog: SETTINGS_PROVIDER_CATALOG,
-        }),
-        ...UNCONFIGURED_VOICE_ROUTES,
-      ],
-    },
-    async (page) => {
-      await expect(page.getByText("not connected")).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "set up provider" }),
-      ).toBeVisible();
-    },
-  ),
-  "settings-provider-signed-out": providerScenario(
-    {
-      agent: settingsAgent("not_authenticated"),
-      routes: [providerRoute({ ...CLAUDE_PROVIDER, authed: false })],
-    },
-    async (page) => {
-      await expect(page.getByText("signed out")).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "sign in again" }),
-      ).toBeVisible();
-    },
-  ),
-  "settings-provider-claude": providerScenario({}, async (page) => {
-    await expect(page.getByText("current session")).toBeVisible();
-    await expect(page.getByText("current week (opus)")).toBeVisible();
-    await expect(page.getByText("emilio@example.com")).toBeVisible();
+  "settings-provider-none": providerScenario({
+    agent: settingsAgent("unprovisioned"),
+    routes: [
+      agentRoute("/provider", {
+        model: null,
+        authed: false,
+        catalog: SETTINGS_PROVIDER_CATALOG,
+      }),
+      ...UNCONFIGURED_VOICE_ROUTES,
+    ],
   }),
-  "settings-provider-openrouter": providerScenario(
-    {
-      routes: [
-        providerRoute(OPENROUTER_PROVIDER),
-        agentRoute("/usage", OPENROUTER_USAGE),
-      ],
-    },
-    async (page) => {
-      await expect(page.getByText("$12.34 / $50.00")).toBeVisible();
-      await expect(page.getByText("model context")).toBeVisible();
-    },
-  ),
-  "settings-usage-loading": providerScenario(
-    { routes: [hang("/usage")] },
-    async (page) => {
-      await expect(page.getByText("plan usage")).toBeVisible();
-      await expect(page.getByText("current session")).toBeHidden();
-      await expect(
-        card(page, "plan usage").locator('[data-slot="skeleton"]').first(),
-      ).toBeVisible();
-    },
-  ),
-  "settings-usage-error": providerScenario(
-    { routes: [failure("/usage", "usage endpoint unavailable")] },
-    async (page) => {
-      await expect(page.getByText("failed to load usage data")).toBeVisible();
-    },
-  ),
+  "settings-provider-signed-out": providerScenario({
+    agent: settingsAgent("not_authenticated"),
+    routes: [providerRoute({ ...CLAUDE_PROVIDER, authed: false })],
+  }),
+  "settings-provider-claude": providerScenario({}),
+  "settings-provider-openrouter": providerScenario({
+    routes: [
+      providerRoute(OPENROUTER_PROVIDER),
+      agentRoute("/usage", OPENROUTER_USAGE),
+    ],
+  }),
+  "settings-usage-loading": providerScenario({ routes: [hang("/usage")] }),
+  "settings-usage-error": providerScenario({
+    routes: [failure("/usage", "usage endpoint unavailable")],
+  }),
   "settings-model-claude": {
     state: settingsState(),
     drive: async (page) => {
       await openModelDialog(page);
       await page.getByRole("button", { name: "more models" }).click();
-    },
-    settle: async (page) => {
-      await expect(page.getByRole("dialog")).toBeVisible();
-      await expect(page.getByText("Claude Opus 5")).toBeVisible();
-      await expect(page.getByText("Claude Haiku 4.5")).toBeVisible();
     },
   },
   "settings-model-openrouter": {
@@ -699,10 +620,6 @@ export const AGENT_SETTINGS: Record<string, Scenario> = {
       ],
     }),
     drive: openModelDialog,
-    settle: async (page) => {
-      await expect(page.getByPlaceholder("search models...")).toBeVisible();
-      await expect(page.getByText("Kimi K2")).toBeVisible();
-    },
   },
   "settings-model-error": {
     state: settingsState({
@@ -719,111 +636,53 @@ export const AGENT_SETTINGS: Record<string, Scenario> = {
       await page.getByRole("button", { name: "Sonnet", exact: true }).click();
       await page.getByRole("button", { name: "switch model" }).click();
     },
-    settle: async (page) => {
-      await expect(
-        page.getByText("provider is locked while a restart is in flight"),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "switch model" }),
-      ).toBeVisible();
-    },
   },
   "settings-context-dialog": {
     state: settingsState(),
     drive: async (page) => {
-      await page.getByRole("button", { name: "change context" }).click();
-    },
-    settle: async (page) => {
-      await expect(page.getByText("change context window")).toBeVisible();
-      await expect(page.getByText("1M", { exact: true })).toBeVisible();
-      await expect(page.getByText("500K", { exact: true })).toBeVisible();
-      await expect(page.getByText("200K", { exact: true })).toBeVisible();
+      await openTab(page, "provider");
+      await page.getByRole("button", { name: "more actions" }).click();
+      await page.getByRole("menuitem", { name: "change context" }).click();
     },
   },
   "settings-sign-out-dialog": {
     state: settingsState(),
     drive: async (page) => {
+      await openTab(page, "provider");
       await page.getByRole("button", { name: "more actions" }).click();
       await page.getByRole("menuitem", { name: "sign out" }).click();
     },
-    settle: async (page) => {
-      await expect(page.getByText(`sign out ${AGENT}?`)).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "sign out", exact: true }),
-      ).toBeVisible();
-    },
   },
-  "settings-actions-stopped": generalScenario(
-    {
-      // A stopped container serves no services, so voice reads as unconfigured.
-      agent: agentNode("stopped"),
-      routes: [
-        failure("/provider", "agent is not running", 503),
-        failure("/usage", "agent is not running", 503),
-      ],
-    },
-    async (page) => {
-      await expect(
-        page.getByRole("button", { name: "start", exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "stop", exact: true }),
-      ).toBeHidden();
-    },
-  ),
-  "settings-actions-needs-auth": generalScenario(
-    {
-      agent: settingsAgent("not_authenticated"),
-      routes: [providerRoute({ ...CLAUDE_PROVIDER, authed: false })],
-    },
-    async (page) => {
-      await expect(
-        page.getByRole("button", { name: "sign in", exact: true }),
-      ).toBeVisible();
-    },
-  ),
-  "settings-backups-loading": backupsCardScenario(
-    [hang("/settings/backup")],
-    async (page) => {
-      const backups = card(page, "automatic backups");
-      await expect(backups).toBeVisible();
-      await expect(backups.getByRole("switch")).toBeHidden();
-      await expect(backups.locator('[data-slot="skeleton"]')).toBeVisible();
-    },
-  ),
-  "settings-backups-off": backupsCardScenario(
-    [
-      agentRoute("/settings/backup", {
-        ...BACKUP_SETTINGS,
-        enabled: false,
-        has_override: true,
-      }),
+  "settings-actions-stopped": generalScenario({
+    // A stopped container serves no services, so voice reads as unconfigured.
+    agent: agentNode("stopped"),
+    routes: [
+      failure("/provider", "agent is not running", 503),
+      failure("/usage", "agent is not running", 503),
     ],
-    async (page) => {
-      await expect(
-        card(page, "automatic backups").getByRole("switch"),
-      ).toHaveAttribute("data-state", "unchecked");
-    },
-  ),
-  "settings-backups-dialog": backupsDialog([], "Before update v0.2.2"),
-  "settings-backups-dialog-empty": backupsDialog(
-    [agentRoute("/backups", [], { method: "GET" })],
-    "no snapshots yet.",
-  ),
-  "settings-backups-dialog-error": backupsDialog(
-    [failure("/backups", "restic repository is locked")],
-    "couldn't load snapshots.",
-  ),
+  }),
+  "settings-actions-needs-auth": generalScenario({
+    agent: settingsAgent("not_authenticated"),
+    routes: [providerRoute({ ...CLAUDE_PROVIDER, authed: false })],
+  }),
+  "settings-backups-loading": backupsCardScenario([hang("/settings/backup")]),
+  "settings-backups-off": backupsCardScenario([
+    agentRoute("/settings/backup", {
+      ...BACKUP_SETTINGS,
+      enabled: false,
+      has_override: true,
+    }),
+  ]),
+  "settings-backups-dialog": backupsDialog([]),
+  "settings-backups-dialog-empty": backupsDialog([
+    agentRoute("/backups", [], { method: "GET" }),
+  ]),
+  "settings-backups-dialog-error": backupsDialog([
+    failure("/backups", "restic repository is locked"),
+  ]),
   "settings-voice-unconfigured": {
     state: settingsState({ routes: UNCONFIGURED_VOICE_ROUTES }),
     drive: scrollToVoice,
-    settle: async (page) => {
-      const warnings = page.getByText(
-        "not configured — ask the agent to set it up",
-      );
-      await expect(warnings).toHaveCount(2);
-      await expect(warnings.first()).toBeVisible();
-    },
   },
   "settings-voice-enabled": {
     state: settingsState(),
@@ -836,42 +695,18 @@ export const AGENT_SETTINGS: Record<string, Scenario> = {
         .getByRole("button", { name: /^voice:/ })
         .scrollIntoViewIfNeeded();
     },
-    settle: async (page) => {
-      await expect(page.getByText("1.25 h used · $12.50 left")).toBeVisible();
-      await expect(page.getByText("12,450 / 100,000")).toBeVisible();
-    },
   },
-  "settings-notifications-loading": notificationsTab(
-    [hang("/history")],
-    async (page) => {
-      const history = card(page, "recent notifications");
-      await expect(history).toBeVisible();
-      await expect(
-        history.locator('[data-slot="skeleton"]').first(),
-      ).toBeVisible();
-      await expect(page.getByText("add a rule")).toBeVisible();
-    },
-  ),
-  "settings-notifications-empty": notificationsTab(
-    [
-      agentRoute(
-        "/history",
-        { events: [], cursor: null },
-        { query: { channel: "notifications" } },
-      ),
-    ],
-    async (page) => {
-      await expect(page.getByText("No notifications yet")).toBeVisible();
-    },
-  ),
-  "settings-notifications-error": notificationsTab(
-    [failure("/history", "events database is locked")],
-    async (page) => {
-      await expect(
-        page.getByText("failed to load: events database is locked"),
-      ).toBeVisible();
-    },
-  ),
+  "settings-notifications-loading": notificationsTab([hang("/history")]),
+  "settings-notifications-empty": notificationsTab([
+    agentRoute(
+      "/history",
+      { events: [], cursor: null },
+      { query: { channel: "notifications" } },
+    ),
+  ]),
+  "settings-notifications-error": notificationsTab([
+    failure("/history", "events database is locked"),
+  ]),
   "settings-notifications-list": {
     state: settingsState({
       agent: {
@@ -880,85 +715,34 @@ export const AGENT_SETTINGS: Record<string, Scenario> = {
       },
     }),
     drive: (page) => openTab(page, "notifications"),
-    settle: async (page) => {
-      await expect(page.getByText("Invoice #2261 due Friday")).toBeVisible();
-      await expect(page.getByText("Design review")).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "load older" }),
-      ).toBeVisible();
-    },
   },
-  "settings-rules-empty": notificationsTab(
-    [agentRoute("/config", { notification_rules: [] }, { method: "GET" })],
-    async (page) => {
-      await expect(page.getByText("no rules yet")).toBeVisible();
-    },
-  ),
-  "settings-rules-list": notificationsTab([], async (page) => {
-    await expect(page.getByText("source: twitter")).toBeVisible();
-    await expect(page.getByText("sender: Bride Squad")).toBeVisible();
-    await expect(page.getByText("keyword: urgent|asap")).toBeVisible();
-    await expect(page.getByText("add a rule")).toBeVisible();
+  "settings-rules-empty": notificationsTab([
+    agentRoute("/config", { notification_rules: [] }, { method: "GET" }),
+  ]),
+  "settings-rules-list": notificationsTab([]),
+  "settings-rules-error": notificationsTab([
+    failure("/config", "config store unreadable"),
+  ]),
+  "settings-host-access-empty": filesTab({
+    routes: [agentRoute("/mounts", { mounts: [] }, { method: "GET" })],
   }),
-  "settings-rules-error": notificationsTab(
-    [failure("/config", "config store unreadable")],
-    async (page) => {
-      await expect(
-        page.getByText("failed to load: config store unreadable"),
-      ).toBeVisible();
-    },
-  ),
-  "settings-host-access-empty": filesTab(
-    { routes: [agentRoute("/mounts", { mounts: [] }, { method: "GET" })] },
-    async (page) => {
-      await expect(page.getByText("shared folders")).toBeVisible();
-      await expect(page.getByText("add a folder")).toBeVisible();
-      await expect(page.getByText("view only")).toBeHidden();
-    },
-  ),
-  "settings-host-access-list": filesTab({}, async (page) => {
-    await expect(page.getByText("Documents", { exact: true })).toBeVisible();
-    await expect(page.getByText("view only")).toBeVisible();
-    await expect(page.getByText("can edit")).toBeVisible();
-    await expect(page.getByText("/mnt/media · seen at /media")).toBeVisible();
-  }),
+  "settings-host-access-list": filesTab({}),
   "settings-host-access-add": {
     state: settingsState(),
     drive: async (page) => {
       await openTab(page, "files");
       await page.getByRole("button", { name: "add a folder" }).click();
     },
-    settle: async (page) => {
-      await expect(page.getByText("suggested folders")).toBeVisible();
-      await expect(page.getByText("/Users/emilio/Downloads")).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "add folder" }),
-      ).toBeDisabled();
-    },
   },
-  "settings-files-simple": filesTab({}, async (page) => {
-    await expect(page.getByText(`who ${AGENT} is`)).toBeVisible();
-    await expect(page.getByText("abilities")).toBeVisible();
-    await expect(page.getByText("tasks", { exact: true })).toBeVisible();
-    await expect(page.getByText("memory", { exact: true })).toBeVisible();
-  }),
+  "settings-files-simple": filesTab({}),
   "settings-files-editor": {
     state: settingsState(),
     drive: async (page) => {
       await openTab(page, "files");
       await page.getByText("memory", { exact: true }).click();
     },
-    settle: async (page) => {
-      await expect(page.getByRole("textbox")).toHaveValue(/# Memory/);
-      await expect(page.getByRole("button", { name: "save" })).toBeDisabled();
-    },
   },
-  "settings-files-error": filesTab(
-    { routes: [failure("/tree", "agent filesystem unavailable")] },
-    async (page) => {
-      await expect(
-        page.getByText("failed to load: agent filesystem unavailable"),
-      ).toBeVisible();
-    },
-  ),
+  "settings-files-error": filesTab({
+    routes: [failure("/tree", "agent filesystem unavailable")],
+  }),
 };

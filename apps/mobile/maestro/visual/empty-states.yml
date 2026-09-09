@@ -4,10 +4,7 @@ tags:
   - visual
   - connected
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://agent/nova/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: '.*No notifications yet\..*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-notifications-empty
@@ -63,9 +58,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/nova/details/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*No rules yet.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-notification-rules-empty
@@ -76,9 +69,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/nova/details/host-access?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*No folders shared.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-host-access-empty
@@ -89,9 +80,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/nova/details/backups?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*No backups yet.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-backups-empty
@@ -102,9 +91,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/nova/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*No skills installed.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-files-missing
@@ -115,9 +102,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/forge/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualLogs=empty"
-- extendedWaitUntil:
-    visible: '.*Waiting for logs.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-logs-empty
@@ -128,9 +113,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualLogs=error"
-- extendedWaitUntil:
-    visible: '.*stream closed.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-logs-error
@@ -141,9 +124,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/logs?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
-- extendedWaitUntil:
-    visible: '.*Waiting for logs.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-logs-offline
@@ -154,6 +135,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualDashboard=error"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*visual regressions.*'
     timeout: 30000
@@ -170,9 +152,6 @@ tags:
           visible: '.*Dashboard unavailable.*'
           timeout: 4000
           optional: true
-- extendedWaitUntil:
-    visible: '.*Dashboard unavailable.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-dashboard-error
@@ -183,9 +162,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/forge?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
-- extendedWaitUntil:
-    visible: '.*Waiting for agent.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-chat-loading
@@ -196,9 +173,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
-- extendedWaitUntil:
-    visible: '.*Something went wrong.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-notification-rules-error
@@ -209,9 +184,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://agent/aria/details/files?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualApi=error"
-- extendedWaitUntil:
-    visible: '.*Something went wrong.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-files-error
@@ -222,9 +195,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReachable=offline"
-- extendedWaitUntil:
-    visible: '.*Reachable.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: diagnostics-offline
@@ -235,9 +206,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=empty"
-- extendedWaitUntil:
-    visible: '.*Agents.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: diagnostics-empty

@@ -42,6 +42,8 @@ export interface Controller {
   subscribeFocused: (listener: () => void) => () => void;
   getViewing: () => string | null;
   subscribeViewing: (listener: () => void) => () => void;
+  // The device identity this client reports on /sync, null until the app has resolved one.
+  getDevice: () => { id: string; descriptor: string } | null;
   getAnyFocused: () => boolean;
   subscribeAnyFocused: (listener: () => void) => () => void;
   close: () => void;
@@ -147,6 +149,7 @@ export function createController(deps: ControllerDeps): Controller {
     subscribeFocused: focused.subscribe,
     getViewing: viewing.get,
     subscribeViewing: viewing.subscribe,
+    getDevice: () => deps.sync.device ?? null,
     getAnyFocused: anyFocused.get,
     subscribeAnyFocused: anyFocused.subscribe,
     close: () => {

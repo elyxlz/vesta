@@ -844,13 +844,39 @@ jobs:
             echo "MAC_ARCH_FLAG=--arm64" >> "$GITHUB_ENV"
           fi
 
-      # PRs package without credentials below. Non-PR builds key the signed path
-      # on the cert being present: with a cert, sign + notarize; without one,
-      # force an unsigned build instead of letting electron-builder resolve an
-      # empty CSC_LINK as a project-relative file.
       - name: Type-check Electron app
         working-directory: apps/desktop
         run: npx tsc
+
+      # Own the signing keychain instead of letting electron-builder create its
+      # own throwaway one: its internal set-key-partition-list breaks on hosted
+      # macOS image bumps (a runner macOS point release fails it with
+      # SecKeychainUnlock). We create the keychain with a known password,
+      # import the cert, and hand electron-builder CSC_KEYCHAIN below.
+      - name: Set up signing keychain
+        if: github.event_name != 'pull_request'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERT_P12" ]; then
+            echo "No signing certificate configured; keychain setup skipped."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          cert_path="$RUNNER_TEMP/certificate.p12"
+          openssl base64 -d -A <<<"$APPLE_CERT_P12" > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert_path" -P "$APPLE_CERT_PASSWORD" \
+            -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm -f "$cert_path"
+          echo "CSC_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
       # PR source is untrusted build input. Keep every signing and notarization
       # credential out of this step instead of relying on electron-builder's CI
@@ -862,24 +888,22 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
 
+      # CSC_KEYCHAIN is set only when the cert was present, so it keys the signed
+      # path: with a keychain, electron-builder discovers the identity there and
+      # notarizes; without one, force a genuinely unsigned build.
       - name: Build signed and notarized Electron app
         if: github.event_name != 'pull_request'
         working-directory: apps/desktop
         env:
-          CSC_LINK: ${{ secrets.APPLE_CERT_P12 }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -n "$CSC_LINK" ]; then
+          if [ -n "$CSC_KEYCHAIN" ]; then
             npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never
           else
             echo "No signing certificate configured; building unsigned."
-            # The empty secrets above still define the env vars: electron-builder resolves an
-            # empty CSC_LINK against the project dir and dies with "not a file". Unset
-            # them so the fallback path is genuinely unsigned.
-            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             CSC_IDENTITY_AUTO_DISCOVERY=false \
               npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
           fi

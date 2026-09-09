@@ -2,6 +2,226 @@
   "version": 1,
   "scenarios": [
     {
+      "id": "page-home",
+      "page": "home",
+      "scroll": "viewport",
+      "title": "Home",
+      "description": "The home page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/",
+      "reference": "home-many-agents"
+    },
+    {
+      "id": "page-chat",
+      "page": "chat",
+      "scroll": "viewport",
+      "title": "Chat",
+      "description": "The chat page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/chat",
+      "reference": "chat-populated"
+    },
+    {
+      "id": "page-dashboard",
+      "page": "dashboard",
+      "scroll": "viewport",
+      "title": "Dashboard",
+      "description": "The dashboard page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna",
+      "reference": "agent-dashboard-live"
+    },
+    {
+      "id": "page-settings",
+      "page": "settings",
+      "scroll": "page",
+      "title": "App settings",
+      "description": "The app settings page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/settings",
+      "reference": "app-settings-devices"
+    },
+    {
+      "id": "page-agent-general",
+      "page": "agent-general",
+      "scroll": "page",
+      "title": "Agent settings · General",
+      "description": "The agent settings · general page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/settings",
+      "reference": "settings-general"
+    },
+    {
+      "id": "page-agent-provider",
+      "page": "agent-provider",
+      "scroll": "page",
+      "title": "Agent settings · Provider",
+      "description": "The agent settings · provider page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/settings",
+      "reference": "settings-provider-claude"
+    },
+    {
+      "id": "page-agent-voice",
+      "page": "agent-voice",
+      "scroll": "page",
+      "title": "Agent settings · Voice",
+      "description": "The agent settings · voice page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/settings",
+      "reference": "settings-voice-enabled"
+    },
+    {
+      "id": "page-agent-notifications",
+      "page": "agent-notifications",
+      "scroll": "page",
+      "title": "Agent settings · Notifications",
+      "description": "The agent settings · notifications page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/settings",
+      "reference": "settings-notifications-list"
+    },
+    {
+      "id": "page-agent-files",
+      "page": "agent-files",
+      "scroll": "page",
+      "title": "Agent settings · Files",
+      "description": "The agent settings · files page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/settings",
+      "reference": "settings-files-simple"
+    },
+    {
+      "id": "page-agent-logs",
+      "page": "agent-logs",
+      "scroll": "viewport",
+      "title": "Agent logs",
+      "description": "The agent logs page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/luna/logs",
+      "reference": "logs-lines"
+    },
+    {
+      "id": "page-notifications",
+      "page": "notifications",
+      "scroll": "page",
+      "title": "Notification feed",
+      "description": "The notification feed page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/",
+      "reference": "notifications-dialog"
+    },
+    {
+      "id": "page-connect",
+      "page": "connect",
+      "scroll": "page",
+      "title": "Connect",
+      "description": "The connect page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/connect",
+      "reference": "connect-form"
+    },
+    {
+      "id": "page-connect-link",
+      "page": "connect-link",
+      "scroll": "page",
+      "title": "Connect with a link",
+      "description": "The connect with a link page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/connect",
+      "reference": "connect-form"
+    },
+    {
+      "id": "page-recent-gateways",
+      "page": "recent-gateways",
+      "scroll": "page",
+      "title": "Recent gateways",
+      "description": "The recent gateways page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/connect",
+      "reference": "connect-recent-gateways"
+    },
+    {
+      "id": "page-new-agent",
+      "page": "new-agent",
+      "scroll": "page",
+      "title": "New agent",
+      "description": "The new agent page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/new",
+      "reference": "name-empty"
+    },
+    {
+      "id": "page-setup-provider",
+      "page": "setup-provider",
+      "scroll": "page",
+      "title": "Set up a provider",
+      "description": "The set up a provider page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/new",
+      "reference": "provider-choice"
+    },
+    {
+      "id": "page-setup-auth",
+      "page": "setup-auth",
+      "scroll": "page",
+      "title": "Provider sign-in",
+      "description": "The provider sign-in page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/new",
+      "reference": "provider-oauth"
+    },
+    {
+      "id": "page-setup-model",
+      "page": "setup-model",
+      "scroll": "page",
+      "title": "Choose a model",
+      "description": "The choose a model page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/new",
+      "reference": "provider-model"
+    },
+    {
+      "id": "page-setup-personality",
+      "page": "setup-personality",
+      "scroll": "page",
+      "title": "Choose a personality",
+      "description": "The choose a personality page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/new",
+      "reference": "personality-default"
+    },
+    {
+      "id": "page-whats-new",
+      "page": "whats-new",
+      "scroll": "page",
+      "title": "What's new",
+      "description": "The what's new page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/settings",
+      "reference": "whats-new-notes"
+    },
+    {
+      "id": "page-gateway-logs",
+      "page": "gateway-logs",
+      "scroll": "viewport",
+      "title": "Gateway logs",
+      "description": "The gateway logs page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/settings",
+      "reference": "app-settings-gateway-logs"
+    },
+    {
+      "id": "page-diagnostics",
+      "page": "diagnostics",
+      "scroll": "page",
+      "title": "Diagnostics",
+      "description": "The diagnostics page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/debug",
+      "reference": "debug-page"
+    },
+    {
       "id": "name-empty",
       "title": "Name step, empty",
       "description": "The first onboarding step before any name is typed; continue is disabled.",

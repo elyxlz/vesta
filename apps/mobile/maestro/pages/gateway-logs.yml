@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Gateway logs
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://gateway-logs?visualSession=connected&visualRoster=agents&visualPrivacy=unlocked"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-gateway-logs
+- runScript:
+    file: ../visual/capture-screenshot.js
+    env:
+      SCREENSHOT: page-gateway-logs.png

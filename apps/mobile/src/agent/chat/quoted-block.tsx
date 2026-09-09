@@ -8,15 +8,24 @@ export function QuotedBlock({
   children,
   trailing,
   style,
+  onAccent = false,
 }: {
   children: ReactNode;
   trailing?: ReactNode;
   style?: StyleProp<ViewStyle>;
+  onAccent?: boolean;
 }) {
   const { colors } = usePreferences();
   return (
     <View style={[styles.frame, { backgroundColor: colors.input }, style]}>
-      <View style={[styles.accent, { backgroundColor: colors.interactive }]} />
+      <View
+        style={[
+          styles.accent,
+          {
+            backgroundColor: onAccent ? colors.accentText : colors.interactive,
+          },
+        ]}
+      />
       <View style={styles.copy}>{children}</View>
       {trailing}
     </View>

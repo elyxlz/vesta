@@ -8,6 +8,10 @@ export interface RegistryScenario {
   screenshot: string;
   family: FamilyId;
   platforms?: PlatformId[];
+  page?: string;
+  route?: string;
+  reference?: string;
+  scroll?: "page" | "viewport";
   [state: string]: unknown;
 }
 export interface Registry {

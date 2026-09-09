@@ -2,10 +2,36 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { fingerprintInputs, staleReasons } from "./fingerprint.mjs";
+import {
+  createFingerprinter,
+  fingerprintInputs,
+  staleReasons,
+} from "./fingerprint.mjs";
 import { appsRoot } from "./platforms.mjs";
 
 describe("fingerprintInputs", () => {
+  it("shares file hashes within one plan and observes edits in the next plan", async () => {
+    const directory = await mkdtemp(path.join(appsRoot, "visual/fp-test-"));
+    const source = path.join(directory, "source.ts");
+    try {
+      await writeFile(source, "before");
+      const fingerprint = createFingerprinter();
+      const before = await fingerprint([source]);
+      await writeFile(source, "after");
+      expect(await fingerprint([source])).toEqual(before);
+      const next = await createFingerprinter()([source]);
+      expect(next.fingerprint).not.toBe(before.fingerprint);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces unreadable inputs instead of fingerprinting them as missing", async () => {
+    await expect(fingerprintInputs([appsRoot])).rejects.toMatchObject({
+      code: "EISDIR",
+    });
+  });
+
   it("hashes the same files and extras to the same fingerprint, in any order", async () => {
     const a = await fingerprintInputs(
       ["visual/platforms.mjs", "visual/store.mjs"],

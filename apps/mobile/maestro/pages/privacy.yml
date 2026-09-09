@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: Page · Privacy
+tags: [visual, pages]
+---
+- runFlow: ../visual/prepare-page.yml
+- openLink:
+    link: "vesta-dev://?visualSession=connected&visualRoster=agents&visualPrivacy=locked"
+- runFlow: ../visual/wait-for-launch.yml
+- takeScreenshot: page-privacy
+- runScript:
+    file: ../visual/capture-screenshot.js
+    env:
+      SCREENSHOT: page-privacy.png

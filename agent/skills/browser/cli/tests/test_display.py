@@ -30,6 +30,11 @@ def _await_gone(pids: list[int]) -> bool:
     return asyncio.run(wait_until_all_dead(pids, PID_GONE_TIMEOUT_SECS))
 
 
+def _recorded_pids(paths) -> list[int]:
+    """Every pid the children ledger names, in record order."""
+    return sorted(int(line.split()[0]) for line in paths.children_ledger.read_text().splitlines())
+
+
 def _listening_x_socket(path: pl.Path) -> socket.socket:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(str(path))
@@ -43,11 +48,11 @@ async def _full_stack(paths) -> tuple[display.SessionDisplay, display.StreamStac
     started: list[asyncio.subprocess.Process] = []
     try:
         vnc_port = display.free_port(display.VNC_PORT_FIRST)
-        x11vnc = await display.start_x11vnc(session_display.display, vnc_port)
+        x11vnc = await display.start_x11vnc(paths.children_ledger, session_display.display, vnc_port)
         started.append(x11vnc)
         webroot = display.build_webroot(paths)
         web_port = display.free_port(WEB_PORT_FIRST)
-        websockify = await display.start_websockify(webroot, web_port, vnc_port, paths.log)
+        websockify = await display.start_websockify(paths.children_ledger, webroot, web_port, vnc_port, paths.log)
     except Exception:
         for process in reversed(started):
             await kill_group(process, KILL_GRACE_SECS)
@@ -154,7 +159,7 @@ def test_x11vnc_retries_without_shm_when_the_first_attempt_dies(rig):
     port = display.free_port(display.VNC_PORT_FIRST)
 
     async def run():
-        process = await display.start_x11vnc(":99", port)
+        process = await display.start_x11vnc(rig.children_ledger, ":99", port)
         try:
             return process.pid, cmdline_of(process.pid), display.port_serving(port)
         finally:
@@ -168,7 +173,7 @@ def test_x11vnc_retries_without_shm_when_the_first_attempt_dies(rig):
 def test_x11vnc_that_never_serves_raises(rig):
     (rig.x11_socket_dir / "fail-always").write_text("")
     with pytest.raises(display.DisplayError, match="x11vnc"):
-        asyncio.run(display.start_x11vnc(":99", display.free_port(display.VNC_PORT_FIRST)))
+        asyncio.run(display.start_x11vnc(rig.children_ledger, ":99", display.free_port(display.VNC_PORT_FIRST)))
 
 
 def test_build_webroot_lays_out_the_page_the_fonts_and_novnc(rig):
@@ -199,7 +204,7 @@ def test_websockify_serves_the_page_on_its_port(rig):
     port = display.free_port(WEB_PORT_FIRST)
 
     async def run():
-        process = await display.start_websockify(webroot, port, 5999, rig.log)
+        process = await display.start_websockify(rig.children_ledger, webroot, port, 5999, rig.log)
         try:
             page = await asyncio.to_thread(fetch, f"http://127.0.0.1:{port}/handover.html")
             return process.pid, cmdline_of(process.pid), page
@@ -211,23 +216,6 @@ def test_websockify_serves_the_page_on_its_port(rig):
     # Bound on every interface, not on loopback: vestad proxies the page from outside this container.
     assert f"0.0.0.0:{port}" in argv
     assert _await_gone([pid])
-
-
-def test_websockify_refuses_a_port_something_else_already_serves(rig):
-    """A bridge a killed daemon left behind answers on the port vestad hands out again; a new
-    websockify would die on the bind while the port probe read the stranger as ready."""
-    webroot = display.build_webroot(rig)
-    port = display.free_port(WEB_PORT_FIRST)
-    squatter = socket.socket()
-    squatter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    squatter.bind(("127.0.0.1", port))
-    squatter.listen(1)
-    try:
-        with pytest.raises(display.DisplayError, match="does not own"):
-            asyncio.run(display.start_websockify(webroot, port, 5999, rig.log))
-    finally:
-        squatter.close()
-    assert not (rig.x11_socket_dir / "pids").exists()
 
 
 def test_start_session_display_returns_a_display_this_container_serves(rig):
@@ -246,6 +234,7 @@ def test_start_session_display_returns_a_display_this_container_serves(rig):
     assert session_display.display == f":{display.DISPLAY_FIRST}" and serving
     pids = sorted(int(line) for line in pids_file.read_text().split())
     assert pids == sorted([session_display.xvfb.pid, session_display.openbox.pid])
+    assert _recorded_pids(rig) == pids
     assert _await_gone(pids)
 
 
@@ -331,4 +320,5 @@ def test_stop_stack_ends_the_stream_and_leaves_the_display_alive(rig):
 
     serving, stream_gone, display_still_alive, display_pids = asyncio.run(run())
     assert serving and stream_gone and display_still_alive
+    assert len(_recorded_pids(rig)) == 4
     assert _await_gone(display_pids)

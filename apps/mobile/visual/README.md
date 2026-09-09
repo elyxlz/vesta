@@ -11,7 +11,7 @@ Reference targets: iPhone 17 on iOS 26.4; the `vesta-visual` AVD (Pixel 7 profil
 From `apps/`:
 
 ```sh
-# iOS: capture every registered scenario on two simulator shards.
+# iOS: capture pages and detailed states on two simulator shards.
 npm run mobile:visual:capture -- --device "iPhone 17"
 
 # Android: capture one variant per run.
@@ -42,6 +42,26 @@ npm run mobile:visual:android:capture -- --device emulator-5554
 
 `--skip-build` is safe only when the installed visual app already contains the current JavaScript bundle. Do not use it after changing application or harness source unless another run has already installed those changes.
 
+The page flows live in `maestro/pages/`, one clean deep link per page. Default captures also include detailed feature states under `maestro/visual/`. Use `npm run visual:capture -- ios --page settings` from `apps/` for a focused refresh, or `--page agent-chat-conversation` to target a state. `--suite pages` / `--suite states` narrow coverage on the shared CLI; direct runners use `VISUAL_SUITE`. Ensure **both** iOS shards have the current bundle when using `--skip-build`.
+
+A focused state refresh runs its whole Maestro flow and records all of that flow's platform-supported screenshots. Other flows remain unselected; sibling captures are never discarded as unexpected screenshots.
+
+Cold-linked sheets rely on the app's real Expo Router anchors: the root and agent stacks retain their index screens, and the pathless connection group retains its landing screen. Without an anchor, native-stack presents the first route as a card even when it requests a form sheet. Keep this in production routing, not a harness substitution. Route fingerprints include pathless layouts and anchor screens because those screens contribute the backdrop pixels.
+
+Agent settings, detail sections, logs, notifications, and the file editor share one pathless `(settings)` navigator presented as a native sheet above the agent page. Its `settings` anchor preserves the back destination when a detail URL is opened directly. The inner routes push within that sheet; they do not depend on a previous manual visit to Settings to inherit modal presentation. Their public URLs are unchanged.
+
+`maestro/navigation/agent-sheet.yml` separately checks the direct-link and normal Settings navigation round trip against the installed visual app (`maestro --device=<id> test maestro/navigation/agent-sheet.yml -e APP_ID=com.vesta.mobile.visual`). Its functional assertions never gate the screenshot flows. Run it only when the device is not capturing. Native build and clean-prebuild validation also need separate runs because both temporarily own `mobile/android` and `mobile/ios`.
+
+General is folded into main agent Settings, with a dedicated Name panel at `details/name` and collapsed Technical details beside Logs. `page-agent-name` covers the rename destination; `agent-identity.yml` captures expanded technical details and a rename draft. The separate `maestro/navigation/agent-identity.yml` checks the legacy General redirect, cancelling a rename, disclosure toggling, and returning from the file editor.
+
+`maestro/navigation/connect-scanner.yml` checks opening the scanner from a focused connection field, closing the denied-camera sheet, and submitting the preserved invalid link. The invalid-link screenshot starts from its own clean launch so it cannot accidentally capture a scanner left above the form. Navigation assertions stay in the separate round-trip test.
+
+`maestro/visual/scan-ready.yml` independently grants camera access and opens the scanner directly. Refreshing `scan-ready` does not replay the denied-camera or invalid-link flow.
+
+Scrollable page flows call `capture-page.yml`: it captures each new viewport in both themes and stops when another swipe produces identical stable pixels. The bridge returns whether another section is needed, and writes the page's freshness record only after reaching the end. A 24-viewport cap fails incomplete pages. `refs` and the gallery expose every part. The harness fixes wall time to 2026-08-01 09:41 UTC without freezing timers, so relative dates stay deterministic.
+
+Those flows set `visualScroll=page`. The harness keeps the real native ScrollView but advances each drag by exactly three quarters of its viewport, with overlap and a final step clamped to the bottom. Gesture momentum cannot choose different offsets or skip sections between runs. Other flows and horizontal pagers retain their own scrolling behavior. Documentation and registry-only edits do not force a JavaScript rebundle. Android visual builds bound Gradle to four workers and 1 GB of metaspace; the Expo default of 512 MB cannot compile this native dependency graph reliably.
+
 Native and config changes invalidate the native cache automatically. `--clean-native` is an explicit recovery option: it is not needed for ordinary React Native UI work, but it is the fix after the checkout moves, because Xcode's module cache pins absolute paths.
 
 `--gentle` runs one simulator shard instead of two and every child process (build, bundler, Maestro, the emulator) at utility QoS through `taskpolicy`, so a capture can run behind interactive work.
@@ -52,7 +72,7 @@ Native and config changes invalidate the native cache automatically. `--clean-na
 
 The runner resolves the requested device and runtime, then creates or reuses two dedicated devices named `Vesta Visual 1` and `Vesta Visual 2`. Simulator.app does not show a window unless `--show-simulator` is passed; CoreSimulator still runs both devices and exposes their framebuffers to Maestro. The focused input scenario briefly uses a hidden, non-frontmost Simulator host to request the real software keyboard, then closes that host when capture ends.
 
-The runner normalizes appearance, Dynamic Type size, and status bar data so captures remain comparable. Maestro flows establish the scenario-specific permissions they need.
+The runner normalizes appearance, Dynamic Type size, and status bar data so captures remain comparable. Android demo mode pins Wi-Fi to full strength and omits cellular activity icons, which otherwise change pixels and confuse end-of-page detection; hiding both also triggers Android 16's delayed satellite fallback icon. Clock, battery, and system insets remain. Page flows share platform-specific permission setup in `prepare-page.yml`; scanner flows handle OS camera denial separately.
 
 ### 2. Build the isolated visual app
 
@@ -91,13 +111,13 @@ Fixtures match the production module's public contract. Production views render 
 
 ### 4. Run Maestro flows across two simulators
 
-The registry's `flows` list is split across the two simulators with `--shard-split=2`. Maestro interacts through visible text and accessibility labels, waits for a specific state, then takes a full-device screenshot.
+The registry's `flows` list is split across the two simulators with `--shard-split=2`. Each deep link runs `wait-for-launch.yml`, which waits for the visual-only stack's `visual-harness-ready` signal after boot handoff. This gates JS/font startup without depending on any production control or text. Maestro uses visible text and accessibility labels to navigate; the screenshot bridge waits for stable pixels before recording the full-device screenshot. Final assertions about copy or component presence belong in functional tests, so removing a component produces a reviewable image change.
 
-Visual builds replace app-level Reanimated transitions with instant values, force Expo Router stack transitions to `animation: "none"`, and inject `UIView.setAnimationsEnabled(false)` into the generated visual-only iOS AppDelegate. This disables both navigation and UIKit transitions without changing the production native project or application source. Native sheets still assert their settled content before capture because iOS can resize a detent after its content first becomes accessible.
+Visual builds replace app-level Reanimated transitions with instant values, force Expo Router stack transitions to `animation: "none"`, and inject `UIView.setAnimationsEnabled(false)` into the generated visual-only iOS AppDelegate. The iOS native activity indicator is held on its stopped frame (still visible, with its real size and color), since its indefinite animation ignores the UIKit switch. This disables both navigation and UIKit transitions without changing the production native project or application source. Native sheet detents are covered by the same pixel-stability check as the rest of the screen.
 
 ### 5. Write shots in both themes and warn on drift
 
-Each flow step calls `capture-screenshot.js`, which POSTs to a local bridge (`CAPTURE_URL_1` and `CAPTURE_URL_2`, one per shard; the bridge itself is shared with the Android runner in `scripts/visual-runner.mjs`). On each callback the bridge grabs the framebuffer with `simctl io screenshot` and writes it with `putShot("ios", name, image)`, then flips the simulator to `appearance dark`, waits until two consecutive grabs are byte-identical, writes the dark grab under `ios-dark`, and flips back to light before answering, so the flow continues where it was. The app follows the system appearance (`userInterfaceStyle: "automatic"`, theme preference `system`), so no second drive is needed. After the run, the runner compares the produced names against the registry and warns about missing or unexpected names; drift never fails the run. Maestro's own report lands at `mobile/.visual/maestro/report.html`, which the gallery links as "iOS report".
+Each flow step calls `capture-screenshot.js`, which POSTs to a local bridge (`CAPTURE_URL_1` and `CAPTURE_URL_2`, one per shard; the bridge itself is shared with the Android runner in `scripts/visual-runner.mjs`). On each callback the bridge grabs the framebuffer with `simctl io screenshot` and writes it with `putShot("ios", name, image)`, then flips the simulator to `appearance dark`, requires byte-identical grabs for at least 250 ms (failing after eight seconds if the screen never settles), writes the dark grab under `ios-dark`, and flips back to light before answering, so the flow continues where it was. The app follows the system appearance (`userInterfaceStyle: "automatic"`, theme preference `system`), so no second drive is needed. After the run, the runner compares the produced names against the registry and warns about missing or unexpected names; drift never fails the run. Maestro's own report lands at `mobile/.visual/maestro/report.html`, which the gallery links as "iOS report".
 
 ## Why scenario groups use separate launches
 
@@ -146,8 +166,7 @@ Only modules under `visual/harness/` interpret the visual query parameters (`vis
 | `visualGatewayOperation` | `snapshotting`, `snapshotting-all`, `applying`, `update-restarting`, `failed`, `failed-generic`, `restarting` | One gateway operation per launch.                                                                                   |
 | `visualGatewayUpdated`   | a version                                                                                                     | The "updated to" notice.                                                                                            |
 | `visualSyncState`        | `app_behind`                                                                                                  | The app-behind screen.                                                                                              |
-| `visualSync`             | `open`                                                                                                        | A controller whose sync socket reads as open (enabled composer, live edges).                                        |
-| `visualLive`             | `typing`, `pending`                                                                                           | With `visualSync=open`: a paced reply stream, or pending notifications on aria.                                     |
+| `visualLive`             | `typing`, `pending`                                                                                           | On a connected session: a paced reply stream, or pending notifications on aria.                                     |
 | `visualChat`             | `delivery`, `errors`, `markdown`, `long`                                                                      | aria's transcript variant.                                                                                          |
 | `visualProvider`         | `none`, `unauthenticated`, `openai`, `openrouter`                                                             | aria's provider state; absent: signed-in Claude.                                                                    |
 | `visualVoice`            | `unconfigured`                                                                                                | No speech providers.                                                                                                |
@@ -185,17 +204,21 @@ An entry in `visual/scenarios.json` accepts an optional `platforms` array naming
 
 The privacy gates and relock states capture on both platforms; on Android they present full screen through `SheetGateScreen` instead of a form sheet, and the unlock label carries the platform authentication name, so the flows match it by the "Unlock" prefix. The sheet close control is addressable by its accessibility label on both platforms, so the flows wait on and tap "Close settings" / "Close scanner" without platform blocks.
 
+State flows share `prepare-page.yml` for platform-specific location permissions after a reset. The visual readiness marker also wraps compatibility gates that replace the navigator. Native text inputs retain their real layout, focus, selection, and keyboard, but the visual-only wrapper hides the blinking caret so focused-input screenshots can settle without weakening the pixel check.
+
+Attachment fixtures use Expo's asset-loading lifecycle to resolve bundled media to real local files, including Android's embedded resources. Degraded fixtures still go through the production media error UI. Android setup closes only the visual app before normalizing SystemUI, so an animated or focused screen left by a previous flow cannot block the next run before it starts.
+
 ## Add a screenshot to an existing flow
 
 ### 1. Reach a deterministic state
 
 Add navigation and interactions to the appropriate file under `maestro/visual/`. Prefer semantic text and existing accessibility labels over coordinates.
 
-Use state-based waits rather than fixed sleeps:
+Keep state-based waits where a following interaction depends on a navigation target. Do not assert surrounding copy, icons, or disabled state just to take a screenshot. Capture itself waits on pixels:
 
 ```yaml
 - extendedWaitUntil:
-    visible: "Expected screen title"
+    visible: "Control used by the next action"
     timeout: 10000
 ```
 
@@ -236,7 +259,7 @@ npm -w @vesta/mobile run lint
 npm run mobile:visual:capture -- --device "iPhone 17"
 ```
 
-Open the gallery and inspect the actual pixels. A passing selector proves that Maestro found the expected element; it does not prove that surrounding navigation, sheet presentation, safe areas, or dimming are visually correct.
+Open the gallery and inspect the actual pixels. A passing selector proves that Maestro found the expected element; it does not prove that surrounding navigation, sheet presentation, safe areas, or dimming are visually correct. A theme capture fails if consecutive framebuffer grabs do not stabilize within eight seconds. The runner restores light appearance even when the dark capture fails, and writes the freshness record only after both themes and the restoration succeed.
 
 ## Add deterministic mock data
 
@@ -298,7 +321,7 @@ Keep flows independent: no flow may depend on another simulator having run first
 - Prefer visible text or meaningful accessibility labels.
 - Use regular expressions only when dynamic copy requires them.
 - Use coordinates only for controls that cannot expose a stable semantic target.
-- Wait for the exact state being captured before taking the screenshot.
+- Let the bridge wait for stable pixels; use selectors only to reach the state being captured.
 - Keep dates, gateway names, and error messages fixed in fixtures.
 - Use unique screenshot names across all flows.
 - Capture meaningful UI states, not every intermediate animation frame.

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import {
   checkForGatewayUpdate,
+  splitSelfDevice,
   triggerGatewayRestart,
   triggerGatewayUpdate,
   type DeviceInfo,
@@ -36,6 +37,7 @@ import {
   FormSection,
   SwitchRow,
 } from "@/components/ui/Form";
+import { useController } from "@/controller/context";
 import { requestLocationSharing } from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
@@ -95,6 +97,11 @@ export default function SettingsScreen() {
   const queryClient = useQueryClient();
   const session = useSession();
   const roster = useRoster();
+  const controller = useController();
+  const { self: thisDevice, others: otherDevices } = splitSelfDevice(
+    roster.devices,
+    controller.getDevice()?.id ?? null,
+  );
   const preferences = usePreferences();
   const privacy = usePrivacy();
   const { showError } = useToast();
@@ -217,7 +224,7 @@ export default function SettingsScreen() {
 
   return (
     <>
-      <SheetChrome grabber title="Settings" closeLabel="Close settings" />
+      <SheetChrome title="Settings" closeLabel="Close settings" />
       <Screen contentStyle={styles.content}>
         <NativeSheetCloseButton
           accessibilityLabel="Close settings"
@@ -291,17 +298,6 @@ export default function SettingsScreen() {
           }}
           onDismiss={() => setActiveConfirm(null)}
         />
-        <FormSection title="Appearance">
-          <View style={styles.appearanceRow}>
-            <SegmentedControl
-              accessibilityLabel="Appearance"
-              options={themeOptions}
-              selectedValue={preferences.theme}
-              onSelect={selectTheme}
-            />
-          </View>
-        </FormSection>
-
         <FormSection title="Privacy">
           <SwitchRow
             label="App Lock"
@@ -375,11 +371,6 @@ export default function SettingsScreen() {
               }
             />
             <FormRow
-              label="Switch gateway"
-              detail="Connect to a gateway saved on this device."
-              onPress={() => router.push("/switch-gateway")}
-            />
-            <FormRow
               label="Version"
               value={roster.gatewayVersion ?? "unknown"}
             />
@@ -413,7 +404,7 @@ export default function SettingsScreen() {
             actions={
               <ButtonGroup>
                 <Button
-                  variant="cardGrouped"
+                  variant="card"
                   loading={gatewayUpdate.isPending || updateCheck.isPending}
                   onPress={
                     updateAvailable
@@ -432,7 +423,19 @@ export default function SettingsScreen() {
                           : "Check for updates"}
                 </Button>
                 <Button
-                  variant="cardGrouped"
+                  variant="card"
+                  onPress={() => router.push("/gateway-logs")}
+                >
+                  View gateway logs
+                </Button>
+                <Button
+                  variant="card"
+                  onPress={() => router.push("/switch-gateway")}
+                >
+                  Switch gateway
+                </Button>
+                <Button
+                  variant="card"
                   loading={gatewayRestart.isPending}
                   onPress={confirmGatewayRestart}
                 >
@@ -445,7 +448,21 @@ export default function SettingsScreen() {
 
         {roster.devices.length > 0 ? (
           <FormSection title="Devices">
-            {roster.devices.map((device) => (
+            {thisDevice ? (
+              <FormRow
+                key={thisDevice.id}
+                label={thisDevice.descriptor ?? "Unnamed device"}
+                labelNote="This device"
+                detail={deviceContextLine(thisDevice)}
+                value={
+                  thisDevice.present
+                    ? "present now"
+                    : lastSeenLabel(thisDevice.lastSeen)
+                }
+                valueTone={thisDevice.present ? "positive" : undefined}
+              />
+            ) : null}
+            {otherDevices.map((device) => (
               <FormRow
                 key={device.id}
                 label={device.descriptor ?? "Unnamed device"}
@@ -455,6 +472,7 @@ export default function SettingsScreen() {
                     ? "present now"
                     : lastSeenLabel(device.lastSeen)
                 }
+                valueTone={device.present ? "positive" : undefined}
               />
             ))}
           </FormSection>
@@ -465,7 +483,6 @@ export default function SettingsScreen() {
             title="Account"
             actions={
               <Button
-                pill
                 variant="card"
                 onPress={() =>
                   void Linking.openURL("https://vesta.run/account")
@@ -477,15 +494,25 @@ export default function SettingsScreen() {
           />
         ) : null}
 
+        <FormSection title="Appearance">
+          <View style={styles.appearanceRow}>
+            <SegmentedControl
+              accessibilityLabel="Appearance"
+              options={themeOptions}
+              selectedValue={preferences.theme}
+              onSelect={selectTheme}
+            />
+          </View>
+        </FormSection>
+
         <FormSection
           title="Support"
           actions={
             <>
-              <Button pill variant="card" onPress={() => router.push("/debug")}>
+              <Button variant="card" onPress={() => router.push("/debug")}>
                 Diagnostics
               </Button>
               <Button
-                pill
                 variant="card"
                 onPress={() => router.push("/whats-new")}
               >
@@ -498,7 +525,6 @@ export default function SettingsScreen() {
         <FormSection
           actions={
             <Button
-              pill
               variant="cardDanger"
               onPress={() => {
                 setActiveConfirm("disconnect");

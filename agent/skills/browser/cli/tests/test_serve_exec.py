@@ -12,6 +12,7 @@ from vesta_browser.runtimes import HeadedDisplay
 from .fakes import HEADED, display_pids
 from .hermetic import display_rig
 from .waiting import (
+    POLL_DEADLINE_SECS,
     exec_request,
     pid_alive,
     request,
@@ -503,19 +504,89 @@ def test_session_stop_refuses_a_busy_session_and_the_exec_still_completes(paths)
     assert after["data"]["sessions"][0]["state"] == "ready"
 
 
-def test_stop_all_excludes_a_busy_session(paths):
+def _browser_pid(paths, name):
+    return int((paths.profiles / "chromium" / name / "fake.pid").read_text())
+
+
+def test_stop_all_cancels_an_exec_in_flight_and_stops_every_session(paths):
     async def run():
-        await request(paths, exec_request("a", "print(1)"))
-        busy_task = asyncio.create_task(request(paths, exec_request("a", "SLEEP", timeout_s=3, request_id="r2")))
+        await request(paths, exec_request("a", "print(1)", request_id="r0"))
+        await request(paths, exec_request("b", "print(1)", request_id="r0b"))
+        busy_task = asyncio.create_task(request(paths, exec_request("a", "SLEEP", timeout_s=30)))
         await wait_for_state(paths, "a", "busy")
-        await request(paths, exec_request("b", "print(1)", request_id="r3"))
+        pids = [*display_pids(paths.x11_socket_dir), _browser_pid(paths, "a"), _browser_pid(paths, "b")]
         stop_all = await request(paths, p.request("stop_all", "sa"))
         busy_result = await busy_task
-        return stop_all, busy_result
+        final = await request(paths, p.request("sessions", "l"))
+        dead = await wait_until_all_dead(pids)
+        return stop_all, busy_result, final, dead
 
-    stop_all, busy_result = with_daemon(paths, run)
-    assert stop_all["data"]["stopped"] == ["b"]
-    assert busy_result["error"]["code"] == "timed_out"
+    stop_all, busy_result, final, dead = with_daemon(paths, run)
+    assert stop_all["ok"] is True
+    assert stop_all["data"] == {"stopped": ["a", "b"], "cancelled": ["r1"], "handover_stopped": False}
+    assert busy_result["error"]["code"] == "cancelled"
+    assert all(s["state"] == "stopped" for s in final["data"]["sessions"])
+    assert dead is True
+
+
+def test_stop_all_stops_every_session_when_one_stop_raises(paths, monkeypatch):
+    original = serve.stop_session
+
+    async def _stop_then_raise(stop_paths, session, *, force=False):
+        stopped = await original(stop_paths, session, force=force)
+        if session.name == "a":
+            raise RuntimeError("stop boom")
+        return stopped
+
+    async def run():
+        state = serve.State(paths=paths, table=sessions.load_table(paths))
+        await serve.op_exec(state, "r1", exec_request("a", "print(1)"))
+        await serve.op_exec(state, "r2", exec_request("b", "print(1)", request_id="r2"))
+        pids = [*display_pids(paths.x11_socket_dir), _browser_pid(paths, "a"), _browser_pid(paths, "b")]
+        monkeypatch.setattr(serve, "stop_session", _stop_then_raise)
+        answer = await serve.handle_request(state, p.request("stop_all", "sa"))
+        dead = await wait_until_all_dead(pids)
+        return answer, dead, [session.state for session in state.table.sessions.values()]
+
+    answer, dead, states = asyncio.run(run())
+    assert answer["ok"] is True
+    assert answer["data"] == {"stopped": ["a", "b"], "cancelled": [], "handover_stopped": False}
+    assert dead is True
+    assert states == ["stopped", "stopped"]
+
+
+def test_stop_all_asks_a_starting_session_to_stop_itself_and_never_waits_on_it(paths, monkeypatch):
+    """A session mid-launch holds a display and no runtime yet. stop-all answers at once and leaves a
+    stop request behind; the start honours it the moment the engine returns, so nothing survives."""
+    launching = asyncio.Event()
+    release = asyncio.Event()
+    engine_start = chromium.start
+
+    async def _held_start(session, engine_paths, *, headed):
+        launching.set()
+        await release.wait()
+        return await engine_start(session, engine_paths, headed=headed)
+
+    monkeypatch.setattr(chromium, "start", _held_start)
+
+    async def run():
+        exec_task = asyncio.create_task(request(paths, exec_request("research", "SLEEP", timeout_s=30)))
+        await asyncio.wait_for(launching.wait(), POLL_DEADLINE_SECS)
+        answer = await request(paths, p.request("stop_all", "sa"))
+        release.set()
+        exec_result = await exec_task
+        await wait_for_state(paths, "research", "stopped")
+        dead = await wait_until_all_dead([*display_pids(paths.x11_socket_dir), _browser_pid(paths, "research")])
+        again = await request(paths, exec_request("research", "print(1)", request_id="r2"))
+        return answer, exec_result, dead, again
+
+    answer, exec_result, dead, again = with_daemon(paths, run)
+    assert answer["ok"] is True
+    assert answer["data"] == {"stopped": [], "cancelled": [], "handover_stopped": False}
+    assert exec_result["ok"] is False and exec_result["error"]["code"] == "cancelled"
+    assert exec_result["error"]["retryable"] is True and "while its browser was starting" in exec_result["error"]["message"]
+    assert dead is True
+    assert again["ok"] is True and again["warnings"] == []
 
 
 def test_an_engine_exception_answers_execution_failed_and_the_session_recovers(paths, monkeypatch):

@@ -184,7 +184,15 @@ export default function NotificationsPage({
   );
 
   return (
-    <View style={styles.screen}>
+    <View
+      style={[
+        styles.screen,
+        {
+          paddingBottom:
+            standalone && process.env.EXPO_OS === "android" ? insets.bottom : 0,
+        },
+      ]}
+    >
       <FlatList
         ref={standalone ? bottomAnchor.listRef : undefined}
         style={[
@@ -205,8 +213,12 @@ export default function NotificationsPage({
             ? [
                 styles.listContent,
                 {
-                  paddingTop: insets.top + navHeaderHeight,
-                  paddingBottom: insets.bottom,
+                  paddingTop:
+                    process.env.EXPO_OS === "android"
+                      ? 12
+                      : insets.top + navHeaderHeight,
+                  paddingBottom:
+                    process.env.EXPO_OS === "android" ? 12 : insets.bottom,
                 },
                 displayItems.length > 0 ? styles.bottomAligned : null,
               ]

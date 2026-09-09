@@ -8,7 +8,7 @@ from vesta_browser import chromium, sessions
 from vesta_browser.runtime_paths import load_paths
 
 from .fakes import HEADED, write_fakes
-from .waiting import wait_for_file, wait_until_dead
+from .waiting import pid_alive, wait_for_file, wait_until_dead
 
 
 @pytest.fixture
@@ -54,6 +54,20 @@ def test_browser_env_omits_timezone_and_language_the_daemon_does_not_have(rig, m
     monkeypatch.delenv("LANG", raising=False)
     env = asyncio.run(_browser_env(session, paths))
     assert "TZ" not in env and "LANG" not in env
+
+
+def test_start_records_the_browser_in_the_children_ledger(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        try:
+            return paths.children_ledger.read_text().split()[0], str(runtime.process.pid)
+        finally:
+            await chromium.stop(runtime, session)
+
+    recorded, browser = asyncio.run(run())
+    assert recorded == browser
 
 
 def test_child_env_is_minimal_and_points_the_harness_at_the_session(rig, monkeypatch):
@@ -229,7 +243,7 @@ def test_stop_leaves_a_recycled_pid_alone(rig):
         stranger = await _spawn_marked("some-other-program")
         _write_harness_record(session, stranger.pid)
         await chromium.stop(runtime, session)
-        survived = stranger.returncode is None and chromium._pid_alive(stranger.pid)
+        survived = stranger.returncode is None and pid_alive(stranger.pid)
         stranger.terminate()
         await stranger.wait()
         return survived
@@ -277,3 +291,16 @@ def test_start_passes_the_display_to_the_browser_process(rig):
 
     env_seen = asyncio.run(run())
     assert env_seen["DISPLAY"] == ":101"
+
+
+def test_start_places_the_agent_helpers_the_harness_loads(rig):
+    paths, session = rig
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        await chromium.stop(runtime, session)
+
+    asyncio.run(run())
+    placed = session.scratch_dir / "home" / "agent-workspace" / "agent_helpers.py"
+    assert placed.read_text() == chromium.AGENT_HELPERS.read_text()
+    assert "def new_tab(" in placed.read_text() and "activate_tab" in placed.read_text()

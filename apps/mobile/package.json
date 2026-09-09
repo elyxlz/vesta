@@ -1,7 +1,7 @@
 {
   "name": "@vesta/mobile",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Vesta native mobile app for iOS and Android",
   "license": "MIT",
   "main": "expo-router/entry",
@@ -49,6 +49,7 @@
     "expo-local-authentication": "~57.0.2",
     "expo-localization": "~57.0.1",
     "expo-location": "~57.0.15",
+    "expo-navigation-bar": "~57.0.2",
     "expo-notifications": "~57.0.16",
     "expo-router": "~57.0.18",
     "expo-screen-capture": "~57.0.2",

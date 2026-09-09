@@ -29,10 +29,7 @@ export function Screen({
   transparent = false,
 }: ScreenProps) {
   const { colors } = usePreferences();
-  const flattened = StyleSheet.flatten([styles.content, contentStyle]);
-  const bottomPadding = useBottomInset(
-    typeof flattened.paddingBottom === "number" ? flattened.paddingBottom : 0,
-  );
+  const bottomInset = useBottomInset(0);
   const backgroundColor = transparent ? "transparent" : colors.background;
   if (!scroll) {
     return (
@@ -43,12 +40,10 @@ export function Screen({
   }
   return (
     <ScrollView
-      style={[styles.screen, { backgroundColor }]}
-      contentContainerStyle={[
-        styles.content,
-        contentStyle,
-        { paddingBottom: bottomPadding },
-      ]}
+      // Inset the viewport, not only its final content: while scrolling,
+      // rows must not show through Android's three-button navigation bar.
+      style={[styles.screen, { backgroundColor, marginBottom: bottomInset }]}
+      contentContainerStyle={[styles.content, contentStyle]}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"

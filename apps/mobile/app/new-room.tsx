@@ -102,7 +102,7 @@ export default function NewRoomScreen() {
             />
           ))}
         </FormSection>
-        <Button pill disabled={!canCreate} loading={busy} onPress={create}>
+        <Button disabled={!canCreate} loading={busy} onPress={create}>
           Create
         </Button>
       </Screen>

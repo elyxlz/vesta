@@ -33,7 +33,7 @@ const config: ExpoConfig = {
   name: isDevelopment ? "Vesta Dev" : "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
-  version: "0.3.4",
+  version: "0.3.5",
   scheme: isDevelopment ? "vesta-dev" : "vesta",
   orientation: "portrait",
   icon: appIcon,
@@ -100,6 +100,7 @@ const config: ExpoConfig = {
     ],
   },
   plugins: [
+    ["expo-navigation-bar", { enforceContrast: false }],
     "expo-router",
     "expo-secure-store",
     "expo-status-bar",

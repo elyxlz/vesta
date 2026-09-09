@@ -108,7 +108,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
   );
   const routeAction = gatewayOperationRouteAction({
     operating: updateOperation !== null,
-    activeRoute: segments[0] as string | undefined,
+    activeRoute: segments.find((segment) => !segment.startsWith("(")),
   });
 
   useEffect(() => {

@@ -7,8 +7,11 @@ import { createHash } from "node:crypto";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { fingerprintInputs, staleReasons } from "@vesta/visual/fingerprint";
+import { createFingerprinter, staleReasons } from "@vesta/visual/fingerprint";
 import { themedSibling } from "@vesta/visual/platforms";
+import { scenariosForPlatform } from "@vesta/visual/registry";
+import { selectRegistry } from "@vesta/visual/selection";
+import { grabUntilStable } from "@vesta/visual/stability";
 import {
   atomicWriteFile,
   putShotRecord,
@@ -17,7 +20,27 @@ import {
 } from "@vesta/visual/store";
 import { flowSources, metroModuleGraph } from "./visual-sources.mjs";
 
-export { atomicWriteFile };
+export { atomicWriteFile, grabUntilStable };
+
+// Maestro executes whole flows, even when a gallery refresh selects one card.
+// Keep the platform catalog beside the selection so every sibling capture is
+// planned and recorded, without widening which flows the user asked to run.
+export function selectMobileRegistry(registry, platform, selection) {
+  const catalogScenarios = scenariosForPlatform(registry, platform);
+  return {
+    ...selectRegistry({ ...registry, scenarios: catalogScenarios }, selection),
+    catalogScenarios,
+  };
+}
+
+export function scenariosInSelectedFlow(manifest, shots) {
+  const requested = new Set(manifest.scenarios.map((s) => s.screenshot));
+  if (!shots.some((shot) => requested.has(shot))) return [];
+  const names = new Set(shots);
+  return (manifest.catalogScenarios ?? manifest.scenarios).filter((s) =>
+    names.has(s.screenshot),
+  );
+}
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 export const mobileRoot = path.resolve(scriptDirectory, "..");
@@ -210,7 +233,15 @@ function jsInputTargets() {
 }
 
 export async function jsInputFingerprint() {
-  return fingerprintPaths(jsInputTargets());
+  return fingerprintPaths(jsInputTargets(), isJsBundleInput);
+}
+
+export function isJsBundleInput(file) {
+  return (
+    path.extname(file) !== ".md" &&
+    !file.split(path.sep).includes(".agents") &&
+    file !== path.join(mobileRoot, "visual/scenarios.json")
+  );
 }
 
 export function jsFingerprintPath(target) {
@@ -266,26 +297,6 @@ export async function assertHarnessBoundary() {
   }
 }
 
-// A shot is settled when two framebuffer grabs in a row are byte-identical.
-// The OS appearance flip re-renders the app with no signal a runner can await,
-// so stability of the picture itself is the signal, bounded by the budget.
-export const SETTLE_POLL_MS = 120;
-export const SETTLE_TIMEOUT_MS = 8_000;
-
-export async function grabUntilStable(grab, options = {}) {
-  const pollMs = options.pollMs ?? SETTLE_POLL_MS;
-  const timeoutMs = options.timeoutMs ?? SETTLE_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
-  let previous = await grab();
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-    const current = await grab();
-    if (current.equals(previous)) return current;
-    previous = current;
-  }
-  return previous;
-}
-
 // One drive, both themes: shoot the light platform now, flip the OS appearance,
 // shoot the dark sibling once the picture settles, then flip back and wait for
 // the light picture to settle so the flow continues where it was.
@@ -297,16 +308,58 @@ export async function captureBothThemes({
   setDark,
   store,
   record,
+  light,
 }) {
-  await store(platform, name, await grab());
+  await store(platform, name, light ?? (await grabUntilStable(grab)));
   const dark = themedSibling(platform, "dark");
   if (dark) {
-    await setDark(true);
-    await store(dark, name, await grabUntilStable(grab));
-    await setDark(false);
-    await grabUntilStable(grab);
+    try {
+      await setDark(true);
+      await store(dark, name, await grabUntilStable(grab));
+    } finally {
+      await setDark(false);
+      await grabUntilStable(grab);
+    }
   }
   if (record) await putShotRecord(platform, name, record);
+}
+
+// A page is complete only when a further scroll produces the same stable
+// framebuffer. No labels, card count, or knowledge of the page's contents.
+export function createPageCapture() {
+  const pages = new Map();
+  return async (options, step) => {
+    if (step === undefined) return captureBothThemes(options);
+    if (!["start", "next"].includes(step))
+      throw new Error(`Invalid page capture step: ${step}`);
+    const key = `${options.platform}/${options.name}`;
+    if (step === "start") pages.set(key, { parts: [], previous: null });
+    const page = pages.get(key);
+    if (!page) throw new Error("Page capture has not started");
+    const light = await grabUntilStable(options.grab);
+    if (page.previous?.equals(light)) {
+      if (options.record)
+        await putShotRecord(options.platform, options.name, {
+          ...options.record,
+          parts: page.parts,
+        });
+      pages.delete(key);
+      return { more: false };
+    }
+    if (page.parts.length >= 24)
+      throw new Error("Page exceeded 24 viewports; capture is incomplete");
+    const name =
+      page.parts.length === 0
+        ? options.name
+        : options.name.replace(
+            /\.png$/,
+            `--${String(page.parts.length + 1).padStart(2, "0")}.png`,
+          );
+    await captureBothThemes({ ...options, name, record: undefined, light });
+    page.previous = light;
+    page.parts.push(name);
+    return { more: true };
+  };
 }
 
 // Which flows a scan must run: a flow is fresh, and skipped, when every shot it
@@ -317,15 +370,14 @@ export async function captureBothThemes({
 // bridge writes it beside the shot it takes.
 export async function planFlows(manifest, options) {
   const { platform, metroPlatform, mechanics, extras, captureAll } = options;
+  const fingerprint = createFingerprinter();
   const graph = await metroModuleGraph(
     mobileRoot,
     metroConfigPath,
     metroPlatform,
   );
   const appDirectory = path.join(mobileRoot, "app");
-  const byShot = new Map(
-    manifest.scenarios.map((scenario) => [scenario.screenshot, scenario]),
-  );
+  const catalog = manifest.catalogScenarios ?? manifest.scenarios;
   const platforms = [platform, themedSibling(platform, "dark")].filter(Boolean);
   const records = new Map();
   const runShots = new Set();
@@ -335,11 +387,21 @@ export async function planFlows(manifest, options) {
   for (const flow of manifest.flows) {
     const flowPath = path.resolve(mobileRoot, flow);
     const { shots, sources } = await flowSources(flowPath, appDirectory, graph);
-    const expected = shots.filter((shot) => byShot.has(shot));
+    const flowScenarios = scenariosInSelectedFlow(manifest, shots);
+    const expected = flowScenarios.map((scenario) => scenario.screenshot);
     if (expected.length === 0) continue;
-    const cards = expected.map((shot) => JSON.stringify(byShot.get(shot)));
-    const record = await fingerprintInputs(
-      [...sources, flowPath, ...mechanics],
+    const cards = flowScenarios.map((scenario) => JSON.stringify(scenario));
+    const record = await fingerprint(
+      [
+        ...sources,
+        flowPath,
+        path.join(mobileRoot, "maestro/visual/wait-for-launch.yml"),
+        path.join(mobileRoot, "maestro/visual/capture-page.yml"),
+        path.join(mobileRoot, "maestro/visual/prepare-page.yml"),
+        ...mechanics,
+        path.join(appsRoot, "visual/stability.mjs"),
+        path.join(appsRoot, "visual/platforms.mjs"),
+      ],
       [...extras, ...cards],
     );
     // Why the flow is stale: shots never recorded, and the files that moved
@@ -373,7 +435,7 @@ export async function planFlows(manifest, options) {
       runShots.add(shot);
     }
   }
-  const scenarios = manifest.scenarios.filter((scenario) =>
+  const scenarios = catalog.filter((scenario) =>
     runShots.has(scenario.screenshot),
   );
   return { flows, skipped, records, scenarios, units };
@@ -431,9 +493,17 @@ export async function startScreenshotBridge(targets, handlers) {
       ) {
         throw new Error(`Invalid screenshot name: ${screenshot}`);
       }
-      await handlers.capture(target, screenshot);
-      cycle.seen.add(screenshot);
-      response.writeHead(204).end();
+      if (!cycle.expected.has(screenshot))
+        throw new Error(`Unexpected screenshot: ${screenshot}`);
+      const result = await handlers.capture(
+        target,
+        screenshot,
+        payload.pageStep,
+      );
+      if (!result?.more) cycle.seen.add(screenshot);
+      response
+        .writeHead(200, { "Content-Type": "application/json" })
+        .end(JSON.stringify(result ?? {}));
       if ([...cycle.expected].every((name) => cycle.seen.has(name))) {
         cycle.completed = true;
         cycle.resolve();

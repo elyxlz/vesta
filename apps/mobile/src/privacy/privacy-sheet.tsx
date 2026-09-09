@@ -1,7 +1,7 @@
 import { StyleSheet, View } from "react-native";
 import { LoadingSpinner } from "@/components/loading-spinner";
 import Animated, { FadeIn } from "react-native-reanimated";
-import { AuthPrimaryButton } from "@/components/auth-primary-button";
+import { Button } from "@/components/ui/Button";
 import { AuthSheet } from "@/components/auth-sheet";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -66,17 +66,17 @@ export function PrivacySheet() {
         </Text>
       </Animated.View>
       {initializationFailed ? (
-        <AuthPrimaryButton onPress={privacy.retryInitialization}>
+        <Button onPress={privacy.retryInitialization}>
           Try again
-        </AuthPrimaryButton>
+        </Button>
       ) : privacy.hydrated ? (
-        <AuthPrimaryButton
+        <Button
           loading={privacy.authenticating}
           disabled={privacy.authenticating}
           onPress={() => void privacy.unlock()}
         >
           {unlockLabel}
-        </AuthPrimaryButton>
+        </Button>
       ) : (
         <View
           accessibilityLabel="Checking privacy settings"

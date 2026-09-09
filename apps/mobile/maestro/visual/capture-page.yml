@@ -1,0 +1,34 @@
+appId: ${APP_ID}
+---
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: ${SCREENSHOT}
+      PAGE_STEP: start
+- repeat:
+    while:
+      true: ${output.captureMore}
+    commands:
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - swipe:
+                start: 50%, 75%
+                end: 50%, 55%
+                duration: 600
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            # Keep the gesture in the page gutter. Native Compose controls
+            # can consume a swipe through the middle and mimic end-of-page.
+            - swipe:
+                start: 3%, 80%
+                end: 3%, 35%
+                duration: 600
+      - runScript:
+          file: capture-screenshot.js
+          env:
+            SCREENSHOT: ${SCREENSHOT}
+            PAGE_STEP: next

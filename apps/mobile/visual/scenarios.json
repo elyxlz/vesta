@@ -2,16 +2,46 @@
   "version": 1,
   "appId": "com.vesta.mobile.visual",
   "flows": [
+    "maestro/pages/dashboard.yml",
+    "maestro/pages/scanner.yml",
+    "maestro/pages/provider-auth.yml",
+    "maestro/pages/home.yml",
+    "maestro/pages/chat.yml",
+    "maestro/pages/settings.yml",
+    "maestro/pages/agent-settings.yml",
+    "maestro/pages/agent-name.yml",
+    "maestro/pages/agent-provider.yml",
+    "maestro/pages/agent-voice.yml",
+    "maestro/pages/agent-notifications.yml",
+    "maestro/pages/agent-files.yml",
+    "maestro/pages/agent-host-access.yml",
+    "maestro/pages/agent-backups.yml",
+    "maestro/pages/agent-logs.yml",
+    "maestro/pages/agent-inbox.yml",
+    "maestro/pages/file-editor.yml",
+    "maestro/pages/connect.yml",
+    "maestro/pages/connect-actions.yml",
+    "maestro/pages/connect-link.yml",
+    "maestro/pages/recent-gateways.yml",
+    "maestro/pages/new-agent.yml",
+    "maestro/pages/whats-new.yml",
+    "maestro/pages/gateway-logs.yml",
+    "maestro/pages/diagnostics.yml",
+    "maestro/pages/privacy.yml",
+    "maestro/pages/gateway-update.yml",
+    "maestro/pages/switch-gateway.yml",
     "maestro/visual/gateway-update.yml",
     "maestro/visual/connected.yml",
     "maestro/visual/recent-gateways.yml",
     "maestro/visual/connected-whats-new-error.yml",
     "maestro/visual/connect.yml",
+    "maestro/visual/scan-ready.yml",
     "maestro/visual/connected-whats-new-empty.yml",
     "maestro/visual/connected-home-empty.yml",
     "maestro/visual/agent-states.yml",
     "maestro/visual/provider-states.yml",
     "maestro/visual/agent-sections.yml",
+    "maestro/visual/agent-identity.yml",
     "maestro/visual/empty-states.yml",
     "maestro/visual/chat-states.yml",
     "maestro/visual/connect-states.yml",
@@ -22,6 +52,230 @@
     "maestro/visual/attachment-states.yml"
   ],
   "scenarios": [
+    {
+      "id": "page-dashboard",
+      "page": "dashboard",
+      "title": "Dashboard",
+      "description": "The dashboard page, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria"
+    },
+    {
+      "id": "page-scanner",
+      "page": "scanner",
+      "title": "QR scanner",
+      "description": "The scanner page with camera permission denied, so no live camera pixels enter the reference.",
+      "group": "Pages",
+      "route": "/scan"
+    },
+    {
+      "id": "page-provider-auth",
+      "page": "provider-auth",
+      "title": "Provider sign-in",
+      "description": "The provider sign-in page, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/provider"
+    },
+    {
+      "id": "page-home",
+      "page": "home",
+      "title": "Home",
+      "description": "The home page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/"
+    },
+    {
+      "id": "page-chat",
+      "page": "chat",
+      "title": "Chat",
+      "description": "The chat page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria"
+    },
+    {
+      "id": "page-settings",
+      "page": "settings",
+      "title": "App settings",
+      "description": "The app settings page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/settings"
+    },
+    {
+      "id": "page-agent-settings",
+      "page": "agent-settings",
+      "title": "Agent settings",
+      "description": "The agent settings page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/settings"
+    },
+    {
+      "id": "page-agent-name",
+      "page": "agent-name",
+      "title": "Rename agent",
+      "description": "The dedicated agent name panel, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/name"
+    },
+    {
+      "id": "page-agent-provider",
+      "page": "agent-provider",
+      "title": "Agent settings · provider",
+      "description": "The agent settings · provider page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/provider"
+    },
+    {
+      "id": "page-agent-voice",
+      "page": "agent-voice",
+      "title": "Agent settings · voice",
+      "description": "The agent settings · voice page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/voice"
+    },
+    {
+      "id": "page-agent-notifications",
+      "page": "agent-notifications",
+      "title": "Agent settings · notifications",
+      "description": "The agent settings · notifications page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/notifications"
+    },
+    {
+      "id": "page-agent-files",
+      "page": "agent-files",
+      "title": "Agent settings · files",
+      "description": "The agent settings · files page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/files"
+    },
+    {
+      "id": "page-agent-host-access",
+      "page": "agent-host-access",
+      "title": "Agent settings · host-access",
+      "description": "The agent settings · host-access page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/host-access"
+    },
+    {
+      "id": "page-agent-backups",
+      "page": "agent-backups",
+      "title": "Agent settings · backups",
+      "description": "The agent settings · backups page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/details/backups"
+    },
+    {
+      "id": "page-agent-logs",
+      "page": "agent-logs",
+      "title": "Agent logs",
+      "description": "The agent logs page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/logs"
+    },
+    {
+      "id": "page-agent-inbox",
+      "page": "agent-inbox",
+      "title": "Agent inbox",
+      "description": "The agent inbox page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/notifications"
+    },
+    {
+      "id": "page-file-editor",
+      "page": "file-editor",
+      "title": "File editor",
+      "description": "The file editor page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/agent/aria/file"
+    },
+    {
+      "id": "page-connect",
+      "page": "connect",
+      "title": "Connect",
+      "description": "The connect page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/connect"
+    },
+    {
+      "id": "page-connect-actions",
+      "page": "connect-actions",
+      "title": "Connection options",
+      "description": "The connection options page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/connect-actions"
+    },
+    {
+      "id": "page-connect-link",
+      "page": "connect-link",
+      "title": "Connect with a link",
+      "description": "The connect with a link page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/connect-link"
+    },
+    {
+      "id": "page-recent-gateways",
+      "page": "recent-gateways",
+      "title": "Recent gateways",
+      "description": "The recent gateways page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/recent-gateways"
+    },
+    {
+      "id": "page-new-agent",
+      "page": "new-agent",
+      "title": "New agent",
+      "description": "The new agent page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/new-agent"
+    },
+    {
+      "id": "page-whats-new",
+      "page": "whats-new",
+      "title": "What's new",
+      "description": "The what's new page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/whats-new"
+    },
+    {
+      "id": "page-gateway-logs",
+      "page": "gateway-logs",
+      "title": "Gateway logs",
+      "description": "The gateway logs page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/gateway-logs"
+    },
+    {
+      "id": "page-diagnostics",
+      "page": "diagnostics",
+      "title": "Diagnostics",
+      "description": "The diagnostics page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/debug"
+    },
+    {
+      "id": "page-privacy",
+      "page": "privacy",
+      "title": "Privacy",
+      "description": "The privacy page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/"
+    },
+    {
+      "id": "page-gateway-update",
+      "page": "gateway-update",
+      "title": "Gateway update",
+      "description": "The gateway update page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/gateway-update"
+    },
+    {
+      "id": "page-switch-gateway",
+      "page": "switch-gateway",
+      "title": "Switch gateway",
+      "description": "The switch gateway page. A development reference for the entire screen, independent of individual controls.",
+      "group": "Pages",
+      "route": "/switch-gateway"
+    },
     {
       "id": "privacy-initialization-error",
       "title": "Privacy settings unavailable",
@@ -559,9 +813,9 @@
       "group": "Provider"
     },
     {
-      "id": "agent-general",
-      "title": "General section",
-      "description": "The agent's identity hero with rename controls and status rows.",
+      "id": "agent-technical-details",
+      "title": "Technical details",
+      "description": "Agent settings with technical details expanded beside Logs.",
       "group": "Agent settings"
     },
     {
@@ -742,6 +996,12 @@
       "id": "agent-chat-markdown",
       "title": "Chat, rich reply",
       "description": "A reply with heading, code block, list, and link.",
+      "group": "Chat"
+    },
+    {
+      "id": "agent-chat-conversation",
+      "title": "Chat, voice conversation",
+      "description": "The composer as the live conversation panel: the agent orb with voice motion, mute, the words spoken so far with the newest bold, and end.",
       "group": "Chat"
     },
     {

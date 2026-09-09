@@ -1,17 +1,19 @@
 import {
   captureAllRequested,
-  fingerprintInputs,
+  createFingerprinter,
   staleReasons,
 } from "@vesta/visual/fingerprint";
 import { PLATFORMS, themedSibling } from "@vesta/visual/platforms";
 import { loadRegistry, scenarioOnPlatform } from "@vesta/visual/registry";
+import { selectRegistry } from "@vesta/visual/selection";
 import { readShotRecord, shotIsFresh } from "@vesta/visual/store";
 import { scenarioInputs } from "./freshness-inputs.mjs";
 
 // The web plan: which scenarios a capture would retake on which projects, as
 // one line of JSON, the same decision capture.spec.ts makes per test.
-const registry = await loadRegistry("web");
+const registry = selectRegistry(await loadRegistry("web"));
 const captureAll = captureAllRequested();
+const fingerprint = createFingerprinter();
 const projects = Object.entries(PLATFORMS)
   .filter(
     ([, platform]) => platform.family === "web" && platform.theme === "light",
@@ -32,7 +34,7 @@ for (const scenario of registry.scenarios) {
     const current =
       record === null
         ? null
-        : await fingerprintInputs(
+        : await fingerprint(
             [...record.sources, ...inputs.files],
             inputs.extras,
           );

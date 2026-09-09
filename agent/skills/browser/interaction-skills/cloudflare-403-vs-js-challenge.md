@@ -38,3 +38,11 @@ browser. Check the header before reaching for the heavy tool.
 
 Sites confirmed on the JS-challenge path: whatson.bfi.org.uk (BFI IMAX booking + search
 endpoints). Any unattended poller against such a site must drive a real browser, not curl.
+
+## A challenge page that ends the stealth worker
+
+On the stealth route, a page whose script throws an error with no source location crashes the
+Playwright driver under Camoufox (`nowsecure.nl` is one), and the program then runs out its whole
+`--timeout` before the daemon ends the worker and answers `timed_out`. The next program on that
+session starts a fresh browser and carries `worker_restarted`. Give a first visit to an unknown
+challenge page a small `--timeout`, and read the answer's `warnings` before trusting the tabs.

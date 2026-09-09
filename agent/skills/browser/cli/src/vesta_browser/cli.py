@@ -31,6 +31,9 @@ RPC_TIMEOUT_SLACK_SECS = 30
 # Past the daemon's own bring-up budget, so a slow handover answers instead of reading as a dead
 # daemon, and inside the 120s a Bash tool call allows by default.
 HANDOVER_RPC_TIMEOUT_SECS = 110.0
+# stop-all waits out a busy session and a handover teardown before it stops them, so its answer
+# waits the same way: past the daemon's own budgets, and inside the Bash tool's 120s.
+STOP_ALL_TIMEOUT_SECS = HANDOVER_RPC_TIMEOUT_SECS
 CANCEL_TIMEOUT_SECS = 5
 
 
@@ -123,7 +126,9 @@ def _dispatch(paths: Paths, args: argparse.Namespace) -> int:
         return _rpc(paths, "session_stop", session=args.name)
     if args.command == "handover":
         return _handover(paths, args)
-    return _rpc(paths, "stop_all" if args.command == "stop-all" else args.command)
+    if args.command == "stop-all":
+        return _rpc(paths, "stop_all", timeout=STOP_ALL_TIMEOUT_SECS)
+    return _rpc(paths, args.command)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -57,10 +57,35 @@ const harnessModules = new Map([
   ["react-native-reanimated", path.resolve(__dirname, "harness/reanimated.js")],
   ["expo-web-browser", path.resolve(__dirname, "harness/web-browser.ts")],
   ["expo-router/stack", path.resolve(__dirname, "harness/stack.js")],
+  ["@/voice/useLiveVoice", path.resolve(__dirname, "harness/live-voice.ts")],
 ]);
 const defaultResolveRequest = config.resolver.resolveRequest;
+const scrollViewFixture = path.resolve(__dirname, "harness/scroll-view.js");
+const textInputFixture = path.resolve(__dirname, "harness/text-input.js");
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (
+    moduleName.endsWith("/TextInput/TextInput") &&
+    context.originModulePath !== textInputFixture
+  ) {
+    return { type: "sourceFile", filePath: textInputFixture };
+  }
+  if (
+    moduleName.endsWith("/ScrollView/ScrollView") &&
+    context.originModulePath !== scrollViewFixture
+  ) {
+    return { type: "sourceFile", filePath: scrollViewFixture };
+  }
+  if (
+    platform === "ios" &&
+    moduleName === "./Libraries/Components/ActivityIndicator/ActivityIndicator" &&
+    context.originModulePath === require.resolve("react-native")
+  ) {
+    return {
+      type: "sourceFile",
+      filePath: path.resolve(__dirname, "harness/activity-indicator.js"),
+    };
+  }
   if (
     moduleName === "./privacy-provider" &&
     privacyProviderConsumers.has(context.originModulePath)

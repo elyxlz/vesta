@@ -4,10 +4,7 @@ tags:
   - visual
   - privacy
 ---
-- clearState
-- setPermissions:
-    permissions:
-      location: inuse
+- runFlow: prepare-page.yml
 - openLink:
     link: "vesta-dev://?visualPrivacy=opening"
 - waitForAnimationToEnd:
@@ -50,9 +47,7 @@ tags:
       - tapOn:
           text: ".*Turn on.*"
           optional: true
-- extendedWaitUntil:
-    visible: '.*vesta.*'
-    timeout: 30000
+- runFlow: wait-for-launch.yml
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: privacy-opening
@@ -63,14 +58,12 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://?visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*Privacy unavailable.*'
     timeout: 30000
 - tapOn:
     text: 'Try again'
-- extendedWaitUntil:
-    visible: '.*vesta.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: privacy-locked-connected
@@ -81,6 +74,7 @@ tags:
 - stopApp
 - openLink:
     link: "vesta-dev://settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: '.*App Lock.*'
     timeout: 30000
@@ -101,9 +95,6 @@ tags:
             text: '.*App Lock.*'
           above:
             text: '.*Preview the message.*'
-- extendedWaitUntil:
-    visible: '.*Preview the message.*'
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-app-lock-off
