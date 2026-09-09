@@ -11,7 +11,6 @@ import {
   AGENT_CAROUSEL_ITEM_STRIDE,
   scaleForCarouselItemOffset,
 } from "./AgentsCarousel/constants";
-import { ChatsList } from "./ChatsList";
 import { EmptyState } from "./EmptyState";
 import { UpdateProgressScreen } from "@/components/UpdateProgressScreen";
 
@@ -105,7 +104,6 @@ export function Home() {
           <div className="flex min-h-0 w-full flex-1">
             <AgentsCarousel agents={agents} initialIndex={lastAgentIndex} />
           </div>
-          <ChatsList />
         </motion.div>
       )}
     </AnimatePresence>
