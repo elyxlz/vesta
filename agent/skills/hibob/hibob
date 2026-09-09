@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import sys
 
 BROWSER_SRC = "/root/agent/skills/browser/cli/src"
@@ -133,7 +134,26 @@ def api(path: str, method: str = "GET", body: dict | None = None, tries: int = 6
 # ── data helpers ──────────────────────────────────────────────
 
 def _me() -> dict:
-    return api("/api/user")
+    """The logged-in employee. Raises rather than returning a hollow dict.
+
+    WHY THE CHECK (9 Sep 2026): when the Bob session expires, `/api/user` answers **200 with
+    `{}`**, not 401. Every caller then failed a different, misleading way. `hibob tasks list`
+    died on `KeyError: 'id'` with a raw traceback, 76 consecutive daemon polls deep. Worse,
+    `hibob whoami` printed `None  <None>  id=None  None (None)` and **exited 0**, so anything
+    checking the exit code read a dead session as a healthy one. That is the empty-output-is-not-
+    zero class: a 200 with no content looks exactly like a successful read.
+
+    So the emptiness is caught HERE, once, at the only place that knows what a real user looks
+    like, instead of in each of the four call sites."""
+    u = api("/api/user")
+    if not isinstance(u, dict) or not u.get("id"):
+        raise ApiError(
+            "Bob session is not signed in: /api/user returned no employee.\n"
+            "  Re-authenticate: browser navigate https://app.hibob.com/home\n"
+            "  then 'Continue with Okta' and his username; 'Keep me signed in' should be ticked.\n"
+            "  (An expired Bob session answers 200 with an empty body, never 401, so this is\n"
+            "   indistinguishable from a successful call without this check.)")
+    return u
 
 
 def _emit(obj, as_json: bool, human) -> None:
@@ -340,6 +360,20 @@ def cmd_task_action(args) -> int:
     return 0
 
 
+def cmd_daemon(args) -> int:
+    """Delegate to hibob-daemon, so `hibob daemon <verb>` matches every other skill.
+
+    The fleet contract is `<skill> daemon start|stop|restart|status`, and
+    `daemon_coverage.py` derives the expected pidfile stem from that first word. With
+    `hibob-daemon start` in daemons.sh it looked for `hibob-daemon.pid`, found only
+    `hibob.pid`, and reported a live daemon as DOWN.
+    """
+    import subprocess
+
+    script = str(pathlib.Path(__file__).resolve().parent / "hibob-daemon")
+    return subprocess.run([script, args.action]).returncode
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="hibob", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -373,6 +407,10 @@ def main() -> int:
     rp.set_defaults(cmd_action="incomplete")
     dp = add("docs", cmd_docs, "list your documents by folder")
     dp.add_argument("action", nargs="?", default="list", choices=["list"])
+
+    dp2 = sub.add_parser("daemon", help="start|stop|restart|status the polling daemon")
+    dp2.add_argument("action", choices=["start", "stop", "restart", "status"])
+    dp2.set_defaults(func=cmd_daemon, json=False)
 
     args = p.parse_args()
     try:
