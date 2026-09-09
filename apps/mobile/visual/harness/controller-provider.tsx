@@ -50,6 +50,7 @@ function fixtureTree(): Tree {
     },
     agents,
     devices: fixtureDevices,
+    rooms: [],
   };
 }
 

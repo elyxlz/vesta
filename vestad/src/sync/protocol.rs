@@ -188,6 +188,10 @@ pub(crate) struct Tree {
     pub agents: BTreeMap<String, AgentNode>,
     #[serde(default)]
     pub devices: Vec<DeviceInfo>,
+    /// Every chat room this gateway holds, the user being a member of all of them. Defaulted so a
+    /// tree written by an older gateway (before the chat node) still parses.
+    #[serde(default)]
+    pub rooms: Vec<crate::chat::Room>,
 }
 
 /// The `state` delta's scope: the gateway branch is the only one, replaced whole.
@@ -209,9 +213,21 @@ pub(crate) enum Frame {
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
     AgentNotifications { agent: String, pending: Vec<serde_json::Value> },
-    UserNotification { id: u64, at: u64, agent: String, kind: String, title: String, body: String },
+    UserNotification {
+        id: u64,
+        at: u64,
+        agent: String,
+        kind: String,
+        title: String,
+        body: String,
+        /// The chat room a `message` notification was minted in, so a client already looking at
+        /// that room stays quiet. Additive: absent on every other kind and on older gateways.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<String>,
+    },
     Presence { any_focused: bool },
     Devices { devices: Vec<DeviceInfo> },
+    Rooms { rooms: Vec<crate::chat::Room> },
 }
 
 impl Frame {
@@ -234,9 +250,10 @@ pub(crate) enum ClientFrame {
 /// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
 /// web visibility/window focus or mobile foreground state. `client` identifies the surface that
 /// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
-/// reconnect never looks like the user returning. `viewing` is the agent whose page is open on this
-/// client, or `None` on the roster, a non-agent screen, or a blurred window: it drives the per-agent
-/// presence notification, independently of `focused`.
+/// reconnect never looks like the user returning. `viewing` is the room open on this client
+/// (`dm:<agent>` on an agent page, a room id on a room screen), or `None` on the roster, another
+/// screen, or a blurred window: it drives that room's presence nudge to its agents, independently
+/// of `focused`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClientContext {
@@ -334,7 +351,28 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         }),
         position_at: Some("2026-01-01T00:00:00Z".into()),
     }];
-    let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
+    let rooms = vec![
+        crate::chat::Room {
+            id: "dm:sample".into(),
+            name: None,
+            agents: vec!["sample".into()],
+            created_at: 1_756_900_000,
+            last_message_at: Some(1_756_903_000),
+        },
+        crate::chat::Room {
+            id: "grp-0011223344556677".into(),
+            name: Some("trip planning".into()),
+            agents: vec!["sample".into(), "scout".into()],
+            created_at: 1_756_900_100,
+            last_message_at: None,
+        },
+    ];
+    let tree = Tree {
+        gateway: gateway.clone(),
+        agents,
+        devices: devices.clone(),
+        rooms: rooms.clone(),
+    };
 
     serde_json::json!({
         "hello": to_value(Frame::Hello {
@@ -349,9 +387,11 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "agent_notifications": to_value(Frame::AgentNotifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize agent_notifications"),
             "user_notification": to_value(Frame::UserNotification {
                 id: 3, at: 1_700_000_400, agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
+                room: Some("dm:sample".into()),
             }).expect("serialize user_notification"),
             "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
             "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
+            "rooms": to_value(Frame::Rooms { rooms }).expect("serialize rooms"),
         }
     })
 }
@@ -486,22 +526,71 @@ mod tests {
         }
     }
 
+    fn sample_room() -> crate::chat::Room {
+        crate::chat::Room {
+            id: "dm:scout".into(),
+            name: None,
+            agents: vec!["scout".into()],
+            created_at: 1_756_900_000,
+            last_message_at: None,
+        }
+    }
+
     #[test]
     fn every_frame_variant_uses_its_wire_tag() {
         let cases = [
             (Frame::Hello { version: "0.1.0".into(), min_supported: "0.0.0".into() }, "hello"),
-            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default(), devices: Default::default() } }, "snapshot"),
+            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default(), devices: Default::default(), rooms: Default::default() } }, "snapshot"),
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::AgentNotifications { agent: "scout".into(), pending: vec![] }, "agent_notifications"),
-            (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::UserNotification { id: 1, at: 1_700_000_000, agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into(), room: None }, "user_notification"),
             (Frame::Presence { any_focused: true }, "presence"),
+            (Frame::Rooms { rooms: vec![sample_room()] }, "rooms"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");
             assert_eq!(value["type"], serde_json::json!(tag));
         }
+    }
+
+    #[test]
+    fn the_rooms_delta_round_trips_through_its_wire_tag() {
+        let frame = Frame::Rooms { rooms: vec![sample_room()] };
+        let encoded = frame.encode().expect("encode rooms");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse rooms json");
+        assert_eq!(value["type"], serde_json::json!("rooms"));
+        assert_eq!(value["rooms"][0]["lastMessageAt"], serde_json::Value::Null);
+        let parsed: Frame = serde_json::from_str(&encoded).expect("parse rooms frame");
+        assert_eq!(parsed, frame);
+    }
+
+    #[test]
+    fn the_user_notification_delta_names_a_room_only_when_it_has_one() {
+        let notification = |room: Option<String>| Frame::UserNotification {
+            id: 1,
+            at: 1_700_000_000,
+            agent: "scout".into(),
+            kind: "message".into(),
+            title: "scout".into(),
+            body: "hi".into(),
+            room,
+        };
+        let in_room = notification(Some("dm:scout".into()));
+        let encoded = in_room.encode().expect("encode a chat notification");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse json");
+        assert_eq!(value["room"], serde_json::json!("dm:scout"));
+        let parsed: Frame = serde_json::from_str(&encoded).expect("parse frame");
+        assert_eq!(parsed, in_room);
+
+        // Every other kind carries no room at all, so an older client sees the frame it always saw.
+        let roomless = notification(None);
+        let encoded = roomless.encode().expect("encode a gateway notification");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse json");
+        assert!(value.get("room").is_none(), "{encoded}");
+        let parsed: Frame = serde_json::from_str(&encoded).expect("parse frame");
+        assert_eq!(parsed, roomless);
     }
 
     #[test]
@@ -545,7 +634,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Mobile,
                 resync: false,
-                viewing: Some("scout".into()),
+                viewing: Some("dm:scout".into()),
                 device_id: Some("device-1".into()),
                 descriptor: Some("Vesta on iPhone".into()),
                 context: DeviceContext {
@@ -642,9 +731,9 @@ mod tests {
         .expect("parse client_context retracting the position");
         let ClientFrame::ClientContext(retracted) = retracted else { panic!("client_context expected") };
         assert_eq!(retracted.context.position, Some(crate::device_registry::PositionReport::Retract));
-        // `viewing` carries the open agent's name; absent it defaults to None (additive-safe).
+        // `viewing` carries the open room's id; absent it defaults to None (additive-safe).
         let viewing: ClientFrame = serde_json::from_str(
-            r#"{"type":"client_context","focused":true,"client":"web","viewing":"scout"}"#,
+            r#"{"type":"client_context","focused":true,"client":"web","viewing":"dm:scout"}"#,
         )
         .expect("parse client_context viewing");
         assert_eq!(
@@ -653,7 +742,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Web,
                 resync: false,
-                viewing: Some("scout".into()),
+                viewing: Some("dm:scout".into()),
                 ..Default::default()
             })
         );

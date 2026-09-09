@@ -10,17 +10,25 @@ vi.mock("./use-window-focus", () => ({
   useWindowFocus: () => focus.value,
 }));
 
-// A router stub the test can navigate: the reporter reads the matched `agent/:name` param and
-// re-reads it on every router notification.
+// A router stub the test can navigate: the reporter reads the matched `agent/:name` and
+// `chat/:roomId` params and re-reads them on every router notification.
 const routerStub = vi.hoisted(() => {
   const listeners = new Set<() => void>();
-  const state = { matches: [] as { params: { name?: string } }[] };
+  const state = {
+    matches: [] as { params: { name?: string; roomId?: string } }[],
+  };
+  const set = (params: { name?: string; roomId?: string } | null) => {
+    state.matches = params ? [{ params }] : [];
+    for (const listener of listeners) listener();
+  };
   return {
     state,
     listeners,
     navigate: (agent: string | null) => {
-      state.matches = agent ? [{ params: { name: agent } }] : [];
-      for (const listener of listeners) listener();
+      set(agent === null ? null : { name: agent });
+    },
+    navigateRoom: (roomId: string) => {
+      set({ roomId });
     },
   };
 });
@@ -56,14 +64,14 @@ afterEach(() => {
 
 describe("PresenceReporter", () => {
   // A focused window on an agent page reports all three facts vestad reads: focus (push muting),
-  // the viewed agent (the presence nudge), and the device context (zone, read live; no geolocation
+  // the viewed room (the presence nudge), and the device context (zone, read live; no geolocation
   // in this environment, so the stored position stands).
-  it("reports focus, the viewed agent, and the device context on a focus edge", async () => {
+  it("reports focus, the viewed room, and the device context on a focus edge", async () => {
     const fake = fakeController(fakeTree());
     mount(fake);
 
     expect(fake.reports.presence).toHaveBeenLastCalledWith(true);
-    expect(fake.reports.viewing).toHaveBeenLastCalledWith("ada");
+    expect(fake.reports.viewing).toHaveBeenLastCalledWith("dm:ada");
     await waitFor(() => {
       expect(fake.reports.deviceContext.mock.calls).toEqual([
         [{ timezone: OS_ZONE }],
@@ -92,18 +100,25 @@ describe("PresenceReporter", () => {
     mount(fake);
 
     expect(fake.reports.presence).toHaveBeenLastCalledWith(false);
-    expect(fake.reports.viewing).toHaveBeenLastCalledWith("ada");
+    expect(fake.reports.viewing).toHaveBeenLastCalledWith("dm:ada");
     expect(fake.reports.deviceContext).not.toHaveBeenCalled();
   });
 
-  it("follows the router to the newly opened agent, and to none off an agent page", () => {
+  // An agent page reports that agent's own direct room; the room route reports the room it names;
+  // anywhere else reports nothing.
+  it("follows the router to the newly opened conversation, and to none off one", () => {
     const fake = fakeController(fakeTree());
     mount(fake);
 
     act(() => {
       routerStub.navigate("grace");
     });
-    expect(fake.reports.viewing).toHaveBeenLastCalledWith("grace");
+    expect(fake.reports.viewing).toHaveBeenLastCalledWith("dm:grace");
+
+    act(() => {
+      routerStub.navigateRoom("grp-trip");
+    });
+    expect(fake.reports.viewing).toHaveBeenLastCalledWith("grp-trip");
 
     act(() => {
       routerStub.navigate(null);

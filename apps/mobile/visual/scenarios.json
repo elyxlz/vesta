@@ -633,12 +633,6 @@
       "group": "Chat"
     },
     {
-      "id": "agent-chat-typing",
-      "title": "Chat, typing",
-      "description": "The typing indicator while a paced reply streams in.",
-      "group": "Chat"
-    },
-    {
       "id": "agent-notifications-pending",
       "title": "Notifications, pending",
       "description": "Received notifications with pending ones highlighted.",
@@ -999,12 +993,6 @@
       "group": "Chat"
     },
     {
-      "id": "agent-chat-errors",
-      "title": "Chat, error lines",
-      "description": "The snag and rate-limit lines.",
-      "group": "Chat"
-    },
-    {
       "id": "agent-chat-markdown",
       "title": "Chat, rich reply",
       "description": "A reply with heading, code block, list, and link.",
@@ -1033,6 +1021,24 @@
       "title": "Chat, draft",
       "description": "A typed draft in the composer.",
       "group": "Chat"
+    },
+    {
+      "id": "room-chat-senders",
+      "title": "Group chat, senders",
+      "description": "A room with two agents, each run of bubbles captioned by who wrote it.",
+      "group": "Chat"
+    },
+    {
+      "id": "home-chats-section",
+      "title": "Home, chats section",
+      "description": "Every conversation under the carousel, with New group in the heading.",
+      "group": "Home"
+    },
+    {
+      "id": "new-room",
+      "title": "New group",
+      "description": "Naming a group and picking the agents that answer in it.",
+      "group": "Home"
     },
     {
       "id": "agent-chat-attach-sheet",

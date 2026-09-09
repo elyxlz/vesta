@@ -4,10 +4,10 @@ import { fade } from "@/lib/motion";
 
 export function DropOverlay({
   active,
-  agentName,
+  label,
 }: {
   active: boolean;
-  agentName: string;
+  label: string;
 }) {
   return (
     <AnimatePresence>
@@ -18,7 +18,7 @@ export function DropOverlay({
         >
           <div className="flex h-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary/50 bg-popover/80 text-muted-foreground">
             <Upload className="size-7" />
-            <span className="text-sm">drop to send to {agentName}</span>
+            <span className="text-sm">drop to send to {label}</span>
           </div>
         </motion.div>
       )}

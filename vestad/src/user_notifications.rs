@@ -1,5 +1,5 @@
 //! The one owner of user-facing notifications. Every notification, whoever produced it, goes
-//! through `UserNotifier::notify`: the `user_notification` delta always fans to every connected
+//! through `UserNotifier`: the `user_notification` delta always fans to every connected
 //! `/sync` client, the entry lands in the durable log, and each kind additionally reaches
 //! backgrounded mobile as an Expo push when its effective setting says so: the user's per-kind
 //! override from the gateway settings, or the kind's default in `MOBILE_PUSH_ROUTES`. That table
@@ -88,7 +88,15 @@ impl UserNotifier {
     /// takes the default from `effective_title`.
     pub fn notify(&self, agent: &str, kind: &str, title: String, body: String) {
         let title = effective_title(agent, title);
-        self.fan(self.log.append(agent, kind, &title, body));
+        self.fan(self.log.append(agent, kind, &title, body, None));
+    }
+
+    /// `notify` for a chat reply, naming the room it was minted in, so a client already looking at
+    /// that room can stay quiet and a push lands on that room's screen. Only a chat reply carries a
+    /// room, so the kind is always `KIND_MESSAGE`; every other producer calls `notify`.
+    pub fn notify_in_room(&self, agent: &str, title: String, body: String, room: String) {
+        let title = effective_title(agent, title);
+        self.fan(self.log.append(agent, KIND_MESSAGE, &title, body, Some(room)));
     }
 
     /// `notify`, delivered at most once ever: skipped when the durable log already holds an
@@ -110,11 +118,14 @@ impl UserNotifier {
             MOBILE_PUSH_ROUTES.iter().find(|(routed, _, _, _)| *routed == entry.kind.as_str())
         {
             if self.push_overrides.get(entry.kind.as_str()).copied().unwrap_or(*default_on) {
-                self.mobile_app.push_event(
-                    &entry.agent,
-                    subscription,
-                    serde_json::json!({ "type": event_type, "title": &entry.title, "body": &entry.body }),
-                );
+                let mut event =
+                    serde_json::json!({ "type": event_type, "title": &entry.title, "body": &entry.body });
+                // The room rides along when the entry has one, so the push lands on the room the
+                // reply was written in; every other kind carries no room field at all.
+                if let (Some(room), Some(fields)) = (&entry.room, event.as_object_mut()) {
+                    fields.insert("room".to_string(), room.clone().into());
+                }
+                self.mobile_app.push_event(&entry.agent, subscription, event);
             }
         }
         self.sync_hub.publish_user_notification(UserNotification {
@@ -124,6 +135,7 @@ impl UserNotifier {
             kind: entry.kind,
             title: entry.title,
             body: entry.body,
+            room: entry.room,
         });
     }
 
@@ -351,6 +363,37 @@ mod tests {
         assert_eq!(deltas.try_recv().expect("new version delta").title, "gateway v0.4.0 available");
         assert!(deltas.try_recv().is_err(), "the repeated title fans no delta");
         assert_eq!(delivery.log.page(None, 10).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_chat_notification_names_its_room_and_every_other_kind_names_none() {
+        let (delivery, sync_hub, _worker, _dir) = notifier(HashMap::new());
+        let mut deltas = sync_hub.subscribe_user_notifications();
+
+        delivery.notify_in_room("alex", "alex".into(), "hi".into(), "dm:alex".into());
+        delivery.notify("alex", KIND_TASK, "task done: x".into(), String::new());
+
+        let chat = deltas.try_recv().expect("chat delta");
+        assert_eq!(chat.room.as_deref(), Some("dm:alex"));
+        let task = deltas.try_recv().expect("task delta");
+        assert_eq!(task.room, None);
+        let logged = delivery.log.page(None, 10);
+        assert_eq!(logged[1].room.as_deref(), Some("dm:alex"));
+        assert_eq!(logged[0].room, None);
+    }
+
+    #[tokio::test]
+    async fn a_chat_push_names_its_room_and_every_other_push_names_none() {
+        let (delivery, _sync_hub, mut worker, _dir) = notifier(HashMap::new());
+
+        delivery.notify_in_room("alex", "alex".into(), "hi".into(), "dm:alex".into());
+        delivery.notify("alex", KIND_NEEDS_USER, "alex needs to sign in again".into(), String::new());
+
+        drop(delivery);
+        let chat = worker.event_rx.recv().await.expect("chat push").event;
+        assert_eq!(chat["room"].as_str(), Some("dm:alex"));
+        let status = worker.event_rx.recv().await.expect("status push").event;
+        assert!(status.get("room").is_none(), "only a chat push names a room");
     }
 
     #[tokio::test]

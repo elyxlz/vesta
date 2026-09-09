@@ -4,7 +4,7 @@
     "focused": true,
     "client": "mobile",
     "resync": false,
-    "viewing": "scout",
+    "viewing": "dm:scout",
     "deviceId": "device-1",
     "descriptor": "Vesta on iPhone",
     "timezone": "Europe/London",

@@ -818,8 +818,23 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             tokio::sync::mpsc::channel::<(String, AgentUpdate)>(64);
 
         loop {
+            // Read before the snapshot: a `DELETE /agents/{name}` landing while the list is in
+            // flight moves it, and the reconcile below is dropped rather than reopening the room
+            // that delete just took.
+            let forget_generation = state.chat.forget_generation();
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
+
+            // The roster is the one place every agent shows up: an agent created outside
+            // `POST /agents` (a `vestad import`, which runs in its own process) reaches the chat
+            // node here and nowhere else. A name set the node already holds is a no-op.
+            let chat_agents: Vec<String> =
+                agents.iter().map(|entry| entry.name.clone()).collect();
+            state.chat.reconcile_agents(
+                &chat_agents,
+                crate::time_utils::now_epoch_secs(),
+                forget_generation,
+            );
 
             // Lifecycle notifications come from vestad's authoritative agent list, never the
             // agent EventBus's thinking/idle activity. Each observed transition is routed into

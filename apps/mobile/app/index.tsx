@@ -24,6 +24,7 @@ import {
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
 import { Screen } from "@/components/layout/Screen";
+import { ChatsList } from "@/home/chats-list";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
@@ -176,93 +177,98 @@ export default function HomeScreen() {
         </Pressable>
       ) : (
         <>
-          <Animated.FlatList
-            ref={carouselRef}
-            data={agents}
-            style={styles.carousel}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            bounces
-            alwaysBounceHorizontal
-            overScrollMode="always"
-            decelerationRate="fast"
-            disableIntervalMomentum
-            keyExtractor={(agent) => agent.name}
-            // The list can remount mid-session (the gateway-update branch swaps it out); mounting
-            // at the retained index keeps it in step with the page dots and selection state.
-            initialScrollIndex={activeIndex}
-            getItemLayout={(_, index) => ({
-              length: width,
-              offset: width * index,
-              index,
-            })}
-            onScroll={Animated.event(
-              [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-              { useNativeDriver: true },
-            )}
-            scrollEventThrottle={16}
-            onScrollEndDrag={prepareSelectedAgent}
-            onMomentumScrollEnd={updateSelectedAgent}
-            renderItem={({ item, index }) => (
-              <AgentCarouselItem
-                agent={item}
-                bootTarget={initialAgentReady && index === activeIndex}
-                width={width}
-                onOpen={() => openAgent(item)}
-              />
-            )}
-          />
-          <View
-            accessible
-            accessibilityLabel={`Agent ${activeIndex + 1} of ${agents.length}`}
-            pointerEvents="none"
-            style={[styles.indicators, { bottom: Math.max(insets.bottom, 16) }]}
-          >
-            {agents.map((agent, index) => (
-              <View key={agent.name} style={styles.indicatorSlot}>
-                <View
-                  style={[
-                    styles.indicatorDot,
-                    { backgroundColor: colors.border },
-                  ]}
+          <View style={styles.carouselArea}>
+            <Animated.FlatList
+              ref={carouselRef}
+              data={agents}
+              style={styles.carousel}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              bounces
+              alwaysBounceHorizontal
+              overScrollMode="always"
+              decelerationRate="fast"
+              disableIntervalMomentum
+              keyExtractor={(agent) => agent.name}
+              // The list can remount mid-session (the gateway-update branch swaps it out); mounting
+              // at the retained index keeps it in step with the page dots and selection state.
+              initialScrollIndex={activeIndex}
+              getItemLayout={(_, index) => ({
+                length: width,
+                offset: width * index,
+                index,
+              })}
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+                { useNativeDriver: true },
+              )}
+              scrollEventThrottle={16}
+              onScrollEndDrag={prepareSelectedAgent}
+              onMomentumScrollEnd={updateSelectedAgent}
+              renderItem={({ item, index }) => (
+                <AgentCarouselItem
+                  agent={item}
+                  bootTarget={initialAgentReady && index === activeIndex}
+                  width={width}
+                  onOpen={() => openAgent(item)}
                 />
-                <Animated.View
-                  style={[
-                    styles.indicatorActive,
-                    {
-                      backgroundColor: colors.accent,
-                      opacity: scrollX.interpolate({
-                        inputRange: [
-                          (index - 1) * width,
-                          index * width,
-                          (index + 1) * width,
+              )}
+            />
+            <View
+              accessible
+              accessibilityLabel={`Agent ${activeIndex + 1} of ${agents.length}`}
+              pointerEvents="none"
+              style={styles.indicators}
+            >
+              {agents.map((agent, index) => (
+                <View key={agent.name} style={styles.indicatorSlot}>
+                  <View
+                    style={[
+                      styles.indicatorDot,
+                      { backgroundColor: colors.border },
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.indicatorActive,
+                      {
+                        backgroundColor: colors.accent,
+                        opacity: scrollX.interpolate({
+                          inputRange: [
+                            (index - 1) * width,
+                            index * width,
+                            (index + 1) * width,
+                          ],
+                          outputRange: [0, 1, 0],
+                          extrapolate: "clamp",
+                        }),
+                        transform: [
+                          {
+                            scaleX: scrollX.interpolate({
+                              inputRange: [
+                                (index - 1) * width,
+                                index * width,
+                                (index + 1) * width,
+                              ],
+                              outputRange: [
+                                PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
+                                1,
+                                PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
+                              ],
+                              extrapolate: "clamp",
+                            }),
+                          },
                         ],
-                        outputRange: [0, 1, 0],
-                        extrapolate: "clamp",
-                      }),
-                      transform: [
-                        {
-                          scaleX: scrollX.interpolate({
-                            inputRange: [
-                              (index - 1) * width,
-                              index * width,
-                              (index + 1) * width,
-                            ],
-                            outputRange: [
-                              PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
-                              1,
-                              PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
-                            ],
-                            extrapolate: "clamp",
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                />
-              </View>
-            ))}
+                      },
+                    ]}
+                  />
+                </View>
+              ))}
+            </View>
+          </View>
+          <View style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
+            <ChatsList />
           </View>
         </>
       )}
@@ -572,6 +578,9 @@ function HomeHeaderButton({
 
 const styles = StyleSheet.create({
   screen: { padding: 0 },
+  // The carousel and its page dots own the free space; the chats list sits under them and gives
+  // way on a short screen, its own rows scrolling inside.
+  carouselArea: { flex: 1 },
   carousel: { backgroundColor: "transparent" },
   agentPage: {
     flex: 1,
@@ -587,6 +596,7 @@ const styles = StyleSheet.create({
   },
   indicators: {
     position: "absolute",
+    bottom: 12,
     left: 0,
     right: 0,
     flexDirection: "row",

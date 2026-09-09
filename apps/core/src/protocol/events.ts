@@ -2,9 +2,9 @@ import type { ChatAttachment } from "../attachments/attachment-model";
 
 export type InputMethod = "voice" | "typed";
 
-// Every event carries the events.db rowid as `id`; the snapshot is a frame, not
-// an event, so it is absent from this union. Field names mirror the agent's
-// Python wire verbatim (snake_case), which vestad relays unchanged.
+// The rows a chat surface holds: the chat node's stored messages, whose `id` is the node's
+// message id, and the agent's own notification rows from `GET /history?channel=notifications`,
+// whose `id` is the events.db rowid. Field names mirror each producer's snake_case wire.
 interface EventBase {
   id: number;
   ts?: string;
@@ -24,7 +24,6 @@ interface NotificationFields {
 export type NotificationEvent = EventBase & NotificationFields;
 
 export type VestaEvent =
-  | (EventBase & { type: "status"; state: "idle" | "thinking" })
   | (EventBase & {
       type: "user";
       text: string;
@@ -32,33 +31,16 @@ export type VestaEvent =
       attachments?: ChatAttachment[];
       // The client id of the send this row echoes; a client confirms its optimistic bubble on it.
       intent_id?: string;
+      // The room this message belongs to and the member who wrote it, stamped on every row the
+      // chat node stores and absent from an optimistic bubble.
+      room?: string;
+      sender?: string;
     })
-  | (EventBase & { type: "assistant"; text: string })
-  | (EventBase & { type: "thinking"; text: string; signature: string })
-  | (EventBase & { type: "chat"; text: string; attachments?: ChatAttachment[] })
   | (EventBase & {
-      type: "tool_start";
-      tool: string;
-      input: string;
-      subagent?: boolean;
-    })
-  | (EventBase & { type: "tool_end"; tool: string; subagent?: boolean })
-  | (EventBase & { type: "error"; text: string })
-  | (EventBase & {
-      type: "rate_limited";
+      type: "chat";
       text: string;
-      window: string | null;
-      resets_at: number | null;
+      attachments?: ChatAttachment[];
+      room?: string;
+      sender?: string;
     })
-  | NotificationEvent
-  | (EventBase & { type: "notification_cleared"; notif_id: string })
-  | (EventBase & {
-      type: "subagent_start";
-      agent_id: string;
-      agent_type: string;
-    })
-  | (EventBase & {
-      type: "subagent_stop";
-      agent_id: string;
-      agent_type: string;
-    });
+  | NotificationEvent;

@@ -1,25 +1,28 @@
 import { useContext, useEffect, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
+import { useGlobalSearchParams, useSegments } from "expo-router";
 import { ControllerContext } from "@/controller/context";
 import { registerBackgroundReport } from "@/device-context/background-report";
 import { readDeviceContext } from "@/device-context/device-context";
 import { requestLocationIfUndecided } from "@/device-context/location-consent";
-import { useViewedAgent } from "@/hooks/use-viewed-agent";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { currentRoom } from "./current-room";
 
 function isFocused(state: AppStateStatus): boolean {
   return state === "active";
 }
 
 // Reports this device to vestad: app foreground (so it can suppress a push while a client is
-// focused), the agent whose page is open (so it drops the per-agent presence notification), and the
-// device context (zone, and position when shared) on each foreground edge, with the closed-app poll
-// registered alongside. Reports the open agent only while foregrounded; a backgrounded app is
-// viewing no one.
+// focused), the conversation that is open (so it drops the per-agent presence notification), and
+// the device context (zone, and position when shared) on each foreground edge, with the closed-app
+// poll registered alongside. Reports the open room only while foregrounded; a backgrounded app is
+// reading nothing.
 export function PresenceReporter() {
   const controller = useContext(ControllerContext);
   const { shareLocation } = usePreferences();
-  const agent = useViewedAgent();
+  const segments = useSegments();
+  const params = useGlobalSearchParams<{ name?: string; roomId?: string }>();
+  const room = currentRoom(segments, params);
   const [active, setActive] = useState(() => isFocused(AppState.currentState));
 
   useEffect(() => {
@@ -35,8 +38,8 @@ export function PresenceReporter() {
 
   useEffect(() => {
     if (!controller) return;
-    controller.reportViewing(active ? agent : null);
-  }, [controller, active, agent]);
+    controller.reportViewing(active ? room : null);
+  }, [controller, active, room]);
 
   // The closed-app poll reports the same context over HTTP; registering is idempotent.
   useEffect(() => {

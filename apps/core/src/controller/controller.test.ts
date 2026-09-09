@@ -41,7 +41,7 @@ function baseGateway(): GatewayInfo {
 }
 
 function baseTree(): Tree {
-  return { gateway: baseGateway(), agents: {}, devices: [] };
+  return { gateway: baseGateway(), agents: {}, devices: [], rooms: [] };
 }
 
 const NOW = 1_800_000_000_000;

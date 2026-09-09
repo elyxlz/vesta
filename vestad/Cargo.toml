@@ -43,7 +43,8 @@ axum = { version = "0.8", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "io-util", "process", "sync", "time", "fs", "net"] }
 tokio-tungstenite = "0.30"
-tower-http = { version = "0.7", features = ["cors", "trace", "timeout"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["cors", "fs", "trace", "timeout"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
@@ -71,6 +72,7 @@ tar = "0.4"
 flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 rust-embed = { version = "8", features = ["compression", "include-exclude", "debug-embed"] }
+mime = "0.3"
 mime_guess = "2"
 base64 = "0.23"
 hex = "0.4"

@@ -122,11 +122,7 @@ async function installState(
   await installSyncSocket(page, state.sync);
   await installGatewayMocks(page, state.routes ?? []);
   if (state.chatSocket) {
-    await installChatSocket(
-      page,
-      state.chatSocket.agent,
-      state.chatSocket.events,
-    );
+    await installChatSocket(page, state.chatSocket.events);
   }
 }
 

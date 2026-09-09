@@ -12,13 +12,23 @@ export interface LoggedUserNotification extends PillContent {
   id: number;
   /** Unix seconds at delivery. */
   at: number;
+  /** The room a chat reply landed in. Absent on every other kind. */
+  room?: string;
 }
 
 /** The `user_notification` delta as the log entry it mirrors, or null for any other delta. */
 export function loggedFromDelta(delta: Delta): LoggedUserNotification | null {
   if (delta.type !== "user_notification") return null;
-  const { id, at, agent, kind, title, body } = delta;
-  return { id, at, agent, kind, title, body };
+  const { id, at, agent, kind, title, body, room } = delta;
+  return {
+    id,
+    at,
+    agent,
+    kind,
+    title,
+    body,
+    ...(room === undefined ? {} : { room }),
+  };
 }
 
 export async function fetchUserNotifications(
@@ -80,11 +90,19 @@ function parseLogged(value: unknown): LoggedUserNotification[] {
   for (const raw of value) {
     const entry = record(raw);
     if (!entry) continue;
-    const { id, at, agent, kind, title, body } = entry;
+    const { id, at, agent, kind, title, body, room } = entry;
     if (typeof id !== "number" || typeof at !== "number") continue;
     if (typeof agent !== "string" || typeof kind !== "string") continue;
     if (typeof title !== "string" || typeof body !== "string") continue;
-    parsed.push({ id, at, agent, kind, title, body });
+    parsed.push({
+      id,
+      at,
+      agent,
+      kind,
+      title,
+      body,
+      ...(typeof room === "string" ? { room } : {}),
+    });
   }
   return parsed;
 }

@@ -868,7 +868,7 @@ def test_scan_ignores_lookalikes_that_are_not_the_apple_format(event_bus, db_con
 # ---------------------------------------------------------------------------
 # The whatsapp-shaped store mirrors skills/whatsapp/cli/storage.go: a messages table, a standalone
 # (contentful) FTS5 mirror, and an AFTER UPDATE trigger keeping the mirror's content in sync. The
-# app-chat-shaped store mirrors skills/app-chat/cli/src/app_chat_cli/store.py: JSON event blobs
+# chat-shaped store mirrors skills/chat/cli/src/chat_cli/store.py: JSON event blobs
 # behind an external-content FTS index with insert/delete triggers only.
 
 WHATSAPP_SCHEMA = """
@@ -880,7 +880,7 @@ CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
 END;
 """
 
-APP_CHAT_SCHEMA = """
+CHAT_SCHEMA = """
 CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, data TEXT NOT NULL);
 CREATE VIRTUAL TABLE events_fts USING fts5(text_content, content='events', content_rowid='id');
 CREATE TRIGGER events_fts_ai AFTER INSERT ON events BEGIN
@@ -909,12 +909,12 @@ def _make_whatsapp_store(home: pl.Path, text: str) -> pl.Path:
     return path
 
 
-def _make_app_chat_store(home: pl.Path, text: str) -> pl.Path:
-    path = home / ".app-chat" / "app-chat.db"
+def _make_chat_store(home: pl.Path, text: str) -> pl.Path:
+    path = home / ".chat" / "chat.db"
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript(APP_CHAT_SCHEMA)
+    conn.executescript(CHAT_SCHEMA)
     conn.execute("INSERT INTO events (ts, data) VALUES ('2026-01-01', ?)", (json.dumps({"type": "user", "text": text}),))
     conn.commit()
     conn.close()
@@ -1078,12 +1078,12 @@ def test_scrub_channel_refs_redact_the_row_its_fts_mirror_and_the_disk_bytes(tmp
         assert not sidecar.is_file() or SECRET.encode() not in sidecar.read_bytes()
 
 
-def test_scrub_app_chat_row_keeps_json_valid_and_resyncs_its_fts(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+def test_scrub_chat_row_keeps_json_valid_and_resyncs_its_fts(tmp_path, event_bus, db_conn, monkeypatch, capsys):
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
-    path = _make_app_chat_store(tmp_path, 'mongo "mongodb://user:secretpass@cluster0.example.net/db" for backups')
+    path = _make_chat_store(tmp_path, 'mongo "mongodb://user:secretpass@cluster0.example.net/db" for backups')
     out = _scan_output(monkeypatch, capsys)
-    refs = sorted({line.split("|", 1)[0] for line in out.splitlines() if line.startswith("app-chat:")})
-    assert refs == ["app-chat:events:1"]
+    refs = sorted({line.split("|", 1)[0] for line in out.splitlines() if line.startswith("chat:")})
+    assert refs == ["chat:events:1"]
 
     monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", *refs])
     assert redact.main() == 0
@@ -1091,7 +1091,7 @@ def test_scrub_app_chat_row_keeps_json_valid_and_resyncs_its_fts(tmp_path, event
     conn = sqlite3.connect(path)
     data = conn.execute("SELECT data FROM events WHERE id = 1").fetchone()[0]
     assert "secretpass" not in data
-    assert "[REDACTED]" in json.loads(data)["text"]  # still valid JSON, so app-chat history still parses
+    assert "[REDACTED]" in json.loads(data)["text"]  # still valid JSON, so chat history still parses
     assert conn.execute("SELECT count(*) FROM events_fts WHERE events_fts MATCH 'secretpass'").fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM events_fts WHERE events_fts MATCH 'backups'").fetchone()[0] == 1
     conn.close()

@@ -15,7 +15,7 @@ export interface DownloadState {
 
 interface DownloadsStore {
   active: Record<string, DownloadState>;
-  start: (agent: string, attachment: ChatAttachment) => void;
+  start: (attachment: ChatAttachment) => void;
 }
 
 // A finished download stays "done" this long before the store forgets it.
@@ -37,7 +37,7 @@ function without(
 
 export const useDownloadsStore = create<DownloadsStore>((set, get) => ({
   active: {},
-  start: (agent, attachment) => {
+  start: (attachment) => {
     const id = attachment.id;
     if (get().active[id]?.phase === "fetching") return;
     const total = attachment.size;
@@ -48,7 +48,7 @@ export const useDownloadsStore = create<DownloadsStore>((set, get) => ({
       },
     }));
     const step = progressStep(total);
-    downloadAttachment(agent, attachment, (bytes) => {
+    downloadAttachment(attachment, (bytes) => {
       set((state) => {
         const entry = state.active[id];
         if (entry?.phase !== "fetching") return state;

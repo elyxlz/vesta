@@ -109,7 +109,7 @@ function start(http: HttpClient, size: number, run = harness()) {
   const blob = new Blob([new Uint8Array(size)]);
   const handle = uploadAttachment(
     http,
-    { agent: "apollo", blob, meta: { ...META, size } },
+    { blob, meta: { ...META, size } },
     run.deps,
     run.callbacks,
   );
@@ -135,28 +135,24 @@ describe("uploadAttachment", () => {
     const { handle, run } = start(http, size);
 
     const create = await next();
-    expect(create.path).toBe("/agents/apollo/app-chat/attachments");
+    expect(create.path).toBe("/rooms/attachments");
     create.resolve({ id: "att1" });
 
     const first = await next();
-    expect(first.path).toBe(
-      "/agents/apollo/app-chat/attachments/att1/data?offset=0",
-    );
+    expect(first.path).toBe("/rooms/attachments/att1/data?offset=0");
     expect((first.init?.body as Blob).size).toBe(INITIAL_CHUNK_BYTES);
     run.advance(CHUNK_FAST_MS + 1); // a slow chunk: size must not double
     first.resolve({ ok: true, received: INITIAL_CHUNK_BYTES });
 
     const second = await next();
     expect(second.path).toBe(
-      `/agents/apollo/app-chat/attachments/att1/data?offset=${String(INITIAL_CHUNK_BYTES)}`,
+      `/rooms/attachments/att1/data?offset=${String(INITIAL_CHUNK_BYTES)}`,
     );
     expect((second.init?.body as Blob).size).toBe(10);
     second.resolve({ ok: true, received: size });
 
     const complete = await next();
-    expect(complete.path).toBe(
-      "/agents/apollo/app-chat/attachments/att1/complete",
-    );
+    expect(complete.path).toBe("/rooms/attachments/att1/complete");
     complete.resolve({ attachment: { ...DONE, size } });
 
     await expect(handle.result).resolves.toEqual({ ...DONE, size });
@@ -188,7 +184,7 @@ describe("uploadAttachment", () => {
     await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
 
     const probe = await next();
-    expect(probe.path).toBe("/agents/apollo/app-chat/attachments/att1/status");
+    expect(probe.path).toBe("/rooms/attachments/att1/status");
     probe.resolve({ received: INITIAL_CHUNK_BYTES, size, finalized: false });
 
     const third = await next();
@@ -229,7 +225,7 @@ describe("uploadAttachment", () => {
     first.reject(new ApiError(409, "offset mismatch"));
 
     const probe = await next();
-    expect(probe.path).toBe("/agents/apollo/app-chat/attachments/att1/status");
+    expect(probe.path).toBe("/rooms/attachments/att1/status");
     // The lost-response case: the server already has the whole first chunk.
     probe.resolve({ received: INITIAL_CHUNK_BYTES, size, finalized: false });
 
@@ -272,21 +268,17 @@ describe("uploadAttachment", () => {
     const run = harness();
     const over = uploadAttachment(
       http,
-      {
-        agent: "apollo",
-        blob,
-        meta: { ...META, size: MAX_ATTACHMENT_BYTES + 1 },
-      },
+      { blob, meta: { ...META, size: MAX_ATTACHMENT_BYTES + 1 } },
       run.deps,
       run.callbacks,
     );
     await expect(over.result).rejects.toMatchObject({ reason: "too_large" });
 
     const notFound = scriptedHttp();
-    const old = start(notFound.http, 1);
+    const missing = start(notFound.http, 1);
     (await notFound.next()).reject(new ApiError(404, "not found"));
-    await expect(old.handle.result).rejects.toMatchObject({
-      reason: "unsupported_agent",
+    await expect(missing.handle.result).rejects.toMatchObject({
+      reason: "failed",
     });
 
     const badRequest = scriptedHttp();

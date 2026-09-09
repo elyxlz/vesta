@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  appChatAttachmentPath,
-  attachmentKind,
-  formatBytes,
-} from "./attachment-model";
+import { attachmentKind, formatBytes } from "./attachment-model";
 
 describe("attachmentKind", () => {
   it.each([
@@ -30,19 +26,5 @@ describe("formatBytes", () => {
     [3 * 1024 * 1024 * 1024, "3.0 GB"],
   ])("formats %d as %s", (size, formatted) => {
     expect(formatBytes(size)).toBe(formatted);
-  });
-});
-
-describe("appChatAttachmentPath", () => {
-  it("builds the proxied service subpath with encoding", () => {
-    expect(appChatAttachmentPath("my agent", "abc123")).toBe(
-      "/agents/my%20agent/app-chat/attachments/abc123",
-    );
-  });
-
-  it("appends the download flag", () => {
-    expect(appChatAttachmentPath("a", "x", true)).toBe(
-      "/agents/a/app-chat/attachments/x?download=1",
-    );
   });
 });

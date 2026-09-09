@@ -322,7 +322,7 @@ fn render_push(
                 Some(text) if device.previews && !text.is_empty() => text.to_string(),
                 _ => format!("{agent} sent a new message."),
             };
-            (title, body, format!("/agent/{agent}/chat"))
+            (title, body, chat_route(agent, text_field(event, "room")))
         }
         // Agent news carrying its server-decided text; tapping it lands on the agent, where
         // the fix (or the story) lives.
@@ -350,6 +350,15 @@ fn render_push(
             "gateway": device.gateway,
             "route": route,
         }),
+    }
+}
+
+/// Where a chat push lands: the agent's own chat page for its direct room (and for a payload
+/// naming no room at all), the room screen for every other room.
+fn chat_route(agent: &str, room: Option<&str>) -> String {
+    match room {
+        Some(room) if room != crate::chat::Room::direct_id(agent) => format!("/chat/{room}"),
+        _ => format!("/agent/{agent}/chat"),
     }
 }
 
@@ -518,6 +527,23 @@ mod tests {
         let message = render_push(&device(true, &["chat"]), "alex", "chat", &event);
         assert_eq!(message.body, "Hello from Vesta");
         assert_eq!(message.data["eventType"], "chat");
+    }
+
+    #[test]
+    fn a_chat_push_routes_to_the_agent_page_for_a_direct_room_and_to_the_room_screen_otherwise() {
+        let direct = serde_json::json!({"type": "chat", "title": "alex", "body": "hi", "room": "dm:alex"});
+        let message = render_push(&device(false, &["chat"]), "alex", "chat", &direct);
+        assert_eq!(message.data["route"], "/agent/alex/chat");
+        let group = serde_json::json!({"type": "chat", "title": "alex", "body": "hi", "room": "team"});
+        let message = render_push(&device(false, &["chat"]), "alex", "chat", &group);
+        assert_eq!(message.data["route"], "/chat/team");
+    }
+
+    #[test]
+    fn a_chat_push_with_no_room_routes_to_the_agent_page() {
+        let event = serde_json::json!({"type": "chat", "title": "alex", "body": "hi"});
+        let message = render_push(&device(false, &["chat"]), "alex", "chat", &event);
+        assert_eq!(message.data["route"], "/agent/alex/chat");
     }
 
     #[test]

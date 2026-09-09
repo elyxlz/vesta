@@ -11,7 +11,8 @@ export interface ScenarioState {
   route?: string;
   sync?: SyncFixture;
   routes?: RouteFixture[];
-  chatSocket?: { agent: string; events: VestaEvent[] };
+  // The live room socket. One pattern serves every room, so the events are all it carries.
+  chatSocket?: { events: VestaEvent[] };
   // Extra localStorage keys on top of the saved connection and the theme.
   storage?: Record<string, string>;
   // false leaves no saved connection, which is how the connect page is reached.

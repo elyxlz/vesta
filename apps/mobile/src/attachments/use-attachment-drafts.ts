@@ -69,7 +69,6 @@ export interface AttachmentDrafts {
 }
 
 export function useAttachmentDrafts(
-  agent: string,
   holdKey: string,
   http: HttpClient,
   notify: (message: string) => void,
@@ -79,7 +78,6 @@ export function useAttachmentDrafts(
     store,
     agentHolds.attachments,
     holdKey,
-    agent,
   );
   const addAssets = useCallback(
     async (assets: PickedAsset[]) => {

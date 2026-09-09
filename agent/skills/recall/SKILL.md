@@ -18,7 +18,7 @@ recall "wifi password" --snippet 10
 
 Results are ranked by relevance with a recency boost, so recent conversations surface higher.
 
-Both sides of the conversation are searchable: your own messages, and the inbound ones that arrive as notifications (whatsapp, telegram, app-chat, email, tasks). An inbound hit comes back as role `notification`, with the channel and sender carried inside the message itself. Internal notifications (`source=core`: proactive checks, greetings, migrations) are not indexed, since thousands of near-identical copies of one string would bury every real hit.
+Both sides of the conversation are searchable: your own messages, and the inbound ones that arrive as notifications (whatsapp, telegram, chat, email, tasks). An inbound hit comes back as role `notification`, with the channel and sender carried inside the message itself. Internal notifications (`source=core`: proactive checks, greetings, migrations) are not indexed, since thousands of near-identical copies of one string would bury every real hit.
 
 ## Flags
 

@@ -51,7 +51,7 @@ describe("visual Metro agent fixtures", () => {
 
     for (const origin of [
       "../src/agent/ChatPage.tsx",
-      "../src/chat/useAgentSocket.ts",
+      "../src/chat/useRoomSocket.ts",
     ]) {
       expect(
         config.resolver.resolveRequest(

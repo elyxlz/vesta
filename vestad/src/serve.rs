@@ -638,6 +638,8 @@ async fn create_agent_handler(
     }
     state.agent_status_cache.clear_build_phase(&name);
     let name = result?;
+    // A new agent gets its direct room now, so its first message already has a room to land in.
+    state.chat.ensure_direct_room(&name, crate::time_utils::now_epoch_secs());
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
 }
@@ -892,6 +894,9 @@ async fn destroy_agent_handler(
     // Forget the destroyed agent's lifecycle-observation state, so an agent later created under
     // the same name seeds fresh instead of diffing against its predecessor.
     state.agent_status_cache.forget_agent(&name);
+    // It leaves every member set: a room left with no agents goes with it, messages included,
+    // while a room that keeps a member stays readable.
+    state.chat.forget_agent(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -971,6 +976,8 @@ async fn rename_agent_handler(
         }
         save_settings(&settings);
     }
+    // Rooms are keyed by agent name too: carry the chat history across the rename.
+    state.chat.rename_agent(&name, &new_name);
 
     if let Err(e) = crate::agent_notification::drop(&state.docker, &new_name, &crate::agent_notification::rename(&name, &new_name)).await {
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
@@ -2728,6 +2735,52 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
+    // Chat: the user and every agent share these routes, so the gate resolves the caller into a
+    // ChatPrincipal and each handler checks membership. No timeout layer: the live socket joins
+    // this group, and a finite deadline would cut it.
+    let chat_routes = Router::new()
+        .route(
+            "/rooms",
+            get(crate::chat::routes::list_rooms_handler)
+                .post(crate::chat::routes::open_room_handler),
+        )
+        .route("/rooms/{id}", axum::routing::delete(crate::chat::routes::delete_room_handler))
+        .route("/rooms/{id}/history", get(crate::chat::routes::history_handler))
+        .route("/rooms/{id}/messages", post(crate::chat::routes::post_message_handler))
+        .route("/rooms/{id}/messages/import", post(crate::chat::routes::import_handler))
+        .route("/rooms/ws", get(crate::chat::socket::rooms_ws_handler))
+        .route(
+            "/rooms/attachments",
+            post(crate::chat::attachment_routes::create_attachment_handler),
+        )
+        .route(
+            "/rooms/attachments/{id}",
+            get(crate::chat::attachment_routes::serve_attachment_handler),
+        )
+        // One chunk plus its framing: the only route that carries bytes, and the only one whose
+        // body limit is raised off the default.
+        .route(
+            "/rooms/attachments/{id}/data",
+            put(crate::chat::attachment_routes::attachment_data_handler).route_layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::chat::attachments::MAX_CHUNK_BYTES + CHUNK_FRAMING_BYTES,
+                ),
+            ),
+        )
+        .route(
+            "/rooms/attachments/{id}/status",
+            get(crate::chat::attachment_routes::attachment_status_handler),
+        )
+        .route(
+            "/rooms/attachments/{id}/complete",
+            post(crate::chat::attachment_routes::complete_attachment_handler),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_chat,
+        ))
+        .with_state(state.clone());
+
     // Agent proxy: auth is checked inside the handler — service requests
     // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
     let agents_proxy = Router::new()
@@ -2753,6 +2806,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route("/agents/{name}/user-notification", post(user_notification_handler))
         .route("/agents/{name}/devices", get(crate::user_context::agent_devices_handler))
+        .route("/agents/{name}/peers", get(crate::chat::routes::peers_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -2861,6 +2915,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(agents_service_keys)
         .merge(agents_services_read)
         .merge(gateway_logs)
+        .merge(chat_routes)
         .merge(agents_proxy)
         .merge(crate::app_static::router())
         .layer(
@@ -3072,6 +3127,12 @@ pub struct ServerConfig {
     pub force_update: bool,
 }
 
+/// The chat attachment GC waits this long after boot, so a large first pass never delays serving.
+const SWEEP_STARTUP_DELAY_SECS: u64 = 60;
+const SWEEP_INTERVAL_SECS: u64 = 6 * 3600;
+/// Headroom over one chunk for the request framing the body limit counts with it.
+const CHUNK_FRAMING_BYTES: usize = 1024 * 1024;
+
 pub async fn run_server(cfg: ServerConfig) {
     let ServerConfig {
         port,
@@ -3144,6 +3205,13 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
+    // Every agent on this host has its direct room before the first client or agent connects, and
+    // the node learns the names membership checks are made of.
+    state.chat.reconcile_agents(
+        &docker::env_file_names(&state.env_config.agents_dir),
+        crate::time_utils::now_epoch_secs(),
+        state.chat.forget_generation(),
+    );
     recover_interrupted_update(&state);
     // Every boot, not only after an interrupted update: a backup killed with its process (a crash,
     // a reboot mid-export) leaves the same throwaway container behind and nothing else collects it.
@@ -3155,6 +3223,37 @@ pub async fn run_server(cfg: ServerConfig) {
     // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
     let flush_registry = state.device_registry.clone();
     tokio::spawn(async move { flush_registry.run_flusher().await });
+    // Attachment GC: abandoned upload sessions, and finalized blobs no message ever referenced.
+    // The first pass waits out startup so a big rmtree never delays serving, and each pass walks
+    // the disk on a blocking thread.
+    let sweep_chat = state.chat.clone();
+    tokio::spawn(async move {
+        let mut delay = SWEEP_STARTUP_DELAY_SECS;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            delay = SWEEP_INTERVAL_SECS;
+            // An unknown reference set must never read as "nothing is referenced".
+            let Some(referenced) = sweep_chat.referenced_attachment_ids() else {
+                tracing::warn!("chat message log unreadable: skipping the attachment sweep");
+                continue;
+            };
+            let node = sweep_chat.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                node.attachments()
+                    .sweep(crate::time_utils::now_epoch_secs(), &|id| {
+                        referenced.contains(id)
+                    })
+            })
+            .await;
+            match pass {
+                Ok(swept) if !swept.is_empty() => {
+                    tracing::info!(count = swept.len(), "swept abandoned chat attachments");
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "chat attachment sweep failed"),
+            }
+        }
+    });
     // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
     // supervisor reports its exit so run_server's select never waits on it, because a branch that
     // resolved would end the select and stop the shutdown handler from stopping the agents.
@@ -3857,6 +3956,95 @@ mod tests {
         let renamed = serde_json::json!({ "name": "sample-agent-2" });
         let host_folders = serde_json::json!({ "folders": ["/home/sample/Documents"] });
 
+        // One `GET /notifications` page: the durable entries behind the ephemeral
+        // `user_notification` delta, the message one naming the room it was minted in.
+        let user_notifications = serde_json::json!({
+            "notifications": [
+                crate::user_notification_log::LoggedUserNotification {
+                    id: 3,
+                    at: 1_700_000_400,
+                    agent: "sample-agent".into(),
+                    kind: crate::user_notifications::KIND_MESSAGE.into(),
+                    title: "sample-agent".into(),
+                    body: "hello".into(),
+                    room: Some("dm:sample-agent".into()),
+                },
+                crate::user_notification_log::LoggedUserNotification {
+                    id: 2,
+                    at: 1_700_000_000,
+                    agent: String::new(),
+                    kind: crate::user_notifications::KIND_UPDATE_AVAILABLE.into(),
+                    title: "gateway v0.3.0 available".into(),
+                    body: String::new(),
+                    room: None,
+                },
+            ]
+        });
+
+        // The chat node's client surface: the room list, the open-room answer, one history page,
+        // and the two intake acks. Built from the production structs so a renamed field fails here.
+        let chat_rooms = vec![
+            crate::chat::Room {
+                id: "dm:sample-agent".into(),
+                name: None,
+                agents: vec!["sample-agent".into()],
+                created_at: 1_756_900_000,
+                last_message_at: Some(1_756_903_000),
+            },
+            crate::chat::Room {
+                id: "grp-0011223344556677".into(),
+                name: Some("trip planning".into()),
+                agents: vec!["sample-agent".into(), "scout".into()],
+                created_at: 1_756_900_100,
+                last_message_at: None,
+            },
+        ];
+        let sample_attachment = crate::chat::AttachmentMeta {
+            id: "0f1e2d3c4b5a69788796a5b4c3d2e1f0".into(),
+            name: "photo.png".into(),
+            mime: "image/png".into(),
+            size: 1234,
+            width: Some(640),
+            height: Some(480),
+            duration_secs: None,
+        };
+        let chat_messages = vec![
+            crate::chat::Message {
+                id: 1,
+                ts: crate::chat::format_ts(1_788_512_400_000),
+                room: "dm:sample-agent".into(),
+                kind: crate::chat::MessageKind::User,
+                sender: crate::chat::USER_SENDER.into(),
+                text: "are we still on for friday?".into(),
+                input_method: Some(crate::chat::InputMethod::Typed),
+                intent_id: Some("c-sample-1".into()),
+                origin_id: None,
+                attachments: Vec::new(),
+            },
+            crate::chat::Message {
+                id: 2,
+                ts: crate::chat::format_ts(1_788_512_404_123),
+                room: "dm:sample-agent".into(),
+                kind: crate::chat::MessageKind::Chat,
+                sender: "sample-agent".into(),
+                text: "yes, 19:00 at the usual place".into(),
+                input_method: None,
+                intent_id: None,
+                origin_id: None,
+                attachments: vec![sample_attachment.clone()],
+            },
+        ];
+        let rooms = serde_json::json!({ "rooms": chat_rooms });
+        let room_opened = serde_json::json!({ "room": chat_rooms[0] });
+        let chat_history = serde_json::json!({ "events": chat_messages, "cursor": 1 });
+        let chat_post = serde_json::json!({ "ok": true, "id": 2 });
+        let chat_import = serde_json::json!({ "imported": 3, "skipped": 1 });
+        let attachment_created = serde_json::json!({ "id": &sample_attachment.id });
+        let attachment_status = serde_json::json!({
+            "received": sample_attachment.size, "size": sample_attachment.size, "finalized": true
+        });
+        let attachment_completed = serde_json::json!({ "attachment": &sample_attachment });
+
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
@@ -3873,6 +4061,15 @@ mod tests {
             "file_read": file_read,
             "renamed": renamed,
             "host_folders": host_folders,
+            "user_notifications": user_notifications,
+            "rooms": rooms,
+            "room_opened": room_opened,
+            "chat_history": chat_history,
+            "chat_post": chat_post,
+            "chat_import": chat_import,
+            "attachment_created": attachment_created,
+            "attachment_status": attachment_status,
+            "attachment_completed": attachment_completed,
         })
     }
 

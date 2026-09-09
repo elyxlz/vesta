@@ -46,12 +46,11 @@ describe("saveAttachment", () => {
           return share();
         },
       }),
-      "apollo",
       ATTACHMENT,
     );
     const url = download.mock.calls[0]?.[0] ?? "";
     expect(url).toBe(
-      "https://gw.example/agents/apollo/app-chat/attachments/att1?download=1&token=t",
+      "https://gw.example/rooms/attachments/att1?download=1&token=t",
     );
     expect(share).toHaveBeenCalledTimes(1);
   });
@@ -62,7 +61,6 @@ describe("saveAttachment", () => {
         download: () => Promise.reject(new Error("UnableToDownload: 410")),
         probe: () => Promise.resolve(410),
       }),
-      "apollo",
       ATTACHMENT,
     );
     await expect(attempt).rejects.toBeInstanceOf(AttachmentRemovedError);
@@ -75,7 +73,6 @@ describe("saveAttachment", () => {
         download: () => Promise.reject(failure),
         probe: () => Promise.reject(new Error("also down")),
       }),
-      "apollo",
       ATTACHMENT,
     );
     await expect(attempt).rejects.toBe(failure);
@@ -88,7 +85,6 @@ describe("saveAttachment", () => {
         download: () => Promise.reject(new Error("boom")),
         share: () => share(),
       }),
-      "apollo",
       ATTACHMENT,
     ).catch(() => undefined);
     expect(share).not.toHaveBeenCalled();

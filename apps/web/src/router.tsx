@@ -3,6 +3,7 @@ import { RouteErrorBoundary } from "@/components/ErrorBoundary";
 import { AgentLayout } from "@/layouts/AgentLayout";
 import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
+import { RoomLayout } from "@/layouts/RoomLayout";
 import { AppSettingsPage } from "@/components/AppSettingsPage";
 import { Callback } from "@/components/Callback";
 import { Connect } from "@/components/Connect";
@@ -44,6 +45,11 @@ export const router = createBrowserRouter(
                 { path: "logs", element: null },
                 { path: "settings", element: null },
               ],
+            },
+            {
+              path: "chat/:roomId",
+              element: <RoomLayout />,
+              errorElement: <RouteErrorBoundary />,
             },
             { path: "*", element: <Navigate to="/" replace /> },
           ],

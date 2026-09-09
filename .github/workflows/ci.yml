@@ -149,7 +149,7 @@ jobs:
             comms:
               - 'agent/skills/whatsapp/cli/**'
               - 'agent/skills/telegram/cli/**'
-              - 'agent/skills/app-chat/cli/**'
+              - 'agent/skills/chat/cli/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
 
@@ -321,7 +321,7 @@ jobs:
       - name: Run agent checks
         run: ./check.sh agent
 
-  # ── Communication channels (whatsapp + telegram Go CLIs, app-chat Python CLI) ──
+  # ── Communication channels (whatsapp + telegram Go CLIs, chat Python CLI) ──
   comms-checks:
     name: Communication channels · Lint, build, and test
     needs: detect-changes
@@ -357,8 +357,8 @@ jobs:
       - name: Run otp checks
         run: ./check.sh otp
 
-      - name: Run app-chat checks
-        run: ./check.sh app-chat
+      - name: Run chat checks
+        run: ./check.sh chat
 
   # ── Frontend unit tests (one job per app, gated on its dependency closure) ──
   # @vesta/core is the shared controller: web bundles it, desktop bundles web,

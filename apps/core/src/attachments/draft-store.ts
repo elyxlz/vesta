@@ -49,14 +49,14 @@ export interface DraftStoreDeps {
 export interface DraftStore {
   // Accepts one source into the cell: false when the per-message cap refused it (the caller stops
   // taking more), true otherwise (accepted, or skipped with a notice).
-  add: (key: string, agent: string, source: DraftSource) => boolean;
-  retry: (key: string, agent: string, localId: string) => void;
+  add: (key: string, source: DraftSource) => boolean;
+  retry: (key: string, localId: string) => void;
   remove: (key: string, localId: string) => void;
   clear: (key: string) => void;
   previewUrl: (localId: string) => string | null;
 }
 
-// Composer attachment drafts, held per agent and per gateway exactly like the text draft, so every
+// Composer attachment drafts, held per room and per gateway exactly like the text draft, so every
 // surface over the same key shares one list and leaving the route never cancels an upload. The
 // engine, the source, and the preview are store state keyed by localId; the hold cell carries only
 // the renderable DraftAttachment list.
@@ -100,7 +100,7 @@ export function createDraftStore(deps: DraftStoreDeps): DraftStore {
     mutate(key, localId, (drafts) => removeDraft(drafts, localId));
   };
 
-  const startUpload = (key: string, agent: string, localId: string): void => {
+  const startUpload = (key: string, localId: string): void => {
     const source = sources.get(localId);
     if (!source) {
       discard(key, localId);
@@ -129,7 +129,7 @@ export function createDraftStore(deps: DraftStoreDeps): DraftStore {
         };
         handle = uploadAttachment(
           deps.http,
-          { agent, blob, meta },
+          { blob, meta },
           { connectivity: deps.connectivity, now: () => Date.now() },
           {
             onProgress: (sent, total) => {
@@ -165,11 +165,6 @@ export function createDraftStore(deps: DraftStoreDeps): DraftStore {
               error instanceof UploadError ? error.reason : "failed";
             // The remove or orphan that aborted already cleaned up.
             if (reason === "aborted") return;
-            if (reason === "unsupported_agent") {
-              deps.notify(`${agent} needs an update to receive files`);
-              discard(key, localId);
-              return;
-            }
             mutate(key, localId, (drafts) =>
               failDraft(drafts, localId, reason),
             );
@@ -184,7 +179,7 @@ export function createDraftStore(deps: DraftStoreDeps): DraftStore {
   };
 
   return {
-    add: (key, agent, source) => {
+    add: (key, source) => {
       if (source.size > MAX_ATTACHMENT_BYTES) {
         deps.notify(
           `${source.name} is too large (${formatBytes(source.size)}, limit ${formatBytes(MAX_ATTACHMENT_BYTES)})`,
@@ -206,10 +201,10 @@ export function createDraftStore(deps: DraftStoreDeps): DraftStore {
       deps.hold.persist(key, added);
       sources.set(localId, source);
       if (source.preview != null) previews.set(localId, source.preview);
-      startUpload(key, agent, localId);
+      startUpload(key, localId);
       return true;
     },
-    retry: (key, agent, localId) => {
+    retry: (key, localId) => {
       const source = sources.get(localId);
       if (!source) {
         discard(key, localId);
@@ -218,7 +213,7 @@ export function createDraftStore(deps: DraftStoreDeps): DraftStore {
       mutate(key, localId, (current) =>
         setDraftProgress(current, localId, 0, source.size),
       );
-      startUpload(key, agent, localId);
+      startUpload(key, localId);
     },
     remove: discard,
     clear: (key) => {

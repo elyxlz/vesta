@@ -517,7 +517,7 @@ def test_search_lists_local_catalog_and_marks_active(tmp_path):
 def _skill_link_box(tmp_path, defaults=DEFAULT_SKILLS, optional=("tasks", "dream", "whatsapp", "microsoft")):
     home = tmp_path / "home"
     (home / "agent/core/skills").mkdir(parents=True)
-    for core_skill in ("app-chat", "upstream-sync"):
+    for core_skill in ("chat", "upstream-sync"):
         d = home / "agent/core/skills" / core_skill
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"---\nname: {core_skill}\ndescription: core\n---\n")
@@ -534,7 +534,7 @@ def test_agent_startup_seeds_defaults_and_always_links_core(tmp_path):
     assert _run_agent_startup(home).returncode == 0
     assert _active(home) == sorted(DEFAULT_SKILLS)  # seeded from the shipped defaults
     # Defaults + every core skill are linked; an inactive optional (whatsapp) is not.
-    assert set(_links(home)) == {*DEFAULT_SKILLS, "app-chat", "upstream-sync"}
+    assert set(_links(home)) == {*DEFAULT_SKILLS, "chat", "upstream-sync"}
     assert "whatsapp" not in _links(home)
     assert json.loads((home / ".claude/settings.json").read_text()) == {"permissions": {"allow": []}}
 

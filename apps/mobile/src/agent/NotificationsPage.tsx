@@ -2,25 +2,22 @@ import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { FlatList, StyleSheet, View, type ListRenderItem } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getNotificationHistory } from "@vesta/core";
-import { useAgent } from "@/agent/AgentProvider";
 import {
-  getPendingNotificationIds,
-  mergeLiveNotifications,
-} from "@/agent/notification-list-model";
-import {
+  getNotificationHistory,
   notificationRowKey,
   parseNotificationContent,
   type NotificationView,
 } from "@vesta/core";
+import { useAgent } from "@/agent/AgentProvider";
+import { notificationRows } from "@/agent/notification-list-model";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { navHeaderHeight, radii } from "@/theme/layout";
 
-// Memoized: row identities are stable across merges, so unrelated chat events re-render no rows,
-// and the parsed content plus formatted timestamp are computed once per event.
+// Memoized: the content is parsed and the timestamp formatted once per event, so a re-render of
+// the list leaves every unchanged row alone.
 const NotificationRow = memo(function NotificationRow({
   event,
   pending,
@@ -134,7 +131,7 @@ export default function NotificationsPage({
   presentation = "pager",
 }: NotificationsPageProps) {
   const { api } = useSession();
-  const { name, socket } = useAgent();
+  const { name, socket, pendingNotifications } = useAgent();
   const { colors } = usePreferences();
   const insets = useSafeAreaInsets();
   const { data, isLoading, refetch } = useQuery({
@@ -142,21 +139,27 @@ export default function NotificationsPage({
     queryFn: () => getNotificationHistory(api, name),
   });
   const lastReseedRevision = useRef(0);
-  const items = useMemo(
-    () => mergeLiveNotifications(data?.notifications ?? [], socket.events),
-    [data?.notifications, socket.events],
-  );
   const standalone = presentation === "standalone";
-  const displayItems = useMemo(
-    () => (standalone ? [...items].reverse() : items),
-    [items, standalone],
+  const displayItems = useMemo<NotificationView[]>(
+    () =>
+      notificationRows(
+        data?.notifications ?? [],
+        pendingNotifications,
+        standalone,
+      ),
+    [data?.notifications, pendingNotifications, standalone],
   );
   const bottomAnchor = useBottomAnchoredFeed<NotificationView>(
     displayItems.length,
   );
   const pendingIds = useMemo(
-    () => getPendingNotificationIds(socket.pendingNotifications, socket.events),
-    [socket.events, socket.pendingNotifications],
+    () =>
+      new Set(
+        pendingNotifications.flatMap((event) =>
+          event.notif_id ? [event.notif_id] : [],
+        ),
+      ),
+    [pendingNotifications],
   );
 
   useEffect(() => {

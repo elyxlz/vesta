@@ -1,4 +1,5 @@
 import { type Locator, type Page } from "@playwright/test";
+import { directRoomId } from "@vesta/core";
 import type { AgentStatus, VestaEvent } from "@vesta/core";
 import {
   CONVERSATION,
@@ -10,8 +11,6 @@ import {
   attachmentStatesConversation,
   multiAttachmentConversation,
   chatRoutes,
-  errorLine,
-  rateLimitedLine,
   userMessage,
   type ChatHistoryFixture,
 } from "../harness/chat-fixtures";
@@ -22,14 +21,13 @@ import {
   type RouteFixture,
 } from "../harness/http-fixtures";
 import type { Scenario, ScenarioState } from "../harness/scenario-state";
-import { agentNode } from "../harness/sync-fixtures";
+import { agentNode, directRooms } from "../harness/sync-fixtures";
 
 const CHAT_ROUTE = `/agent/${AGENT}/chat`;
-const HISTORY_PATH = `/agents/${AGENT}/app-chat/history`;
-const MESSAGE_PATH = `/agents/${AGENT}/app-chat/message`;
+const DIRECT_ROOM = directRoomId(AGENT);
+const HISTORY_PATH = `/rooms/${encodeURIComponent(DIRECT_ROOM)}/history`;
+const MESSAGE_PATH = `/rooms/${encodeURIComponent(DIRECT_ROOM)}/messages`;
 const LOGS_PATH = `/agents/${AGENT}/logs`;
-const FIXED_NOW_SECS = Math.floor(Date.parse("2026-08-18T10:00:00Z") / 1000);
-const TWO_HOURS_SECS = 2 * 60 * 60;
 
 // Navigation into a chat section can wait for its initial history seed.
 const LOADED = { timeout: 30_000 };
@@ -52,8 +50,8 @@ function chatState(
   return {
     route: CHAT_ROUTE,
     sync: { agents: { [AGENT]: agentNode(options.status ?? "alive") } },
-    routes: [...chatRoutes(AGENT, history), ...(options.routes ?? [])],
-    chatSocket: { agent: AGENT, events: [] },
+    routes: [...chatRoutes(DIRECT_ROOM, history), ...(options.routes ?? [])],
+    chatSocket: { events: [] },
   };
 }
 
@@ -66,19 +64,6 @@ function chatScenario(
     drive: () => Promise.resolve(),
   };
 }
-
-// A status line lands after the conversation: the turn it reports on failed.
-const RATE_LIMITED_HISTORY: VestaEvent[] = [
-  ...CONVERSATION,
-  userMessage("can you draft the reply to the landlord?", 3),
-  rateLimitedLine(2, FIXED_NOW_SECS + TWO_HOURS_SECS),
-];
-
-const ERROR_HISTORY: VestaEvent[] = [
-  ...CONVERSATION,
-  userMessage("can you draft the reply to the landlord?", 3),
-  errorLine("turn failed", 2),
-];
 
 // Thirty rows across a morning, oldest first, with more history behind them.
 function longHistory(): VestaEvent[] {
@@ -95,6 +80,36 @@ function longHistory(): VestaEvent[] {
   return events;
 }
 
+// A group the user shares with two agents: each reply is stamped with its writer, so the bubbles
+// carry a name above the first of every run.
+const GROUP_ROOM = "grp-trip";
+const GROUP_AGENTS = [AGENT, "atlas"];
+const GROUP_HISTORY: VestaEvent[] = [
+  userMessage("we land in lisbon on the 4th, can you two sort the day?", 62),
+  agentMessage(
+    "i booked the airport transfer for 09:40 and told the hotel you arrive early.",
+    61,
+    AGENT,
+  ),
+  agentMessage("your first meeting is 11:00, so the timing works.", 60, AGENT),
+  agentMessage(
+    "i moved the afternoon calls to wednesday and blocked the walk along the river.",
+    59,
+    "atlas",
+  ),
+  userMessage("perfect. dinner somewhere near the water?", 58),
+  agentMessage(
+    "table for two at 20:30, five minutes from the hotel.",
+    57,
+    AGENT,
+  ),
+  agentMessage(
+    "i put the reservation in your calendar with the address.",
+    56,
+    "atlas",
+  ),
+];
+
 const LONG_HISTORY = longHistory();
 const OLDEST_LONG_ID = LONG_HISTORY[0]?.id ?? 0;
 
@@ -109,7 +124,7 @@ const LOG_LINES = [
   `${ESC}[2m2026-08-18 09:58:09${ESC}[0m ${ESC}[33mWARNING${ESC}[0m core.upstream_sync: agent-v0.2.3 not in HEAD, queueing sync turn`,
   `${ESC}[2m2026-08-18 09:58:10${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: boot turn 1/2 greeting`,
   `${ESC}[2m2026-08-18 09:59:41${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: boot turn 2/2 upstream-sync`,
-  `${ESC}[2m2026-08-18 09:59:58${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: batch of 2 notifications source=app-chat`,
+  `${ESC}[2m2026-08-18 09:59:58${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: batch of 2 notifications source=chat`,
   `${ESC}[2m2026-08-18 09:59:59${ESC}[0m ${ESC}[31mERROR${ESC}[0m core.tools: user_devices: gateway answered 503, retrying`,
   `${ESC}[2m2026-08-18 10:00:00${ESC}[0m ${ESC}[32mINFO${ESC}[0m core.loops: turn complete in 3.2s, idle`,
 ];
@@ -175,8 +190,6 @@ export const CHAT: Record<string, Scenario> = {
   ),
   "chat-populated": chatScenario({ events: CONVERSATION }),
   "chat-markdown": chatScenario({ events: MARKDOWN_REPLY }),
-  "chat-error-line": chatScenario({ events: ERROR_HISTORY }),
-  "chat-rate-limited": chatScenario({ events: RATE_LIMITED_HISTORY }),
   "chat-send-failed": {
     state: chatState(
       { events: CONVERSATION },
@@ -186,7 +199,7 @@ export const CHAT: Record<string, Scenario> = {
             path: MESSAGE_PATH,
             method: "POST",
             status: 500,
-            json: { error: "app-chat intake failed" },
+            json: { error: "chat intake failed" },
           },
         ],
       },
@@ -258,10 +271,7 @@ export const CHAT: Record<string, Scenario> = {
     },
   },
   "chat-attachment-chips": {
-    state: chatState(
-      { events: CONVERSATION },
-      { routes: attachmentRoutes(AGENT) },
-    ),
+    state: chatState({ events: CONVERSATION }, { routes: attachmentRoutes() }),
     drive: async (page) => {
       await pickFiles(page, [
         SMALL_FILE,
@@ -272,7 +282,7 @@ export const CHAT: Record<string, Scenario> = {
   "chat-attachment-chip-uploading": {
     state: chatState(
       { events: CONVERSATION },
-      { routes: attachmentRoutes(AGENT, { stallData: true }) },
+      { routes: attachmentRoutes({ stallData: true }) },
     ),
     drive: async (page) => {
       await pickFiles(page, [SMALL_FILE]);
@@ -281,7 +291,7 @@ export const CHAT: Record<string, Scenario> = {
   "chat-attachment-chip-error": {
     state: chatState(
       { events: CONVERSATION },
-      { routes: attachmentRoutes(AGENT, { failCreate: true }) },
+      { routes: attachmentRoutes({ failCreate: true }) },
     ),
     drive: async (page) => {
       await pickFiles(page, [SMALL_FILE]);
@@ -290,7 +300,7 @@ export const CHAT: Record<string, Scenario> = {
   "chat-attachment-chips-offline": {
     state: chatState(
       { events: CONVERSATION },
-      { routes: attachmentRoutes(AGENT, { unreachableCreate: true }) },
+      { routes: attachmentRoutes({ unreachableCreate: true }) },
     ),
     drive: async (page) => {
       await page.context().setOffline(true);
@@ -321,20 +331,20 @@ export const CHAT: Record<string, Scenario> = {
 
   "chat-attachment-bubbles": chatScenario(
     { events: attachmentConversation() },
-    { routes: attachmentServeRoutes(AGENT) },
+    { routes: attachmentServeRoutes() },
   ),
   "chat-attachment-bubble-states": chatScenario(
     { events: attachmentStatesConversation() },
-    { routes: attachmentServeRoutes(AGENT) },
+    { routes: attachmentServeRoutes() },
   ),
   "chat-attachment-bubble-group": chatScenario(
     { events: multiAttachmentConversation() },
-    { routes: attachmentServeRoutes(AGENT) },
+    { routes: attachmentServeRoutes() },
   ),
   "chat-attachment-viewer": {
     state: chatState(
       { events: attachmentConversation() },
-      { routes: attachmentServeRoutes(AGENT) },
+      { routes: attachmentServeRoutes() },
     ),
     drive: async (page) => {
       await page
@@ -347,7 +357,7 @@ export const CHAT: Record<string, Scenario> = {
   "chat-attachment-viewer-zoomed": {
     state: chatState(
       { events: attachmentConversation() },
-      { routes: attachmentServeRoutes(AGENT) },
+      { routes: attachmentServeRoutes() },
     ),
     drive: async (page) => {
       await page
@@ -358,5 +368,34 @@ export const CHAT: Record<string, Scenario> = {
       const stage = page.locator("img[data-viewer-stage]").first();
       await stage.dblclick();
     },
+  },
+  // A room with two agents: the bubbles name who wrote each run, and the composer and title read
+  // the group's name rather than any one agent's.
+  "room-group-senders": {
+    state: {
+      route: `/chat/${GROUP_ROOM}`,
+      sync: {
+        agents: Object.fromEntries(
+          GROUP_AGENTS.map((name) => [name, agentNode("alive")] as const),
+        ),
+        rooms: [
+          ...directRooms(
+            Object.fromEntries(
+              GROUP_AGENTS.map((name) => [name, agentNode("alive")] as const),
+            ),
+          ),
+          {
+            id: GROUP_ROOM,
+            name: "lisbon trip",
+            agents: GROUP_AGENTS,
+            createdAt: 1_755_500_000,
+            lastMessageAt: 1_755_590_000,
+          },
+        ],
+      },
+      routes: chatRoutes(GROUP_ROOM, { events: GROUP_HISTORY }),
+      chatSocket: { events: [] },
+    },
+    drive: () => Promise.resolve(),
   },
 };

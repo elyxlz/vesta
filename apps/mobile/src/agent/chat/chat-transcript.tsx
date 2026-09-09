@@ -37,7 +37,8 @@ const keyExtractor = (row: ChatRow) => row.key;
 
 export const ChatTranscript = memo(function ChatTranscript({
   rows,
-  agentName,
+  label,
+  showSenders,
   canSpeak,
   historyLoaded,
   loadingMore,
@@ -55,7 +56,11 @@ export const ChatTranscript = memo(function ChatTranscript({
   onOpenAttachment,
 }: {
   rows: ChatRow[];
-  agentName: string;
+  // What this conversation is called: the agent's name in a direct room, the room's own name
+  // otherwise. It titles the empty state and the typing indicator.
+  label: string;
+  // A room with several agents prints who wrote each run of bubbles.
+  showSenders: boolean;
   canSpeak: boolean;
   historyLoaded: boolean;
   loadingMore: boolean;
@@ -68,7 +73,7 @@ export const ChatTranscript = memo(function ChatTranscript({
     props: ScrollViewProps,
   ) => ReactElement<ScrollViewProps>;
   onLoadEarlier: () => void;
-  onReply: (text: string, user: boolean) => void;
+  onReply: (text: string, user: boolean, sender: string | null) => void;
   onEditAndResend: (text: string) => void;
   onReadAloud: (text: string) => void;
   onRetry: (
@@ -99,7 +104,7 @@ export const ChatTranscript = memo(function ChatTranscript({
     ({ item }) =>
       item.kind === "typing" ? (
         <TypingIndicator
-          agentName={agentName}
+          label={label}
           startsNewBubbleGroup={item.startsNewBubbleGroup}
         />
       ) : item.kind === "date" ? (
@@ -107,7 +112,7 @@ export const ChatTranscript = memo(function ChatTranscript({
       ) : (
         <ChatEvent
           event={item.event}
-          agentName={agentName}
+          showSender={showSenders && item.isGroupStart}
           startsNewBubbleGroup={item.startsNewBubbleGroup}
           endsBubbleGroup={item.endsBubbleGroup}
           canSpeak={canSpeak}
@@ -119,7 +124,8 @@ export const ChatTranscript = memo(function ChatTranscript({
         />
       ),
     [
-      agentName,
+      label,
+      showSenders,
       canSpeak,
       onEditAndResend,
       onOpenAttachment,
@@ -156,7 +162,7 @@ export const ChatTranscript = memo(function ChatTranscript({
       />
       {historyLoaded && empty ? (
         <ChatEmptyState
-          agentName={agentName}
+          agentName={label}
           composerInset={composerInset}
           keyboardOffset={keyboardOffset}
         />

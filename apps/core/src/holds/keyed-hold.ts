@@ -1,9 +1,10 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 
-// Keyed stale-while-remounting holds: one cell per agent+gateway key, living above navigation so
-// per-agent view state survives screen pops, route unmounts, and controller epochs. A bounded LRU
-// keeps memory flat. The cells live in a zustand store so a React consumer can subscribe to one
-// key (`useHeld` in the react entry) while imperative readers seed from `read`.
+// Keyed stale-while-remounting holds: one cell per key, an agent or a room paired with its
+// gateway, living above navigation so that view state survives screen pops, route unmounts, and
+// controller epochs. A bounded LRU keeps memory flat. The cells live in a zustand store so a React
+// consumer can subscribe to one key (`useHeld` in the react entry) while imperative readers seed
+// from `read`.
 const MAX_HOLD_CELLS = 12;
 
 interface HeldCells<T> {
@@ -38,4 +39,10 @@ export function createKeyedHoldStore<T>(): KeyedHoldStore<T> {
 // or a switched gateway never seeds the wrong data.
 export function agentHoldKey(agent: string, connectionKey: string): string {
   return `${agent}\n${connectionKey}`;
+}
+
+// A conversation's cells (the chat tail, the composer draft, the attachment drafts) key by room
+// instead: the prefix keeps a room id out of the agent-keyed namespace it shares the store with.
+export function roomHoldKey(roomId: string, connectionKey: string): string {
+  return `room:${roomId}\n${connectionKey}`;
 }

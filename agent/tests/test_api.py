@@ -60,7 +60,7 @@ async def _drain_until(ws, predicate, timeout=1.0):
 
 @pytest.mark.anyio
 async def test_ws_snapshot_omits_chat(event_bus):
-    """The connect snapshot carries state + notifications + config, never chat: the app-chat skill owns
+    """The connect snapshot carries state + notifications + config, never chat: the chat skill owns
     chat end to end on its own service socket, so core neither transports nor seeds it."""
     runner, base = await _start_server(event_bus)
     try:
@@ -696,30 +696,6 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
     try:
         async with ClientSession() as session, session.put(f"{base}/memory", json=42, headers=auth) as resp:
             assert resp.status == 400
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
-async def test_history_rejects_app_chat_channel_with_410(event_bus):
-    """app-chat history moved to the app-chat skill service: core /history rejects channel=app-chat
-    with 410 so a stale client fails loud rather than silently getting the full stream. Other channels
-    are untouched."""
-    from core.api import _history_handler
-
-    app = web.Application()
-    app["event_bus"] = event_bus
-    app.router.add_get("/history", _history_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _pick_port()
-    await web.TCPSite(runner, "127.0.0.1", port).start()
-    try:
-        async with ClientSession() as session:
-            async with session.get(f"http://127.0.0.1:{port}/history?channel=app-chat") as resp:
-                assert resp.status == 410
-            async with session.get(f"http://127.0.0.1:{port}/history?channel=notifications") as resp:
-                assert resp.status == 200
     finally:
         await runner.cleanup()
 

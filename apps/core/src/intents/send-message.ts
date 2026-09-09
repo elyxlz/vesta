@@ -1,8 +1,9 @@
+import { roomMessagesPath } from "../api/rooms";
 import type { InputMethod } from "../protocol/events";
 import { ApiError, type HttpClient } from "../transport/http";
 
-// Every send carries a client-generated id. The app-chat service stores it on the user event and
-// echoes it on the chat socket, making optimistic-echo dedup exact and HTTP retries idempotent.
+// Every send carries a client-generated id. The chat node stores it on the user event and
+// echoes it on the room socket, making optimistic-echo dedup exact and HTTP retries idempotent.
 // The id generator is injected (crypto.randomUUID in production) for testability.
 export type IdGenerator = () => string;
 
@@ -10,14 +11,14 @@ export interface SendMessageBody {
   // The caption; may be empty when attachments carry the message.
   text?: string;
   input_method?: InputMethod;
-  // Finalized attachment ids (uploaded ahead of the send; the service embeds their metadata).
+  // Finalized attachment ids (uploaded ahead of the send; the node embeds their metadata).
   attachments?: string[];
 }
 
-// The send POST's disposition once it settles. `null` means accepted (persisted by the service;
-// the chat-socket echo clears the bubble). A daemon-down signal (502/503/504 from the proxy, or
-// a network/timeout failure with no HTTP status) leaves the bubble retryable; any other error fails
-// it. A retry re-posts the SAME id (idempotent, deduped on the echo).
+// The send POST's disposition once it settles. `null` means accepted (persisted by the node; the
+// room-socket echo clears the bubble). A gateway-down signal (502/503/504, or a network/timeout
+// failure with no HTTP status) leaves the bubble retryable; any other error fails it. A retry
+// re-posts the SAME id (idempotent, deduped on the echo).
 export type SendFailure = "retry" | "failed";
 
 export interface SentMessage {
@@ -30,13 +31,13 @@ export interface SentMessage {
 // the outcome promise the caller reflects into the bubble's send_state.
 export function sendMessage(
   http: HttpClient,
-  agent: string,
+  roomId: string,
   body: SendMessageBody,
   newId: IdGenerator,
 ): SentMessage {
   const id = newId();
   const outcome = http
-    .json(`/agents/${encodeURIComponent(agent)}/app-chat/message`, {
+    .json(roomMessagesPath(roomId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

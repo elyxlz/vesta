@@ -148,8 +148,20 @@ export interface DeviceInfo {
   positionAt: string | null;
 }
 
+// One conversation the gateway holds: its agents, and the user, who is a member of every room. A
+// direct room carries the single agent it belongs to and no name; a group room is named. `createdAt`
+// and `lastMessageAt` are unix seconds, `lastMessageAt` null while the room is empty.
+export interface Room {
+  id: string;
+  name: string | null;
+  agents: string[];
+  createdAt: number;
+  lastMessageAt: number | null;
+}
+
 export interface Tree {
   gateway: GatewayInfo;
   agents: Record<string, AgentNode>;
   devices: DeviceInfo[];
+  rooms: Room[];
 }

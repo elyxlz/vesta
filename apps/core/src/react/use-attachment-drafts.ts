@@ -26,16 +26,15 @@ export function useAttachmentDrafts(
   store: DraftStore,
   hold: KeyedHoldStore<DraftAttachment[]>,
   key: string,
-  agent: string,
 ): AttachmentDrafts {
   const drafts = useHeld(hold, key) ?? [];
   const actions = useMemo(
     () => ({
       addSources: (sources: DraftSource[]) => {
-        for (const source of sources) if (!store.add(key, agent, source)) break;
+        for (const source of sources) if (!store.add(key, source)) break;
       },
       retry: (localId: string) => {
-        store.retry(key, agent, localId);
+        store.retry(key, localId);
       },
       remove: (localId: string) => {
         store.remove(key, localId);
@@ -45,7 +44,7 @@ export function useAttachmentDrafts(
       },
       previewUrl: store.previewUrl,
     }),
-    [store, key, agent],
+    [store, key],
   );
   return {
     ...actions,

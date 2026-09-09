@@ -234,10 +234,13 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
-        command=["uv", "run", "--project", str(SKILLS_DIR / "app-chat/cli"), "app-chat"],
-        name="app-chat",
-        serves_port=True,
+        command=["uv", "run", "--project", str(SKILLS_DIR / "chat/cli"), "chat"],
+        name="chat",
+        serves_port=False,
         emits_daemon_died=True,
+        # The name vestad writes into the container names the room the conversation is filed under, and
+        # the daemon refuses to serve without it.
+        env=(("AGENT_NAME", "contract-agent"),),
     ),
     Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "google/cli"), "google"],
