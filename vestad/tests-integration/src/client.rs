@@ -629,6 +629,12 @@ impl Client {
         Ok((status, body))
     }
 
+    /// The gateway api key this client authenticates with, for a test that carries it in a
+    /// URL of its own.
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     /// The status of a proxied GET, for the authorization table where the body is noise.
     pub fn proxy_status(&self, path: &str, auth: ProxyAuth) -> Result<u16, String> {
         Ok(self.proxy_get(path, auth)?.0)
@@ -638,12 +644,30 @@ impl Client {
     /// in-container `register-service` script calls. Exposure is left unspecified, so the
     /// response's `public` reports vestad's own default for a fresh registration.
     pub fn register_service(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
+        self.post_service_registration(name, serde_json::json!({ "name": service }))
+    }
+
+    /// Register a service that asks for exposure (`public: true`), the `--public` flag of the
+    /// in-container `register-service` script: vestad gates nothing on it.
+    pub fn register_public_service(
+        &self,
+        name: &str,
+        service: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.post_service_registration(name, serde_json::json!({ "name": service, "public": true }))
+    }
+
+    fn post_service_registration(
+        &self,
+        name: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let agent_token = self.read_agent_token(name)?;
         let response = self
             .agent
             .post(&format!("{}/agents/{name}/services", self.base_url))
             .header("X-Agent-Token", &agent_token)
-            .send_json(serde_json::json!({ "name": service }))
+            .send_json(body)
             .map_err(|e| map_error(&e))?;
         check_response(response)?
             .into_body()

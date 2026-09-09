@@ -3,7 +3,7 @@ use std::time::Duration;
 use axum::{
     body::Body,
     extract::{ws::WebSocketUpgrade, Path, Request, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Response,
     Json,
 };
@@ -24,6 +24,10 @@ use crate::state::{
 const UPSTREAM_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const UPSTREAM_READY_POLL_INITIAL: Duration = Duration::from_millis(25);
 const UPSTREAM_READY_POLL_MAX: Duration = Duration::from_millis(250);
+
+/// Headers that describe the client's connection, not the request, so the proxy's own
+/// connection to the upstream supplies them.
+const HOP_BY_HOP_HEADERS: [&str; 4] = ["host", "connection", "transfer-encoding", "content-length"];
 
 /// Send the request, retrying connection failures within the bind-grace window when `grace`
 /// (registered services only; the raw agent port is up whenever its container is). The last
@@ -55,10 +59,36 @@ async fn send_with_bind_grace(
     }
 }
 
+/// The handshake dialed upstream: the client's headers ride along, minus the hop-by-hop set
+/// and the handshake fields tungstenite negotiates itself (`Upgrade`, `Sec-WebSocket-*`).
+fn upstream_ws_request(
+    url: &str,
+    client_headers: &HeaderMap,
+) -> Result<
+    tokio_tungstenite::tungstenite::handshake::client::Request,
+    tokio_tungstenite::tungstenite::Error,
+> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let mut request = url.into_client_request()?;
+    for (name, value) in client_headers {
+        let lowercase = name.as_str();
+        if HOP_BY_HOP_HEADERS.contains(&lowercase)
+            || lowercase == "upgrade"
+            || lowercase.starts_with("sec-websocket-")
+        {
+            continue;
+        }
+        request.headers_mut().append(name.clone(), value.clone());
+    }
+    Ok(request)
+}
+
 /// Dial a registered service's upstream socket, retrying io-level failures within the
 /// bind-grace window, the socket counterpart of `send_with_bind_grace`.
 async fn dial_upstream_ws(
     url: &str,
+    client_headers: &HeaderMap,
     timeout: Duration,
 ) -> Result<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
@@ -67,7 +97,8 @@ async fn dial_upstream_ws(
     let deadline = Instant::now() + timeout;
     let mut delay = UPSTREAM_READY_POLL_INITIAL;
     loop {
-        match tokio_tungstenite::connect_async(url).await {
+        let request = upstream_ws_request(url, client_headers)?;
+        match tokio_tungstenite::connect_async(request).await {
             Ok((ws, _)) => return Ok(ws),
             Err(error) => {
                 let now = Instant::now();
@@ -149,16 +180,38 @@ fn keyed_forward_path(
     keys.accepts(agent, service, key, now).then_some(forwarded)
 }
 
-/// The query string forwarded upstream: the client's query minus every `token=` pair
-/// (`auth::presented_tokens` reads that carrier, so vestad has already consumed it and no
-/// upstream may see it). `None` when nothing else remains, so the URL carries no stray `?`.
-fn forwarded_query(query: &str) -> Option<String> {
+/// The query string forwarded upstream: the client's query minus each `token=` pair whose
+/// value is one of `consumed`, the gateway's own credentials. Every other pair passes
+/// untouched. `None` when nothing remains, so the URL carries no stray `?`.
+fn forwarded_query(query: &str, consumed: &[String]) -> Option<String> {
+    let is_consumed = |pair: &str| {
+        pair.strip_prefix(auth::CLIENT_CREDENTIAL_QUERY_PREFIX)
+            .is_some_and(|value| consumed.iter().any(|token| token == value))
+    };
     let kept = query
         .split('&')
-        .filter(|pair| !pair.is_empty() && !pair.starts_with(auth::CLIENT_CREDENTIAL_QUERY_PREFIX))
+        .filter(|pair| !pair.is_empty() && !is_consumed(pair))
         .collect::<Vec<_>>()
         .join("&");
     (!kept.is_empty()).then_some(kept)
+}
+
+/// Remove the gateway's own credentials (`auth::gateway_credentials`) from the request, the
+/// bearer header and the `token=` query pairs alike, and return the query to forward. Vestad
+/// is the gate, so no upstream is handed the user's tier; everything else the caller sent
+/// rides through untouched, a service key or a third party's bearer included, since reading
+/// those is the service's own job.
+fn remove_gateway_credentials(api_key: &str, request: &mut Request) -> Option<String> {
+    let consumed = auth::gateway_credentials(request.headers(), request.uri(), api_key);
+    let bearer_consumed = auth::presented_bearer(request.headers())
+        .is_some_and(|bearer| consumed.iter().any(|token| token == bearer));
+    if bearer_consumed {
+        request.headers_mut().remove(auth::CLIENT_CREDENTIAL_HEADER);
+    }
+    request
+        .uri()
+        .query()
+        .and_then(|query| forwarded_query(query, &consumed))
 }
 
 /// The agent token vestad injects upstream. Only the raw agent port consumes it, so a
@@ -222,7 +275,7 @@ async fn resolve_raw_agent_target(
 pub async fn agent_proxy_handler(
     State(state): State<SharedState>,
     Path((name, path)): Path<(String, String)>,
-    request: Request,
+    mut request: Request,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     use axum::extract::FromRequestParts;
 
@@ -280,9 +333,10 @@ pub async fn agent_proxy_handler(
         ));
     }
 
-    // Both the HTTP and WS branches forward this path, so the credential strip covers both.
+    // Both the HTTP and WS branches forward this path and these headers, so the credential
+    // removal covers both.
     let mut target_path = stripped_path;
-    if let Some(query) = request.uri().query().and_then(forwarded_query) {
+    if let Some(query) = remove_gateway_credentials(&state.api_key, &mut request) {
         target_path.push('?');
         target_path.push_str(&query);
     }
@@ -320,9 +374,17 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
+        let client_headers = parts.headers;
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
-            ws_proxy(socket, &target_host, target_port, &target_path).await;
+            ws_proxy(
+                socket,
+                &target_host,
+                target_port,
+                &target_path,
+                &client_headers,
+            )
+            .await;
         }))
     } else {
         drop(guard);
@@ -347,7 +409,7 @@ async fn forward_raw_agent_http(
     state: SharedState,
     name: String,
     raw_path: String,
-    request: Request,
+    mut request: Request,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let RawAgentTarget {
         cname,
@@ -357,7 +419,7 @@ async fn forward_raw_agent_http(
         guard,
     } = resolve_raw_agent_target(&state, &name).await?;
     let mut target_path = raw_path;
-    if let Some(query) = request.uri().query().and_then(forwarded_query) {
+    if let Some(query) = remove_gateway_credentials(&state.api_key, &mut request) {
         target_path.push('?');
         target_path.push_str(&query);
     }
@@ -396,7 +458,7 @@ pub async fn personalities_proxy_handler(
 }
 
 /// The upstream address a forward dials: the agent's bridge-network host plus the resolved
-/// service (or raw agent) port and the credential-stripped path.
+/// service (or raw agent) port and the path with vestad's credentials removed.
 struct UpstreamTarget<'a> {
     host: &'a str,
     port: u16,
@@ -410,13 +472,14 @@ async fn ws_proxy(
     host: &str,
     agent_port: u16,
     path: &str,
+    client_headers: &HeaderMap,
 ) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
     let url = build_target_url("ws", host, agent_port, path);
-    let agent_ws = match dial_upstream_ws(&url, UPSTREAM_READY_TIMEOUT).await {
+    let agent_ws = match dial_upstream_ws(&url, client_headers, UPSTREAM_READY_TIMEOUT).await {
         Ok(ws) => ws,
         Err(e) => {
             tracing::warn!(port = agent_port, error = %e, "agent websocket not reachable");
@@ -524,17 +587,11 @@ async fn forward_http_to_container(
         .await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {e}")))?;
 
-    // Hop-by-hop headers, plus the client credential vestad already consumed
-    // (auth::presented_tokens): the proxy is the gate, so no upstream, registered
-    // service or raw agent port alike, is handed the gateway-tier bearer.
+    // Every client header rides through except the hop-by-hop set; the gateway's own
+    // credentials are already gone (`remove_gateway_credentials`).
     let mut req_builder = state.http_client.request(method, &url);
     for (name, value) in &parts.headers {
-        let n = name.as_str().to_ascii_lowercase();
-        if matches!(
-            n.as_str(),
-            "host" | "connection" | "transfer-encoding" | "content-length"
-        ) || n == auth::CLIENT_CREDENTIAL_HEADER
-        {
+        if HOP_BY_HOP_HEADERS.contains(&name.as_str()) {
             continue;
         }
         req_builder = req_builder.header(name.as_str(), value.as_bytes());
@@ -677,12 +734,14 @@ mod tests {
         pump_agent_to_client, send_with_bind_grace, split_key_subpath, split_service_subpath,
     };
     use axum::extract::ws::Message as AxumMsg;
+    use axum::http::{HeaderMap, HeaderValue};
     use futures_util::stream;
     use std::convert::Infallible;
     use std::net::Ipv4Addr;
     use std::time::Duration;
     use tokio::net::TcpListener;
     use tokio::time::Instant;
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
     #[test]
@@ -697,29 +756,96 @@ mod tests {
         assert_eq!(injected_agent_token(None, true), None);
     }
 
-    /// The `?token=` pair is the query carrier `auth::presented_tokens` consumes, so the
-    /// forwarded query must never contain one, while every other pair passes untouched.
-    /// Both the HTTP forward and the WS upstream dial use the path this filter produces.
+    /// A `?token=` pair carrying one of the gateway's own credentials is consumed by the gate,
+    /// so the forwarded query never contains it, while every other pair passes untouched: a
+    /// `token=` a third party set is theirs, not vestad's. Both the HTTP forward and the WS
+    /// upstream dial use the path this filter produces.
     #[test]
-    fn the_forwarded_query_drops_every_token_pair_and_keeps_the_rest() {
+    fn the_forwarded_query_drops_the_consumed_token_pairs_and_keeps_the_rest() {
+        let consumed = ["secret".to_string(), "one".to_string()];
         // (client query, query forwarded upstream)
         let cases = [
             ("token=secret", None),
             ("token=secret&lang=en", Some("lang=en")),
             ("lang=en&token=secret&fmt=json", Some("lang=en&fmt=json")),
-            ("token=one&token=two", None),
+            ("token=one&token=secret", None),
+            ("token=one&token=third-party", Some("token=third-party")),
+            (
+                "token=third-party&sig=abc",
+                Some("token=third-party&sig=abc"),
+            ),
             ("lang=en", Some("lang=en")),
             // `tokens=` is a different name; only the exact `token=` carrier is a credential.
-            ("tokens=plural&mytoken=x", Some("tokens=plural&mytoken=x")),
+            (
+                "tokens=secret&mytoken=secret",
+                Some("tokens=secret&mytoken=secret"),
+            ),
             ("", None),
         ];
         for (query, expected) in cases {
             assert_eq!(
-                forwarded_query(query).as_deref(),
+                forwarded_query(query, &consumed).as_deref(),
                 expected,
                 "forwarded_query({query:?})"
             );
         }
+    }
+
+    /// The upstream handshake carries the client's own headers, a third party's bearer and
+    /// cookies included, while the fields that describe the client's connection and the
+    /// handshake tungstenite negotiates itself are left out.
+    #[tokio::test]
+    async fn the_ws_dial_forwards_the_client_headers_minus_the_handshake_set() {
+        let port = free_port().await;
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap();
+            if let Ok((socket, _)) = listener.accept().await {
+                let mut seen_tx = Some(seen_tx);
+                let _ = tokio_tungstenite::accept_hdr_async(
+                    socket,
+                    |request: &Request, response: Response| {
+                        if let Some(seen_tx) = seen_tx.take() {
+                            let _ = seen_tx.send(request.headers().clone());
+                        }
+                        Ok(response)
+                    },
+                )
+                .await;
+            }
+        });
+
+        let mut client_headers = HeaderMap::new();
+        client_headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer third-party"),
+        );
+        client_headers.insert("cookie", HeaderValue::from_static("session=abc"));
+        client_headers.insert("host", HeaderValue::from_static("gateway.example"));
+        client_headers.insert(
+            "connection",
+            HeaderValue::from_static("keep-alive, Upgrade"),
+        );
+        client_headers.insert("upgrade", HeaderValue::from_static("websocket"));
+        client_headers.insert("sec-websocket-key", HeaderValue::from_static("client-key"));
+        client_headers.insert("sec-websocket-protocol", HeaderValue::from_static("chat"));
+
+        dial_upstream_ws(
+            &format!("ws://127.0.0.1:{port}/ws"),
+            &client_headers,
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("dial succeeds");
+        let seen = seen_rx.await.expect("the upstream saw the handshake");
+
+        assert_eq!(seen["authorization"], "Bearer third-party");
+        assert_eq!(seen["cookie"], "session=abc");
+        assert_eq!(seen["host"], format!("127.0.0.1:{port}"));
+        assert_ne!(seen["sec-websocket-key"], "client-key");
+        assert!(!seen.contains_key("sec-websocket-protocol"));
     }
 
     #[test]
@@ -942,9 +1068,13 @@ mod tests {
         });
 
         let start = Instant::now();
-        dial_upstream_ws(&format!("ws://127.0.0.1:{port}/ws"), Duration::from_secs(5))
-            .await
-            .expect("dial succeeds once the port binds");
+        dial_upstream_ws(
+            &format!("ws://127.0.0.1:{port}/ws"),
+            &HeaderMap::new(),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("dial succeeds once the port binds");
         let elapsed = start.elapsed();
         assert!(elapsed >= Duration::from_millis(150));
         assert!(elapsed < Duration::from_millis(1500));
@@ -957,6 +1087,7 @@ mod tests {
         let start = Instant::now();
         let error = dial_upstream_ws(
             &format!("ws://127.0.0.1:{port}/ws"),
+            &HeaderMap::new(),
             Duration::from_millis(300),
         )
         .await
