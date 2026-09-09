@@ -53,6 +53,37 @@ def _write_notification(notif_type: str, interrupt: bool, **fields) -> pathlib.P
     return path
 
 
+def _current_url() -> str | None:
+    """Where the browser tab is right now, or None if it cannot be asked.
+
+    Read through the hibob CLI's own interpreter so this needs no second venv.
+    """
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '/root/agent/skills/browser/cli/src');"
+             "from vesta_browser import helpers; print(helpers.js('location.href') or '')"],
+            capture_output=True, text=True, timeout=60,
+        )
+        url = out.stdout.strip()
+        return url or None
+    except Exception:
+        return None
+
+
+def _restore_url(url: str) -> None:
+    """Put the tab back where it was. Best effort: a failure here is not a poll failure."""
+    try:
+        subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '/root/agent/skills/browser/cli/src');"
+             "from vesta_browser import helpers; helpers.goto(sys.argv[1])", url],
+            capture_output=True, text=True, timeout=90,
+        )
+    except Exception:
+        pass
+
+
 def _fetch_tasks() -> list[dict]:
     """Open tasks via the CLI. Raises on anything that is not a clean, parseable pass."""
     proc = subprocess.run(
@@ -90,12 +121,56 @@ def _snapshot(t: dict) -> dict:
     }
 
 
+def _ensure_browser() -> None:
+    """Start the browser if no session is alive. The dependency belongs to the dependant.
+
+    WHY (9 Sep 2026): this poller drives a logged-in page, and the browser was only ever started BY
+    HAND, so nothing brought it back after a restart. `daemon_coverage.py` reports it ORPHAN,
+    "started by hand and invisible to both". A restart therefore left this daemon polling into
+    nothing, indefinitely and silently.
+
+    Putting `browser launch` in the restart fleet was tried first and REVERTED within the hour: the
+    fleet's liveness probe runs `<skill> daemon status`, `browser` has no such subcommand, and
+    preflight went from "16 daemons, 0 down" to a permanent false DOWN. A check that cries wolf is
+    worse than the gap it covers.
+
+    So the launch lives here, at the point of use, where the thing that needs the browser is the
+    thing that starts it. Best-effort on purpose: if it fails, `_fetch_tasks()` raises immediately
+    afterwards and the caller reports that, which is a better error than anything this could invent.
+
+    This does NOT restore the Bob login. An expired Okta session is his identity and needs a
+    handover (task 30796f17); a fresh browser on a signed-out profile still fails, loudly.
+    """
+    try:
+        out = subprocess.run(
+            ["browser", "sessions"], capture_output=True, text=True, timeout=30
+        ).stdout
+        if '"browser_alive": true' in out or '"browser_alive":true' in out:
+            return
+        subprocess.run(
+            ["browser", "launch", "--headless", "--user-data-dir", "/root/.browser/profile"],
+            capture_output=True, text=True, timeout=180,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
 def main() -> int:
+    # The CLI parks the tab on app.hibob.com to make its fetch same-origin, which
+    # silently hijacks whatever another tool was doing there. On 7 Sep that killed a
+    # half-finished Gmail filter import and knocked an Okta page out mid-flow. So note
+    # where the tab was and put it back.
+    _ensure_browser()
+    before = _current_url()
     try:
         tasks = _fetch_tasks()
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        if before and "app.hibob.com" not in before:
+            _restore_url(before)
         print(f"hibob poll FAILED: {exc}", file=sys.stderr)
         return 1
+    if before and "app.hibob.com" not in before:
+        _restore_url(before)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     first_run = not STATE_PATH.is_file()
