@@ -61,22 +61,31 @@ else
     ok "host disk at ${usage:-unknown}%, $share of it this agent's"
 fi
 
-# Error storms: a component can log thousands of errors without one of them reaching a notification.
-# Only lines dated today or yesterday count (an undated line takes the date of the line above it),
-# a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
-# the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
-# daemon output with the agent's own [AGENT] narration, which is prose, not a component's failure.
+# Error storms: a component can log thousands of errors without one reaching a notification. Only
+# lines dated today or yesterday count (an undated line takes the date of the line above it), a
+# zero-count line ("0 error(s)", "no errors") reports success and is skipped, and colour codes are
+# stripped first so a dated line is seen as dated. vesta.log interleaves component output with
+# NARRATION channels that quote "error" without being one: [AGENT] prose, [SYSTEM] [MESSAGE]
+# subagent lifecycle, and [SYSTEM] [CLIENT] compaction recaps. Exclude every narration channel and
+# count only real component output ([SYSTEM] [RUNTIME], untagged tracebacks), so an error storm still
+# registers while the dream's own retrospective prose does not inflate the count.
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
-        BEGIN { recent = 1 }
+    # A dated log's leading lines above its first date are stragglers of an older event (a Python
+    # traceback prints its frames before the dated record), so they start non-recent and an aged-out
+    # event stops inflating the count; a log that never dates its lines has no anchor, so it keeps the
+    # recent=1 default and its errors still count.
+    dated=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | grep -cE '^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+    [ "$dated" -gt 0 ] && start=0 || start=1
+    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" -v start="$start" '
+        BEGIN { recent = start }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
-        recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
+        recent && $0 !~ /\[AGENT\]/ && $0 !~ /\[SYSTEM\] \[(MESSAGE|CLIENT)\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
