@@ -121,7 +121,7 @@ def test_unreachable_messenger_is_unknown_not_red(tmp_path):
 
 def test_messenger_without_the_field_is_unknown_not_red(tmp_path):
     home = _healthy_home(tmp_path)
-    _fake_messenger(home, "whatsapp", 'echo \'{"running":true}\'')
+    _fake_messenger(home, "whatsapp", "echo '{\"running\":true}'")
 
     run = _run(home)
 
