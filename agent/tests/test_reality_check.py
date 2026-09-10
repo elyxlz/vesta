@@ -76,6 +76,59 @@ def test_live_daemon_record_stays_green(tmp_path):
     assert "OK  daemon alive is running" in run.stdout
 
 
+def _fake_messenger(home: pl.Path, name: str, body: str) -> None:
+    # The auth probe shells out to the messaging skill's own status command, so a test pins it the
+    # same way df and du are pinned: a PATH shim plus the daemon record that makes the probe look.
+    (home / "agent" / "data" / "daemons" / f"{name}.pid").write_text(f"{os.getpid()} 12345")
+    shim = home / "bin" / name
+    shim.write_text(f"#!/bin/sh\n{body}\n")
+    shim.chmod(0o755)
+
+
+def test_signed_out_messenger_goes_red(tmp_path):
+    # kill -0 proves a process exists, not that it can still reach the user: a signed-out messaging
+    # daemon is the channel going silent while every liveness signal stays green.
+    home = _healthy_home(tmp_path)
+    _fake_messenger(home, "whatsapp", 'echo \'{"running":true,"connection":{"logged_in":false}}\'')
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED whatsapp is running but SIGNED OUT" in run.stdout
+
+
+def test_signed_in_messenger_stays_green(tmp_path):
+    home = _healthy_home(tmp_path)
+    _fake_messenger(home, "whatsapp", 'echo \'{"running":true,"connection":{"logged_in":true}}\'')
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  whatsapp is signed in" in run.stdout
+
+
+def test_unreachable_messenger_is_unknown_not_red(tmp_path):
+    # A probe that cannot reach its target must not report the target as broken, or it fires on a
+    # healthy system; the answer is still printed so fail-safe does not become fail-silent.
+    home = _healthy_home(tmp_path)
+    _fake_messenger(home, "whatsapp", "exit 1")
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "auth state unknown" in run.stdout
+
+
+def test_messenger_without_the_field_is_unknown_not_red(tmp_path):
+    home = _healthy_home(tmp_path)
+    _fake_messenger(home, "whatsapp", "echo '{\"running\":true}'")
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "auth state unknown" in run.stdout
+
+
 def test_dead_daemon_record_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "data" / "daemons" / "ghost.pid").write_text("99999999")
