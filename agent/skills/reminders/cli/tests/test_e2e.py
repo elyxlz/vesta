@@ -559,7 +559,15 @@ class TestDaemonLifecycle:
         proc = start_daemon(home, notif_dir)
         stop_daemon(proc, home, sig=signal.SIGINT)
 
-        death_files = list(notif_dir.glob("*-daemon_died.json"))
+        # The death record is written in the daemon's shutdown `finally` before it exits, but a
+        # just-renamed file can lag a readdir on the CI overlay fs, so poll briefly instead of
+        # asserting on the first glob. A genuine failure to write still times out and fails.
+        death_files: list = []
+        for _ in range(30):
+            death_files = list(notif_dir.glob("*-daemon_died.json"))
+            if death_files:
+                break
+            time.sleep(0.1)
         assert len(death_files) == 1
         data = json.loads(death_files[0].read_text())
         assert data["type"] == "daemon_died"
