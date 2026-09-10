@@ -88,6 +88,15 @@ describe("ChatsLayout", () => {
     expect(screen.getByText("atlas, iris")).toBeTruthy();
   });
 
+  it("stripes the rows like the backups list", () => {
+    renderAt("/chats");
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.className).toContain("odd:bg-foreground/[0.07]");
+    }
+  });
+
   it("links a row to its selection inside the inbox at wide width", () => {
     renderAt("/chats");
     expect(

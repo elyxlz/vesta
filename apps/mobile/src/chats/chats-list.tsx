@@ -73,7 +73,7 @@ function MemberStatus({ name }: { name: string }) {
   );
 }
 
-function ChatRow({ room }: { room: Room }) {
+function ChatRow({ room, striped }: { room: Room; striped: boolean }) {
   const router = useRouter();
   const { colors } = usePreferences();
   const kind = roomKind(room);
@@ -90,7 +90,10 @@ function ChatRow({ room }: { room: Room }) {
       }}
       style={({ pressed }) => [
         styles.row,
-        { backgroundColor: colors.card, opacity: pressed ? 0.6 : 1 },
+        {
+          backgroundColor: striped ? colors.card : "transparent",
+          opacity: pressed ? 0.6 : 1,
+        },
       ]}
     >
       {direct ? (
@@ -131,21 +134,22 @@ function ChatRow({ room }: { room: Room }) {
   );
 }
 
-// Every conversation on the node, busiest first, under the agent row; the screen scrolls, so a
-// long list never fights a nested scroll view.
+// Every conversation on the node, busiest first, under the agent row, striped like the backups
+// list so neighboring rows read apart; the screen scrolls, so a long list never fights a nested
+// scroll view.
 export function ChatsList() {
   const { rooms } = useRoster();
   return (
     <View style={styles.rows}>
-      {rooms.map((room) => (
-        <ChatRow key={room.id} room={room} />
+      {rooms.map((room, index) => (
+        <ChatRow key={room.id} room={room} striped={index % 2 === 0} />
       ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  rows: { gap: 6 },
+  rows: {},
   row: {
     flexDirection: "row",
     alignItems: "center",

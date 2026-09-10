@@ -40,16 +40,18 @@ function ChatRow({ room, wide }: { room: Room; wide: boolean }) {
   const first = room.agents[0];
   const direct = kind === "direct" && first !== undefined;
 
+  // Striped like the backups list, so neighboring rows read apart; the selected row takes a
+  // tint twice the stripe's, so it stands out on either parity.
   return (
-    <li>
+    <li className="rounded-md odd:bg-foreground/[0.07]">
       <NavLink
         to={roomRoute(room, wide)}
         end
         aria-label={`open ${roomLabel(room)} chat`}
         className={({ isActive }) =>
           cn(
-            "flex w-full min-w-0 items-center gap-3 rounded-xl py-2 pr-3 pl-2 text-left transition-colors hover:bg-muted",
-            isActive && wide && "bg-muted",
+            "flex w-full min-w-0 items-center gap-3 rounded-md py-2 pr-3 pl-2 text-left transition-colors hover:bg-foreground/[0.1]",
+            isActive && wide && "bg-foreground/[0.14]",
           )
         }
       >
@@ -101,7 +103,7 @@ export function ConversationList({ wide }: { wide: boolean }) {
           <Plus />
         </Button>
       </div>
-      <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2">
+      <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
         {rooms.map((room) => (
           <ChatRow key={room.id} room={room} wide={wide} />
         ))}
