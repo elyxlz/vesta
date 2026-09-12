@@ -82,9 +82,9 @@ function longHistory(): VestaEvent[] {
 
 // A group the user shares with two agents: each reply is stamped with its writer, so the bubbles
 // carry a name above the first of every run.
-const GROUP_ROOM = "grp-trip";
-const GROUP_AGENTS = [AGENT, "atlas"];
-const GROUP_HISTORY: VestaEvent[] = [
+export const GROUP_ROOM = "grp-trip";
+export const GROUP_AGENTS = [AGENT, "atlas"];
+export const GROUP_HISTORY: VestaEvent[] = [
   userMessage("we land in lisbon on the 4th, can you two sort the day?", 62),
   agentMessage(
     "i booked the airport transfer for 09:40 and told the hotel you arrive early.",

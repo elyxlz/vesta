@@ -1029,16 +1029,16 @@
       "group": "Chat"
     },
     {
-      "id": "home-chats-section",
-      "title": "Home, chats section",
-      "description": "Every conversation under the carousel, with New group in the heading.",
-      "group": "Home"
+      "id": "chats-screen",
+      "title": "Chats",
+      "description": "Every agent's orb over every conversation, busiest first.",
+      "group": "Chat"
     },
     {
       "id": "new-room",
       "title": "New group",
       "description": "Naming a group and picking the agents that answer in it.",
-      "group": "Home"
+      "group": "Chat"
     },
     {
       "id": "agent-chat-attach-sheet",

@@ -60,7 +60,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   // node, so its composer is always live.
   const notAuthenticated =
     directAgent !== null && agentNeedsUser(directAgent.status);
-  // Voice is the direct agent's own service: it has no meaning in a room with several members.
   const direct = kind === "direct";
   const isMobile = useIsMobile();
   const toast = useToast();
