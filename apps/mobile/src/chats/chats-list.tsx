@@ -2,14 +2,13 @@ import { use } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import {
-  agentVisualStatus,
+  directRoomAgent,
   relativeTime,
-  roomKind,
   roomLabel,
   type AgentRow,
   type Room,
 } from "@vesta/core";
-import { useAgentRequest } from "@vesta/core/react";
+import { useAgentVisualStatus } from "@vesta/core/react";
 import { AgentOrb } from "@/components/AgentOrb";
 import { Text } from "@/components/ui/Typography";
 import { ControllerContext } from "@/controller/context";
@@ -23,17 +22,18 @@ const MEMBER_ORB_SIZE = 26;
 const CLUSTER_MAX = 3;
 const CLUSTER_OVERLAP = -8;
 
-function useAgentRow(name: string): AgentRow | null {
+function useAgentRow(name: string | null): AgentRow | null {
   const { agents } = useRoster();
+  if (name === null) return null;
   return agents.find((row) => row.name === name) ?? null;
 }
 
-function MemberOrb({ name, size }: { name: string; size: number }) {
-  const agent = useAgentRow(name);
+// A roster agent's orb; a name the roster lacks holds the slot empty.
+function RosterOrb({ agent, size }: { agent: AgentRow | null; size: number }) {
   if (agent === null) return <View style={{ width: size, height: size }} />;
   return (
     <AgentOrb
-      name={name}
+      name={agent.name}
       status={agent.status}
       activityState={agent.activityState}
       operation={agent.operation}
@@ -45,41 +45,22 @@ function MemberOrb({ name, size }: { name: string; size: number }) {
   );
 }
 
-// The status word the carousel's badge shows, as plain text.
-function MemberStatus({ name }: { name: string }) {
-  const agent = useAgentRow(name);
-  const { request } = useAgentRequest(use(ControllerContext), name);
-  const { colors } = usePreferences();
-  const label =
-    agent === null
-      ? ""
-      : agentVisualStatus(
-          {
-            status: agent.status,
-            operation: agent.operation,
-            booting: agent.booting,
-            rateLimited: agent.rateLimited,
-          },
-          request,
-          agent.activityState,
-        ).label;
-  return (
-    <Text
-      numberOfLines={1}
-      style={[styles.rowDetail, { color: colors.tertiaryText }]}
-    >
-      {label}
-    </Text>
-  );
+function MemberOrb({ name, size }: { name: string; size: number }) {
+  return <RosterOrb agent={useAgentRow(name)} size={size} />;
 }
 
 function ChatRow({ room, striped }: { room: Room; striped: boolean }) {
   const router = useRouter();
   const { colors } = usePreferences();
-  const kind = roomKind(room);
   const label = roomLabel(room);
-  const first = room.agents[0];
-  const direct = kind === "direct" && first !== undefined;
+  const directName = directRoomAgent(room);
+  const direct = useAgentRow(directName);
+  // The status word the carousel's badge shows, as plain text.
+  const { label: status } = useAgentVisualStatus(
+    use(ControllerContext),
+    direct,
+    direct?.activityState ?? "idle",
+  );
 
   return (
     <Pressable
@@ -96,8 +77,8 @@ function ChatRow({ room, striped }: { room: Room; striped: boolean }) {
         },
       ]}
     >
-      {direct ? (
-        <MemberOrb name={first} size={DIRECT_ORB_SIZE} />
+      {directName !== null ? (
+        <RosterOrb agent={direct} size={DIRECT_ORB_SIZE} />
       ) : (
         <View style={styles.cluster}>
           {room.agents.slice(0, CLUSTER_MAX).map((name, index) => (
@@ -114,16 +95,12 @@ function ChatRow({ room, striped }: { room: Room; striped: boolean }) {
         >
           {label}
         </Text>
-        {direct ? (
-          <MemberStatus name={first} />
-        ) : (
-          <Text
-            numberOfLines={1}
-            style={[styles.rowDetail, { color: colors.tertiaryText }]}
-          >
-            {room.agents.join(", ")}
-          </Text>
-        )}
+        <Text
+          numberOfLines={1}
+          style={[styles.rowDetail, { color: colors.tertiaryText }]}
+        >
+          {directName !== null ? status : room.agents.join(", ")}
+        </Text>
       </View>
       {room.lastMessageAt !== null ? (
         <Text style={[styles.rowTime, { color: colors.tertiaryText }]}>
@@ -140,7 +117,7 @@ function ChatRow({ room, striped }: { room: Room; striped: boolean }) {
 export function ChatsList() {
   const { rooms } = useRoster();
   return (
-    <View style={styles.rows}>
+    <View>
       {rooms.map((room, index) => (
         <ChatRow key={room.id} room={room} striped={index % 2 === 0} />
       ))}
@@ -149,7 +126,6 @@ export function ChatsList() {
 }
 
 const styles = StyleSheet.create({
-  rows: {},
   row: {
     flexDirection: "row",
     alignItems: "center",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
-import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
@@ -23,6 +22,7 @@ import {
   AgentIdentityCard,
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
+import { HeaderButton } from "@/components/header-button";
 import { Screen } from "@/components/layout/Screen";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -43,6 +43,7 @@ const IS_IOS = process.env.EXPO_OS === "ios";
 export default function HomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { status } = useSession();
   const { agents, agentsReady } = useRoster();
   const { colors } = usePreferences();
@@ -217,7 +218,10 @@ export default function HomeScreen() {
               accessible
               accessibilityLabel={`Agent ${activeIndex + 1} of ${agents.length}`}
               pointerEvents="none"
-              style={styles.indicators}
+              style={[
+                styles.indicators,
+                { bottom: Math.max(insets.bottom, 16) },
+              ]}
             >
               {agents.map((agent, index) => (
                 <View key={agent.name} style={styles.indicatorSlot}>
@@ -476,14 +480,14 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
             : () => (
                 <View style={styles.headerButtons}>
                   {showCreate ? (
-                    <HomeHeaderButton
+                    <HeaderButton
                       accessibilityLabel="Create agent"
                       icon="add"
                       iconSize={22}
                       onPress={openCreateAgent}
                     />
                   ) : null}
-                  <HomeHeaderButton
+                  <HeaderButton
                     accessibilityLabel="Chats"
                     icon="chatbubbles-outline"
                     iconSize={20}
@@ -553,44 +557,8 @@ function HomeWordmark() {
   );
 }
 
-function HomeHeaderButton({
-  accessibilityLabel,
-  icon,
-  iconSize,
-  onPress,
-}: {
-  accessibilityLabel: string;
-  icon: ComponentProps<typeof Ionicons>["name"];
-  iconSize: number;
-  onPress: () => void;
-}) {
-  const { colors } = usePreferences();
-  const content = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      hitSlop={8}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.headerButtonContent,
-        { opacity: pressed ? 0.68 : 1 },
-      ]}
-    >
-      <Ionicons name={icon} size={iconSize} color={colors.text} />
-    </Pressable>
-  );
-
-  return (
-    <View style={[styles.headerButton, { backgroundColor: colors.elevated }]}>
-      {content}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { padding: 0 },
-  // The carousel and its page dots own the free space; the chats list sits under them and gives
-  // way on a short screen, its own rows scrolling inside.
   carouselArea: { flex: 1 },
   carousel: { backgroundColor: "transparent" },
   agentPage: {
@@ -607,7 +575,6 @@ const styles = StyleSheet.create({
   },
   indicators: {
     position: "absolute",
-    bottom: 12,
     left: 0,
     right: 0,
     flexDirection: "row",
@@ -647,17 +614,6 @@ const styles = StyleSheet.create({
     transform: [{ translateY: 3 }],
   },
   headerButtons: { flexDirection: "row", gap: 8 },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    overflow: "hidden",
-  },
-  headerButtonContent: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   skeletonOrb: {
     width: AGENT_IDENTITY_ORB_SIZE,
     height: AGENT_IDENTITY_ORB_SIZE,

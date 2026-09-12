@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { roomRoute } from "@/layouts/ChatsLayout/room-route";
 import { errorMessage } from "@/lib/utils";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
@@ -27,6 +29,7 @@ function NewRoomBody({ onClose }: { onClose: () => void }) {
   const { agents } = useGateway();
   const controller = useOptionalController();
   const navigate = useNavigate();
+  const wide = !useIsMobile();
   const toast = useToast();
   const [name, setName] = useState("");
   const [members, setMembers] = useState<string[]>([]);
@@ -58,7 +61,7 @@ function NewRoomBody({ onClose }: { onClose: () => void }) {
       if (controller) await waitForRoom(controller.replica, opened.room.id);
       if (!live.current) return;
       onClose();
-      await navigate(`/chat/${encodeURIComponent(opened.room.id)}`);
+      await navigate(roomRoute(opened.room, wide));
     } catch (error) {
       toast.error(errorMessage(error, "could not open the group"));
       setCreating(false);

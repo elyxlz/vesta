@@ -33,3 +33,6 @@ export interface Scenario {
 // A fixed wall clock so every relative label ("resets in 2h", "last seen 5m
 // ago", day stamps) renders the same on every scan. Timers keep running.
 export const FIXED_TIME = new Date("2026-08-18T10:00:00Z");
+
+// A scenario whose state alone reaches the screenshot.
+export const noDrive = (): Promise<void> => Promise.resolve();

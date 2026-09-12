@@ -7,13 +7,15 @@ import { RoomSocketProvider } from "@/providers/RoomSocketProvider";
 // providers, so a navbar rendered here can read the room; the inbox passes none.
 export function RoomPane({
   roomId,
+  missingTo,
   children,
 }: {
   roomId: string;
+  missingTo?: string;
   children?: ReactNode;
 }) {
   return (
-    <RoomProvider roomId={roomId}>
+    <RoomProvider roomId={roomId} missingTo={missingTo}>
       <RoomSocketProvider>
         {children}
         <div className="relative flex min-h-0 flex-1 flex-col">

@@ -86,7 +86,10 @@ function SessionNavigation() {
     activeRoute === "scan";
   const isHomeRoute = !activeRoute;
   const routeNeedsAgents =
-    isHomeRoute || activeRoute === "agent" || activeRoute === "chats";
+    isHomeRoute ||
+    activeRoute === "agent" ||
+    activeRoute === "chats" ||
+    activeRoute === "chat";
   const navigationTheme = useMemo(() => {
     const base = dark ? DarkTheme : DefaultTheme;
     return {

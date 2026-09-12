@@ -3,6 +3,7 @@ import { chatRoutes } from "../harness/chat-fixtures";
 import { AGENT } from "../harness/http-fixtures";
 import {
   FIXED_TIME,
+  noDrive,
   type Scenario,
   type ScenarioState,
 } from "../harness/scenario-state";
@@ -10,7 +11,6 @@ import { agentNode, directRooms } from "../harness/sync-fixtures";
 import { GROUP_HISTORY, GROUP_ROOM } from "./chat";
 
 const CHATS_ROUTE = "/chats";
-const noDrive = (): Promise<void> => Promise.resolve();
 
 // The inbox fixture: the agents' own chats plus a group and a pair, each with the time of its last
 // message. The group is the one the chat drives carry history for, so selecting it renders bubbles.

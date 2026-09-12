@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { AgentOrb } from "@/components/AgentOrb";
 import { Text } from "@/components/ui/Typography";
@@ -50,14 +50,12 @@ export function AgentsRow() {
           </Text>
         </Pressable>
       ))}
-      <View style={styles.tail} />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  row: { gap: 18, paddingHorizontal: 20, paddingVertical: 8 },
+  row: { gap: 18, paddingLeft: 20, paddingRight: 24, paddingVertical: 8 },
   item: { alignItems: "center", gap: 6, width: ORB_SIZE + 16 },
   name: { fontSize: 13, fontWeight: "500" },
-  tail: { width: 4 },
 });

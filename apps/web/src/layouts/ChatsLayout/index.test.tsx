@@ -117,6 +117,14 @@ describe("ChatsLayout", () => {
     ).toBe("page");
   });
 
+  it("sends a selection the loaded tree lacks back to nothing selected", () => {
+    // Narrow, so the real RoomProvider resolves the id; the wide pane is mocked out here.
+    mobile.value = true;
+    renderAt("/chats/grp-gone");
+    expect(screen.queryByText("full page")).toBeNull();
+    expect(screen.getByText("pick a conversation")).toBeTruthy();
+  });
+
   it("opens the new group dialog from the header", () => {
     renderAt("/chats");
     fireEvent.click(screen.getByRole("button", { name: "new group" }));

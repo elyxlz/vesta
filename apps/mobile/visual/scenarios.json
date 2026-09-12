@@ -601,23 +601,23 @@
     },
     {
       "id": "whats-new",
-      "title": "What’s new",
+      "title": "What\u2019s new",
       "description": "Deterministic release notes available to the connected gateway version.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new.png"
     },
     {
       "id": "whats-new-empty",
       "title": "No release notes",
       "description": "Empty release-note state when nothing new applies to this gateway.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new-empty.png"
     },
     {
       "id": "whats-new-error",
       "title": "Release notes unavailable",
       "description": "Recoverable error state when release notes cannot be loaded.",
-      "group": "What’s new",
+      "group": "What\u2019s new",
       "screenshot": "whats-new-error.png"
     },
     {

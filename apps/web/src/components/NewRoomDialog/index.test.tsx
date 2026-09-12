@@ -89,7 +89,7 @@ describe("NewRoomDialog", () => {
     fake.emit({ type: "rooms", rooms: [OPENED.room] });
 
     await waitFor(() => {
-      expect(navigate).toHaveBeenCalledWith("/chat/grp-1");
+      expect(navigate).toHaveBeenCalledWith("/chats/grp-1");
     });
   });
 

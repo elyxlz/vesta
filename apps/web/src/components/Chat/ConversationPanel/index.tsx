@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
 import { sheetEase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { useAgentVisualStatus } from "@vesta/core/react";
+import { useController } from "@/providers/ControllerProvider/context";
+import { useRoom } from "@/providers/RoomProvider/context";
 import { useVoice } from "@/stores/use-voice";
 
 const ORB_SIZE = 168;
@@ -36,7 +38,15 @@ export function ConversationPanel() {
   // held at the last live values: reading the reset store would flash "connecting" on the
   // way out.
   const live = useVoice((s) => s.recordingMode === "conversation");
-  const { orbState, statusLabel } = useSelectedAgent();
+  // The room owns its agent scope, so the panel reads the same status the agent page shows and
+  // works wherever a direct room is mounted.
+  const { directAgent } = useRoom();
+  const { label, orbState, error } = useAgentVisualStatus(
+    useController(),
+    directAgent,
+    directAgent?.activityState ?? "idle",
+  );
+  const statusLabel = error || label;
   const listening = useVoice((s) => s.listening);
   const liveTranscript = useVoice((s) => s.liveTranscript);
   const micMuted = useVoice((s) => s.micMuted);

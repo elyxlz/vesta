@@ -27,6 +27,12 @@ export function directRoomId(agent: string): string {
   return `dm:${agent}`;
 }
 
+// The agent a direct room belongs to, whose own page is where that room opens; null for any other.
+export function directRoomAgent(room: Room): string | null {
+  if (roomKind(room) !== "direct") return null;
+  return room.agents[0] ?? null;
+}
+
 // The conversation list: the busiest room first, the never-used ones last, ties broken by label so
 // the order is stable across snapshots. A room holding no agent has nobody to answer in it, so it
 // never reaches a view.

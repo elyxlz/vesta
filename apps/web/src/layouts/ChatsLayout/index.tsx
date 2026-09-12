@@ -7,12 +7,11 @@ import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
-import { useGateway } from "@/providers/GatewayProvider/context";
+import { RoomProvider } from "@/providers/RoomProvider";
+import { useRoom } from "@/providers/RoomProvider/context";
 import { useLayout } from "@/stores/use-layout";
 import { ConversationList } from "./ConversationList";
 import { roomRoute } from "./room-route";
-
-const LIST_WIDTH_CLASS = "w-80";
 
 // The inbox: every conversation on the left, the selected one on the right, the selection in the
 // URL. Narrow, the list stands alone and a row opens the full-page chat; the outlet stays mounted
@@ -44,11 +43,11 @@ export function ChatsLayout() {
         <aside
           className={cn(
             "flex min-h-0 shrink-0 flex-col pb-4",
-            wide ? LIST_WIDTH_CLASS : "w-full",
+            wide ? "w-80" : "w-full",
           )}
           style={{ paddingTop: navbarHeight }}
         >
-          <ConversationList wide={wide} />
+          <ConversationList />
         </aside>
         <div
           className={cn(
@@ -81,12 +80,16 @@ export function ChatsIndex() {
 export function ChatsRoom() {
   const { roomId } = useParams<{ roomId: string }>();
   const wide = !useIsMobile();
-  const { rooms, agentsFetched } = useGateway();
   if (roomId === undefined) return <Navigate to="/chats" replace />;
-  if (wide) return <RoomPane roomId={roomId} />;
-  const room = rooms.find((candidate) => candidate.id === roomId);
-  if (room === undefined) {
-    return agentsFetched ? <Navigate to="/chats" replace /> : null;
-  }
+  if (wide) return <RoomPane roomId={roomId} missingTo="/chats" />;
+  return (
+    <RoomProvider roomId={roomId} missingTo="/chats">
+      <NarrowRoomRedirect />
+    </RoomProvider>
+  );
+}
+
+function NarrowRoomRedirect() {
+  const { room } = useRoom();
   return <Navigate to={roomRoute(room, false)} replace />;
 }

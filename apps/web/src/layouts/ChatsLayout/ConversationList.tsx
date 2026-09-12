@@ -1,9 +1,16 @@
 import { NavLink } from "react-router-dom";
 import { Plus } from "lucide-react";
-import { relativeTime, roomKind, roomLabel, type Room } from "@vesta/core";
+import {
+  directRoomAgent,
+  relativeTime,
+  roomLabel,
+  type OrbVisualState,
+  type Room,
+} from "@vesta/core";
 import { useAgentVisualStatus } from "@vesta/core/react";
 import { Orb } from "@/components/Orb";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
@@ -15,9 +22,10 @@ const MEMBER_ORB_SIZE = 30;
 const CLUSTER_MAX = 3;
 
 // An agent's orb and status word as the roster reports them; a name the roster lacks renders off.
-function useMemberStatus(name: string) {
+function useMemberStatus(name: string | null) {
   const { agents } = useGateway();
-  const agent = agents.find((row) => row.name === name) ?? null;
+  const agent =
+    name === null ? null : (agents.find((row) => row.name === name) ?? null);
   return useAgentVisualStatus(
     useOptionalController(),
     agent,
@@ -25,20 +33,26 @@ function useMemberStatus(name: string) {
   );
 }
 
-function MemberOrb({ name, size }: { name: string; size: number }) {
-  const { orbState } = useMemberStatus(name);
+function StatusOrb({
+  orbState,
+  size,
+}: {
+  orbState: OrbVisualState;
+  size: number;
+}) {
   return <Orb state={orbState} size={size} glow={0.4} suppressMotion />;
 }
 
-function MemberStatus({ name }: { name: string }) {
-  const { label } = useMemberStatus(name);
-  return <>{label}</>;
+function MemberOrb({ name, size }: { name: string; size: number }) {
+  const { orbState } = useMemberStatus(name);
+  return <StatusOrb orbState={orbState} size={size} />;
 }
 
-function ChatRow({ room, wide }: { room: Room; wide: boolean }) {
-  const kind = roomKind(room);
-  const first = room.agents[0];
-  const direct = kind === "direct" && first !== undefined;
+function ChatRow({ room }: { room: Room }) {
+  const wide = !useIsMobile();
+  const label = roomLabel(room);
+  const agent = directRoomAgent(room);
+  const status = useMemberStatus(agent);
 
   // Striped like the backups list, so neighboring rows read apart; the selected row takes a
   // tint twice the stripe's, so it stands out on either parity.
@@ -47,7 +61,7 @@ function ChatRow({ room, wide }: { room: Room; wide: boolean }) {
       <NavLink
         to={roomRoute(room, wide)}
         end
-        aria-label={`open ${roomLabel(room)} chat`}
+        aria-label={`open ${label} chat`}
         className={({ isActive }) =>
           cn(
             "flex w-full min-w-0 items-center gap-3 rounded-md py-2 pr-3 pl-2 text-left transition-colors hover:bg-foreground/[0.1]",
@@ -55,8 +69,8 @@ function ChatRow({ room, wide }: { room: Room; wide: boolean }) {
           )
         }
       >
-        {direct ? (
-          <MemberOrb name={first} size={DIRECT_ORB_SIZE} />
+        {agent !== null ? (
+          <StatusOrb orbState={status.orbState} size={DIRECT_ORB_SIZE} />
         ) : (
           <span className="flex shrink-0 -space-x-2">
             {room.agents.slice(0, CLUSTER_MAX).map((name) => (
@@ -66,10 +80,10 @@ function ChatRow({ room, wide }: { room: Room; wide: boolean }) {
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-sm leading-none font-medium">
-            {roomLabel(room)}
+            {label}
           </span>
           <span className="truncate text-xs leading-none text-muted-foreground">
-            {direct ? <MemberStatus name={first} /> : room.agents.join(", ")}
+            {agent !== null ? status.label : room.agents.join(", ")}
           </span>
         </span>
         {room.lastMessageAt !== null && (
@@ -84,7 +98,7 @@ function ChatRow({ room, wide }: { room: Room; wide: boolean }) {
 
 // Every conversation on the node, busiest first, with the way to start a group in the header so a
 // long list never scrolls it away.
-export function ConversationList({ wide }: { wide: boolean }) {
+export function ConversationList() {
   const { rooms } = useGateway();
   const openDialog = useDialogs((s) => s.setOpen);
 
@@ -105,7 +119,7 @@ export function ConversationList({ wide }: { wide: boolean }) {
       </div>
       <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
         {rooms.map((room) => (
-          <ChatRow key={room.id} room={room} wide={wide} />
+          <ChatRow key={room.id} room={room} />
         ))}
       </ul>
     </div>
