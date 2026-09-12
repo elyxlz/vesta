@@ -3,17 +3,18 @@ any other client holding a service key."""
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from . import commands
 from .config import Config
 from .db import get_db, utc_now
-from .settings import SETTING_NAMES, Settings, load_settings, set_setting
+from .settings import Settings, load_settings, set_setting
 
 
 class CardItem(BaseModel):
@@ -49,15 +50,15 @@ class SettingBody(BaseModel):
     value: str
 
 
-def _connection(config: Config):
+def _connection(config: Config) -> Callable[[], Iterator[sqlite3.Connection]]:
     def conn() -> Iterator[sqlite3.Connection]:
         with closing(get_db(config.data_dir)) as connection:
             yield connection
 
-    return Depends(conn)
+    return conn
 
 
-def _deck_routes(app: FastAPI, connection) -> None:
+def _deck_routes(app: FastAPI, connection: sqlite3.Connection) -> None:
     @app.get("/stats")
     def stats(db: sqlite3.Connection = connection) -> commands.Stats:
         return commands.stats(db, load_settings(db), now=utc_now())
@@ -71,7 +72,7 @@ def _deck_routes(app: FastAPI, connection) -> None:
         return commands.deck_update(db, name, new_name=body.name, description=body.description, now=utc_now())
 
     @app.delete("/decks/{name}")
-    def delete_deck(name: str, db: sqlite3.Connection = connection) -> dict[str, str | int | bool]:
+    def delete_deck(name: str, db: sqlite3.Connection = connection) -> commands.DeckDeleted:
         return commands.deck_delete(db, name, now=utc_now())
 
     @app.get("/config")
@@ -80,12 +81,10 @@ def _deck_routes(app: FastAPI, connection) -> None:
 
     @app.patch("/config")
     def config_set(body: SettingBody, db: sqlite3.Connection = connection) -> Settings:
-        if body.name not in SETTING_NAMES:
-            raise HTTPException(status_code=400, detail=f"unknown setting {body.name!r}")
         return set_setting(db, body.name, body.value)
 
 
-def _card_routes(app: FastAPI, connection) -> None:
+def _card_routes(app: FastAPI, connection: sqlite3.Connection) -> None:
     @app.get("/cards")
     def cards(deck: str | None = None, db: sqlite3.Connection = connection) -> list[commands.Card]:
         return commands.card_list(db, deck=deck)
@@ -115,7 +114,7 @@ def _card_routes(app: FastAPI, connection) -> None:
         return commands.card_suspend(db, card_id, suspended=False, now=utc_now())
 
 
-def _study_routes(app: FastAPI, connection) -> None:
+def _study_routes(app: FastAPI, connection: sqlite3.Connection) -> None:
     @app.post("/cards/{card_id}/review")
     def review_card(card_id: int, body: ReviewBody, db: sqlite3.Connection = connection) -> commands.ReviewResult:
         return commands.review(db, load_settings(db), card_id, body.rating, now=utc_now(), seconds=body.seconds)
@@ -133,18 +132,20 @@ def _create_app(config: Config) -> FastAPI:
     app = FastAPI()
 
     @app.exception_handler(ValueError)
-    async def value_error_handler(_request, exc):
-        raise HTTPException(status_code=400, detail=str(exc))
+    async def value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     connection = _connection(config)
-    _deck_routes(app, connection)
-    _card_routes(app, connection)
-    _study_routes(app, connection)
+    _deck_routes(app, Depends(connection))
+    _card_routes(app, Depends(connection))
+    _study_routes(app, Depends(connection))
     return app
 
 
-def start_server(config: Config, port: int) -> uvicorn.Server:
+def start_server(config: Config, port: int) -> threading.Thread:
+    """Serves on a daemon thread; the thread ending means the server stopped (a taken port dies here)."""
     app = _create_app(config)
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info"))
-    threading.Thread(target=server.run, daemon=True).start()
-    return server
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    return thread

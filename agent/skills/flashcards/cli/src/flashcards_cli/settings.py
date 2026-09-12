@@ -6,9 +6,10 @@ from datetime import datetime, time
 
 from fsrs import Scheduler
 
-from .db import get_meta, set_meta
+from .db import set_meta
 
-# Wall-clock window, in the agent's own timezone, inside which the daemon nudges; "22:00-06:00" wraps midnight.
+# Wall-clock window, in the agent's own timezone, inside which the daemon nudges; "22:00-06:00" wraps
+# midnight and equal ends ("00:00-00:00") mean the whole day.
 _ACTIVE_HOURS_FORMAT = "HH:MM-HH:MM"
 
 
@@ -42,7 +43,9 @@ def parse_active_hours(text: str) -> tuple[time, time]:
 def within_active_hours(settings: Settings, local_now: datetime) -> bool:
     start, end = parse_active_hours(settings.active_hours)
     now = local_now.time().replace(second=0, microsecond=0)
-    if start <= end:
+    if start == end:
+        return True
+    if start < end:
         return start <= now < end
     return now >= start or now < end
 
@@ -72,8 +75,9 @@ def _parse_value(name: str, raw: str) -> float | int | str | bool:
 
 
 def load_settings(conn: sqlite3.Connection) -> Settings:
-    stored = {name: get_meta(conn, _META_PREFIX + name) for name in SETTING_NAMES}
-    return Settings(**{name: _parse_value(name, raw) for name, raw in stored.items() if raw is not None})
+    rows = conn.execute("SELECT key, value FROM meta WHERE key LIKE ?", (f"{_META_PREFIX}%",))
+    stored = {row["key"].removeprefix(_META_PREFIX): row["value"] for row in rows}
+    return Settings(**{name: _parse_value(name, raw) for name, raw in stored.items() if name in SETTING_NAMES})
 
 
 def set_setting(conn: sqlite3.Connection, name: str, raw: str) -> Settings:

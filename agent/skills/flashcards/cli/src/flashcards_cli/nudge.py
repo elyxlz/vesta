@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .commands import due_summary
-from .db import get_meta, iso, parse_datetime, set_meta
+from .db import get_meta, iso, parse_datetime, set_meta, utc_now
 from .settings import load_settings, within_active_hours
 
 SOURCE = "flashcards"
@@ -17,7 +17,7 @@ LAST_NUDGE_KEY = "last_nudge_at"
 def write_notification(notif_dir: Path, type_: str, **fields: str | int | bool) -> Path:
     """Atomically write one `source=flashcards` notification; the single owner of the on-disk shape."""
     notif_dir.mkdir(parents=True, exist_ok=True)
-    notif = {"source": SOURCE, "type": type_, **fields, "timestamp": iso(datetime.now().astimezone())}
+    notif = {"source": SOURCE, "type": type_, **fields, "timestamp": iso(utc_now())}
     target = notif_dir / f"{time.time_ns()}-{SOURCE}-{type_}.json"
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(notif))
@@ -25,8 +25,7 @@ def write_notification(notif_dir: Path, type_: str, **fields: str | int | bool) 
     return target
 
 
-def _nudge_message(total: int, decks: dict[str, int]) -> str:
-    by_deck = ", ".join(f"{name} {count}" for name, count in decks.items())
+def _nudge_message(total: int, by_deck: str) -> str:
     noun = "flashcard is" if total == 1 else "flashcards are"
     return (
         f"{total} {noun} due ({by_deck}). When the user has a free moment, quiz them: "
@@ -46,12 +45,13 @@ def tick(conn: sqlite3.Connection, notif_dir: Path, *, now: datetime) -> bool:
     summary = due_summary(conn, settings, now=now)
     if summary["total"] == 0:
         return False
+    by_deck = ", ".join(f"{name} {count}" for name, count in summary["decks"].items())
     write_notification(
         notif_dir,
         "cards_due",
-        message=_nudge_message(summary["total"], summary["decks"]),
+        message=_nudge_message(summary["total"], by_deck),
         due_count=summary["total"],
-        decks=", ".join(f"{name} {count}" for name, count in summary["decks"].items()),
+        decks=by_deck,
         interrupt=False,
     )
     set_meta(conn, LAST_NUDGE_KEY, iso(now))

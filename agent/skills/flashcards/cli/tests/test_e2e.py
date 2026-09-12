@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import os
 import signal
@@ -122,6 +123,46 @@ def test_http_api_and_the_daemon_nudge(home: Path, serving: tuple[str, subproces
     with pytest.raises(urllib.error.HTTPError) as failure:
         _request(f"{serving}/cards/1/review", "POST", {"rating": "wrong"})
     assert failure.value.code == 400
+
+
+def test_http_api_serves_overlapping_requests(home: Path, serving: tuple[str, subprocess.Popen]):
+    """A request's connection crosses threadpool threads, so overlapping requests must not trip sqlite's thread check."""
+    serving, _ = serving
+    with concurrent.futures.ThreadPoolExecutor(16) as pool:
+        answers = list(pool.map(lambda _: _request(f"{serving}/stats")["cards"], range(64)))
+    assert answers == [0] * 64
+
+
+def test_daemon_start_without_the_api_clears_a_stale_port_record(home: Path):
+    records = home / "agent/data/daemons"
+    records.mkdir(parents=True)
+    (records / "flashcards.port").write_text("4321")
+    assert json.loads(_cli(home, "daemon", "start").stdout) == {"status": "started"}
+    try:
+        assert json.loads(_cli(home, "daemon", "status").stdout) == {"running": True, "port": None}
+    finally:
+        assert json.loads(_cli(home, "daemon", "stop").stdout) == {"status": "stopped"}
+
+
+def test_serve_exits_when_the_api_port_is_taken(home: Path):
+    with socket.socket() as taken:
+        taken.bind(("", 0))
+        taken.listen()
+        proc = _serve(home, "--port", str(taken.getsockname()[1]))
+        try:
+            assert proc.wait(timeout=15) != 0
+        finally:
+            _end(proc)
+    (died,) = (home / "agent/notifications").glob("*daemon_died.json")
+    assert "http server" in json.loads(died.read_text())["reason"]
+
+
+def test_daemon_start_reports_an_unreadable_store_as_an_error(tmp_path: Path):
+    (tmp_path / ".flashcards" / "flashcards.db").mkdir(parents=True)
+    result = _cli(tmp_path, "daemon", "start")
+    assert result.returncode == 1 and result.stdout == ""
+    assert "unable to open" in json.loads(result.stderr)["error"]
+    assert not (tmp_path / "agent/data/daemons/flashcards.pid").exists()
 
 
 def test_serve_without_a_port_nudges_and_serves_nothing(home: Path):

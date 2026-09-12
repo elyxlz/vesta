@@ -46,7 +46,9 @@ CREATE INDEX IF NOT EXISTS reviews_card ON reviews (card_id, reviewed_at);
 
 
 def get_db(data_dir: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(data_dir / DB_NAME)
+    # An HTTP request opens, uses, and closes its connection on threadpool threads that need not
+    # be the same one; each connection still serves one caller at a time.
+    conn = sqlite3.connect(data_dir / DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

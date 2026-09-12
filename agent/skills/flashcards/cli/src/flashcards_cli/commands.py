@@ -3,6 +3,7 @@ route calls one of these, so the two surfaces cannot drift."""
 
 import json
 import sqlite3
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
@@ -68,6 +69,12 @@ class ReviewResult(TypedDict):
     remaining: int
 
 
+class DeckDeleted(TypedDict):
+    deck: str
+    cards: int
+    deleted: bool
+
+
 class DueSummary(TypedDict):
     total: int
     decks: dict[str, int]
@@ -90,8 +97,10 @@ _CARD_SELECT = (
     "SELECT c.*, d.name AS deck, (SELECT COUNT(*) FROM reviews r WHERE r.card_id = c.id) AS reviews "
     "FROM cards c JOIN decks d ON d.id = c.deck_id"
 )
-_LIVE = "c.deleted_at IS NULL AND d.deleted_at IS NULL"
+# Deleting a deck marks every card in it deleted, so the card row alone decides liveness.
+_LIVE = "c.deleted_at IS NULL"
 _ACTIVE = f"{_LIVE} AND c.suspended_at IS NULL"
+_DECK_SELECT = "SELECT d.name AS deck FROM cards c JOIN decks d ON d.id = c.deck_id"
 
 
 def _card(row: sqlite3.Row) -> Card:
@@ -138,6 +147,10 @@ def _deck_id(conn: sqlite3.Connection, name: str, *, create: bool, now: datetime
     return cursor.lastrowid, True
 
 
+def _deck_clause(deck: str | None) -> tuple[str, tuple[str, ...]]:
+    return (" AND d.name = ?", (deck,)) if deck is not None else ("", ())
+
+
 def _fetch_card(conn: sqlite3.Connection, card_id: int) -> sqlite3.Row:
     row = conn.execute(f"{_CARD_SELECT} WHERE c.id = ?", (card_id,)).fetchone()
     if row is None:
@@ -145,16 +158,16 @@ def _fetch_card(conn: sqlite3.Connection, card_id: int) -> sqlite3.Row:
     return row
 
 
-def _day_start(now: datetime) -> str:
+def _day_start(now: datetime) -> datetime:
     """Local midnight, so a daily budget resets when the user's day does."""
-    return iso(now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0))
+    return now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def deck_list(conn: sqlite3.Connection, *, now: datetime) -> list[Deck]:
     rows = conn.execute(
         "SELECT d.id, d.name, d.description, d.created_at, COUNT(c.id) AS cards, "
-        "IFNULL(SUM(c.suspended_at IS NULL AND c.last_review IS NULL), 0) AS new, "
-        "IFNULL(SUM(c.suspended_at IS NULL AND c.last_review IS NOT NULL AND c.due <= ?), 0) AS due "
+        "COUNT(c.id) FILTER (WHERE c.suspended_at IS NULL AND c.last_review IS NULL) AS new, "
+        "COUNT(c.id) FILTER (WHERE c.suspended_at IS NULL AND c.last_review IS NOT NULL AND c.due <= ?) AS due "
         "FROM decks d LEFT JOIN cards c ON c.deck_id = d.id AND c.deleted_at IS NULL "
         "WHERE d.deleted_at IS NULL GROUP BY d.id ORDER BY d.name",
         (iso(now),),
@@ -174,12 +187,13 @@ def deck_update(conn: sqlite3.Connection, name: str, *, new_name: str | None, de
     return next(deck for deck in deck_list(conn, now=now) if deck["id"] == deck_id)
 
 
-def deck_delete(conn: sqlite3.Connection, name: str, *, now: datetime) -> dict[str, str | int | bool]:
+def deck_delete(conn: sqlite3.Connection, name: str, *, now: datetime) -> DeckDeleted:
     deck_id, _ = _deck_id(conn, name, create=False, now=now)
     cards = conn.execute("SELECT COUNT(*) FROM cards WHERE deck_id = ? AND deleted_at IS NULL", (deck_id,)).fetchone()[0]
+    conn.execute("UPDATE cards SET deleted_at = ? WHERE deck_id = ? AND deleted_at IS NULL", (iso(now), deck_id))
     conn.execute("UPDATE decks SET deleted_at = ? WHERE id = ?", (iso(now), deck_id))
     conn.commit()
-    return {"deck": name, "cards": cards, "deleted": True}
+    return DeckDeleted(deck=name, cards=cards, deleted=True)
 
 
 def cards_add(conn: sqlite3.Connection, deck: str, items: list[tuple[str, str, str]], *, now: datetime) -> AddResult:
@@ -208,7 +222,7 @@ def card_get(conn: sqlite3.Connection, card_id: int) -> Card:
 
 
 def card_list(conn: sqlite3.Connection, *, deck: str | None) -> list[Card]:
-    clause, params = (" AND d.name = ?", (deck,)) if deck is not None else ("", ())
+    clause, params = _deck_clause(deck)
     rows = conn.execute(f"{_CARD_SELECT} WHERE {_LIVE}{clause} ORDER BY c.due, c.id", params)
     return [_card(row) for row in rows]
 
@@ -232,7 +246,9 @@ def card_update(
 ) -> Card:
     _require_live(conn, card_id)
     text_fields = (("front", front), ("back", back), ("notes", notes))
-    changes: list[tuple[str, str | int]] = [(column, value) for column, value in text_fields if value is not None]
+    changes: list[tuple[str, str | int]] = [(column, value.strip()) for column, value in text_fields if value is not None]
+    if any(not value for column, value in changes if column != "notes"):
+        raise ValueError("front and back cannot be empty")
     if deck is not None:
         deck_id, _ = _deck_id(conn, deck, create=True, now=now)
         changes.append(("deck_id", deck_id))
@@ -261,37 +277,46 @@ def card_suspend(conn: sqlite3.Connection, card_id: int, *, suspended: bool, now
 def _new_card_budget(conn: sqlite3.Connection, settings: Settings, *, now: datetime) -> int:
     introduced = conn.execute(
         "SELECT COUNT(*) FROM (SELECT card_id, MIN(reviewed_at) AS first FROM reviews GROUP BY card_id) WHERE first >= ?",
-        (_day_start(now),),
+        (iso(_day_start(now)),),
     ).fetchone()[0]
     return max(0, settings.new_cards_per_day - introduced)
 
 
-def due_cards(conn: sqlite3.Connection, settings: Settings, *, now: datetime, deck: str | None = None, limit: int | None = None) -> list[Card]:
-    """Cards to ask now: every reviewed card past its due instant, then new cards up to today's budget."""
-    clause, params = (" AND d.name = ?", (deck,)) if deck is not None else ("", ())
+def _due_rows(
+    conn: sqlite3.Connection, settings: Settings, *, now: datetime, deck: str | None, select: str, limit: int | None = None
+) -> list[sqlite3.Row]:
+    """Rows to ask now: every reviewed card past its due instant, then new cards up to today's budget."""
+    clause, params = _deck_clause(deck)
     reviewed = conn.execute(
-        f"{_CARD_SELECT} WHERE {_ACTIVE} AND c.last_review IS NOT NULL AND c.due <= ?{clause} ORDER BY c.due, c.id", (iso(now), *params)
-    )
-    fresh = conn.execute(
-        f"{_CARD_SELECT} WHERE {_ACTIVE} AND c.last_review IS NULL{clause} ORDER BY c.created_at, c.id LIMIT ?",
-        (*params, _new_card_budget(conn, settings, now=now)),
-    )
-    cards = [_card(row) for row in reviewed] + [_card(row) for row in fresh]
-    return cards[:limit] if limit is not None else cards
+        f"{select} WHERE {_ACTIVE} AND c.last_review IS NOT NULL AND c.due <= ?{clause} ORDER BY c.due, c.id LIMIT ?",
+        (iso(now), *params, -1 if limit is None else limit),
+    ).fetchall()
+    budget = _new_card_budget(conn, settings, now=now)
+    if limit is not None:
+        budget = max(0, min(budget, limit - len(reviewed)))
+    fresh = conn.execute(f"{select} WHERE {_ACTIVE} AND c.last_review IS NULL{clause} ORDER BY c.created_at, c.id LIMIT ?", (*params, budget))
+    return reviewed + fresh.fetchall()
+
+
+def due_cards(conn: sqlite3.Connection, settings: Settings, *, now: datetime, deck: str | None = None, limit: int | None = None) -> list[Card]:
+    return [_card(row) for row in _due_rows(conn, settings, now=now, deck=deck, select=_CARD_SELECT, limit=limit)]
+
+
+def _due_decks(conn: sqlite3.Connection, settings: Settings, *, now: datetime, deck: str | None = None) -> list[str]:
+    """The deck of every card due now: the due set without card bodies, for counting."""
+    return [row["deck"] for row in _due_rows(conn, settings, now=now, deck=deck, select=_DECK_SELECT)]
 
 
 def due_summary(conn: sqlite3.Connection, settings: Settings, *, now: datetime) -> DueSummary:
-    decks: dict[str, int] = {}
-    for card in due_cards(conn, settings, now=now):
-        decks[card["deck"]] = decks[card["deck"]] + 1 if card["deck"] in decks else 1
-    return DueSummary(total=sum(decks.values()), decks=decks)
+    decks = Counter(_due_decks(conn, settings, now=now))
+    return DueSummary(total=decks.total(), decks=dict(decks))
 
 
 def next_card(conn: sqlite3.Connection, settings: Settings, *, now: datetime, deck: str | None = None) -> NextCard | None:
-    due = due_cards(conn, settings, now=now, deck=deck)
-    if not due:
+    head = due_cards(conn, settings, now=now, deck=deck, limit=1)
+    if not head:
         return None
-    return NextCard(**due[0], remaining=len(due))
+    return NextCard(**head[0], remaining=len(_due_decks(conn, settings, now=now, deck=deck)))
 
 
 def review(
@@ -304,7 +329,7 @@ def review(
         raise ValueError(f"card {card_id} is suspended; resume it first")
     when = now.astimezone(UTC)
     updated, log = build_scheduler(settings).review_card(
-        FsrsCard.from_json(row["fsrs"]), RATINGS[rating_name], review_datetime=when, review_duration=seconds * 1000 if seconds else None
+        FsrsCard.from_json(row["fsrs"]), RATINGS[rating_name], review_datetime=when, review_duration=None if seconds is None else seconds * 1000
     )
     conn.execute(
         "UPDATE cards SET fsrs = ?, state = ?, due = ?, last_review = ? WHERE id = ?",
@@ -323,7 +348,7 @@ def review(
         due_in=rel_delta(updated.due - when),
         stability=updated.stability,
         difficulty=updated.difficulty,
-        remaining=len(due_cards(conn, settings, now=now)),
+        remaining=len(_due_decks(conn, settings, now=now)),
     )
 
 
@@ -332,14 +357,16 @@ def stats(conn: sqlite3.Connection, settings: Settings, *, now: datetime) -> Sta
         "SELECT COUNT(*) AS cards, IFNULL(SUM(c.last_review IS NULL), 0) AS new, "
         "IFNULL(SUM(c.last_review IS NOT NULL AND c.state IN (?, ?)), 0) AS learning, "
         "IFNULL(SUM(c.state = ?), 0) AS review, IFNULL(SUM(c.suspended_at IS NOT NULL), 0) AS suspended "
-        f"FROM cards c JOIN decks d ON d.id = c.deck_id WHERE {_LIVE}",
+        f"FROM cards c WHERE {_LIVE}",
         (int(State.Learning), int(State.Relearning), int(State.Review)),
     ).fetchone()
     upcoming = conn.execute(
-        f"SELECT MIN(c.due) FROM cards c JOIN decks d ON d.id = c.deck_id WHERE {_ACTIVE} AND c.last_review IS NOT NULL AND c.due > ?",
-        (iso(now),),
+        f"SELECT MIN(c.due) FROM cards c WHERE {_ACTIVE} AND c.last_review IS NOT NULL AND c.due > ?", (iso(now),)
     ).fetchone()[0]
-    reviews_today = conn.execute("SELECT COUNT(*) FROM reviews WHERE reviewed_at >= ?", (_day_start(now),)).fetchone()[0]
+    waiting_new = conn.execute(f"SELECT COUNT(*) FROM cards c WHERE {_ACTIVE} AND c.last_review IS NULL").fetchone()[0]
+    # New cards past today's budget become due when the budget resets at local midnight.
+    tomorrow = iso(_day_start(now) + timedelta(days=1)) if waiting_new else None
+    reviews_today = conn.execute("SELECT COUNT(*) FROM reviews WHERE reviewed_at >= ?", (iso(_day_start(now)),)).fetchone()[0]
     recent = conn.execute(
         "SELECT COUNT(*) AS total, IFNULL(SUM(rating != ?), 0) AS recalled FROM reviews WHERE reviewed_at >= ?",
         (int(Rating.Again), iso(now - RETENTION_WINDOW)),
@@ -352,7 +379,7 @@ def stats(conn: sqlite3.Connection, settings: Settings, *, now: datetime) -> Sta
         review=counts["review"],
         suspended=counts["suspended"],
         due_now=due,
-        next_due=iso(now) if due else upcoming,
+        next_due=iso(now) if due else min((instant for instant in (upcoming, tomorrow) if instant is not None), default=None),
         reviews_today=reviews_today,
         retention_30d=round(recent["recalled"] / recent["total"], 3) if recent["total"] else None,
         decks=deck_list(conn, now=now),

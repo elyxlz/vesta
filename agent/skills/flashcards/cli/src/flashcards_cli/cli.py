@@ -1,14 +1,16 @@
 import argparse
 import json
 import logging
-import os
 import signal
 import sqlite3
 import sys
 import time
+from collections.abc import Callable
 from contextlib import closing
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from types import FrameType
 
 from . import commands, daemon, db
 from . import format as fmt
@@ -37,13 +39,8 @@ USAGE = (
 
 Ratings: again = forgot; hard = recalled with real difficulty; good = recalled after a pause; easy = instant.
 Every command prints one line of JSON on stdout (tables for list, due, deck list unless --json);
-a failure prints {"error": ...} on stderr and exits 1."""
+a failure prints {"error": ...} on stderr and exits 1; a malformed command line prints its usage line instead."""
 )
-
-
-def _fail(message: str) -> int:
-    print(json.dumps({"error": message}), file=sys.stderr)
-    return 1
 
 
 def _emit(data: object, *, pretty: bool = False) -> None:
@@ -70,13 +67,14 @@ def _build_parser() -> argparse.ArgumentParser:
     add.add_argument("--notes", default="")
     add.add_argument("--file", help='JSON list of {"front", "back", "notes"?}; "-" for stdin')
 
-    for name in ("next", "due", "list"):
-        p = sub.add_parser(name)
-        p.add_argument("--deck")
-        if name == "due":
-            p.add_argument("--limit", type=int)
-        if name != "next":
-            _add_format_flags(p)
+    sub.add_parser("next").add_argument("--deck")
+    due = sub.add_parser("due")
+    due.add_argument("--deck")
+    due.add_argument("--limit", type=int)
+    _add_format_flags(due)
+    lst = sub.add_parser("list")
+    lst.add_argument("--deck")
+    _add_format_flags(lst)
 
     rev = sub.add_parser("review")
     rev.add_argument("id", type=int)
@@ -141,9 +139,11 @@ def _run(args: argparse.Namespace, config: Config) -> int:
         elif args.command == "next":
             _emit(commands.next_card(conn, settings, now=now, deck=args.deck))
         elif args.command == "due":
-            _emit_cards(commands.due_cards(conn, settings, now=now, deck=args.deck, limit=args.limit), args, now)
+            cards = commands.due_cards(conn, settings, now=now, deck=args.deck, limit=args.limit)
+            _emit_rows(cards, args, lambda: fmt.format_cards([dict(card) for card in cards], now))
         elif args.command == "list":
-            _emit_cards(commands.card_list(conn, deck=args.deck), args, now)
+            cards = commands.card_list(conn, deck=args.deck)
+            _emit_rows(cards, args, lambda: fmt.format_cards([dict(card) for card in cards], now))
         elif args.command == "deck":
             _run_deck(args, conn, now)
         elif args.command == "stats":
@@ -164,33 +164,31 @@ def _run_card(args: argparse.Namespace, conn: sqlite3.Connection, settings: Sett
         _emit(commands.card_update(conn, args.id, front=args.front, back=args.back, notes=args.notes, deck=args.deck, now=now))
     elif args.command == "delete":
         _emit(commands.card_delete(conn, args.id, now=now))
-    else:
+    elif args.command in ("suspend", "resume"):
         _emit(commands.card_suspend(conn, args.id, suspended=args.command == "suspend", now=now))
 
 
 def _run_config(args: argparse.Namespace, conn: sqlite3.Connection, settings: Settings) -> None:
     if args.name is None:
-        _emit(settings.__dict__)
+        _emit(asdict(settings))
     elif args.value is None:
         raise ValueError(f"config {args.name} needs a value: flashcards config {args.name} <value>")
     else:
-        _emit(set_setting(conn, args.name, args.value).__dict__)
+        _emit(asdict(set_setting(conn, args.name, args.value)))
 
 
-def _emit_cards(cards: list[commands.Card], args: argparse.Namespace, now: datetime) -> None:
+def _emit_rows(rows: list[commands.Card] | list[commands.Deck], args: argparse.Namespace, table: Callable[[], str]) -> None:
+    """A listing prints as a table unless the caller asked for JSON."""
     if args.json or args.json_pretty:
-        _emit(cards, pretty=args.json_pretty)
+        _emit(rows, pretty=args.json_pretty)
     else:
-        print(fmt.format_cards([dict(card) for card in cards], now))
+        print(table())
 
 
 def _run_deck(args: argparse.Namespace, conn: sqlite3.Connection, now: datetime) -> None:
     if args.deck_command == "list":
         decks = commands.deck_list(conn, now=now)
-        if args.json or args.json_pretty:
-            _emit(decks, pretty=args.json_pretty)
-        else:
-            print(fmt.format_decks([dict(deck) for deck in decks]))
+        _emit_rows(decks, args, lambda: fmt.format_decks([dict(deck) for deck in decks]))
     elif args.deck_command == "update":
         _emit(commands.deck_update(conn, args.name, new_name=args.new_name, description=args.description, now=now))
     elif args.deck_command == "delete":
@@ -212,19 +210,18 @@ def main() -> None:
         # argparse has already printed its message on stderr; the exit code is the contract's.
         sys.exit(1 if exc.code else 0)
 
+    if args.command == "daemon":
+        sys.exit(daemon.daemon_cmd(args.action))
     config = Config()
     config.log_dir.mkdir(parents=True, exist_ok=True)
     db.init_db(config.data_dir)
-
-    if args.command == "daemon":
-        sys.exit(daemon.daemon_cmd(args.action))
     if args.command == "serve":
         _run_serve(config, Path(args.notifications_dir), port=args.port)
         return
     try:
         sys.exit(_run(args, config))
     except (ValueError, OSError) as exc:
-        sys.exit(_fail(str(exc)))
+        sys.exit(daemon.fail(str(exc)))
 
 
 def _run_serve(config: Config, notif_dir: Path, *, port: int | None) -> None:
@@ -239,7 +236,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int | None) -> None:
     shutdown_reason = "unknown"
     asked_to_stop = False
 
-    def handle_signal(signum, _frame):
+    def handle_signal(signum: int, _frame: FrameType | None) -> None:
         # SIGTERM is what `flashcards daemon stop` sends, the one exit the agent asked for; every
         # other way out is news the agent needs.
         nonlocal shutdown_reason, asked_to_stop
@@ -250,13 +247,16 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int | None) -> None:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    http_server = start_server(config, port) if port is not None else None
-    tick_secs = int(os.environ["FLASHCARDS_TICK_SECS"]) if "FLASHCARDS_TICK_SECS" in os.environ else DEFAULT_TICK_SECS
+    http_thread = start_server(config, port) if port is not None else None
+    tick_secs = daemon.env_int("FLASHCARDS_TICK_SECS", DEFAULT_TICK_SECS)
     print(json.dumps({"status": "serving", "tick_secs": tick_secs, "http_port": port}))
     sys.stdout.flush()
     try:
         while True:
             time.sleep(tick_secs)
+            if http_thread is not None and not http_thread.is_alive():
+                shutdown_reason = f"http server stopped serving port {port}"
+                raise SystemExit(1)
             try:
                 with closing(db.get_db(config.data_dir)) as conn:
                     if tick(conn, notif_dir, now=db.utc_now()):
@@ -265,7 +265,5 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int | None) -> None:
                 # A bad tick (locked db, malformed row) must not kill the daemon; retry next tick.
                 logging.getLogger(__name__).exception("tick failed")
     finally:
-        if http_server is not None:
-            http_server.should_exit = True
         if not asked_to_stop:
             write_notification(notif_dir, "daemon_died", reason=shutdown_reason)

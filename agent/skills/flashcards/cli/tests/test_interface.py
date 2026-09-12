@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
 from flashcards_cli import cli
 
 
@@ -14,12 +13,6 @@ def _main(monkeypatch, capsys, *argv):
         code = exc.code if isinstance(exc.code, int) else 1
     out, err = capsys.readouterr()
     return code, out, err
-
-
-@pytest.fixture
-def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    return tmp_path
 
 
 def test_help_forms_print_usage_on_stdout_and_exit_zero(home, monkeypatch, capsys):

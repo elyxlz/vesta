@@ -25,7 +25,7 @@ flashcards stats
 flashcards config                     # every setting; flashcards config <name> <value> changes one
 ```
 
-Every command prints one line of JSON on stdout (`list`, `due` and `deck list` print a table unless `--json`); a failure prints `{"error": ...}` on stderr and exits 1. Times are UTC ISO-8601.
+Every command prints one line of JSON on stdout (`list`, `due` and `deck list` print a table unless `--json`); a failure prints `{"error": ...}` on stderr and exits 1, and a malformed command line prints its usage line instead. Times are UTC ISO-8601.
 
 ## Running a session
 
@@ -33,8 +33,8 @@ A `cards_due` notification, or the user asking to be quizzed, starts a session:
 
 1. `flashcards next` gives the card. Send the user the `front` only, never the `back`. Frame it naturally ("Quick one: how do you say 'How are you?' in Spanish?").
 2. Wait for the answer. Compare it with the `back` yourself (accept an equivalent phrasing, a synonym, a typo), tell the user whether it was right and what the back says, then record it: `flashcards review <id> <rating>`.
-3. The result carries `due_in` and `remaining`. Keep going with `flashcards next` while `remaining` is above zero and the user is engaged. Stop when they say so, change the subject, or after about ten cards; the rest waits, nothing is lost.
-4. A card rated `again` or `hard` comes back within minutes (its learning step), so a session naturally ends by re-asking what was missed. Ask it again when `next` returns it.
+3. The result carries `due_in` and `remaining`. Keep going with `flashcards next` while it returns a card and the user is engaged. Stop when they say so, change the subject, or after about ten cards; the rest waits, nothing is lost.
+4. A card rated `again` or `hard` comes back within minutes (its learning step) and is left out of `remaining` until then, so `remaining` can read zero mid-session. After a miss, call `next` once more after the next exchange and ask that card again when it returns, so the session ends by re-asking what was missed.
 
 Rating is your judgement of their recall, not their self-report, though take their word when they say it was a lucky guess:
 
@@ -75,12 +75,12 @@ New cards are introduced at `new_cards_per_day` (default 10) per day across all 
 | `maximum_interval_days` | `365` | the longest gap FSRS may schedule |
 | `new_cards_per_day` | `10` | new cards offered per day across all decks |
 | `nudge_interval_minutes` | `120` | minimum gap between `cards_due` notifications; `0` turns nudging off |
-| `active_hours` | `09:00-21:00` | wall-clock window for nudges, in the agent's timezone; `22:00-06:00` wraps midnight |
+| `active_hours` | `09:00-21:00` | wall-clock window for nudges, in the agent's timezone; `22:00-06:00` wraps midnight; `00:00-00:00` is the whole day |
 | `api_enabled` | `false` | serve the HTTP API below; `true` or `false` |
 
 ## Other clients: the HTTP API
 
-Off by default; nothing outside chat needs it until you build something that does. Turn it on with `flashcards config api_enabled true` then `flashcards daemon restart`, and `flashcards daemon status` reports the port. The daemon then serves a private vestad service named `flashcards`, so a dashboard widget or any client holding a service key can read and write the same store: `GET /stats`, `GET /decks`, `PATCH|DELETE /decks/{name}`, `GET /cards?deck=`, `POST /cards` (`{"deck", "cards": [{"front", "back", "notes"?}]}`), `GET|PATCH|DELETE /cards/{id}`, `POST /cards/{id}/suspend|resume|review` (`{"rating", "seconds"?}`), `GET /due?deck=&limit=`, `GET /next?deck=`, `GET|PATCH /config` (`{"name", "value"}`). Answers are the same JSON the CLI prints; a bad request is a 400 with `detail`.
+Off by default. Turn it on only when something outside chat needs the store: `flashcards config api_enabled true`, then `flashcards daemon restart`; `flashcards daemon status` then reports the port. The daemon then serves a private vestad service named `flashcards`, so a dashboard widget or any client holding a service key can read and write the same store: `GET /stats`, `GET /decks`, `PATCH|DELETE /decks/{name}`, `GET /cards?deck=`, `POST /cards` (`{"deck", "cards": [{"front", "back", "notes"?}]}`), `GET|PATCH|DELETE /cards/{id}`, `POST /cards/{id}/suspend|resume|review` (`{"rating", "seconds"?}`), `GET /due?deck=&limit=`, `GET /next?deck=`, `GET|PATCH /config` (`{"name", "value"}`). Answers are the same JSON the CLI prints; a bad request is a 400 with `detail`.
 
 For a widget on the user's dashboard (due count, streak, a deck table), follow the `dashboard` skill and point the builder at these endpoints. For a link someone opens outside the app, mint a key with the `vestad` skill: `service-key mint flashcards --label <who>`.
 

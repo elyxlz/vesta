@@ -88,11 +88,19 @@ def _recorded_pid(pidfile: pl.Path) -> int:
 
 
 FLASHCARDS = ["uv", "run", "--project", str(SKILLS_DIR / "flashcards/cli"), "flashcards"]
+# A skill CLI runs in its own project environment. Whichever venv is running this suite would
+# otherwise capture it: the override redirects the CLI's environment into this one and resyncs it
+# to the skill's lockfile, and the mismatch warning lands on its stderr.
+_FOREIGN_VENV_VARS = ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV")
+
+
+def _skill_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in _FOREIGN_VENV_VARS}
 
 
 def _rig_flashcards_api(home: pl.Path, bin_dir: pl.Path) -> None:
     """The API is a setting, off by default; this row is the daemon with it on."""
-    subprocess.run([*FLASHCARDS, "config", "api_enabled", "true"], env={**os.environ, "HOME": str(home)}, check=True, capture_output=True)
+    subprocess.run([*FLASHCARDS, "config", "api_enabled", "true"], env={**_skill_env(), "HOME": str(home)}, check=True, capture_output=True)
 
 
 def _rig_file_host(home: pl.Path, bin_dir: pl.Path) -> None:
@@ -374,10 +382,7 @@ def daemon(request, tmp_path):
     reg.chmod(0o755)
     if spec.rig:
         spec.rig(home, bin_dir)
-    # A skill CLI runs in its own project environment. Whichever venv is running this suite
-    # would otherwise capture it: the override redirects the CLI's environment into this one
-    # and resyncs it to the skill's lockfile, and the mismatch warning lands on its stderr.
-    env = {key: value for key, value in os.environ.items() if key not in ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV")}
+    env = _skill_env()
     env["HOME"] = str(home)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env.update(dict(spec.env))

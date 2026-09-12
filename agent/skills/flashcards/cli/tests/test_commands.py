@@ -1,3 +1,5 @@
+import json
+import time
 from datetime import timedelta
 
 import pytest
@@ -88,6 +90,22 @@ def test_delete_is_soft_and_get_still_resolves(conn):
     assert commands.card_get(conn, 1)["front"] == "hola"
     with pytest.raises(ValueError):
         commands.card_update(conn, 1, front="x", back=None, notes=None, deck=None, now=NOON)
+    (deck,) = commands.deck_list(conn, now=NOON)
+    assert (deck["cards"], deck["new"], deck["due"]) == (0, 0, 0)
+
+
+def test_update_strips_and_refuses_a_blank_side(conn):
+    _add(conn)
+    assert commands.card_update(conn, 1, front=" hola? ", back=None, notes=None, deck=None, now=NOON)["front"] == "hola?"
+    with pytest.raises(ValueError, match="cannot be empty"):
+        commands.card_update(conn, 1, front="   ", back=None, notes=None, deck=None, now=NOON)
+
+
+def test_review_records_an_instant_answer_as_zero_seconds(conn):
+    _add(conn)
+    commands.review(conn, Settings(), 1, "easy", now=NOON, seconds=0)
+    (row,) = conn.execute("SELECT duration_secs, log FROM reviews").fetchall()
+    assert (row["duration_secs"], json.loads(row["log"])["review_duration"]) == (0, 0)
 
 
 def test_update_moves_a_card_between_decks(conn):
@@ -105,12 +123,24 @@ def test_deck_update_refuses_a_name_another_live_deck_holds(conn):
     assert [deck["name"] for deck in commands.deck_list(conn, now=NOON)] == ["french", "spanish"]
 
 
+def test_due_limit_takes_reviewed_cards_before_new_ones(conn):
+    _add(conn, "spanish", ("a", "1"), ("b", "2"), ("c", "3"))
+    commands.review(conn, Settings(), 1, "again", now=NOON)
+    later = NOON + timedelta(minutes=10)
+    assert [card["front"] for card in commands.due_cards(conn, Settings(), now=later, limit=2)] == ["a", "b"]
+    assert [card["front"] for card in commands.due_cards(conn, Settings(), now=later, limit=1)] == ["a"]
+    assert commands.next_card(conn, Settings(), now=later)["remaining"] == 3
+
+
 def test_deck_delete_hides_its_cards_and_deck_update_renames(conn):
     _add(conn, "spanish", ("a", "1"), ("b", "2"))
     renamed = commands.deck_update(conn, "spanish", new_name="es", description="Spanish basics", now=NOON)
     assert (renamed["name"], renamed["description"], renamed["cards"]) == ("es", "Spanish basics", 2)
     assert commands.deck_delete(conn, "es", now=NOON) == {"deck": "es", "cards": 2, "deleted": True}
     assert commands.due_cards(conn, Settings(), now=NOON) == []
+    assert commands.card_get(conn, 1)["deleted"] is True
+    with pytest.raises(ValueError, match="deleted"):
+        commands.review(conn, Settings(), 1, "good", now=NOON)
     with pytest.raises(ValueError):
         commands.deck_delete(conn, "es", now=NOON)
 
@@ -124,6 +154,16 @@ def test_stats_counts_states_due_and_retention(conn):
     # The card rated again is back after its one-minute learning step, beside the untouched new card.
     assert stats["due_now"] == 2 and stats["reviews_today"] == 2 and stats["retention_30d"] == 0.5
     assert stats["decks"][0]["due"] == 1 and stats["next_due"] == "2026-03-02T12:02:00+00:00"
+
+
+def test_stats_next_due_is_tomorrow_when_new_cards_wait_on_the_budget(conn, monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    _add(conn, "spanish", ("a", "1"), ("b", "2"))
+    settings = Settings(new_cards_per_day=1)
+    commands.review(conn, settings, 1, "easy", now=NOON)
+    stats = commands.stats(conn, settings, now=NOON + timedelta(minutes=1))
+    assert stats["due_now"] == 0 and stats["next_due"] == "2026-03-03T00:00:00+00:00"
 
 
 def test_settings_round_trip_validate_and_reach_the_scheduler(conn):

@@ -57,3 +57,6 @@ def test_active_hours_window_wraps_midnight():
     day = Settings()
     assert within_active_hours(day, datetime(2026, 1, 1, 9, 0, tzinfo=UTC))
     assert not within_active_hours(day, datetime(2026, 1, 1, 21, 0, tzinfo=UTC))
+    always = Settings(active_hours="00:00-00:00")
+    assert within_active_hours(always, datetime(2026, 1, 1, 0, 0, tzinfo=UTC))
+    assert within_active_hours(always, datetime(2026, 1, 1, 12, 0, tzinfo=UTC))

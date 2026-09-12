@@ -10,12 +10,13 @@ import json
 import os
 import pathlib as pl
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
 
 from .config import Config
-from .db import get_db
+from .db import get_db, init_db
 from .settings import load_settings
 
 NAME = "flashcards"
@@ -35,7 +36,7 @@ PROBE_TIMEOUT_SECS = 2
 SETTLE_SECS = 2
 
 
-def _budget(name: str, default: int) -> int:
+def env_int(name: str, default: int) -> int:
     return int(os.environ[name]) if name in os.environ else default
 
 
@@ -46,11 +47,12 @@ def _budget(name: str, default: int) -> int:
 # For this daemon that means no cards-due nudge fires at all until someone notices, which is the
 # whole point of it. Raising the ceiling costs a healthy start nothing: it returns the moment
 # the port answers, in about a second.
-READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 120)
-STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
+READY_TIMEOUT_SECS = env_int("DAEMON_READY_TIMEOUT_SECS", 120)
+STOP_TIMEOUT_SECS = env_int("DAEMON_STOP_TIMEOUT_SECS", 15)
 
 
-def _fail(message: str) -> int:
+def fail(message: str) -> int:
+    """The one failure envelope every flashcards verb prints: one JSON line on stderr, exit 1."""
     print(json.dumps({"error": message}), file=sys.stderr)
     return 1
 
@@ -96,11 +98,7 @@ def live_pid() -> int | None:
         os.kill(pid, 0)
     except (FileNotFoundError, IndexError, ValueError, ProcessLookupError, PermissionError):
         return None
-    # LEGACY(remove-when: no daemon record predating the release that ships this check remains, i.e.
-    # every box has restarted its daemons at least once on this version): a record written by the
-    # old code is a bare pid. Trust it as before rather than reading the absence of a starttime as a
-    # mismatch, because an upgrade must not declare a live daemon dead and let a second stack beside
-    # it. Once records have converged, an unparseable second field should read as dead, not as legacy.
+    # A bare record was written where /proc was unreadable, so the pid is all there is to check.
     if len(record) > 1 and record[1].isdigit():
         current = _starttime(pid)
         if current is not None and current != int(record[1]):
@@ -134,11 +132,13 @@ def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
         child.wait()
     PIDFILE.unlink(missing_ok=True)
     PORTFILE.unlink(missing_ok=True)
-    return _fail(message)
+    return fail(message)
 
 
 def _api_enabled() -> bool:
-    with contextlib.closing(get_db(Config().data_dir)) as conn:
+    config = Config()
+    init_db(config.data_dir)
+    with contextlib.closing(get_db(config.data_dir)) as conn:
         return load_settings(conn).api_enabled
 
 
@@ -191,7 +191,7 @@ def _claim_start() -> int | None:
     PIDFILE.unlink(missing_ok=True)
     if _claim(os.getpid()):
         return None
-    return _fail(f"another {NAME} start holds {PIDFILE}")
+    return fail(f"another {NAME} start holds {PIDFILE}")
 
 
 def _start() -> int:
@@ -204,11 +204,17 @@ def _start() -> int:
     if answer is not None:
         return answer
     port = None
-    if _api_enabled():
+    PORTFILE.unlink(missing_ok=True)
+    try:
+        api_enabled = _api_enabled()
+    except sqlite3.OperationalError as exc:
+        PIDFILE.unlink(missing_ok=True)
+        return fail(f"cannot read the {NAME} store: {exc}")
+    if api_enabled:
         port = _register_port()
         if port is None:
             PIDFILE.unlink(missing_ok=True)
-            return _fail(f"could not register {NAME} with vestad; not launching")
+            return fail(f"could not register {NAME} with vestad; not launching")
         PORTFILE.write_text(port)
     argv = [sys.argv[0], "serve"] if port is None else [sys.argv[0], "serve", "--port", port]
     with LOG.open("ab") as log:
@@ -245,7 +251,7 @@ def _stop() -> int:
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
         if not _await_gone(started + STOP_TIMEOUT_SECS):
-            return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM then SIGKILL (pid={pid})")
+            return fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM then SIGKILL (pid={pid})")
     PIDFILE.unlink(missing_ok=True)
     PORTFILE.unlink(missing_ok=True)
     print(json.dumps({"status": "stopped"}))
