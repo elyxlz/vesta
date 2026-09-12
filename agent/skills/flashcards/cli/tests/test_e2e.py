@@ -1,0 +1,102 @@
+import json
+import os
+import signal
+import socket
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+CLI_DIR = Path(__file__).parent.parent
+FLASHCARDS_BIN = str(CLI_DIR / ".venv" / "bin" / "flashcards")
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _env(home: Path) -> dict[str, str]:
+    return {**os.environ, "HOME": str(home), "TZ": "UTC", "FLASHCARDS_TICK_SECS": "1"}
+
+
+def _cli(home: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([FLASHCARDS_BIN, *args], capture_output=True, text=True, timeout=30, env=_env(home), check=False)
+
+
+def _wait_for(url: str, timeout: float = 30) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1):
+                return
+        except OSError:
+            time.sleep(0.2)
+    raise AssertionError(f"{url} never answered")
+
+
+def _request(url: str, method: str = "GET", body: dict | None = None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.loads(response.read())
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    (tmp_path / "agent/notifications").mkdir(parents=True)
+    return tmp_path
+
+
+@pytest.fixture
+def serving(home: Path):
+    port = _free_port()
+    proc = subprocess.Popen(
+        [FLASHCARDS_BIN, "serve", "--notifications-dir", str(home / "agent/notifications"), "--port", str(port)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=_env(home),
+    )
+    try:
+        _wait_for(f"http://127.0.0.1:{port}/stats")
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+
+
+def test_cli_round_trip(home: Path):
+    added = _cli(home, "add", "--deck", "spanish", "hola", "hello")
+    assert added.returncode == 0, added.stderr
+    assert json.loads(added.stdout)["ids"] == [1]
+    nxt = json.loads(_cli(home, "next").stdout)
+    assert nxt["front"] == "hola" and nxt["remaining"] == 1
+    reviewed = json.loads(_cli(home, "review", "1", "good", "--seconds", "4").stdout)
+    assert reviewed["due_in"] == "10m"
+    assert _cli(home, "next").stdout.strip() == "null"
+    failed = _cli(home, "review", "1", "wrong")
+    assert failed.returncode == 1 and failed.stdout == ""
+
+
+def test_http_api_and_the_daemon_nudge(home: Path, serving: str):
+    created = _request(f"{serving}/cards", "POST", {"deck": "anatomy", "cards": [{"front": "femur", "back": "thigh bone"}]})
+    assert created["added"] == 1
+    assert _request(f"{serving}/next")["front"] == "femur"
+    assert _request(f"{serving}/stats")["due_now"] == 1
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not list((home / "agent/notifications").glob("*cards_due.json")):
+        time.sleep(0.2)
+    (notif,) = (home / "agent/notifications").glob("*cards_due.json")
+    assert json.loads(notif.read_text())["due_count"] == 1
+    reviewed = _request(f"{serving}/cards/1/review", "POST", {"rating": "good"})
+    assert reviewed["state"] == "learning"
+    assert _request(f"{serving}/config", "PATCH", {"name": "new_cards_per_day", "value": "3"})["new_cards_per_day"] == 3
+    with pytest.raises(urllib.error.HTTPError) as failure:
+        _request(f"{serving}/cards/1/review", "POST", {"rating": "wrong"})
+    assert failure.value.code == 400

@@ -221,6 +221,12 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "flashcards/cli"), "flashcards"],
+        name="flashcards",
+        serves_port=True,
+        emits_daemon_died=True,
+    ),
+    Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "agentmail/cli"), "agentmail"],
         name="agentmail",
         serves_port=True,
