@@ -116,7 +116,8 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Cam
     return CamoufoxRuntime(process=process)
 
 
-async def _ask(runtime: CamoufoxRuntime, payload: dict[str, p.JsonValue], timeout_s: float) -> dict[str, p.JsonValue]:
+async def _ask(runtime: CamoufoxRuntime, payload: dict[str, p.JsonValue], timeout_s: float,
+               expect: tuple[str, ...] = ()) -> dict[str, p.JsonValue]:
     if runtime.process.stdin is None or runtime.process.stdout is None:
         raise RuntimeError("camoufox worker has no pipe")
     runtime.process.stdin.write((json.dumps(payload) + "\n").encode())
@@ -127,13 +128,22 @@ async def _ask(runtime: CamoufoxRuntime, payload: dict[str, p.JsonValue], timeou
     answer = json.loads(line)
     if not isinstance(answer, dict):
         raise ConnectionError("camoufox worker answered with a non-object")
+    # The worker answers exec and observe with different key sets on one pipe that carries no
+    # request id, so a reply read by the wrong waiter is a shape the caller never checks. Naming
+    # the keys an op needs turns that into the garbled-pipe case the callers already recover from,
+    # instead of an unhandled KeyError inside the caller.
+    missing = [k for k in expect if k not in answer]
+    if missing:
+        raise ConnectionError(
+            f"camoufox worker answered {payload.get('op')!r} without {', '.join(missing)}")
     return answer
 
 
 async def exec_code(runtime: CamoufoxRuntime, _session: Session, _paths: Paths, code: str, timeout_s: int) -> ExecOutcome:
     started = time.monotonic()
     try:
-        answer = await _ask(runtime, {"op": "exec", "code": code}, timeout_s)
+        answer = await _ask(runtime, {"op": "exec", "code": code}, timeout_s,
+                            expect=("stdout", "stderr", "exit_code", "capability_mismatch"))
     except TimeoutError:
         await kill_group(runtime.process, KILL_GRACE_SECS)
         return ExecOutcome("", "", None, elapsed_ms(started), timed_out=True)
@@ -159,7 +169,7 @@ async def observe(runtime: CamoufoxRuntime) -> p.PageInfo:
     if runtime.process.returncode is not None:
         return p.page_unavailable()
     try:
-        answer = await _ask(runtime, {"op": "observe"}, 5)
+        answer = await _ask(runtime, {"op": "observe"}, 5, expect=("page",))
     except (TimeoutError, ConnectionError, ValueError):
         return p.page_unavailable()
     return _page_info(answer["page"])
