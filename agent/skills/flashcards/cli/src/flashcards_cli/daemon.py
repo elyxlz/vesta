@@ -14,6 +14,10 @@ import subprocess
 import sys
 import time
 
+from .config import Config
+from .db import get_db
+from .settings import load_settings
+
 NAME = "flashcards"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
@@ -27,6 +31,8 @@ POLL_SECS = 0.5
 CLAIM_WAIT_SECS = 3
 # One hung connection must not eat the whole readiness budget.
 PROBE_TIMEOUT_SECS = 2
+# With the API off there is no port to probe, so a start that outlives the import is a start.
+SETTLE_SECS = 2
 
 
 def _budget(name: str, default: int) -> int:
@@ -131,9 +137,20 @@ def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
     return _fail(message)
 
 
-def _await_ready(child: subprocess.Popen[bytes], port: str) -> int:
+def _api_enabled() -> bool:
+    with contextlib.closing(get_db(Config().data_dir)) as conn:
+        return load_settings(conn).api_enabled
+
+
+def _await_ready(child: subprocess.Popen[bytes], port: str | None) -> int:
     """Holds the start open until the daemon it spawned answers on its port, which is what lets
-    the caller's next line use the service."""
+    the caller's next line use the service. A portless daemon is ready once it survives the settle."""
+    if port is None:
+        time.sleep(SETTLE_SECS)
+        if child.poll() is not None:
+            return _abandon(child, f"{NAME} exited during startup; see {LOG}")
+        print(json.dumps({"status": "started"}))
+        return 0
     deadline = time.monotonic() + READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
         if child.poll() is not None:
@@ -186,15 +203,16 @@ def _start() -> int:
     answer = _claim_start()
     if answer is not None:
         return answer
-    port = _register_port()
-    if port is None:
-        PIDFILE.unlink(missing_ok=True)
-        return _fail(f"could not register {NAME} with vestad; not launching")
-    PORTFILE.write_text(port)
+    port = None
+    if _api_enabled():
+        port = _register_port()
+        if port is None:
+            PIDFILE.unlink(missing_ok=True)
+            return _fail(f"could not register {NAME} with vestad; not launching")
+        PORTFILE.write_text(port)
+    argv = [sys.argv[0], "serve"] if port is None else [sys.argv[0], "serve", "--port", port]
     with LOG.open("ab") as log:
-        child = subprocess.Popen(
-            [sys.argv[0], "serve", "--port", port], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
-        )
+        child = subprocess.Popen(argv, env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log)
     PIDFILE.write_text(_record(child.pid))
     return _await_ready(child, port)
 

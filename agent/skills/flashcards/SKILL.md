@@ -67,7 +67,7 @@ New cards are introduced at `new_cards_per_day` (default 10) per day across all 
 
 ## Settings
 
-`flashcards config <name> <value>`; a change reaches the daemon on its next tick.
+`flashcards config <name> <value>`; a change reaches the daemon on its next tick, except `api_enabled`, which takes effect on `flashcards daemon restart`.
 
 | name | default | meaning |
 | --- | --- | --- |
@@ -76,10 +76,11 @@ New cards are introduced at `new_cards_per_day` (default 10) per day across all 
 | `new_cards_per_day` | `10` | new cards offered per day across all decks |
 | `nudge_interval_minutes` | `120` | minimum gap between `cards_due` notifications; `0` turns nudging off |
 | `active_hours` | `09:00-21:00` | wall-clock window for nudges, in the agent's timezone; `22:00-06:00` wraps midnight |
+| `api_enabled` | `false` | serve the HTTP API below; `true` or `false` |
 
 ## Other clients: the HTTP API
 
-The daemon serves a private vestad service named `flashcards`, so a dashboard widget or any client holding a service key can read and write the same store: `GET /stats`, `GET /decks`, `PATCH|DELETE /decks/{name}`, `GET /cards?deck=`, `POST /cards` (`{"deck", "cards": [{"front", "back", "notes"?}]}`), `GET|PATCH|DELETE /cards/{id}`, `POST /cards/{id}/suspend|resume|review` (`{"rating", "seconds"?}`), `GET /due?deck=&limit=`, `GET /next?deck=`, `GET|PATCH /config` (`{"name", "value"}`). Answers are the same JSON the CLI prints; a bad request is a 400 with `detail`.
+Off by default; nothing outside chat needs it until you build something that does. Turn it on with `flashcards config api_enabled true` then `flashcards daemon restart`, and `flashcards daemon status` reports the port. The daemon then serves a private vestad service named `flashcards`, so a dashboard widget or any client holding a service key can read and write the same store: `GET /stats`, `GET /decks`, `PATCH|DELETE /decks/{name}`, `GET /cards?deck=`, `POST /cards` (`{"deck", "cards": [{"front", "back", "notes"?}]}`), `GET|PATCH|DELETE /cards/{id}`, `POST /cards/{id}/suspend|resume|review` (`{"rating", "seconds"?}`), `GET /due?deck=&limit=`, `GET /next?deck=`, `GET|PATCH /config` (`{"name", "value"}`). Answers are the same JSON the CLI prints; a bad request is a 400 with `detail`.
 
 For a widget on the user's dashboard (due count, streak, a deck table), follow the `dashboard` skill and point the builder at these endpoints. For a link someone opens outside the app, mint a key with the `vestad` skill: `service-key mint flashcards --label <who>`.
 
@@ -95,7 +96,7 @@ uv tool install --editable ~/agent/skills/flashcards/cli
 
 ## Background Daemon
 
-`flashcards daemon start|stop|restart|status`. Start is idempotent, registers the port with vestad, and returns once the API answers; stop is the deliberate shutdown that does not write `daemon_died`. Manage the daemon through these verbs, never by launching `flashcards serve` yourself.
+`flashcards daemon start|stop|restart|status`. Start is idempotent and returns once the daemon is up (with `api_enabled`, it registers the port with vestad first and waits until the API answers); stop is the deliberate shutdown that does not write `daemon_died`. Manage the daemon through these verbs, never by launching `flashcards serve` yourself.
 
 So the daemon survives restarts, read the `restart` skill and add this line to your restart daemons:
 ```

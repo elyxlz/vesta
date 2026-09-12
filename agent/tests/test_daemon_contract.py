@@ -87,6 +87,14 @@ def _recorded_pid(pidfile: pl.Path) -> int:
     return int(pidfile.read_text().split()[0])
 
 
+FLASHCARDS = ["uv", "run", "--project", str(SKILLS_DIR / "flashcards/cli"), "flashcards"]
+
+
+def _rig_flashcards_api(home: pl.Path, bin_dir: pl.Path) -> None:
+    """The API is a setting, off by default; this row is the daemon with it on."""
+    subprocess.run([*FLASHCARDS, "config", "api_enabled", "true"], env={**os.environ, "HOME": str(home)}, check=True, capture_output=True)
+
+
 def _rig_file_host(home: pl.Path, bin_dir: pl.Path) -> None:
     served = home / ".file-host"
     served.mkdir()
@@ -221,10 +229,17 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
-        command=["uv", "run", "--project", str(SKILLS_DIR / "flashcards/cli"), "flashcards"],
+        command=FLASHCARDS,
+        name="flashcards",
+        serves_port=False,
+        emits_daemon_died=True,
+    ),
+    Daemon(
+        command=FLASHCARDS,
         name="flashcards",
         serves_port=True,
         emits_daemon_died=True,
+        rig=_rig_flashcards_api,
     ),
     Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "agentmail/cli"), "agentmail"],

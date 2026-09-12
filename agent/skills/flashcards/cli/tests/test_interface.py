@@ -69,3 +69,7 @@ def test_config_shows_and_sets_values(home, monkeypatch, capsys):
     assert code == 0 and json.loads(out)["active_hours"] == "08:00-23:00"
     code, _, err = _main(monkeypatch, capsys, "config", "desired_retention")
     assert code == 1 and "needs a value" in json.loads(err)["error"]
+    code, out, _ = _main(monkeypatch, capsys, "config", "api_enabled", "on")
+    assert code == 0 and json.loads(out)["api_enabled"] is True
+    code, _, err = _main(monkeypatch, capsys, "config", "api_enabled", "maybe")
+    assert code == 1 and json.loads(err)["error"] == "api_enabled must be true or false"

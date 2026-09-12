@@ -5,6 +5,7 @@ import socket
 import subprocess
 import time
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -45,30 +46,54 @@ def _request(url: str, method: str = "GET", body: dict | None = None):
         return json.loads(response.read())
 
 
-@pytest.fixture
-def home(tmp_path: Path) -> Path:
-    (tmp_path / "agent/notifications").mkdir(parents=True)
-    return tmp_path
+def _active_hours_around_now() -> str:
+    """A nudge window that holds the daemon's clock (UTC, per _env) whatever hour the test runs."""
+    now = datetime.now(UTC)
+    return f"{(now - timedelta(hours=1)):%H:%M}-{(now + timedelta(hours=1)):%H:%M}"
 
 
-@pytest.fixture
-def serving(home: Path):
-    port = _free_port()
-    proc = subprocess.Popen(
-        [FLASHCARDS_BIN, "serve", "--notifications-dir", str(home / "agent/notifications"), "--port", str(port)],
+def _serve(home: Path, *args: str) -> subprocess.Popen:
+    return subprocess.Popen(
+        [FLASHCARDS_BIN, "serve", "--notifications-dir", str(home / "agent/notifications"), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
         env=_env(home),
     )
+
+
+def _end(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+
+
+def _await_nudge(home: Path, proc: subprocess.Popen) -> Path:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not list((home / "agent/notifications").glob("*cards_due.json")):
+        assert proc.poll() is None, proc.stderr.read() if proc.stderr else ""
+        time.sleep(0.2)
+    (notif,) = (home / "agent/notifications").glob("*cards_due.json")
+    return notif
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    (tmp_path / "agent/notifications").mkdir(parents=True)
+    assert _cli(tmp_path, "config", "active_hours", _active_hours_around_now()).returncode == 0
+    return tmp_path
+
+
+@pytest.fixture
+def serving(home: Path):
+    port = _free_port()
+    proc = _serve(home, "--port", str(port))
     try:
         _wait_for(f"http://127.0.0.1:{port}/stats")
-        yield f"http://127.0.0.1:{port}"
+        yield f"http://127.0.0.1:{port}", proc
     finally:
-        if proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
+        _end(proc)
 
 
 def test_cli_round_trip(home: Path):
@@ -84,19 +109,25 @@ def test_cli_round_trip(home: Path):
     assert failed.returncode == 1 and failed.stdout == ""
 
 
-def test_http_api_and_the_daemon_nudge(home: Path, serving: str):
+def test_http_api_and_the_daemon_nudge(home: Path, serving: tuple[str, subprocess.Popen]):
+    serving, serving_proc = serving
     created = _request(f"{serving}/cards", "POST", {"deck": "anatomy", "cards": [{"front": "femur", "back": "thigh bone"}]})
     assert created["added"] == 1
     assert _request(f"{serving}/next")["front"] == "femur"
     assert _request(f"{serving}/stats")["due_now"] == 1
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and not list((home / "agent/notifications").glob("*cards_due.json")):
-        time.sleep(0.2)
-    (notif,) = (home / "agent/notifications").glob("*cards_due.json")
-    assert json.loads(notif.read_text())["due_count"] == 1
+    assert json.loads(_await_nudge(home, serving_proc).read_text())["due_count"] == 1
     reviewed = _request(f"{serving}/cards/1/review", "POST", {"rating": "good"})
     assert reviewed["state"] == "learning"
     assert _request(f"{serving}/config", "PATCH", {"name": "new_cards_per_day", "value": "3"})["new_cards_per_day"] == 3
     with pytest.raises(urllib.error.HTTPError) as failure:
         _request(f"{serving}/cards/1/review", "POST", {"rating": "wrong"})
     assert failure.value.code == 400
+
+
+def test_serve_without_a_port_nudges_and_serves_nothing(home: Path):
+    assert _cli(home, "add", "--deck", "anatomy", "femur", "thigh bone").returncode == 0
+    proc = _serve(home)
+    try:
+        assert json.loads(_await_nudge(home, proc).read_text())["due_count"] == 1
+    finally:
+        _end(proc)

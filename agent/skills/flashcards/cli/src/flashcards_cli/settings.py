@@ -19,6 +19,7 @@ class Settings:
     new_cards_per_day: int = 10
     nudge_interval_minutes: int = 120
     active_hours: str = "09:00-21:00"
+    api_enabled: bool = False
 
 
 SETTING_NAMES = tuple(f.name for f in fields(Settings))
@@ -46,7 +47,14 @@ def within_active_hours(settings: Settings, local_now: datetime) -> bool:
     return now >= start or now < end
 
 
-def _parse_value(name: str, raw: str) -> float | int | str:
+def _parse_value(name: str, raw: str) -> float | int | str | bool:
+    if name == "api_enabled":
+        lowered = raw.strip().lower()
+        if lowered in ("true", "on", "yes", "1"):
+            return True
+        if lowered in ("false", "off", "no", "0"):
+            return False
+        raise ValueError("api_enabled must be true or false")
     if name == "desired_retention":
         value = float(raw)
         if not 0.7 <= value <= 0.99:

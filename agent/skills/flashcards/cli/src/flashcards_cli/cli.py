@@ -106,7 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("daemon").add_argument("action", nargs="?", default="")
     serve = sub.add_parser("serve")
-    serve.add_argument("--port", type=int, required=True, help="HTTP port, allocated by vestad")
+    serve.add_argument("--port", type=int, help="HTTP port allocated by vestad; omitted when the API is off")
     serve.add_argument("--notifications-dir", default=str(Path.home() / "agent" / "notifications"))
     return parser
 
@@ -227,7 +227,7 @@ def main() -> None:
         sys.exit(_fail(str(exc)))
 
 
-def _run_serve(config: Config, notif_dir: Path, *, port: int) -> None:
+def _run_serve(config: Config, notif_dir: Path, *, port: int | None) -> None:
     notif_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -250,7 +250,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int) -> None:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    http_server = start_server(config, port)
+    http_server = start_server(config, port) if port is not None else None
     tick_secs = int(os.environ["FLASHCARDS_TICK_SECS"]) if "FLASHCARDS_TICK_SECS" in os.environ else DEFAULT_TICK_SECS
     print(json.dumps({"status": "serving", "tick_secs": tick_secs, "http_port": port}))
     sys.stdout.flush()
@@ -265,6 +265,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int) -> None:
                 # A bad tick (locked db, malformed row) must not kill the daemon; retry next tick.
                 logging.getLogger(__name__).exception("tick failed")
     finally:
-        http_server.should_exit = True
+        if http_server is not None:
+            http_server.should_exit = True
         if not asked_to_stop:
             write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
