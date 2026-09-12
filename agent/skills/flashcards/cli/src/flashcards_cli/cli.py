@@ -61,7 +61,7 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="flashcards", usage=USAGE, add_help=False)
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, prog="flashcards")
 
     add = sub.add_parser("add")
     add.add_argument("--deck", required=True)
