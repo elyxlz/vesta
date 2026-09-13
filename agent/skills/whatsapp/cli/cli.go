@@ -761,6 +761,9 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	if message == "" || message == "-" {
 		return nil, fmt.Errorf("--message is required (pass '-' and a <<'MSG' heredoc to read the body from stdin)")
 	}
+	if reason := dashReason(message); reason != "" {
+		return nil, fmt.Errorf("%s", reason)
+	}
 	if !longform {
 		if reason := bubbleLintReason(message); reason != "" {
 			return nil, fmt.Errorf("%s", reason)
