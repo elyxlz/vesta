@@ -107,6 +107,14 @@ path = "tests/live/mod.rs"
 name = "oauth"
 path = "tests/oauth/mod.rs"
 
+# The Docker-tier tests gzip and gunzip multi-GB image tars in process; an unoptimized miniz_oxide
+# compresses at about 6 MB/s and turns each of those tests into a 15 minute wait.
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.crc32fast]
+opt-level = 3
+
 [profile.release]
 strip = true
 lto = true
