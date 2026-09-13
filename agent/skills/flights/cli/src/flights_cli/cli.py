@@ -95,7 +95,7 @@ class FlightSearchQuery:
     currency: str = DEFAULT_CURRENCY
 
 
-def _search_flights(query: FlightSearchQuery) -> list[dict]:
+def _search_flights(query: FlightSearchQuery, *, _canary: bool = True) -> list[dict]:
     """Run a flight search for a single origin and return list of result dicts."""
     from fli.core import build_flight_segments, parse_cabin_class, parse_max_stops, parse_sort_by, resolve_airport
     from fli.models import FlightSearchFilters, PassengerInfo
@@ -126,6 +126,12 @@ def _search_flights(query: FlightSearchQuery) -> list[dict]:
 
         results = SearchFlights().search(filters, currency=query.currency)
         if not results:
+            if _canary and not _canary_is_alive():
+                raise DriftError(
+                    f"{query.origin}-{query.destination} returned nothing AND the "
+                    f"{CANARY_ROUTE[0]}-{CANARY_ROUTE[1]} canary is also empty: the Google Flights "
+                    "client is broken, this is NOT a statement that the route has no flights"
+                )
             return []
 
         rows = [_roundtrip_to_dict(r[0], r[1], query.currency) if isinstance(r, tuple) else _flight_to_dict(r, query.currency) for r in results]
@@ -144,6 +150,29 @@ def _search_flights(query: FlightSearchQuery) -> list[dict]:
 
     except Exception as e:
         return [{"error": str(e), "origin": query.origin}]
+
+
+# An empty result is ambiguous: a route with no flights and a drifted client look identical.
+# Re-run a route that always has flights to tell them apart, as the maps client does.
+CANARY_ROUTE = ("JFK", "LAX")
+CANARY_DAYS_AHEAD = 30
+
+
+class DriftError(RuntimeError):
+    """A known-good canary route also returned nothing: the Google Flights client has drifted."""
+
+
+def _canary_is_alive() -> bool:
+    """True if a route that always has flights still returns rows."""
+    date = (datetime.now().astimezone() + timedelta(days=CANARY_DAYS_AHEAD)).strftime("%Y-%m-%d")
+    probe = FlightSearchQuery(
+        origin=CANARY_ROUTE[0],
+        destination=CANARY_ROUTE[1],
+        date=date,
+        max_results=1,
+    )
+    # The probe must not trigger its own canary.
+    return bool(_search_flights(probe, _canary=False))
 
 
 @dataclasses.dataclass
@@ -193,6 +222,12 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
 
         results = SearchDates().search(filters, currency=query.currency)
         if not results:
+            if not _canary_is_alive():
+                raise DriftError(
+                    f"date search {query.origin}-{query.destination} returned nothing AND the "
+                    f"{CANARY_ROUTE[0]}-{CANARY_ROUTE[1]} canary is also empty: the Google Flights "
+                    "client is broken, this is NOT a statement that the route has no flights"
+                )
             return []
 
         # Sort by price and limit
