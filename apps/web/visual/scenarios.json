@@ -390,18 +390,6 @@
       "group": "Home"
     },
     {
-      "id": "home-chats-list",
-      "title": "Home, chats list",
-      "description": "Every conversation on the node under the carousel: direct chats, a group, and a pair.",
-      "group": "Home"
-    },
-    {
-      "id": "new-room-dialog",
-      "title": "New group dialog",
-      "description": "The new-group form with a name typed and one agent picked, so create is enabled.",
-      "group": "Home"
-    },
-    {
       "id": "home-card-starting",
       "title": "Card, starting",
       "description": "An agent card while its container starts.",
@@ -761,6 +749,33 @@
       "id": "room-group-senders",
       "title": "Room, several agents",
       "description": "A group room where each agent's run of bubbles carries its writer's name.",
+      "group": "Chat"
+    },
+    {
+      "id": "chats-empty",
+      "title": "Chats, nothing selected",
+      "description": "The inbox: every conversation busiest first, the pane waiting for a pick.",
+      "group": "Chat",
+      "platforms": ["web", "desktop"]
+    },
+    {
+      "id": "chats-selected",
+      "title": "Chats, a room open",
+      "description": "The inbox with the lisbon trip group selected and its transcript beside the list.",
+      "group": "Chat",
+      "platforms": ["web", "desktop"]
+    },
+    {
+      "id": "chats-narrow",
+      "title": "Chats, narrow",
+      "description": "The conversation list alone on a narrow viewport.",
+      "group": "Chat",
+      "platforms": ["web-narrow"]
+    },
+    {
+      "id": "new-room-dialog",
+      "title": "New group dialog",
+      "description": "The new-group form with a name typed and one agent picked, so create is enabled.",
       "group": "Chat"
     },
     {

@@ -31,7 +31,15 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
       pathname: "/agent/[name]/settings",
       params: { name },
     });
-  const goHome = () => router.dismissTo("/");
+  // Back is where the page was opened from (Home or the chats inbox); a cold deep link has
+  // nothing behind it, so it lands on Home.
+  const goBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.dismissTo("/");
+  };
 
   return (
     <>
@@ -45,7 +53,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           headerTitleAlign: "center",
           headerLeft: IS_IOS
             ? undefined
-            : () => <AgentBackHeaderButton onPress={goHome} />,
+            : () => <AgentBackHeaderButton onPress={goBack} />,
         }}
       />
       <Stack.Title asChild>
@@ -63,10 +71,10 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
       {IS_IOS && !hidden ? (
         <Stack.Toolbar placement="left">
           <Stack.Toolbar.Button
-            accessibilityLabel="Back to agents"
+            accessibilityLabel="Back"
             icon="chevron.backward"
             tintColor={colors.text}
-            onPress={goHome}
+            onPress={goBack}
           />
         </Stack.Toolbar>
       ) : null}
@@ -132,7 +140,7 @@ function AgentBackHeaderButton({ onPress }: { onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Back to agents"
+      accessibilityLabel="Back"
       hitSlop={10}
       android_ripple={{ color: colors.border, radius: 22 }}
       onPress={onPress}

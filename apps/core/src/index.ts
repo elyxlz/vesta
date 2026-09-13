@@ -57,6 +57,7 @@ export {
 export { parseServerFrame } from "./protocol/parse";
 export { selectDevices, devicesEqual, splitSelfDevice } from "./tree/devices";
 export {
+  directRoomAgent,
   directRoomId,
   roomKind,
   roomLabel,

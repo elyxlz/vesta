@@ -1,7 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { SheetChrome } from "./sheet-chrome.android";
 
-const { dismissTo } = vi.hoisted(() => ({ dismissTo: vi.fn() }));
+const { dismissTo, popBack, canGoBack } = vi.hoisted(() => ({
+  dismissTo: vi.fn(),
+  popBack: vi.fn(),
+  canGoBack: vi.fn(() => false),
+}));
 
 vi.mock("react-native", () => ({
   Pressable: "Pressable",
@@ -10,7 +14,9 @@ vi.mock("react-native", () => ({
   StyleSheet: { create: <T>(styles: T) => styles },
 }));
 vi.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
-vi.mock("expo-router", () => ({ useRouter: () => ({ dismissTo }) }));
+vi.mock("expo-router", () => ({
+  useRouter: () => ({ dismissTo, back: popBack, canGoBack }),
+}));
 vi.mock("expo-router/stack", () => ({
   default: {
     Screen: "Stack.Screen",
@@ -65,10 +71,22 @@ it("gives the Android back button the same flat surface as sheet close", async (
   expect(backStyle.backgroundColor).toBe("#f4f1ed");
   expect(backStyle).not.toHaveProperty("elevation");
   expect(back.props.android_ripple).toEqual(close.props.android_ripple);
-  expect(back.props.accessibilityLabel).toBe("Back to agents");
+  expect(back.props.accessibilityLabel).toBe("Back");
   expect(back.props.children.props.name).toBe("chevron-back");
   back.props.onPress();
   expect(dismissTo).toHaveBeenCalledWith("/");
+});
+
+it("pops back to the screen the agent page was opened from", async () => {
+  vi.stubEnv("EXPO_OS", "android");
+  vi.resetModules();
+  canGoBack.mockReturnValue(true);
+  const { AgentStackHeader } = await import("./AgentHeader");
+  const header = AgentStackHeader({});
+  const element = header.props.children[0].props.options.headerLeft();
+  element.type(element.props).props.onPress();
+  expect(popBack).toHaveBeenCalledOnce();
+  expect(dismissTo).not.toHaveBeenCalled();
 });
 
 it("keeps the iOS native back toolbar unchanged", async () => {

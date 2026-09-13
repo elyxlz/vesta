@@ -9,12 +9,15 @@ import { RoomContext, type RoomContextValue } from "./context";
 export function RoomProvider({
   roomId,
   fallback,
+  missingTo = "/",
   children,
 }: {
   roomId: string;
   // The room to serve while the tree does not carry this id. The agent page hands its own direct
   // room, which the node mints only after the build, so that page is never unreachable.
   fallback?: Room;
+  // Where a loaded tree that lacks the id sends the surface; the inbox keeps its own page.
+  missingTo?: string;
   children: ReactNode;
 }) {
   const { rooms, agents, agentsFetched } = useGateway();
@@ -23,7 +26,7 @@ export function RoomProvider({
   // Before the snapshot lands the room list is unknown, not empty; only a loaded tree that does
   // not carry this id, with no room to fall back on, means the conversation is gone.
   if (!room) {
-    return agentsFetched ? <Navigate to="/" replace /> : null;
+    return agentsFetched ? <Navigate to={missingTo} replace /> : null;
   }
 
   const kind = roomKind(room);

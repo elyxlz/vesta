@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
-import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
@@ -23,8 +22,8 @@ import {
   AgentIdentityCard,
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
+import { HeaderButton } from "@/components/header-button";
 import { Screen } from "@/components/layout/Screen";
-import { ChatsList } from "@/home/chats-list";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
@@ -219,7 +218,10 @@ export default function HomeScreen() {
               accessible
               accessibilityLabel={`Agent ${activeIndex + 1} of ${agents.length}`}
               pointerEvents="none"
-              style={styles.indicators}
+              style={[
+                styles.indicators,
+                { bottom: Math.max(insets.bottom, 16) },
+              ]}
             >
               {agents.map((agent, index) => (
                 <View key={agent.name} style={styles.indicatorSlot}>
@@ -266,9 +268,6 @@ export default function HomeScreen() {
                 </View>
               ))}
             </View>
-          </View>
-          <View style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
-            <ChatsList />
           </View>
         </>
       )}
@@ -462,6 +461,7 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
   const { reachable } = useRoster();
   const openSettings = () => router.push("/settings");
   const openCreateAgent = () => router.push("/new-agent");
+  const openChats = () => router.push("/chats");
 
   return (
     <>
@@ -475,17 +475,26 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerBackVisible: false,
-          headerLeft:
-            IS_IOS || !showCreate
-              ? undefined
-              : () => (
-                  <HomeHeaderButton
-                    accessibilityLabel="Create agent"
-                    icon="add"
-                    iconSize={22}
-                    onPress={openCreateAgent}
+          headerLeft: IS_IOS
+            ? undefined
+            : () => (
+                <View style={styles.headerButtons}>
+                  {showCreate ? (
+                    <HeaderButton
+                      accessibilityLabel="Create agent"
+                      icon="add"
+                      iconSize={22}
+                      onPress={openCreateAgent}
+                    />
+                  ) : null}
+                  <HeaderButton
+                    accessibilityLabel="Chats"
+                    icon="chatbubbles-outline"
+                    iconSize={20}
+                    onPress={openChats}
                   />
-                ),
+                </View>
+              ),
           headerRight: IS_IOS
             ? undefined
             : () => (
@@ -513,6 +522,12 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
               tintColor={colors.text}
               hidden={!showCreate}
               onPress={openCreateAgent}
+            />
+            <Stack.Toolbar.Button
+              accessibilityLabel="Chats"
+              icon="message"
+              tintColor={colors.text}
+              onPress={openChats}
             />
           </Stack.Toolbar>
           <Stack.Toolbar placement="right" asChild>
@@ -542,44 +557,8 @@ function HomeWordmark() {
   );
 }
 
-function HomeHeaderButton({
-  accessibilityLabel,
-  icon,
-  iconSize,
-  onPress,
-}: {
-  accessibilityLabel: string;
-  icon: ComponentProps<typeof Ionicons>["name"];
-  iconSize: number;
-  onPress: () => void;
-}) {
-  const { colors } = usePreferences();
-  const content = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      hitSlop={8}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.headerButtonContent,
-        { opacity: pressed ? 0.68 : 1 },
-      ]}
-    >
-      <Ionicons name={icon} size={iconSize} color={colors.text} />
-    </Pressable>
-  );
-
-  return (
-    <View style={[styles.headerButton, { backgroundColor: colors.elevated }]}>
-      {content}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { padding: 0 },
-  // The carousel and its page dots own the free space; the chats list sits under them and gives
-  // way on a short screen, its own rows scrolling inside.
   carouselArea: { flex: 1 },
   carousel: { backgroundColor: "transparent" },
   agentPage: {
@@ -596,7 +575,6 @@ const styles = StyleSheet.create({
   },
   indicators: {
     position: "absolute",
-    bottom: 12,
     left: 0,
     right: 0,
     flexDirection: "row",
@@ -635,17 +613,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.85,
     transform: [{ translateY: 3 }],
   },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    overflow: "hidden",
-  },
-  headerButtonContent: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  headerButtons: { flexDirection: "row", gap: 8 },
   skeletonOrb: {
     width: AGENT_IDENTITY_ORB_SIZE,
     height: AGENT_IDENTITY_ORB_SIZE,

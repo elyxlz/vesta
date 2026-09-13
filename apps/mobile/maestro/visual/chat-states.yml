@@ -142,17 +142,18 @@ tags:
       SCREENSHOT: room-chat-senders.png
 - stopApp
 - openLink:
-    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualRooms=group"
+    link: "vesta-dev://chats?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualRooms=group"
+- runFlow: wait-for-launch.yml
 - extendedWaitUntil:
     visible: "Open Launch week chat"
     timeout: 30000
 - waitForAnimationToEnd:
     timeout: 3000
-- takeScreenshot: home-chats-section
+- takeScreenshot: chats-screen
 - runScript:
     file: capture-screenshot.js
     env:
-      SCREENSHOT: home-chats-section.png
+      SCREENSHOT: chats-screen.png
 - tapOn:
     text: "New group"
 - extendedWaitUntil:
