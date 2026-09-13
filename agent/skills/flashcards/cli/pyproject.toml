@@ -1,0 +1,26 @@
+[project]
+name = "flashcards"
+version = "0.1.0"
+description = "Flashcards CLI: spaced repetition on the FSRS scheduler, with a daemon that nudges the agent when cards are due"
+readme = {text = "", content-type = "text/plain"}
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "fsrs>=6.3.0",
+    "uvicorn>=0.34.0",
+]
+
+[project.scripts]
+flashcards = "flashcards_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flashcards_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
