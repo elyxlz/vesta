@@ -1,4 +1,11 @@
-import { useImperativeHandle, useRef, type ComponentRef } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ComponentRef,
+} from "react";
 import { StyleSheet, TextInput } from "react-native";
 import {
   CHAT_COMPOSER_CONTROL_HEIGHT,
@@ -13,9 +20,14 @@ const MIN_HEIGHT = CHAT_COMPOSER_CONTROL_HEIGHT;
 const VERTICAL_PADDING = (MIN_HEIGHT - LINE_HEIGHT) / 2;
 const MAX_HEIGHT = 180;
 
-// No fixed height: the new-architecture text input measures its own text, so layout grows it
-// between the min and max heights. A height pinned from state would freeze layout, and the
-// content-size event only fires on a layout change.
+// The new-architecture text input measures its own text, so layout grows it between the min
+// and max heights. A typed value is committed by the native view first and measures right away.
+// A value set from code (a send's clear, edit and resend, a dictation transcript) is measured one
+// commit late: layout reads the previous text before the input's state takes the new one, and
+// the native re-sync is skipped because the text already matches. So such a value is committed
+// twice: first pinned to the height layout last gave the input, which is what the stale
+// measurement would yield anyway, then released for a fresh measurement once the deferred
+// value has caught up.
 export function ChatComposerInput({
   ref,
   value,
@@ -27,6 +39,17 @@ export function ChatComposerInput({
   onChangeText,
 }: ChatComposerInputProps) {
   const nativeRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const [typed, setTyped] = useState(value);
+  const [laidOutHeight, setLaidOutHeight] = useState(MIN_HEIGHT);
+  const settled = useDeferredValue(value);
+  const pinned = value !== typed && value !== settled;
+  const handleChangeText = useCallback(
+    (text: string) => {
+      setTyped(text);
+      onChangeText(text);
+    },
+    [onChangeText],
+  );
 
   useImperativeHandle(
     ref,
@@ -39,11 +62,20 @@ export function ChatComposerInput({
       ref={nativeRef}
       maxLength={maxLength}
       multiline
-      onChangeText={onChangeText}
+      onChangeText={handleChangeText}
+      onLayout={(event) => {
+        setLaidOutHeight(event.nativeEvent.layout.height);
+      }}
       placeholder={placeholder}
       placeholderTextColor={placeholderTextColor}
       selectionColor={selectionColor}
-      style={[styles.input, { color: textColor }]}
+      style={[
+        styles.input,
+        {
+          color: textColor,
+          height: pinned ? laidOutHeight : undefined,
+        },
+      ]}
       value={value}
     />
   );
