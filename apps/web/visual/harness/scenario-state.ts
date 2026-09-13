@@ -11,7 +11,8 @@ export interface ScenarioState {
   route?: string;
   sync?: SyncFixture;
   routes?: RouteFixture[];
-  chatSocket?: { agent: string; events: VestaEvent[] };
+  // The live room socket. One pattern serves every room, so the events are all it carries.
+  chatSocket?: { events: VestaEvent[] };
   // Extra localStorage keys on top of the saved connection and the theme.
   storage?: Record<string, string>;
   // false leaves no saved connection, which is how the connect page is reached.
@@ -32,3 +33,6 @@ export interface Scenario {
 // A fixed wall clock so every relative label ("resets in 2h", "last seen 5m
 // ago", day stamps) renders the same on every scan. Timers keep running.
 export const FIXED_TIME = new Date("2026-08-18T10:00:00Z");
+
+// A scenario whose state alone reaches the screenshot.
+export const noDrive = (): Promise<void> => Promise.resolve();

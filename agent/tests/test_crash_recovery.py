@@ -163,7 +163,7 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
 @pytest.mark.anyio
 async def test_monitor_crash_triggers_graceful_shutdown(tmp_path):
     """When monitor_loop crashes, the done callback records a crash reason and shuts down, so a dead
-    notification/app-chat intake restarts the agent instead of silently wedging behind a live WS."""
+    notification/chat intake restarts the agent instead of silently wedging behind a live WS."""
     from core.main import run_vesta
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")

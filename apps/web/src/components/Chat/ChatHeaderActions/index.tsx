@@ -12,7 +12,9 @@ interface ChatHeaderActionsProps {
   // Recede in perspective with the chat while a conversation runs.
   receded?: boolean;
   onCollapse?: () => void;
-  agentName: string;
+  // The agent behind a direct room, null in any other conversation. Only a direct room has an
+  // agent page to expand into, so the expand button renders with it.
+  agentName: string | null;
 }
 
 export function ChatHeaderActions({
@@ -24,8 +26,10 @@ export function ChatHeaderActions({
   const navigate = useNavigate();
   const speechEnabled = useVoice((s) => s.speechEnabled);
   const navbarHeight = useLayout((s) => s.navbarHeight);
+  // Voice is the direct agent's own service, so the speaker rides a direct room alone.
+  const showSpeech = speechEnabled && agentName !== null;
 
-  if (fullscreen && !speechEnabled) return null;
+  if (fullscreen && !showSpeech) return null;
 
   // The fullscreen chat sits under the absolute navbar, so the actions start below it.
   return (
@@ -38,19 +42,21 @@ export function ChatHeaderActions({
       style={{ top: fullscreen ? navbarHeight + 12 : 12 }}
     >
       <ButtonGroup>
-        {speechEnabled && <SpeechButton />}
+        {showSpeech && <SpeechButton />}
         {!fullscreen && (
           <>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              className="text-muted-foreground"
-              onClick={() => {
-                void navigate(`/agent/${agentName}/chat`);
-              }}
-            >
-              <Maximize2 />
-            </Button>
+            {agentName !== null && (
+              <Button
+                variant="outline"
+                size="icon-sm"
+                className="text-muted-foreground"
+                onClick={() => {
+                  void navigate(`/agent/${encodeURIComponent(agentName)}/chat`);
+                }}
+              >
+                <Maximize2 />
+              </Button>
+            )}
             <Button
               variant="outline"
               size="icon-sm"

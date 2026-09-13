@@ -113,6 +113,65 @@ pub async fn auth_middleware_api_or_any_agent_token(
     unauthorized()
 }
 
+/// Who is calling a chat route: the user (api key or access token) or one agent (its own token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ChatPrincipal {
+    User,
+    Agent(String),
+}
+
+impl ChatPrincipal {
+    pub(crate) fn is_member(&self, room: &crate::chat::Room) -> bool {
+        match self {
+            Self::User => true,
+            Self::Agent(name) => room.has_agent(name),
+        }
+    }
+}
+
+/// The agent whose env file carries `provided` as its token, if any.
+pub(crate) async fn agent_for_token(
+    provided: &str,
+    agents_dir: &std::path::Path,
+) -> Option<String> {
+    for name in crate::docker::env_file_names(agents_dir) {
+        let (_, expected) = crate::docker::read_agent_port_and_token_async(&name, agents_dir).await;
+        if expected.is_some_and(|expected| expected == provided) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// The chat routes' gate: resolve the caller into a `ChatPrincipal` once and hand it to the
+/// handler as a request extension. Client credentials mean the user; an agent token means that
+/// agent. Membership is the handler's decision.
+pub async fn auth_middleware_chat(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    if has_valid_api_auth(&headers, request.uri(), &state.api_key) {
+        request.extensions_mut().insert(ChatPrincipal::User);
+        return next.run(request).await;
+    }
+
+    if let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) {
+        if let Some(agent) = agent_for_token(provided, &state.env_config.agents_dir).await {
+            request.extensions_mut().insert(ChatPrincipal::Agent(agent));
+            return next.run(request).await;
+        }
+    }
+    let path = request.uri().path().to_string();
+    tracing::warn!(path = %path, "chat auth failed (neither client credentials nor an agent token)");
+    unauthorized()
+}
+
 /// True when the provided token matches the `AGENT_TOKEN` of any agent env file on this host.
 fn any_agent_token_matches(provided: &str, agents_dir: &std::path::Path) -> bool {
     crate::docker::env_file_names(agents_dir).iter().any(|name| {
@@ -643,6 +702,45 @@ mod any_agent_token_tests {
     fn rejects_when_no_agents_exist() {
         let tmp = tempfile::tempdir().expect("tempdir");
         assert!(!any_agent_token_matches("tok-alpha", tmp.path()));
+    }
+}
+
+#[cfg(test)]
+mod chat_principal_tests {
+    use super::{agent_for_token, ChatPrincipal};
+
+    #[tokio::test]
+    async fn agent_for_token_names_the_owner_of_a_token_and_none_for_a_stranger() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            tmp.path().join("alpha.env"),
+            "WS_PORT=4001\nAGENT_TOKEN=tok-alpha\n",
+        )
+        .expect("write alpha");
+        std::fs::write(
+            tmp.path().join("beta.env"),
+            "export WS_PORT=4002\nexport AGENT_TOKEN=tok-beta\n",
+        )
+        .expect("write beta");
+        assert_eq!(
+            agent_for_token("tok-beta", tmp.path()).await.as_deref(),
+            Some("beta")
+        );
+        assert_eq!(agent_for_token("tok-nope", tmp.path()).await, None);
+    }
+
+    #[test]
+    fn the_user_is_a_member_of_every_room_and_an_agent_only_of_its_own() {
+        let room = crate::chat::Room {
+            id: "dm:alpha".into(),
+            name: None,
+            agents: vec!["alpha".into()],
+            created_at: 0,
+            last_message_at: None,
+        };
+        assert!(ChatPrincipal::User.is_member(&room));
+        assert!(ChatPrincipal::Agent("alpha".into()).is_member(&room));
+        assert!(!ChatPrincipal::Agent("beta".into()).is_member(&room));
     }
 }
 

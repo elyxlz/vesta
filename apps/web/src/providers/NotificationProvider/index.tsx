@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { type Delta, type Tree } from "@vesta/core";
+import {
+  directRoomId,
+  roomKind,
+  selectRooms,
+  type Delta,
+  type Tree,
+} from "@vesta/core";
 import { useReplica } from "@vesta/core/react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { native } from "@/lib/native";
@@ -25,16 +31,13 @@ async function ensurePermission(): Promise<boolean> {
   return result === "granted";
 }
 
-async function focusAndOpen(
-  agentName: string,
-  openAgent: (agentName: string) => void,
-): Promise<void> {
+async function focusAndOpen(open: () => void): Promise<void> {
   try {
     await native.focusWindow();
   } catch {
     /* ignore */
   }
-  openAgent(agentName);
+  open();
 }
 
 // The fleet-wide pending count is the replica's always-on truth for unprocessed notifications.
@@ -50,9 +53,13 @@ function selectPendingCount(tree: Tree | null): number {
 export function NotificationProvider({
   children,
   onOpenAgent,
+  onOpenRoom,
 }: {
   children: ReactNode;
   onOpenAgent: (agentName: string) => void;
+  // Where a room notification lands: a direct room opens its agent's chat, anything else the
+  // room route. The direct agent is resolved here, off the replica, at click time.
+  onOpenRoom: (roomId: string, directAgent: string | null) => void;
 }) {
   // Null before the controller exists; every hook below answers the null with its idle value, so
   // the provider's hook order never depends on the connection. Focus, the viewed agent, and the
@@ -90,16 +97,29 @@ export function NotificationProvider({
     [controller],
   );
 
+  // The room a notification belongs to, resolved to its direct agent when it has one. Read off
+  // the replica at call time rather than subscribed, so the roster churning never re-renders here.
+  const directAgentOf = useCallback(
+    (roomId: string): string | null => {
+      const room = selectRooms(controller?.replica.getState() ?? null).find(
+        (candidate) => candidate.id === roomId,
+      );
+      if (!room || roomKind(room) !== "direct") return null;
+      return room.agents[0] ?? null;
+    },
+    [controller],
+  );
+
   const notifyAssistant = useCallback(
-    (agentName: string, text: string) => {
+    (sender: string, text: string, room: string) => {
       if (anyoneFocused()) return;
       if (!permissionRef.current) return;
       const body = text.trim();
       if (!body) return;
       try {
-        const n = new Notification(agentName, {
+        const n = new Notification(sender, {
           body: truncate(body),
-          tag: agentName,
+          tag: room,
         });
         const autoClose = setTimeout(
           () => n.close(),
@@ -107,7 +127,9 @@ export function NotificationProvider({
         );
         n.onclick = () => {
           clearTimeout(autoClose);
-          void focusAndOpen(agentName, onOpenAgent);
+          void focusAndOpen(() => {
+            onOpenRoom(room, directAgentOf(room));
+          });
           n.close();
         };
         n.onclose = () => clearTimeout(autoClose);
@@ -115,7 +137,7 @@ export function NotificationProvider({
         /* ignore */
       }
     },
-    [anyoneFocused, onOpenAgent],
+    [anyoneFocused, directAgentOf, onOpenRoom],
   );
 
   // Unlike chat previews, a needs-user alert (set up, sign in, rate limited) fires even while
@@ -130,7 +152,9 @@ export function NotificationProvider({
           tag: `${agentName}-needs-user`,
         });
         n.onclick = () => {
-          void focusAndOpen(agentName, onOpenAgent);
+          void focusAndOpen(() => {
+            onOpenAgent(agentName);
+          });
           n.close();
         };
       } catch {
@@ -140,8 +164,8 @@ export function NotificationProvider({
     [onOpenAgent],
   );
 
-  // The gateway announces an update only to clients that were away for it, so this raises with the
-  // same focus mute as a chat preview and opens nothing: there is no agent behind it.
+  // The gateway's own news reaches the clients that were away for it, so this raises with the same
+  // focus mute as a chat preview and opens nothing: there is no agent behind it.
   const notifyGateway = useCallback(
     (title: string, text: string) => {
       if (anyoneFocused()) return;
@@ -165,11 +189,11 @@ export function NotificationProvider({
     };
   }, []);
 
-  // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
-  // kind/title/body), independent of any subscription. A needs-user alert (set up, sign in, rate
-  // limited) toasts even while focused, since the chat surface shows nothing for it; a chat lights
-  // the unseen badge and toasts, deferring the agent whose page is open to AgentSocketProvider (which
-  // fires after the typing delay so it lines up with the visible bubble).
+  // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display
+  // triple: kind/title/body), independent of any subscription. A needs-user alert (set up, sign
+  // in, rate limited) toasts even while focused, since the chat surface shows nothing for it; a
+  // chat lights the unseen badge and toasts, deferring the room the user is looking at to
+  // RoomSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
     if (!controller) return;
     return controller.subscribeDeltas((delta: Delta) => {
@@ -181,15 +205,19 @@ export function NotificationProvider({
         notifyNeedsUser(agent, title, body);
         return;
       }
-      // The gateway's own announcement, sent only to clients that missed the update: it names no
-      // agent, so it carries its own title and lights no unseen badge.
-      if (kind === "gateway_updated") {
+      // The gateway's own news (the update it applied, the release it found, a device that
+      // connected) names no agent: there is no conversation behind it, so it carries its own
+      // title, opens nothing, and lights no unseen badge.
+      if (agent === "") {
         notifyGateway(title, body);
         return;
       }
       markUnseen();
-      if (controller.getViewing() === agent) return;
-      notifyAssistant(agent, body);
+      // A reply carries the room it landed in; a notice vestad minted about the agent itself (a
+      // finished task) carries none, so it falls back to that agent's own conversation.
+      const room = delta.room ?? directRoomId(agent);
+      if (room === controller.getViewing()) return;
+      notifyAssistant(title, body, room);
     });
   }, [controller, notifyAssistant, notifyNeedsUser, notifyGateway, markUnseen]);
 

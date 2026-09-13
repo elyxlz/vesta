@@ -26,10 +26,30 @@ describe("parseServerFrame", () => {
   });
 
   it("parses a snapshot frame and preserves the tree", () => {
-    const tree = { gateway: {}, agents: {} };
+    const tree = {
+      gateway: {},
+      agents: {},
+      rooms: [
+        {
+          id: "dm:scout",
+          name: null,
+          agents: ["scout"],
+          createdAt: 1,
+          lastMessageAt: null,
+        },
+      ],
+    };
     const parsed = parseServerFrame(JSON.stringify({ type: "snapshot", tree }));
     expect(parsed.kind).toBe("snapshot");
     if (parsed.kind === "snapshot") expect(parsed.frame.tree).toEqual(tree);
+  });
+
+  it("reads a snapshot from a gateway with no room list as an empty one", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({ type: "snapshot", tree: { gateway: {}, agents: {} } }),
+    );
+    expect(parsed.kind).toBe("snapshot");
+    if (parsed.kind === "snapshot") expect(parsed.frame.tree.rooms).toEqual([]);
   });
 
   it("classifies each delta type", () => {
@@ -88,6 +108,70 @@ describe("parseServerFrame", () => {
       expect(parsed.delta.title).toBe("scout");
       expect(parsed.delta.body).toBe("hello there");
     }
+  });
+
+  it("carries the room a message notification names", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        id: 13,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+        body: "hello there",
+        room: "dm:scout",
+      }),
+    );
+    expect(parsed.kind).toBe("delta");
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect(parsed.delta.room).toBe("dm:scout");
+    }
+  });
+
+  it("parses a user_notification without a room exactly as before", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        id: 14,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "task",
+        title: "scout",
+        body: "done",
+      }),
+    );
+    expect(parsed).toEqual({
+      kind: "delta",
+      delta: {
+        type: "user_notification",
+        id: 14,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "task",
+        title: "scout",
+        body: "done",
+      },
+    });
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect("room" in parsed.delta).toBe(false);
+    }
+  });
+
+  it("ignores a user_notification whose room is not a string", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        id: 15,
+        at: 1_700_000_000,
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+        body: "hi",
+        room: 7,
+      }),
+    );
+    expect(parsed.kind).toBe("unknown");
   });
 
   it("carries the gateway's own update announcement, which names no agent", () => {
@@ -272,6 +356,58 @@ describe("parseServerFrame", () => {
     expect(
       parseServerFrame(JSON.stringify({ type: "devices", devices: [bad] })),
     ).toEqual({
+      kind: "unknown",
+    });
+  });
+
+  it("parses a rooms delta", () => {
+    const rooms = [
+      {
+        id: "dm:scout",
+        name: null,
+        agents: ["scout"],
+        createdAt: 1_756_900_000,
+        lastMessageAt: 1_756_903_000,
+      },
+      {
+        id: "grp-0011223344556677",
+        name: "trip planning",
+        agents: ["scout", "axel"],
+        createdAt: 1_756_900_100,
+        lastMessageAt: null,
+      },
+    ];
+    const parsed = parseServerFrame(JSON.stringify({ type: "rooms", rooms }));
+    expect(parsed).toEqual({ kind: "delta", delta: { type: "rooms", rooms } });
+  });
+
+  it("parses an empty rooms delta", () => {
+    expect(
+      parseServerFrame(JSON.stringify({ type: "rooms", rooms: [] })),
+    ).toEqual({ kind: "delta", delta: { type: "rooms", rooms: [] } });
+  });
+
+  it("treats a rooms delta with a malformed room as unknown", () => {
+    const base = {
+      id: "dm:scout",
+      name: null,
+      agents: ["scout"],
+      createdAt: 1_756_900_000,
+      lastMessageAt: null,
+    };
+    for (const bad of [
+      { ...base, id: 7 },
+      { ...base, name: 7 },
+      { ...base, agents: "scout" },
+      { ...base, agents: ["scout", 7] },
+      { ...base, createdAt: "yesterday" },
+      { ...base, lastMessageAt: "yesterday" },
+    ]) {
+      expect(
+        parseServerFrame(JSON.stringify({ type: "rooms", rooms: [bad] })),
+      ).toEqual({ kind: "unknown" });
+    }
+    expect(parseServerFrame(JSON.stringify({ type: "rooms" }))).toEqual({
       kind: "unknown",
     });
   });

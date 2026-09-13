@@ -1,4 +1,4 @@
-import { startsNewBubbleGroup } from "@vesta/core";
+import { senderOf, startsNewBubbleGroup } from "@vesta/core";
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import type { ChatMessage } from "@vesta/core";
 
@@ -11,6 +11,21 @@ export interface DecoratedRow {
   // Last bubble of its group (next message is a different sender or a new bubble group, or
   // this is the final message). Only this bubble gets the tail corner; the rest are rounded.
   isGroupEnd: boolean;
+  // First bubble of its group. A room with several agents prints who spoke above this one.
+  isGroupStart: boolean;
+}
+
+// Who a bubble prints above itself, null for none. Only a room with several agents names anyone,
+// only the first bubble of a group carries it, and only a reply names a member: the user is the one
+// member every room shares, and no other row was written by an agent.
+export function senderCaption(
+  row: DecoratedRow,
+  showSenders: boolean,
+): string | null {
+  if (!showSenders || !row.isGroupStart) return null;
+  if (row.event.type !== "chat") return null;
+  const sender = senderOf(row.event);
+  return sender === "user" ? null : sender;
 }
 
 function rowKey(event: ChatMessage, idxFallback: number): string {
@@ -64,6 +79,9 @@ export function buildDecorated(
     const isGroupEnd = next
       ? next.type !== msg.type || startsNewBubbleGroup(msg, next)
       : true;
+    const isGroupStart = prev
+      ? prev.type !== msg.type || startsNewBubbleGroup(prev, msg)
+      : true;
     const dayKey = calendarDayKey(msg.ts);
     const showDayStamp = Boolean(
       dayKey && (lastDayKey === null || dayKey !== lastDayKey),
@@ -82,6 +100,7 @@ export function buildDecorated(
       showDayStamp,
       dayLabel,
       isGroupEnd,
+      isGroupStart,
     };
   });
 }

@@ -24,6 +24,8 @@ pub(crate) struct UserNotification {
     pub kind: String,
     pub title: String,
     pub body: String,
+    /// The chat room a `message` notification was minted in; `None` on every other kind.
+    pub room: Option<String>,
 }
 
 /// The aggregator's shared fan-out state. The tap (in `agent_status.rs`) seeds each agent's pending
@@ -135,6 +137,7 @@ mod tests {
             kind: "message".into(),
             title: "scout".into(),
             body: "hi".into(),
+            room: Some("dm:scout".into()),
         });
         for rx in [&mut first, &mut second] {
             let notification = rx.recv().await.expect("user notification");

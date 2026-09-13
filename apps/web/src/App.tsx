@@ -23,6 +23,15 @@ function openAgent(agentName: string): void {
   void router.navigate(`/agent/${encodeURIComponent(agentName)}`);
 }
 
+// A direct room is that agent's own page; every other conversation has its own route.
+function openRoom(roomId: string, directAgent: string | null): void {
+  void router.navigate(
+    directAgent !== null
+      ? `/agent/${encodeURIComponent(directAgent)}/chat`
+      : `/chat/${encodeURIComponent(roomId)}`,
+  );
+}
+
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
   const { versionChecked } = useGateway();
@@ -65,7 +74,10 @@ export default function App() {
             <AuthProvider>
               <ControllerProvider>
                 <GatewayProvider>
-                  <NotificationProvider onOpenAgent={openAgent}>
+                  <NotificationProvider
+                    onOpenAgent={openAgent}
+                    onOpenRoom={openRoom}
+                  >
                     <PresenceReporter />
                     <Scrim />
                     <SwitchGatewayDialog />

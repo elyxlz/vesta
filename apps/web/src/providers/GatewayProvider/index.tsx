@@ -5,10 +5,12 @@ import {
   devicesEqual,
   dismissGatewayUpdate as requestDismissUpdate,
   gatewayOperationsEqual,
+  roomsEqual,
   rosterFromTree,
   rostersEqual,
   selectDevices,
   selectGatewayOperation,
+  selectRooms,
   triggerGatewayRestart as requestGatewayRestart,
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
@@ -98,6 +100,7 @@ function ConnectedGateway({
   );
   const agents = useReplica(replica, rosterFromTree, rostersEqual);
   const devices = useReplica(replica, selectDevices, devicesEqual);
+  const rooms = useReplica(replica, selectRooms, roomsEqual);
   const syncState = useSyncState(controller);
   const reconnect = useControllerReconnect();
 
@@ -164,6 +167,7 @@ function ConnectedGateway({
     gatewayOperation,
     updatedTo,
     agents,
+    rooms,
     devices,
     triggerGatewayUpdate,
     triggerGatewayRestart,

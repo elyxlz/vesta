@@ -1,7 +1,9 @@
 import { createContext, useContext } from "react";
 
 export interface NotificationContextValue {
-  notifyAssistant: (agentName: string, text: string) => void;
+  // A reply landing in a room: `sender` titles the notification, `room` tags it and decides where
+  // a click lands.
+  notifyAssistant: (sender: string, text: string, room: string) => void;
 }
 
 export const NotificationContext =

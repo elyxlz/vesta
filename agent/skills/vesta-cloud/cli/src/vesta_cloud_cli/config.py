@@ -5,7 +5,7 @@ Everything is read from the environment the agent container already has:
 * the control-plane base URL (`https://vesta.run/api`, override with
   `VESTA_CLOUD_CONTROL_URL`);
 * how to reach **this box's vestad**: `BOX_HOST` + `VESTAD_PORT` +
-  `AGENT_NAME` + `AGENT_TOKEN` (the same agent-token tier the voice / app-chat
+  `AGENT_NAME` + `AGENT_TOKEN` (the same agent-token tier the voice / chat
   skills use). The CLI calls vestad to mint a server-identity token; it never
   holds the box's `api_key`.
 

@@ -17,7 +17,6 @@ import { cn } from "@/lib/utils";
 
 const ERROR_LABEL: Record<UploadErrorReason, string> = {
   too_large: "too large",
-  unsupported_agent: "agent needs an update",
   failed: "upload failed",
   aborted: "cancelled",
 };

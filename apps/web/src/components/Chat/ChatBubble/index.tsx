@@ -3,7 +3,6 @@ import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
-import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, InputMethod, ChatMessage } from "@vesta/core";
 import { cn } from "@/lib/utils";
 import { AttachmentContent, type OpenViewerRequest } from "./AttachmentContent";
@@ -24,52 +23,27 @@ function formatBubbleTime(ts: string | undefined): string {
   });
 }
 
-function statusLineText(
-  event: Extract<ChatMessage, { type: "error" | "rate_limited" }>,
-): string {
-  if (event.type === "error")
-    return "hit a snag, this may not have gone through";
-  return event.resets_at
-    ? `rate limited, back ${formatResetTime(event.resets_at)}`
-    : "rate limited, retrying later";
-}
-
 export const ChatBubble = memo(function ChatBubble({
   event,
   className,
   isMobile,
   hasTail = true,
+  sender = null,
   onRetry,
-  agentName,
   onOpenAttachment,
 }: {
   event: ChatMessage;
   className?: string;
   isMobile: boolean;
   hasTail?: boolean;
+  // Who wrote this, printed above the bubble. Null unless the room has several agents and this
+  // bubble opens one of their groups: a conversation with one agent needs no name on it.
+  sender?: string | null;
   onRetry?: RetryHandler;
-  agentName?: string;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
   // Desktop chats read at 16px body / 14px meta; mobile keeps its smaller sizes.
   const large = !isMobile;
-  if (event.type === "status") return null;
-
-  if (event.type === "error" || event.type === "rate_limited") {
-    return (
-      <div className={cn("flex justify-center", className)}>
-        <span
-          className={cn(
-            "text-muted-foreground/60 select-none",
-            large ? "text-sm" : "text-[11px]",
-          )}
-        >
-          {statusLineText(event)}
-        </span>
-      </div>
-    );
-  }
-
   if (event.type !== "user" && event.type !== "chat") return null;
 
   const ts = formatBubbleTime(event.ts);
@@ -92,7 +66,7 @@ export const ChatBubble = memo(function ChatBubble({
           large={large}
           hasTail={hasTail}
           attachments={attachments}
-          agentName={agentName}
+          sender={sender}
           onOpenAttachment={onOpenAttachment}
         />
         <div className="mt-0.5 flex justify-end pr-1">
@@ -119,7 +93,7 @@ export const ChatBubble = memo(function ChatBubble({
       large={large}
       hasTail={hasTail}
       attachments={event.attachments}
-      agentName={agentName}
+      sender={sender}
       onOpenAttachment={onOpenAttachment}
     />
   );
@@ -133,7 +107,7 @@ function MessageBubble({
   large,
   hasTail,
   attachments,
-  agentName,
+  sender,
   onOpenAttachment,
 }: {
   isUser: boolean;
@@ -145,60 +119,61 @@ function MessageBubble({
   // Only the last bubble of a group carries the tighter tail corner.
   hasTail: boolean;
   attachments?: ChatAttachment[];
-  agentName?: string;
+  sender?: string | null;
   onOpenAttachment?: (request: OpenViewerRequest) => void;
 }) {
-  // Attachments need the agent name to build their URLs; a caller that omits it (the Debug
-  // stream) renders the caption alone.
-  const blocks =
-    agentName !== undefined &&
-    attachments !== undefined &&
-    attachments.length > 0
-      ? { agentName, attachments }
-      : null;
+  const blocks = attachments && attachments.length > 0 ? attachments : null;
   return (
-    <Message align={isUser ? "end" : "start"} className={className}>
-      <Bubble
-        variant={isUser ? "default" : "secondary"}
-        align={isUser ? "end" : "start"}
-        className="max-w-[85%]"
-      >
-        <BubbleContent
-          className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}
-          // Pill bubble; the last bubble of a group gets one tighter "tail"
-          // corner for the conversation look.
-          style={bubbleRadiusStyle(isUser, hasTail)}
+    <div className={className}>
+      {sender != null && (
+        <div className="mb-1 px-3.5 text-xs text-muted-foreground">
+          {sender}
+        </div>
+      )}
+      <Message align={isUser ? "end" : "start"}>
+        <Bubble
+          variant={isUser ? "default" : "secondary"}
+          align={isUser ? "end" : "start"}
+          className="max-w-[85%]"
         >
-          {/* Block flow (not flex) so adjacent markdown paragraphs keep their collapsed margins. */}
-          <div className="min-w-0 break-words">
-            {blocks && (
-              <div className={cn("flex flex-col gap-2.5 py-1", text && "mb-1")}>
-                {blocks.attachments.map((attachment) => (
-                  <AttachmentContent
-                    key={attachment.id}
-                    agent={blocks.agentName}
-                    attachment={attachment}
-                    onOpen={onOpenAttachment}
-                  />
-                ))}
-              </div>
-            )}
-            {text && <Markdown>{text}</Markdown>}
-          </div>
-          {ts && (
-            <span
-              className={cn(
-                "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
-                isUser
-                  ? "text-primary-foreground/50"
-                  : "text-muted-foreground/50",
+          <BubbleContent
+            className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}
+            // Pill bubble; the last bubble of a group gets one tighter "tail"
+            // corner for the conversation look.
+            style={bubbleRadiusStyle(isUser, hasTail)}
+          >
+            {/* Block flow (not flex) so adjacent markdown paragraphs keep their collapsed margins. */}
+            <div className="min-w-0 break-words">
+              {blocks && (
+                <div
+                  className={cn("flex flex-col gap-2.5 py-1", text && "mb-1")}
+                >
+                  {blocks.map((attachment) => (
+                    <AttachmentContent
+                      key={attachment.id}
+                      attachment={attachment}
+                      onOpen={onOpenAttachment}
+                    />
+                  ))}
+                </div>
               )}
-            >
-              {ts}
-            </span>
-          )}
-        </BubbleContent>
-      </Bubble>
-    </Message>
+              {text && <Markdown>{text}</Markdown>}
+            </div>
+            {ts && (
+              <span
+                className={cn(
+                  "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
+                  isUser
+                    ? "text-primary-foreground/50"
+                    : "text-muted-foreground/50",
+                )}
+              >
+                {ts}
+              </span>
+            )}
+          </BubbleContent>
+        </Bubble>
+      </Message>
+    </div>
   );
 }

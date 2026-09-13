@@ -8,6 +8,7 @@ import type {
 import { AGENT } from "../harness/http-fixtures";
 import {
   FIXED_TIME,
+  noDrive,
   type Scenario,
   type ScenarioState,
 } from "../harness/scenario-state";
@@ -21,8 +22,6 @@ const START_REFUSED = `gateway refused to start ${AGENT}: disk is full`;
 function homeState(agent: AgentNode): ScenarioState {
   return { route: HOME_ROUTE, sync: { agents: { [AGENT]: agent } } };
 }
-
-const noDrive = (): Promise<void> => Promise.resolve();
 
 function card(status: AgentStatus, info: Partial<AgentInfo> = {}): Scenario {
   return {

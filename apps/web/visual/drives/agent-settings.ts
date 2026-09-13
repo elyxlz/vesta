@@ -1,4 +1,5 @@
 import { type Page } from "@playwright/test";
+import { directRoomId } from "@vesta/core";
 import type {
   AgentNode,
   NotificationEvent,
@@ -481,7 +482,7 @@ const HAPPY_ROUTES: RouteFixture[] = [
   { path: "/host/folders", json: { folders: HOST_FOLDERS } },
   agentRoute("/tree", { entries: TREE }),
   agentRoute("/file", MEMORY_FILE, { query: { path: MEMORY_PATH } }),
-  ...chatRoutes(AGENT),
+  ...chatRoutes(directRoomId(AGENT)),
 ];
 
 // The voice service is what makes the settings page read the voice status.
@@ -505,7 +506,7 @@ function settingsState(
     sync: { agents: { [AGENT]: overrides.agent ?? settingsAgent() } },
     routes: [...HAPPY_ROUTES, ...(overrides.routes ?? [])],
     storage: overrides.storage,
-    chatSocket: { agent: AGENT, events: [] },
+    chatSocket: { events: [] },
   };
 }
 

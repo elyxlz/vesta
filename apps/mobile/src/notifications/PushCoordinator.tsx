@@ -6,7 +6,7 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { usePathname, useRouter } from "expo-router";
-import { useViewedAgent } from "@/hooks/use-viewed-agent";
+import { useViewedAgent } from "./use-viewed-agent";
 import { registerMobileDevice, unregisterMobileDevice } from "@vesta/core";
 import { createApiClient, type ApiClient } from "@/api/client";
 import type { ConnectionConfig } from "@vesta/core";
@@ -25,6 +25,7 @@ import { shouldPresentForegroundNotification } from "./foreground-policy";
 import {
   notificationNavigationDecision,
   pendingNotificationFromData,
+  pushOpensAgentPage,
   readPendingNotification,
   type PendingNotification,
 } from "./notification-routing";
@@ -236,10 +237,19 @@ function EnabledPushCoordinator() {
       })
       .finally(() => {
         if (decision === "open") {
-          router.push({
-            pathname: "/agent/[name]",
-            params: { name: pending.agent },
-          });
+          // A direct room IS the agent's page (its chat is one page of that pager); every other
+          // conversation has its own screen.
+          if (pushOpensAgentPage(pending)) {
+            router.push({
+              pathname: "/agent/[name]",
+              params: { name: pending.agent },
+            });
+          } else {
+            router.push({
+              pathname: "/chat/[roomId]",
+              params: { roomId: pending.room },
+            });
+          }
         }
         setPending((current) =>
           current?.identifier === pending.identifier ? null : current,

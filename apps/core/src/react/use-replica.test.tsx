@@ -24,7 +24,7 @@ function baseGateway(): GatewayInfo {
 }
 
 function baseTree(): Tree {
-  return { gateway: baseGateway(), agents: {}, devices: [] };
+  return { gateway: baseGateway(), agents: {}, devices: [], rooms: [] };
 }
 
 function agentInfo(): AgentInfo {

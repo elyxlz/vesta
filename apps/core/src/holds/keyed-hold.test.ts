@@ -10,7 +10,7 @@ import {
   type ChatState,
   type VestaEvent,
 } from "../index";
-import { agentHoldKey, createKeyedHoldStore } from "./keyed-hold";
+import { agentHoldKey, createKeyedHoldStore, roomHoldKey } from "./keyed-hold";
 
 function chat(id: number, text: string): VestaEvent {
   return { type: "chat", text, id };
@@ -103,6 +103,22 @@ describe("keyed hold store", () => {
     const confirmedUsers = confirmed.messages.filter((m) => m.type === "user");
     expect(confirmedUsers).toHaveLength(1);
     expect(confirmedUsers[0]?.send_state).toBeUndefined();
+  });
+
+  it("keys a conversation by room and gateway, never colliding with the agent key", () => {
+    const store = createKeyedHoldStore<ChatState>();
+    store.persist(roomHoldKey("dm:ada", GW), tailWith([1, "a"]));
+    store.persist(roomHoldKey("grp-1", GW), tailWith([2, "b"]));
+
+    const direct = store.read(roomHoldKey("dm:ada", GW));
+    if (!direct) throw new Error("expected held state");
+    const group = store.read(roomHoldKey("grp-1", GW));
+    if (!group) throw new Error("expected held state");
+    expect(texts(direct)).toEqual(["a"]);
+    expect(texts(group)).toEqual(["b"]);
+    expect(roomHoldKey("dm:ada", GW)).toBe(`room:dm:ada\n${GW}`);
+    expect(roomHoldKey("dm:ada", GW)).not.toBe(agentHoldKey("dm:ada", GW));
+    expect(store.read(roomHoldKey("dm:ada", "https://gw-b"))).toBeNull();
   });
 
   it("an empty store seeds nothing", () => {

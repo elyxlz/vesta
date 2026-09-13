@@ -35,7 +35,7 @@ function harness() {
   };
   const sender = createChatSender({
     http,
-    agent: "apollo",
+    roomId: "dm:apollo",
     commit,
     current: () => state,
     makeId: () => {

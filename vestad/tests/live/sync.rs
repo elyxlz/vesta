@@ -1,66 +1,70 @@
-//! Live chat-socket e2e against a REAL, settled Claude agent (release-gated tier). Bridges the two
-//! halves the fake-token server suite (`tests/server/sync.rs`) can only test apart: an app-chat
-//! `send_message` carrying an `intent_id` echoes that id back on the chat socket (the delivery-truth
-//! contract), AND the real model round-trip that follows streams a genuine agent reply (a `chat`
-//! event the skill's `app-chat send` persists and fans) onto the same socket. Skips with no
-//! `CLAUDE_CREDENTIALS` (the pool is unprovisioned, so the lock returns None), matching every other
-//! live test.
+//! Live room-socket e2e against a REAL, settled Claude agent (release-gated tier). Bridges the two
+//! halves the fake-token server suite (`tests/server/sync.rs`) can only test apart: a post into the
+//! agent's direct room carrying an `intent_id` echoes that id back on `/rooms/ws` (the
+//! delivery-truth contract), AND the real model round-trip that follows streams a genuine agent
+//! reply (a `chat` message the skill's `chat send` posts to the node) onto the same socket. Skips
+//! with no `CLAUDE_CREDENTIALS` (the pool is unprovisioned, so the lock returns None), matching
+//! every other live test.
 
 use std::time::{Duration, Instant};
 
-use vesta_tests::client::{Client, SyncSocket};
-use vesta_tests::SERVER;
+use vesta_tests::client::direct_room;
+use vesta_tests::{exec_in_container, SERVER};
 
 use super::common::lock_live_agent_a;
 
-/// The app-chat daemon writes the user echo the instant it intakes the send, so it lands fast. The
-/// bounded resends close two races: the chat socket's subscriber may register a hair after the first
-/// echo was fanned (the socket is replay-free, so a missed echo needs another send with a fresh id),
-/// and a real agent's daemon may still be coming up on the first send (the send 502s and retries).
+/// The node echoes a post the moment it appends it, so the echo lands fast. The bounded resends
+/// close the one race left: the room socket's subscriber may register a hair after the first echo
+/// was fanned, and the socket is replay-free, so a missed echo needs another post with a fresh id.
 const ECHO_TIMEOUT: Duration = Duration::from_secs(45);
 const ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
-/// The proxy 404s the chat-socket upgrade until the daemon's service is registered, so the open is
-/// retried briefly over this window (a settled pool agent's daemon is normally already up).
-const CHAT_SOCKET_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
-/// A full real-model round-trip: the app-chat notification is delivered, the SDK query runs, and the
-/// agent's reply streams back as a `chat` event on the socket. Generous like the first-start settle
+/// A full real-model round-trip: the chat notification is delivered, the SDK query runs, and the
+/// agent's reply arrives as a `chat` message on the socket. Generous like the first-start settle
 /// budget; it only has to not be hit in practice.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long the settled agent's own chat daemon gets to report itself up. The reply travels through
+/// that daemon, so a dead one is read here in seconds instead of at the round-trip budget.
+const CHAT_DAEMON_TIMEOUT: Duration = Duration::from_secs(30);
+const CHAT_DAEMON_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// True when `frame` is the app-chat user echo carrying our `intent` (a `StoredEvent` on the chat
-/// socket, no envelope). Only the intake event carries an `intent_id`.
+/// True when `frame` is the user echo carrying our `intent`. Only an intake message carries an
+/// `intent_id`, and the room-level frames carry no `type` of `user` at all.
 fn is_echo(frame: &serde_json::Value, intent: &str) -> bool {
     frame["type"].as_str() == Some("user") && frame["intent_id"].as_str() == Some(intent)
 }
 
 /// True when `frame` is a non-empty agent reply (`chat`): the real model's response the skill
-/// persisted and fanned on its socket, not the user echo.
+/// posted to the node, not the user echo and not a room-level frame.
 fn is_agent_reply(frame: &serde_json::Value) -> bool {
     frame["type"].as_str() == Some("chat")
         && frame["text"].as_str().is_some_and(|text| !text.trim().is_empty())
 }
 
-/// Open the live agent's app-chat chat socket, retrying briefly past a still-registering service.
-async fn open_chat_socket(c: &Client, agent: &str) -> SyncSocket {
-    let deadline = Instant::now() + CHAT_SOCKET_OPEN_TIMEOUT;
+/// Poll the agent's own `chat daemon status` until it reports itself running. The daemon is what
+/// carries the reply back to the node, so its own answer is the fastest reading of a dead one.
+/// Bounded by `CHAT_DAEMON_TIMEOUT`, never a bare sleep.
+async fn wait_for_chat_daemon(container: &str) {
+    let deadline = Instant::now() + CHAT_DAEMON_TIMEOUT;
     loop {
-        match c.open_app_chat_socket(agent).await {
-            Ok(sock) => return sock,
-            Err(e) => assert!(
-                Instant::now() < deadline,
-                "the app-chat chat socket never opened for {agent}: {e}"
-            ),
+        let status = exec_in_container(container, ". /run/vestad-env && chat daemon status")
+            .unwrap_or_else(|error| format!("<status failed: {error}>"));
+        if status.contains("\"running\": true") {
+            return;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            Instant::now() < deadline,
+            "the agent's chat daemon never reported itself running within {CHAT_DAEMON_TIMEOUT:?}: {status}"
+        );
+        tokio::time::sleep(CHAT_DAEMON_POLL_INTERVAL).await;
     }
 }
 
-/// End-to-end: open the app-chat chat socket for a real settled agent, send one message with an intent
-/// id, observe the echo carrying that id, then observe the real agent reply arriving on the same
-/// socket. No-ops (returns) without `CLAUDE_CREDENTIALS`.
+/// End-to-end: open the room socket for a real settled agent's direct room, post one message with
+/// an intent id, observe the echo carrying that id, then observe the real agent reply arriving on
+/// the same socket. No-ops (returns) without `CLAUDE_CREDENTIALS`.
 #[tokio::test]
 async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
-    let Some((shared, _container)) = lock_live_agent_a() else {
+    let Some((shared, container)) = lock_live_agent_a() else {
         return;
     };
     let name = shared
@@ -70,20 +74,34 @@ async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
         .name
         .clone();
 
+    wait_for_chat_daemon(&container).await;
+
     let c = SERVER.client();
-    let mut chat = open_chat_socket(&c, &name).await;
+    let mut chat = c
+        .open_rooms_socket(Some(&direct_room(&name)))
+        .await
+        .expect("open the agent's room socket");
 
     let text = "Please reply with a short one-line greeting.";
 
-    // Resend on a bounded cadence with a fresh intent each attempt until the daemon's echo lands,
-    // closing the subscriber-registration and daemon-warmup races (a duplicate intent is deduped, so
-    // each attempt carries a new id). Once an echo is in hand the socket is proven subscribed, so the
-    // later reply needs no resend.
+    // Repost on a bounded cadence with a fresh intent each attempt until the node's echo lands,
+    // closing the subscriber-registration race (a duplicate intent is deduped, so each attempt
+    // carries a new id). Once an echo is in hand the socket is proven subscribed, so the later
+    // reply needs no repost.
     let echo_deadline = Instant::now() + ECHO_TIMEOUT;
     let mut attempt = 0u32;
     loop {
         let intent = format!("i-live-chat-e2e-{attempt}");
-        let _ = c.send_message(&name, text, Some(&intent));
+        let posted = c.send_message(&name, text, Some(&intent));
+        if attempt == 0 {
+            let id = posted
+                .as_ref()
+                .expect("the first post into the room is accepted");
+            assert!(
+                id.is_some(),
+                "an accepted post answers with the id it stored (only a deduped retry answers none)"
+            );
+        }
         if chat
             .expect_frame_matching(|f| is_echo(f, &intent), ECHO_ATTEMPT_TIMEOUT)
             .await
@@ -93,17 +111,17 @@ async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
         }
         assert!(
             Instant::now() < echo_deadline,
-            "no user-echo carrying an intent on the chat socket within {ECHO_TIMEOUT:?}"
+            "no user-echo carrying an intent on the room socket within {ECHO_TIMEOUT:?} (last post: {posted:?})"
         );
         attempt += 1;
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    // The real model round-trip: the agent's `app-chat send` reply streams a non-empty `chat` event
-    // onto the same socket.
+    // The real model round-trip: the agent's `chat send` reply posts a non-empty `chat` message
+    // the node fans onto the same socket.
     chat.expect_frame_matching(is_agent_reply, REPLY_TIMEOUT)
         .await
-        .expect("a real agent reply event on the chat socket within the round-trip budget");
+        .expect("a real agent reply on the room socket within the round-trip budget");
 
     chat.close().await.ok();
 }

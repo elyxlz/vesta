@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Animated,
@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
-import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
@@ -23,6 +22,7 @@ import {
   AgentIdentityCard,
 } from "@/components/agent-identity-card";
 import { GatewaySettingsButton } from "@/components/gateway-settings-button";
+import { HeaderButton } from "@/components/header-button";
 import { Screen } from "@/components/layout/Screen";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -176,93 +176,98 @@ export default function HomeScreen() {
         </Pressable>
       ) : (
         <>
-          <Animated.FlatList
-            ref={carouselRef}
-            data={agents}
-            style={styles.carousel}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            bounces
-            alwaysBounceHorizontal
-            overScrollMode="always"
-            decelerationRate="fast"
-            disableIntervalMomentum
-            keyExtractor={(agent) => agent.name}
-            // The list can remount mid-session (the gateway-update branch swaps it out); mounting
-            // at the retained index keeps it in step with the page dots and selection state.
-            initialScrollIndex={activeIndex}
-            getItemLayout={(_, index) => ({
-              length: width,
-              offset: width * index,
-              index,
-            })}
-            onScroll={Animated.event(
-              [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-              { useNativeDriver: true },
-            )}
-            scrollEventThrottle={16}
-            onScrollEndDrag={prepareSelectedAgent}
-            onMomentumScrollEnd={updateSelectedAgent}
-            renderItem={({ item, index }) => (
-              <AgentCarouselItem
-                agent={item}
-                bootTarget={initialAgentReady && index === activeIndex}
-                width={width}
-                onOpen={() => openAgent(item)}
-              />
-            )}
-          />
-          <View
-            accessible
-            accessibilityLabel={`Agent ${activeIndex + 1} of ${agents.length}`}
-            pointerEvents="none"
-            style={[styles.indicators, { bottom: Math.max(insets.bottom, 16) }]}
-          >
-            {agents.map((agent, index) => (
-              <View key={agent.name} style={styles.indicatorSlot}>
-                <View
-                  style={[
-                    styles.indicatorDot,
-                    { backgroundColor: colors.border },
-                  ]}
+          <View style={styles.carouselArea}>
+            <Animated.FlatList
+              ref={carouselRef}
+              data={agents}
+              style={styles.carousel}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              bounces
+              alwaysBounceHorizontal
+              overScrollMode="always"
+              decelerationRate="fast"
+              disableIntervalMomentum
+              keyExtractor={(agent) => agent.name}
+              // The list can remount mid-session (the gateway-update branch swaps it out); mounting
+              // at the retained index keeps it in step with the page dots and selection state.
+              initialScrollIndex={activeIndex}
+              getItemLayout={(_, index) => ({
+                length: width,
+                offset: width * index,
+                index,
+              })}
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+                { useNativeDriver: true },
+              )}
+              scrollEventThrottle={16}
+              onScrollEndDrag={prepareSelectedAgent}
+              onMomentumScrollEnd={updateSelectedAgent}
+              renderItem={({ item, index }) => (
+                <AgentCarouselItem
+                  agent={item}
+                  bootTarget={initialAgentReady && index === activeIndex}
+                  width={width}
+                  onOpen={() => openAgent(item)}
                 />
-                <Animated.View
-                  style={[
-                    styles.indicatorActive,
-                    {
-                      backgroundColor: colors.accent,
-                      opacity: scrollX.interpolate({
-                        inputRange: [
-                          (index - 1) * width,
-                          index * width,
-                          (index + 1) * width,
+              )}
+            />
+            <View
+              accessible
+              accessibilityLabel={`Agent ${activeIndex + 1} of ${agents.length}`}
+              pointerEvents="none"
+              style={[
+                styles.indicators,
+                { bottom: Math.max(insets.bottom, 16) },
+              ]}
+            >
+              {agents.map((agent, index) => (
+                <View key={agent.name} style={styles.indicatorSlot}>
+                  <View
+                    style={[
+                      styles.indicatorDot,
+                      { backgroundColor: colors.border },
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.indicatorActive,
+                      {
+                        backgroundColor: colors.accent,
+                        opacity: scrollX.interpolate({
+                          inputRange: [
+                            (index - 1) * width,
+                            index * width,
+                            (index + 1) * width,
+                          ],
+                          outputRange: [0, 1, 0],
+                          extrapolate: "clamp",
+                        }),
+                        transform: [
+                          {
+                            scaleX: scrollX.interpolate({
+                              inputRange: [
+                                (index - 1) * width,
+                                index * width,
+                                (index + 1) * width,
+                              ],
+                              outputRange: [
+                                PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
+                                1,
+                                PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
+                              ],
+                              extrapolate: "clamp",
+                            }),
+                          },
                         ],
-                        outputRange: [0, 1, 0],
-                        extrapolate: "clamp",
-                      }),
-                      transform: [
-                        {
-                          scaleX: scrollX.interpolate({
-                            inputRange: [
-                              (index - 1) * width,
-                              index * width,
-                              (index + 1) * width,
-                            ],
-                            outputRange: [
-                              PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
-                              1,
-                              PAGE_DOT_SIZE / PAGE_DOT_ACTIVE_WIDTH,
-                            ],
-                            extrapolate: "clamp",
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                />
-              </View>
-            ))}
+                      },
+                    ]}
+                  />
+                </View>
+              ))}
+            </View>
           </View>
         </>
       )}
@@ -456,6 +461,7 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
   const { reachable } = useRoster();
   const openSettings = () => router.push("/settings");
   const openCreateAgent = () => router.push("/new-agent");
+  const openChats = () => router.push("/chats");
 
   return (
     <>
@@ -469,17 +475,26 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerBackVisible: false,
-          headerLeft:
-            IS_IOS || !showCreate
-              ? undefined
-              : () => (
-                  <HomeHeaderButton
-                    accessibilityLabel="Create agent"
-                    icon="add"
-                    iconSize={22}
-                    onPress={openCreateAgent}
+          headerLeft: IS_IOS
+            ? undefined
+            : () => (
+                <View style={styles.headerButtons}>
+                  {showCreate ? (
+                    <HeaderButton
+                      accessibilityLabel="Create agent"
+                      icon="add"
+                      iconSize={22}
+                      onPress={openCreateAgent}
+                    />
+                  ) : null}
+                  <HeaderButton
+                    accessibilityLabel="Chats"
+                    icon="chatbubbles-outline"
+                    iconSize={20}
+                    onPress={openChats}
                   />
-                ),
+                </View>
+              ),
           headerRight: IS_IOS
             ? undefined
             : () => (
@@ -507,6 +522,12 @@ function HomeHeader({ showCreate }: { showCreate: boolean }) {
               tintColor={colors.text}
               hidden={!showCreate}
               onPress={openCreateAgent}
+            />
+            <Stack.Toolbar.Button
+              accessibilityLabel="Chats"
+              icon="message"
+              tintColor={colors.text}
+              onPress={openChats}
             />
           </Stack.Toolbar>
           <Stack.Toolbar placement="right" asChild>
@@ -536,42 +557,9 @@ function HomeWordmark() {
   );
 }
 
-function HomeHeaderButton({
-  accessibilityLabel,
-  icon,
-  iconSize,
-  onPress,
-}: {
-  accessibilityLabel: string;
-  icon: ComponentProps<typeof Ionicons>["name"];
-  iconSize: number;
-  onPress: () => void;
-}) {
-  const { colors } = usePreferences();
-  const content = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      hitSlop={8}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.headerButtonContent,
-        { opacity: pressed ? 0.68 : 1 },
-      ]}
-    >
-      <Ionicons name={icon} size={iconSize} color={colors.text} />
-    </Pressable>
-  );
-
-  return (
-    <View style={[styles.headerButton, { backgroundColor: colors.elevated }]}>
-      {content}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { padding: 0 },
+  carouselArea: { flex: 1 },
   carousel: { backgroundColor: "transparent" },
   agentPage: {
     flex: 1,
@@ -625,17 +613,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.85,
     transform: [{ translateY: 3 }],
   },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    overflow: "hidden",
-  },
-  headerButtonContent: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  headerButtons: { flexDirection: "row", gap: 8 },
   skeletonOrb: {
     width: AGENT_IDENTITY_ORB_SIZE,
     height: AGENT_IDENTITY_ORB_SIZE,

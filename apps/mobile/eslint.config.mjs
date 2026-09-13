@@ -16,8 +16,8 @@ export default defineConfig([
         "error",
         {
           selector:
-            "Literal[value=/^\\/(agents|gateway)\\//], TemplateElement[value.raw=/^\\/(agents|gateway)\\//]",
-          message: "gateway routes live once in @vesta/core/src/api",
+            "Literal[value=/^\\/(agents|gateway|rooms)\\//], TemplateElement[value.raw=/^\\/(agents|gateway|rooms)\\//]",
+          message: "gateway and room routes live once in @vesta/core/src/api",
         },
       ],
       "@typescript-eslint/no-unused-vars": [

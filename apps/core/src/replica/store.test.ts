@@ -19,6 +19,7 @@ function baseTree(): Tree {
     },
     agents: {},
     devices: [],
+    rooms: [],
   };
 }
 

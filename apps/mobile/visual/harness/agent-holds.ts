@@ -1,6 +1,8 @@
 import {
   agentHoldKey,
+  directRoomId,
   initialChatState,
+  roomHoldKey,
   seedTail,
   type ChatAttachment,
   type ChatMessage,
@@ -10,14 +12,15 @@ import {
 import { agentHolds } from "../../src/holds/agent-holds";
 import { connectionKeyOf } from "../../src/session/session-model";
 import { visualSwitch } from "./launch-query";
+import { GROUP_ROOM_ID } from "./roster-provider";
 import { visualConnection } from "./session-provider";
 
 export * from "../../src/holds/agent-holds";
 
 // visualChat picks aria's transcript: the default short exchange, `delivery`
-// (a bubble still sending and one the gateway refused), `errors` (the snag and
-// rate-limit lines), `markdown` (a rich reply), or `long` (days of history, for
-// the scroll-to-bottom control and date headers).
+// (a bubble still sending and one the gateway refused), `markdown` (a rich
+// reply), or `long` (days of history, for the scroll-to-bottom control and date
+// headers).
 const chatVariant = visualSwitch("visualChat");
 const conversation: ChatMessage[] = [
   {
@@ -65,28 +68,6 @@ const deliveryTail: ChatMessage[] = [
     ts: "2026-08-01T09:21:30.000Z",
     intent_id: "visual-failed",
     send_state: "failed",
-  },
-];
-const errorTail: ChatMessage[] = [
-  {
-    id: 106,
-    type: "user",
-    text: "Summarise the launch thread.",
-    ts: "2026-08-01T09:22:00.000Z",
-  },
-  {
-    id: 107,
-    type: "error",
-    text: "turn failed",
-    ts: "2026-08-01T09:22:05.000Z",
-  },
-  {
-    id: 108,
-    type: "rate_limited",
-    text: "rate limited",
-    window: "5h",
-    resets_at: Date.UTC(2026, 7, 1, 11, 0),
-    ts: "2026-08-01T09:22:06.000Z",
   },
 ];
 const markdownTail: ChatMessage[] = [
@@ -225,17 +206,15 @@ const degradedTail: ChatMessage[] = [
 const events: ChatMessage[] =
   chatVariant === "delivery"
     ? [...conversation, ...deliveryTail]
-    : chatVariant === "errors"
-      ? [...conversation, ...errorTail]
-      : chatVariant === "markdown"
-        ? [...conversation, ...markdownTail]
-        : chatVariant === "long"
-          ? [...longHistory, ...conversation]
-          : chatVariant === "attachments"
-            ? [...conversation, ...attachmentsTail]
-            : chatVariant === "attachments-degraded"
-              ? [...conversation, ...degradedTail]
-              : conversation;
+    : chatVariant === "markdown"
+      ? [...conversation, ...markdownTail]
+      : chatVariant === "long"
+        ? [...longHistory, ...conversation]
+        : chatVariant === "attachments"
+          ? [...conversation, ...attachmentsTail]
+          : chatVariant === "attachments-degraded"
+            ? [...conversation, ...degradedTail]
+            : conversation;
 const chatState: ChatState = seedTail(initialChatState(), {
   events,
   cursor: null,
@@ -299,17 +278,71 @@ const chipDrafts: DraftAttachment[] =
           ]
         : [];
 
+// The group transcript for the room-chat scenario: two agents answering in turn, so each run of
+// bubbles carries the writer's name.
+const groupConversation: ChatMessage[] = [
+  {
+    id: 301,
+    type: "user",
+    text: "Where are we on launch week?",
+    ts: "2026-08-01T10:00:00.000Z",
+    sender: "user",
+  },
+  {
+    id: 302,
+    type: "chat",
+    text: "Onboarding copy is signed off and the store screenshots are queued.",
+    ts: "2026-08-01T10:00:20.000Z",
+    sender: "aria",
+  },
+  {
+    id: 303,
+    type: "chat",
+    text: "I can take the screenshots tonight.",
+    ts: "2026-08-01T10:00:35.000Z",
+    sender: "aria",
+  },
+  {
+    id: 304,
+    type: "chat",
+    text: "The release notes still need a pass, and the beta channel is one build behind.",
+    ts: "2026-08-01T10:01:10.000Z",
+    sender: "nova",
+  },
+  {
+    id: 305,
+    type: "user",
+    text: "Split it: aria on the store, nova on the notes.",
+    ts: "2026-08-01T10:02:00.000Z",
+    sender: "user",
+  },
+  {
+    id: 306,
+    type: "chat",
+    text: "Taking the notes now.",
+    ts: "2026-08-01T10:02:12.000Z",
+    sender: "nova",
+  },
+];
+
 const connectionKey = connectionKeyOf(visualConnection) ?? "";
+agentHolds.chat.persist(
+  roomHoldKey(directRoomId("aria"), connectionKey),
+  chatState,
+);
 if (visualSwitch("visualPage") === "dashboard")
   agentHolds.page.persist(agentHoldKey("aria", connectionKey), "dashboard");
-agentHolds.chat.persist(agentHoldKey("aria", connectionKey), chatState);
 if (chipDrafts.length > 0)
   agentHolds.attachments.persist(
-    agentHoldKey("aria", connectionKey),
+    roomHoldKey(directRoomId("aria"), connectionKey),
     chipDrafts,
   );
 // nova has history loaded and no messages, so opening nova renders the empty-chat state.
 agentHolds.chat.persist(
-  agentHoldKey("nova", connectionKey),
+  roomHoldKey(directRoomId("nova"), connectionKey),
   seedTail(initialChatState(), { events: [], cursor: null }),
+);
+agentHolds.chat.persist(
+  roomHoldKey(GROUP_ROOM_ID, connectionKey),
+  seedTail(initialChatState(), { events: groupConversation, cursor: null }),
 );

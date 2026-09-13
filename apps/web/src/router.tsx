@@ -1,8 +1,10 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/ErrorBoundary";
 import { AgentLayout } from "@/layouts/AgentLayout";
+import { ChatsIndex, ChatsLayout, ChatsRoom } from "@/layouts/ChatsLayout";
 import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
+import { RoomLayout } from "@/layouts/RoomLayout";
 import { AppSettingsPage } from "@/components/AppSettingsPage";
 import { Callback } from "@/components/Callback";
 import { Connect } from "@/components/Connect";
@@ -43,6 +45,20 @@ export const router = createBrowserRouter(
                 { path: "chat", element: null },
                 { path: "logs", element: null },
                 { path: "settings", element: null },
+              ],
+            },
+            {
+              path: "chat/:roomId",
+              element: <RoomLayout />,
+              errorElement: <RouteErrorBoundary />,
+            },
+            {
+              path: "chats",
+              element: <ChatsLayout />,
+              errorElement: <RouteErrorBoundary />,
+              children: [
+                { index: true, element: <ChatsIndex /> },
+                { path: ":roomId", element: <ChatsRoom /> },
               ],
             },
             { path: "*", element: <Navigate to="/" replace /> },

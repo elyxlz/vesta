@@ -1,5 +1,5 @@
 //! The durable, uncapped log of user-facing notifications: every notification
-//! `UserNotifier::notify` delivers is appended here, one JSON line per entry
+//! `UserNotifier` delivers is appended here, one JSON line per entry
 //! (`user-notifications.jsonl` beside `settings.json`), so appends stay O(1)
 //! forever. The whole log is held in memory (entries are small and a personal
 //! gateway produces a handful a day), pages serve from memory newest-first,
@@ -26,6 +26,10 @@ pub(crate) struct LoggedUserNotification {
     pub(crate) kind: String,
     pub(crate) title: String,
     pub(crate) body: String,
+    /// The chat room a `message` notification was minted in, absent on every other kind. Additive
+    /// on the wire and in the log: an entry written before rooms simply carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) room: Option<String>,
 }
 
 #[derive(Debug)]
@@ -84,9 +88,16 @@ impl UserNotificationLog {
     /// Append one delivered notification, assigning the next monotonic id, and return the logged
     /// entry so the fanned delta carries the same identity the log serves. The disk write is
     /// best-effort: a full disk costs history, never delivery.
-    pub(crate) fn append(&self, agent: &str, kind: &str, title: &str, body: String) -> LoggedUserNotification {
+    pub(crate) fn append(
+        &self,
+        agent: &str,
+        kind: &str,
+        title: &str,
+        body: String,
+        room: Option<String>,
+    ) -> LoggedUserNotification {
         let mut entries = self.entries.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        Self::push_entry(&self.path, &mut entries, agent, kind, title, body)
+        Self::push_entry(&self.path, &mut entries, agent, kind, title, body, room)
     }
 
     /// Append unless an entry with this kind and title is already logged, the check and the
@@ -98,7 +109,7 @@ impl UserNotificationLog {
         if entries.iter().any(|entry| entry.kind == kind && entry.title == title) {
             return None;
         }
-        Some(Self::push_entry(&self.path, &mut entries, agent, kind, title, body))
+        Some(Self::push_entry(&self.path, &mut entries, agent, kind, title, body, None))
     }
 
     fn push_entry(
@@ -108,6 +119,7 @@ impl UserNotificationLog {
         kind: &str,
         title: &str,
         body: String,
+        room: Option<String>,
     ) -> LoggedUserNotification {
         let entry = LoggedUserNotification {
             id: entries.last().map_or(1, |last| last.id + 1),
@@ -116,6 +128,7 @@ impl UserNotificationLog {
             kind: kind.to_string(),
             title: title.to_string(),
             body,
+            room,
         };
         match serde_json::to_string(&entry) {
             Ok(line) => {
@@ -157,9 +170,9 @@ mod tests {
     fn appends_page_newest_first_with_an_id_cursor() {
         let directory = tempfile::tempdir().expect("tempdir");
         let log = UserNotificationLog::load(directory.path());
-        log.append("aria", "message", "aria", "hi".to_string());
-        log.append("aria", "task", "aria added a task: x", String::new());
-        log.append("", "gateway_updated", "gateway updated to v0.2.10", String::new());
+        log.append("aria", "message", "aria", "hi".to_string(), None);
+        log.append("aria", "task", "aria added a task: x", String::new(), None);
+        log.append("", "gateway_updated", "gateway updated to v0.2.10", String::new(), None);
 
         let newest = log.page(None, 2);
         assert_eq!(newest.iter().map(|entry| entry.id).collect::<Vec<_>>(), vec![3, 2]);
@@ -172,11 +185,11 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         {
             let log = UserNotificationLog::load(directory.path());
-            log.append("aria", "message", "aria", "hi".to_string());
-            log.append("aria", "message", "aria", "again".to_string());
+            log.append("aria", "message", "aria", "hi".to_string(), None);
+            log.append("aria", "message", "aria", "again".to_string(), None);
         }
         let reloaded = UserNotificationLog::load(directory.path());
-        reloaded.append("aria", "message", "aria", "after restart".to_string());
+        reloaded.append("aria", "message", "aria", "after restart".to_string(), None);
         let ids: Vec<u64> = reloaded.page(None, 10).iter().map(|entry| entry.id).collect();
         assert_eq!(ids, vec![3, 2, 1]);
     }
@@ -212,9 +225,37 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let log = UserNotificationLog::load(directory.path());
         assert_eq!(log.last_at(), None);
-        log.append("aria", "message", "aria", "hi".to_string());
+        log.append("aria", "message", "aria", "hi".to_string(), None);
         let newest = log.page(None, 1);
         assert_eq!(log.last_at(), Some(newest[0].at));
+    }
+
+    #[test]
+    fn a_room_round_trips_and_a_line_written_before_rooms_still_loads() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        {
+            let log = UserNotificationLog::load(directory.path());
+            let room = Some("dm:aria".to_string());
+            log.append("aria", "message", "aria", "hi".to_string(), room);
+        }
+        let path = directory.path().join(LOG_FILE);
+        let written = std::fs::read_to_string(&path).expect("log file");
+        assert!(written.contains("\"room\":\"dm:aria\""));
+
+        // A line from before rooms carries no key at all and still loads.
+        std::fs::write(
+            &path,
+            format!("{written}{}\n", r#"{"id":2,"at":1700000000,"agent":"aria","kind":"task","title":"aria added a task: x","body":""}"#),
+        )
+        .expect("write a legacy line");
+
+        let reloaded = UserNotificationLog::load(directory.path());
+        let page = reloaded.page(None, 10);
+        assert_eq!(page[1].room.as_deref(), Some("dm:aria"));
+        assert_eq!(page[0].room, None);
+        // A logged entry with no room serializes without the key.
+        let line = serde_json::to_string(&page[0]).expect("serialize");
+        assert!(!line.contains("room"), "{line}");
     }
 
     #[test]
@@ -222,7 +263,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         {
             let log = UserNotificationLog::load(directory.path());
-            log.append("aria", "message", "aria", "hi".to_string());
+            log.append("aria", "message", "aria", "hi".to_string(), None);
         }
         let path = directory.path().join(LOG_FILE);
         let mut content = std::fs::read_to_string(&path).expect("log file");

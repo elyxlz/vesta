@@ -1,12 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { vestadApiFixtures } from "../../fixtures/vestad-api-fixtures";
+import type { HistoryPage } from "../chat/chat-stream-model";
+import type { LoggedUserNotification } from "../notifications-pill/user-notification-feed";
 import type { AgentStatus } from "../protocol/tree";
 import type { AgentStatusResponse } from "./agents";
 import type { AgentBackupSettings, BackupInfo } from "./backups";
 import type { FileReadResponse, FileTreeEntry } from "./files";
 import type { GatewayEndpointInfo, GatewaySettings } from "./gateway";
 import type { HostMount } from "./mounts";
+import type {
+  AttachmentCompleted,
+  AttachmentCreated,
+  AttachmentStatus,
+  ChatImportAck,
+  ChatPostAck,
+  RoomOpened,
+  RoomsResponse,
+} from "./rooms";
 
 type DeepReadonly<T> = T extends (infer U)[]
   ? readonly DeepReadonly<U>[]
@@ -87,5 +98,54 @@ describe("vestad API contract", () => {
       folders: string[];
     }>;
     expect(folders.folders).toHaveLength(1);
+  });
+
+  it("the chat node's room, history, and intake bodies satisfy their shapes", () => {
+    const rooms = vestadApiFixtures.rooms satisfies DeepReadonly<RoomsResponse>;
+    expect(rooms.rooms.map((room) => room.id)).toEqual([
+      "dm:sample-agent",
+      "grp-0011223344556677",
+    ]);
+    const opened =
+      vestadApiFixtures.room_opened satisfies DeepReadonly<RoomOpened>;
+    expect(opened.room.name).toBeNull();
+    const history =
+      vestadApiFixtures.chat_history satisfies DeepReadonly<HistoryPage>;
+    expect(history.cursor).toBe(1);
+    expect(history.events.map((event) => event.type)).toEqual(["user", "chat"]);
+    const post =
+      vestadApiFixtures.chat_post satisfies DeepReadonly<ChatPostAck>;
+    expect(post.id).toBe(2);
+    const imported =
+      vestadApiFixtures.chat_import satisfies DeepReadonly<ChatImportAck>;
+    expect(imported.skipped).toBe(1);
+  });
+
+  it("a user-notification page satisfies the logged feed entry, with and without a room", () => {
+    const page = vestadApiFixtures.user_notifications satisfies DeepReadonly<{
+      notifications: LoggedUserNotification[];
+    }>;
+    expect(page.notifications.map((entry) => entry.kind)).toEqual([
+      "message",
+      "update_available",
+    ]);
+    expect(page.notifications[0].room).toBe("dm:sample-agent");
+    expect(page.notifications[1].agent).toBe("");
+  });
+
+  it("the attachment acks satisfy their shapes and history carries the metadata", () => {
+    const created =
+      vestadApiFixtures.attachment_created satisfies DeepReadonly<AttachmentCreated>;
+    expect(created.id).toBe("0f1e2d3c4b5a69788796a5b4c3d2e1f0");
+    const status =
+      vestadApiFixtures.attachment_status satisfies DeepReadonly<AttachmentStatus>;
+    expect(status.received).toBe(1234);
+    expect(status.finalized).toBe(true);
+    const completed =
+      vestadApiFixtures.attachment_completed satisfies DeepReadonly<AttachmentCompleted>;
+    expect(completed.attachment.mime).toBe("image/png");
+    expect(completed.attachment.width).toBe(640);
+    const [, reply] = vestadApiFixtures.chat_history.events;
+    expect(reply.attachments).toEqual([completed.attachment]);
   });
 });

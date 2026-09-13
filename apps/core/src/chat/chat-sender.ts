@@ -29,7 +29,7 @@ export interface ChatSender {
 
 export function createChatSender(deps: {
   http: HttpClient;
-  agent: string;
+  roomId: string;
   commit: (fold: (current: ChatState) => ChatState) => void;
   current: () => ChatState;
   makeId: () => string;
@@ -67,7 +67,7 @@ export function createChatSender(deps: {
     deps.commit((current) => markSend(current, intentId, "sending"));
     const { outcome } = sendMessage(
       deps.http,
-      deps.agent,
+      deps.roomId,
       body(text, inputMethod, attachments),
       () => intentId,
     );
@@ -78,7 +78,7 @@ export function createChatSender(deps: {
     send: (text, inputMethod = "typed", attachments) => {
       const { id, outcome } = sendMessage(
         deps.http,
-        deps.agent,
+        deps.roomId,
         body(text, inputMethod, attachments),
         deps.makeId,
       );

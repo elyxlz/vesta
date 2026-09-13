@@ -137,21 +137,6 @@ const mockChat: { label: string; events: ChatMessage[] }[] = [
       },
     ],
   },
-  {
-    label: "error",
-    events: [{ type: "error", text: "something broke", ts }],
-  },
-  {
-    label: "tool call",
-    events: [
-      {
-        type: "tool_start",
-        tool: "Read",
-        input: '{"path":"/tmp/foo.txt"}',
-        ts,
-      },
-    ],
-  },
 ];
 
 export function Debug() {

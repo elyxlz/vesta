@@ -1,3 +1,4 @@
+import { roomAttachmentsPath } from "../api/rooms";
 import { ApiError, type HttpClient } from "../transport/http";
 import {
   CHUNK_FAST_MS,
@@ -11,7 +12,7 @@ import {
   type ChatAttachment,
 } from "./attachment-model";
 
-// The chunked upload engine: offset-addressed PUTs against the app-chat service, built for spotty
+// The chunked upload engine: offset-addressed PUTs against the chat node, built for spotty
 // connections. The server holds the truth about staged bytes (a 409 or a status probe resyncs the
 // offset), chunk size adapts to link quality, retryable failures back off forever while the draft
 // lives, and an offline link parks the run (no timers burn) until the connectivity edge. Everything
@@ -44,8 +45,7 @@ export interface UploadCallbacks {
 }
 
 // Terminal outcomes only; a retryable failure never surfaces here. "aborted" is the caller's own X.
-export type UploadErrorReason =
-  "too_large" | "unsupported_agent" | "failed" | "aborted";
+export type UploadErrorReason = "too_large" | "failed" | "aborted";
 
 export class UploadError extends Error {
   readonly reason: UploadErrorReason;
@@ -89,7 +89,6 @@ function classify(error: unknown): Verdict {
 }
 
 export interface UploadRequest {
-  agent: string;
   blob: Blob;
   meta: UploadMeta;
 }
@@ -100,8 +99,8 @@ export function uploadAttachment(
   deps: UploadDeps,
   callbacks: UploadCallbacks,
 ): UploadHandle {
-  const { agent, blob, meta } = request;
-  const base = `/agents/${encodeURIComponent(agent)}/app-chat/attachments`;
+  const { blob, meta } = request;
+  const base = roomAttachmentsPath();
   // Aborts every non-chunk request in flight (create, status probe, complete) the moment the caller
   // gives up; chunk PUTs carry their own controller so the stall timeout can abort just one chunk.
   const runAbort = new AbortController();
@@ -201,8 +200,6 @@ export function uploadAttachment(
         return created.id;
       } catch (error) {
         checkAborted();
-        if (error instanceof ApiError && error.status === 404)
-          throw new UploadError("unsupported_agent");
         const verdict = classify(error);
         if (verdict !== "retryable") throw new UploadError(verdict);
         await park(attempt);

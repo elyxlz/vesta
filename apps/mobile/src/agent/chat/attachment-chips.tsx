@@ -24,7 +24,6 @@ const RING_STROKE = 2.5;
 
 const ERROR_LABEL: Record<UploadErrorReason, string> = {
   too_large: "Too large",
-  unsupported_agent: "Agent needs an update",
   failed: "Upload failed",
   aborted: "Cancelled",
 };

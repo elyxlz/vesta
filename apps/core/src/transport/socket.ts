@@ -53,7 +53,7 @@ export interface SyncSocketCallbacks {
 export interface SyncSocket {
   reauth: (token: string) => void;
   reportPresence: (focused: boolean) => void;
-  reportViewing: (agent: string | null) => void;
+  reportViewing: (room: string | null) => void;
   // What this device reports about itself (zone, position). Cached like focus and viewing, so the
   // reconnect replay carries the latest report; the caller decides when to read the device.
   reportDeviceContext: (context: DeviceContext) => void;
@@ -65,8 +65,8 @@ export function createSyncSocket(
   callbacks: SyncSocketCallbacks,
 ): SyncSocket {
   let lastFocused: boolean | null = null;
-  // The agent whose page is open on this client, null on the roster or before any report. The
-  // wire carries it only while focused: a blurred window is viewing no one.
+  // The room whose conversation is open on this client, null off any conversation or before any
+  // report. The wire carries it only while focused: a blurred window is viewing nothing.
   let lastViewing: string | null = null;
   let lastContext: DeviceContext | undefined;
   // Whether the gateway already has the latest reported context (focus + viewing). False while a
@@ -160,10 +160,10 @@ export function createSyncSocket(
       lastFocused = focused;
       emitContext();
     },
-    reportViewing: (agent) => {
+    reportViewing: (room) => {
       // Skip repeated route reports; the cached value still drives reconnect replay.
-      if (lastViewing === agent) return;
-      lastViewing = agent;
+      if (lastViewing === room) return;
+      lastViewing = room;
       emitContext();
     },
     reportDeviceContext: (context) => {

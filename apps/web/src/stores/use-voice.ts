@@ -82,6 +82,9 @@ interface VoiceState {
     clearInput: () => void,
     reportSpeaking: (speaking: boolean) => void,
   ) => void;
+  // Drops the binding when the mounted chat is not the direct agent's own: voice is that agent's
+  // service, so a room with several members leaves nothing registered to speak into.
+  clearChat: () => void;
 
   // Status management
   patchStt: (patch: Partial<SttStatus>) => void;
@@ -267,6 +270,12 @@ export const useVoice = create<VoiceState>((set, get) => {
       sendCallback = send;
       clearInputCallback = clearInput;
       reportSpeakingCallback = reportSpeaking;
+    },
+
+    clearChat: () => {
+      sendCallback = null;
+      clearInputCallback = null;
+      reportSpeakingCallback = null;
     },
 
     patchStt: (patch) => {

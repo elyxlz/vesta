@@ -97,7 +97,7 @@ export function orbIsLive(state: OrbVisualState): boolean {
 
 // Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
 // plenty of precision for "come back later" copy.
-export function formatResetTime(resetsAt: number): string {
+function formatResetTime(resetsAt: number): string {
   const minutes = Math.round((resetsAt * 1000 - Date.now()) / 60_000);
   if (minutes <= 1) return "in a minute";
   if (minutes < 60) return `in ${String(minutes)}m`;

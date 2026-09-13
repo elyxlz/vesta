@@ -3,7 +3,12 @@ import { create } from "zustand";
 // Open state for every dialog that mounts once at a shell (the app root or the agent layout)
 // while its triggers live elsewhere, keyed by name so a trigger and its dialog share one flag.
 type DialogName =
-  "switchGateway" | "whatsNew" | "providerAuth" | "deleteAgent" | "backups";
+  | "switchGateway"
+  | "whatsNew"
+  | "providerAuth"
+  | "deleteAgent"
+  | "backups"
+  | "newRoom";
 
 interface DialogsState {
   open: Record<DialogName, boolean>;
@@ -17,6 +22,7 @@ export const useDialogs = create<DialogsState>((set) => ({
     providerAuth: false,
     deleteAgent: false,
     backups: false,
+    newRoom: false,
   },
   setOpen: (name, open) =>
     set((state) => ({ open: { ...state.open, [name]: open } })),

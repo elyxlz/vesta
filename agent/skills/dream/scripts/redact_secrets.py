@@ -76,13 +76,13 @@ class EventsFts:
 
 
 CORE_FTS = EventsFts(indexed=FTS_INDEXED, text=FTS_TEXT)
-# The app-chat store (skills/app-chat/cli/src/app_chat_cli/store.py): same events(id, ts, data)
+# The chat store (skills/chat/cli/src/chat_cli/store.py): same events(id, ts, data)
 # shape, but its triggers index only user/chat rows by $.text.
-APP_CHAT_FTS = EventsFts(indexed="(json_extract(data, '$.type') IN ('user', 'chat'))", text="json_extract(data, '$.text')")
+CHAT_FTS = EventsFts(indexed="(json_extract(data, '$.type') IN ('user', 'chat'))", text="json_extract(data, '$.text')")
 # The stores holding JSON event blobs behind an external-content FTS index with insert/delete
 # triggers only: a scrub must rewrite the decoded JSON and resync the index itself. Every other
 # store goes through the generic per-cell path.
-JSON_EVENT_FTS = {"events": CORE_FTS, "app-chat": APP_CHAT_FTS}
+JSON_EVENT_FTS = {"events": CORE_FTS, "chat": CHAT_FTS}
 
 
 def channel_stores() -> list[Store]:
@@ -94,7 +94,7 @@ def channel_stores() -> list[Store]:
     crypto/session key material by design, and a scrub there breaks the device pairing."""
     home = Path.home()
     stores = [
-        Store("app-chat", home / ".app-chat" / "app-chat.db"),
+        Store("chat", home / ".chat" / "chat.db"),
         Store("tasks", home / ".tasks" / "tasks.db"),
         Store("email-client", home / ".email-client" / "pending-sends.db"),
         Store("microsoft", home / ".microsoft" / "pending-sends.db"),
@@ -566,7 +566,7 @@ def channel_still_matching(conn: sqlite3.Connection, hits: dict[tuple[str, int],
 
 def _transform_cell(text: str, transform: tp.Callable[[str], str]) -> str:
     """One text cell through a transform: a JSON object or array is rewritten through its decoded
-    structure so the stored blob stays valid JSON (app-chat cells are JSON event blobs; splicing the
+    structure so the stored blob stays valid JSON (chat cells are JSON event blobs; splicing the
     placeholder across an escape boundary would corrupt them), anything else as raw text."""
     obj = _decoded(text)
     if isinstance(obj, dict | list):

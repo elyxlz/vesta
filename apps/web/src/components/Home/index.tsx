@@ -95,13 +95,15 @@ export function Home() {
       ) : (
         <motion.div
           key="agents"
-          className="flex min-h-0 w-full flex-1"
+          className="flex min-h-0 w-full flex-1 flex-col"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
         >
-          <AgentsCarousel agents={agents} initialIndex={lastAgentIndex} />
+          <div className="flex min-h-0 w-full flex-1">
+            <AgentsCarousel agents={agents} initialIndex={lastAgentIndex} />
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

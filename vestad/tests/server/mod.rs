@@ -9,6 +9,7 @@ fn _point_harness_at_built_vestad() {
 mod agent_code;
 mod auth;
 mod backup;
+mod chat_rooms;
 mod gateway_update;
 mod health;
 mod layout;

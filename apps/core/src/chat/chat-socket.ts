@@ -18,10 +18,10 @@ export interface ChatSocketCallbacks {
 }
 
 export interface ChatSocket {
-  // Reports whether the user is talking into a live voice conversation; the daemon holds the
+  // Reports whether the user is talking into a live voice conversation; the chat node holds the
   // agent's replies while it is true. The latest value is cached and a true is replayed on
-  // reconnect open. With no open socket nothing is sent, which is the right answer: the daemon
-  // ties the flag to the connection that set it and clears it when that connection drops.
+  // reconnect open. With no open socket nothing is sent, which is the right answer: the node ties
+  // the flag to the connection that set it and clears it when that connection drops.
   reportSpeaking: (speaking: boolean) => void;
   close: () => void;
 }
@@ -39,7 +39,7 @@ export function createChatSocket(
 
   const socket = createReconnectingSocket(deps, {
     onOpen: (live) => {
-      // A turn that outlived a reconnect is replayed, so the daemon's fresh connection holds it.
+      // A turn that outlived a reconnect is replayed, so the node's fresh connection holds it.
       if (speaking) live.send(speakingFrame());
     },
     onMessage: (data) => {

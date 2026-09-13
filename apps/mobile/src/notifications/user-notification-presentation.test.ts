@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { UserNotificationDelta } from "@vesta/core";
+import { setVisibleRoomSocket } from "./foreground-policy";
 import { shouldPresentUserNotification } from "./user-notification-presentation";
 
-function chatUserNotification(agent: string): UserNotificationDelta {
+function chatUserNotification(
+  agent: string,
+  room?: string,
+): UserNotificationDelta {
   return {
     type: "user_notification",
     id: 1,
@@ -11,6 +15,7 @@ function chatUserNotification(agent: string): UserNotificationDelta {
     kind: "message",
     title: agent,
     body: "hi",
+    ...(room === undefined ? {} : { room }),
   };
 }
 
@@ -38,7 +43,7 @@ function needsUserNotification(agent: string): UserNotificationDelta {
   };
 }
 
-// The gateway's own announcement names no agent, so it can never be the one on screen.
+// The gateway's own announcement names no agent, so it can never be the open conversation.
 const gatewayUpdatedNotification: UserNotificationDelta = {
   type: "user_notification",
   id: 1,
@@ -53,50 +58,85 @@ describe("shouldPresentUserNotification", () => {
   const cases: {
     name: string;
     delta: UserNotificationDelta;
-    activeAgent: string | null;
+    activeRoom: string | null;
     expected: boolean;
   }[] = [
     {
-      name: "a needs-user notification always shows, even for the active agent",
+      name: "a needs-user notification always shows, even for the open conversation",
       delta: needsUserNotification("alex"),
-      activeAgent: "alex",
+      activeRoom: "dm:alex",
       expected: true,
     },
     {
-      name: "an older gateway's rate-limit notification always shows, even for the active agent",
+      name: "an older gateway's rate-limit notification always shows",
       delta: rateLimitedUserNotification("alex"),
-      activeAgent: "alex",
+      activeRoom: "dm:alex",
       expected: true,
     },
     {
-      name: "a chat user notification for the active agent defers",
-      delta: chatUserNotification("alex"),
-      activeAgent: "alex",
+      name: "a reply in the open room defers",
+      delta: chatUserNotification("alex", "dm:alex"),
+      activeRoom: "dm:alex",
       expected: false,
     },
     {
-      name: "a chat user notification for a background agent shows",
-      delta: chatUserNotification("alex"),
-      activeAgent: "robin",
+      name: "a group reply while a different conversation is open shows",
+      delta: chatUserNotification("alex", "grp-trip"),
+      activeRoom: "dm:alex",
       expected: true,
     },
     {
-      name: "a chat user notification shows when no agent is active",
+      name: "a group reply in the group being read defers",
+      delta: chatUserNotification("alex", "grp-trip"),
+      activeRoom: "grp-trip",
+      expected: false,
+    },
+    {
+      name: "a notice naming no room falls back to the agent's own conversation",
       delta: chatUserNotification("alex"),
-      activeAgent: null,
+      activeRoom: "dm:alex",
+      expected: false,
+    },
+    {
+      name: "a reply shows when no conversation is open",
+      delta: chatUserNotification("alex", "dm:alex"),
+      activeRoom: null,
       expected: true,
     },
     {
       name: "the gateway's update announcement shows whatever chat is open",
       delta: gatewayUpdatedNotification,
-      activeAgent: "alex",
+      activeRoom: "dm:alex",
       expected: true,
     },
   ];
 
-  for (const { name, delta, activeAgent, expected } of cases) {
+  for (const { name, delta, activeRoom, expected } of cases) {
     it(name, () => {
-      expect(shouldPresentUserNotification(delta, activeAgent)).toBe(expected);
+      expect(shouldPresentUserNotification(delta, activeRoom)).toBe(expected);
     });
   }
+
+  // The viewed room is what this client reported to the node, not the last chat socket that
+  // mounted: a second socket registering over the visible one cannot move the deferral.
+  it("defers by the viewed room whatever socket mounted last", () => {
+    const clear = setVisibleRoomSocket(
+      "https://first.vesta.run",
+      "grp-trip",
+      true,
+    );
+    expect(
+      shouldPresentUserNotification(
+        chatUserNotification("alex", "dm:alex"),
+        "dm:alex",
+      ),
+    ).toBe(false);
+    expect(
+      shouldPresentUserNotification(
+        chatUserNotification("alex", "grp-trip"),
+        "dm:alex",
+      ),
+    ).toBe(true);
+    clear();
+  });
 });

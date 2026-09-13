@@ -17,13 +17,13 @@ function placeholderText({
   recordingMode,
   listening,
   notAuthenticated,
-  agentName,
+  label,
   hasAttachments,
 }: {
   recordingMode: VoiceMode | null;
   listening: boolean;
   notAuthenticated: boolean;
-  agentName: string;
+  label: string;
   hasAttachments: boolean;
 }) {
   if (recordingMode === "dictation") {
@@ -31,7 +31,7 @@ function placeholderText({
   }
   if (notAuthenticated) return "sign in to chat";
   if (hasAttachments) return "add a caption";
-  return `message ${agentName}`.toLowerCase();
+  return `message ${label}`.toLowerCase();
 }
 
 function composerPadding(fullscreen: boolean | undefined, isMobile: boolean) {
@@ -47,7 +47,8 @@ function composerPadding(fullscreen: boolean | undefined, isMobile: boolean) {
 
 interface ChatComposerProps {
   fullscreen?: boolean;
-  agentName: string;
+  // What this conversation is called; the composer's placeholder says "message <label>".
+  label: string;
   notAuthenticated: boolean;
   voiceConfigured: boolean;
   recordingMode: VoiceMode | null;
@@ -72,7 +73,7 @@ interface ChatComposerProps {
 
 export function ChatComposer({
   fullscreen,
-  agentName,
+  label,
   notAuthenticated,
   voiceConfigured,
   recordingMode,
@@ -105,7 +106,7 @@ export function ChatComposer({
     recordingMode,
     listening,
     notAuthenticated,
-    agentName,
+    label,
     hasAttachments,
   });
   const controls: ComposerControls = {

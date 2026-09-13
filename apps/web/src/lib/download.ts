@@ -1,4 +1,4 @@
-import { appChatAttachmentPath, type ChatAttachment } from "@vesta/core";
+import { roomAttachmentPath, type ChatAttachment } from "@vesta/core";
 import { ApiError, httpClient } from "@/api/client";
 
 declare global {
@@ -17,6 +17,10 @@ export function attachmentRemoved(error: unknown): boolean {
 
 export type DownloadOutcome = "saved" | "cancelled";
 
+// The serve route hands back an attachment inline by default; this asks for the attachment
+// disposition instead. The path builder stays query-free, so the caller joins the two.
+const DOWNLOAD_QUERY = new URLSearchParams({ download: "1" });
+
 // Download an attachment through the header-authed client (no token in any visible URL): fetch to a
 // Blob with progress, then save it. Chromium (including the desktop app) uses the File System Access
 // picker, which resolves only once the file is actually written and rejects when the user cancels, so
@@ -24,12 +28,11 @@ export type DownloadOutcome = "saved" | "cancelled";
 // owns and never reports on, so there it is optimistic. The proxy strips Content-Length from streamed
 // responses, so progress reads received bytes against the metadata size the caller already holds.
 export async function downloadAttachment(
-  agent: string,
   attachment: ChatAttachment,
   onProgress?: (receivedBytes: number, totalBytes: number) => void,
 ): Promise<DownloadOutcome> {
   const response = await httpClient.request(
-    appChatAttachmentPath(agent, attachment.id, true),
+    `${roomAttachmentPath(attachment.id)}?${DOWNLOAD_QUERY.toString()}`,
   );
   const blob = await readWithProgress(response, attachment.size, onProgress);
   return saveBlob(blob, attachment.name);

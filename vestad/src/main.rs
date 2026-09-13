@@ -14,6 +14,7 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
+mod chat;
 mod device_registry;
 mod docker;
 mod jwt;

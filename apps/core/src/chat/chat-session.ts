@@ -1,5 +1,5 @@
 import type { ChatAttachment } from "../attachments/attachment-model";
-import { fetchChatHistory } from "../api/history";
+import { fetchRoomHistory } from "../api/rooms";
 import type { InputMethod } from "../protocol/events";
 import type { HttpClient } from "../transport/http";
 import type { SocketLike } from "../transport/websocket";
@@ -25,12 +25,13 @@ const SEED_RETRY_MAX_MS = 30_000;
 
 export interface ChatSessionDeps {
   http: HttpClient;
-  agent: string;
+  // The conversation this session reads and writes: an agent's direct room, or any other room.
+  roomId: string;
   // Built per connect, so a reconnect hours later dials with a freshly refreshed access token.
   buildUrl: () => Promise<string>;
   // Defaults to the platform WebSocket; tests inject a fake.
   createSocket?: (url: string) => SocketLike;
-  // Defaults to the app-chat history route over `http`; tests inject a scripted page.
+  // Defaults to the room history route over `http`; tests inject a scripted page.
   fetchHistory?: (cursor?: number) => Promise<HistoryPage>;
   makeId: () => string;
   // Read at each pacing step, so a preference flip lands mid-conversation. False commits every
@@ -82,7 +83,7 @@ export interface ChatSession {
   close: () => void;
 }
 
-// The chat view-model, framework-free: the replay-free app-chat socket joined to the HTTP history
+// The chat view-model, framework-free: the replay-free chat socket joined to the HTTP history
 // page by event id, the pacing queue that types replies out, and the send path confirmed by its
 // echo. ChatState is the single source of truth; every fold runs synchronously against it so a
 // batch of appends dedups against the running accumulation. The tail is seeded at creation, in
@@ -94,7 +95,7 @@ export function createChatSession(
 ): ChatSession {
   const fetchHistory =
     deps.fetchHistory ??
-    ((cursor?: number) => fetchChatHistory(deps.http, deps.agent, cursor));
+    ((cursor?: number) => fetchRoomHistory(deps.http, deps.roomId, cursor));
 
   let state: ChatSessionState = {
     chat: deps.initialState ?? initialChatState(),
@@ -203,7 +204,7 @@ export function createChatSession(
 
   const sender: ChatSender = createChatSender({
     http: deps.http,
-    agent: deps.agent,
+    roomId: deps.roomId,
     commit,
     current: () => state.chat,
     makeId: deps.makeId,

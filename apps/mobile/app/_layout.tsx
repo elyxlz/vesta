@@ -85,7 +85,11 @@ function SessionNavigation() {
     activeRoute === "recent-gateways" ||
     activeRoute === "scan";
   const isHomeRoute = !activeRoute;
-  const routeNeedsAgents = isHomeRoute || activeRoute === "agent";
+  const routeNeedsAgents =
+    isHomeRoute ||
+    activeRoute === "agent" ||
+    activeRoute === "chats" ||
+    activeRoute === "chat";
   const navigationTheme = useMemo(() => {
     const base = dark ? DarkTheme : DefaultTheme;
     return {
@@ -286,6 +290,33 @@ function SessionNavigation() {
               <Stack.Screen
                 name="agent/[name]"
                 options={{ headerShown: false }}
+              />
+              <Stack.Screen name="chat/[roomId]" />
+              <Stack.Screen
+                name="chats"
+                options={{
+                  title: "Chats",
+                  headerTitleAlign: "center",
+                  ...(IS_ANDROID
+                    ? {
+                        headerTransparent: false,
+                        headerStyle: { backgroundColor: colors.background },
+                      }
+                    : {}),
+                }}
+              />
+              <Stack.Screen
+                name="new-room"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  ...formSheetCorners,
+                  sheetAllowedDetents: [0.6, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
               />
             </Stack.Protected>
             {/* Declared after both groups: a screen listed before them becomes the router's

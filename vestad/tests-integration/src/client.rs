@@ -3,13 +3,26 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::tungstenite::Message;
-use ureq::http::Response;
+use ureq::http::{HeaderMap, Response};
 use ureq::Body;
 
 use crate::types::{
     AccessToken, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
 };
+
+/// Budget for a fresh room-socket session to be subscribed and echo a post back.
+const ROOM_ECHO_TIMEOUT: Duration = Duration::from_secs(45);
+/// Per-attempt read window inside the echo drive.
+const ROOM_ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// An agent's direct room: the conversation the user and that one agent share. The node's own
+/// `Room::direct_id`, mirrored here because an integration crate cannot import it.
+pub fn direct_room(agent: &str) -> String {
+    format!("dm:{agent}")
+}
 
 // ── HTTP client ─────────────────────────────────────────────────
 
@@ -103,6 +116,15 @@ pub enum ProxyAuth<'cred> {
     Bearer(&'cred str),
     /// An agent's own `AGENT_TOKEN` (from `read_agent_token`) as `X-Agent-Token`.
     AgentToken(&'cred str),
+}
+
+/// What one post attempt inside `drive_until_echo` answered, once the node's refusals are told
+/// apart from the failures another attempt can still win: a 4xx is the refusal, returned as the
+/// drive's own `Err`, and everything else is `Retryable`.
+#[derive(Debug, Clone)]
+enum PostOutcome {
+    Accepted,
+    Retryable(String),
 }
 
 pub struct Client {
@@ -380,43 +402,56 @@ impl Client {
         Ok(())
     }
 
-    /// Deliver a chat message to the agent's `app-chat` skill service via `POST
-    /// /agents/{name}/app-chat/message` (the generic authenticated proxy), the same path the web/mobile
-    /// clients use. A `200` means the daemon durably intook it (persisted, echoed, notification
-    /// written); delivery truth is the echo carrying `intent_id` on the app-chat chat socket
-    /// (`open_app_chat_socket`). Pass `intent_id` to correlate that echo; omit with `None`. Requires the
-    /// agent's app-chat daemon to be running (`start_app_chat_daemon` for model-less fake-token agents).
-    pub fn send_message(&self, name: &str, text: &str, intent_id: Option<&str>) -> Result<(), String> {
+    /// Post a user message into an agent's direct room (`POST /rooms/dm:{name}/messages`), the
+    /// intake the web/mobile composer drives. The node persists it and fans the echo on `/rooms/ws`
+    /// before it answers, so a `200` is durable delivery with nothing running in the container. The
+    /// ack carries the message id, or `None` when a repeated `intent_id` was answered from the
+    /// dedup memory alone. Delivery truth is still the echo carrying that id on the room socket
+    /// (`open_rooms_socket`).
+    pub fn send_message(
+        &self,
+        name: &str,
+        text: &str,
+        intent_id: Option<&str>,
+    ) -> Result<Option<u64>, String> {
         let mut body = serde_json::json!({ "text": text });
         if let Some(id) = intent_id {
             body["intent_id"] = serde_json::Value::String(id.to_string());
         }
-        self.post_json(&format!("/agents/{name}/app-chat/message"), &body)?;
-        Ok(())
+        let ack: serde_json::Value = self
+            .post_json(&format!("/rooms/{}/messages", direct_room(name)), &body)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))?;
+        Ok(ack["id"].as_u64())
     }
 
-    /// Fetch the agent's app-chat conversation tail via `GET /agents/{name}/app-chat/history` (the
-    /// skill service through the proxy), the same `{events, cursor}` page the clients read. `limit`
-    /// caps the page size.
-    pub fn fetch_app_chat_history(&self, name: &str, limit: u32) -> Result<serde_json::Value, String> {
-        let resp = self.get(&format!("/agents/{name}/app-chat/history?limit={limit}"))?;
+    /// Fetch an agent's direct-room tail via `GET /rooms/dm:{name}/history?limit=`, the
+    /// `{events, cursor}` page the clients read. A limit-only page is the newest `limit` messages,
+    /// ordered oldest first and newest last.
+    pub fn fetch_chat_history(&self, name: &str, limit: u32) -> Result<serde_json::Value, String> {
+        let resp = self.get(&format!(
+            "/rooms/{}/history?limit={limit}",
+            direct_room(name)
+        ))?;
         resp.into_body()
             .read_json()
             .map_err(|e| format!("parse error: {e}"))
     }
 
-    /// Start the agent's `app-chat` daemon in-container, idempotently. Model-less fake-token agents
-    /// never run the skill's setup or the restart daemon block, so send/history scenarios install the
-    /// CLI and start the daemon by hand before the service can accept a request. Docker-exec, not HTTP:
-    /// the daemon owns the service the proxy targets. Sources `/run/vestad-env` (`WS_PORT`,
-    /// `AGENT_TOKEN`, `VESTAD_PORT`, `AGENT_NAME`) that register-service and `serve` read; `PATH`
-    /// carries uv and `/root/.local/bin` from the image env. Re-runnable across a restart (the daemon dies with the
+    /// Start the agent's `chat` daemon in-container, idempotently. Model-less fake-token agents
+    /// never run the skill's setup or the restart daemon block, so a scenario that needs the skill
+    /// installs the CLI and starts the daemon by hand: the daemon's replica loop is what turns a
+    /// node message into the agent's notification, and its unix socket is what `chat send` posts
+    /// through. Docker-exec, not HTTP. Sources `/run/vestad-env` (`AGENT_NAME`, `AGENT_TOKEN`,
+    /// `BOX_HOST`, `VESTAD_PORT`) that the node client reads; `PATH` carries uv and
+    /// `/root/.local/bin` from the image env. Re-runnable across a restart (the daemon dies with the
     /// container's process tree): `--force` reinstall is a no-op and `daemon start` is idempotent.
-    pub fn start_app_chat_daemon(&self, name: &str) -> Result<(), String> {
+    pub fn start_chat_daemon(&self, name: &str) -> Result<(), String> {
         let container = crate::agent_container_name(name);
         crate::exec_in_container(
             &container,
-            ". /run/vestad-env && uv tool install --force --editable /root/agent/skills/app-chat/cli && app-chat daemon start",
+            ". /run/vestad-env && uv tool install --force --editable /root/agent/skills/chat/cli && chat daemon start",
         )?;
         Ok(())
     }
@@ -435,10 +470,10 @@ impl Client {
     }
 
     /// Post an agent-injected user-facing notification via `POST /agents/{name}/user-notification`
-    /// carrying the agent's own `X-Agent-Token` (self-scoped, the loopback path the app-chat reply hook
-    /// and the rate-limit notice use). `kind` is the closed set `message`/`needs_user`; an unknown
-    /// kind is a 400 (surfaced here as the mapped error string). On success vestad fans a
-    /// `user_notification` delta `{agent,kind,title,body}` to every connected `/sync` session.
+    /// carrying the agent's own `X-Agent-Token` (self-scoped, the loopback path the rate-limit
+    /// notice uses). `kind` is the closed set `message`/`needs_user`; an unknown kind is a 400
+    /// (surfaced here as the mapped error string). On success vestad fans a `user_notification`
+    /// delta `{agent,kind,title,body}` to every connected `/sync` session.
     pub fn send_user_notification(
         &self,
         name: &str,
@@ -509,18 +544,94 @@ impl Client {
         self.connect_sync(jwt).await
     }
 
-    /// Connect the app-chat live chat socket `GET /agents/{name}/app-chat/ws` through the generic
-    /// authenticated proxy, API-key authed via `?token=` (the path web/mobile chat use). Replay-free
-    /// by contract: only events appended after connect arrive, each frame one `StoredEvent` JSON
-    /// object. Delivery truth for a send is the echo carrying its `intent_id` on this socket. Requires
-    /// the agent's app-chat daemon running (`start_app_chat_daemon` for model-less fake-token agents).
-    pub async fn open_app_chat_socket(&self, name: &str) -> Result<SyncSocket, String> {
+    /// Connect the chat node's room socket `GET /rooms/ws` as the user, api-key authed via
+    /// `?token=` (the carrier a browser socket has). `room` scopes the session to that one room;
+    /// `None` reads every room. Replay-free by contract: only events fanned after the session
+    /// subscribed arrive, each message frame one JSON object.
+    pub async fn open_rooms_socket(&self, room: Option<&str>) -> Result<SyncSocket, String> {
+        let scope = match room {
+            Some(id) => format!("room={}&", urlencod(id)),
+            None => String::new(),
+        };
         self.connect_ws(&format!(
-            "/agents/{}/app-chat/ws?token={}",
-            urlencod(name),
+            "/rooms/ws?{scope}token={}",
             urlencod(&self.api_key)
         ))
         .await
+    }
+
+    /// One post attempt into `room`, keeping the status the shared `post_json` maps away: a 2xx is
+    /// `Accepted`, a 4xx is the node's own refusal (`Err`, carrying the status and the body it
+    /// answered), and a 5xx or a transport failure is `Retryable`.
+    fn post_room_message(
+        &self,
+        room: &str,
+        body: &serde_json::Value,
+    ) -> Result<PostOutcome, String> {
+        let response = match self
+            .agent
+            .post(&format!("{}/rooms/{room}/messages", self.base_url))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body)
+        {
+            Ok(response) => response,
+            Err(error) => return Ok(PostOutcome::Retryable(map_error(&error))),
+        };
+        let status = response.status().as_u16();
+        if (200..300).contains(&status) {
+            return Ok(PostOutcome::Accepted);
+        }
+        let detail = response.into_body().read_to_string().unwrap_or_default();
+        if (400..500).contains(&status) {
+            return Err(format!(
+                "the node refused a post to {room} with HTTP {status}: {detail}"
+            ));
+        }
+        Ok(PostOutcome::Retryable(format!("HTTP {status}: {detail}")))
+    }
+
+    /// Drive user posts into `room` until one echoes on `sock`, answering that post's intent id and
+    /// its echo frame. `/rooms/ws` is replay-free, so an event fanned before the session subscribed
+    /// is gone: a fresh intent per attempt is what closes the registration race (a repeated one is
+    /// deduped and never re-echoes), and the winning echo proves the session is live for whatever
+    /// the caller asserts next. Bounded by `ROOM_ECHO_TIMEOUT`, never a bare sleep. A 4xx answer is
+    /// the node refusing the post itself (an unknown room, a malformed body), which no resend
+    /// mends, so it fails on the spot with the status and the body; only a transport error or a 5xx
+    /// is retried inside the budget.
+    pub async fn drive_until_echo(
+        &self,
+        sock: &mut SyncSocket,
+        room: &str,
+        label: &str,
+    ) -> Result<(String, serde_json::Value), String> {
+        let deadline = Instant::now() + ROOM_ECHO_TIMEOUT;
+        let mut attempt = 0u32;
+        let mut last_error: Option<String>;
+        loop {
+            let intent = format!("i-{label}-{attempt}");
+            let body =
+                serde_json::json!({ "text": format!("{label} {attempt}"), "intent_id": intent });
+            match self.post_room_message(room, &body) {
+                Ok(PostOutcome::Accepted) => last_error = None,
+                Ok(PostOutcome::Retryable(error)) => last_error = Some(error),
+                Err(refusal) => return Err(refusal),
+            }
+            if let Ok(frame) = sock
+                .expect_frame_matching(
+                    |frame| frame["intent_id"].as_str() == Some(intent.as_str()),
+                    ROOM_ECHO_ATTEMPT_TIMEOUT,
+                )
+                .await
+            {
+                return Ok((intent, frame));
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "no room-socket echo for {room} within {ROOM_ECHO_TIMEOUT:?} (last post error: {last_error:?})"
+                ));
+            }
+            attempt += 1;
+        }
     }
 
     async fn connect_sync(&self, token: &str) -> Result<SyncSocket, String> {
@@ -529,16 +640,37 @@ impl Client {
     }
 
     /// Open a WebSocket to `path_and_query` (already `?token=`-authed) over the fingerprint-pinned
-    /// TLS the harness uses everywhere. Shared by the `/sync` state plane and the app-chat chat socket.
+    /// TLS the harness uses everywhere. Shared by the `/sync` state plane and the room socket.
     /// Public for the proxy's own gate: a service route decides authorization before it upgrades, so
     /// the handshake completing is that verdict, and a refusal arrives as `HTTP error: {status}` in
     /// the error string rather than as a socket.
     pub async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
+        self.connect_ws_as(path_and_query, ProxyAuth::None).await
+    }
+
+    /// `connect_ws`, presenting `auth` as a request header instead of a `?token=` query. A browser
+    /// socket cannot set headers, which is why the app surfaces carry the token in the URL; an
+    /// agent's own `X-Agent-Token` has no query carrier at all, so its `/rooms/ws` session can only
+    /// be opened this way.
+    pub async fn connect_ws_as(
+        &self,
+        path_and_query: &str,
+        auth: ProxyAuth<'_>,
+    ) -> Result<SyncSocket, String> {
         let url = format!("{}{}", ws_base_url(&self.base_url), path_and_query);
+        let mut request = url
+            .into_client_request()
+            .map_err(|e| format!("ws request build failed: {e}"))?;
+        if let Some((header, value)) = self.auth_header(auth) {
+            let name = HeaderName::try_from(header).map_err(|e| format!("ws header name: {e}"))?;
+            let value =
+                HeaderValue::try_from(value).map_err(|e| format!("ws header value: {e}"))?;
+            request.headers_mut().insert(name, value);
+        }
         let tls = make_ws_rustls_config(self.cert_fingerprint.clone());
         let connector = tokio_tungstenite::Connector::Rustls(tls);
         let (ws, _resp) =
-            tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
+            tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector))
                 .await
                 .map_err(|e| format!("ws connect failed: {e}"))?;
         Ok(SyncSocket { ws })
@@ -621,6 +753,60 @@ impl Client {
             request = request.header(header, &value);
         }
         let response = request.send_json(body).map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// PUT raw bytes to a proxied path with a chosen credential, preserving the upstream
+    /// status/body. The attachment chunk upload carries no JSON, and its 409 body is the
+    /// resync answer a scenario asserts, so neither may be mapped away.
+    pub fn proxy_put_bytes(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+        body: &[u8],
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.put(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.send(body).map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// GET a proxied path, keeping the response headers. A served blob states its whole policy in
+    /// its headers, so the body alone says nothing about it.
+    pub fn proxy_get_headers(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+    ) -> Result<(u16, HeaderMap), String> {
+        let mut request = self.agent.get(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
+        Ok((response.status().as_u16(), response.headers().clone()))
+    }
+
+    /// DELETE a path with a chosen credential, preserving the upstream status/body. The chat
+    /// routes answer a refused delete with a 409 and an error string, so the status is the
+    /// assertion and must not be mapped away.
+    pub fn proxy_delete(&self, path: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
+        let mut request = self.agent.delete(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
         let status = response.status().as_u16();
         let body = response
             .into_body()
@@ -774,7 +960,7 @@ impl Client {
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// A live WebSocket carrying JSON frames: the `/sync` state plane, or the app-chat chat socket. Frames
+/// A live WebSocket carrying JSON frames: the `/sync` state plane, or the room socket. Frames
 /// are parsed as `serde_json::Value` keyed on `type` (lighter than mirroring the server's protocol
 /// enum here); ping/pong are drained transparently on `recv_frame`.
 pub struct SyncSocket {

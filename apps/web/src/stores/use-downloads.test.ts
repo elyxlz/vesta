@@ -13,7 +13,6 @@ const downloads = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/download", () => ({
   downloadAttachment: (
-    _agent: string,
     _attachment: ChatAttachment,
     onProgress?: (received: number, total: number) => void,
   ) =>
@@ -61,7 +60,7 @@ afterEach(() => {
 
 describe("useDownloadsStore", () => {
   it("throttles progress, completes with a success toast, then forgets the entry", async () => {
-    useDownloadsStore.getState().start("ada", ATT);
+    useDownloadsStore.getState().start(ATT);
     expect(entry("att-1")).toEqual({
       received: 0,
       total: TOTAL,
@@ -88,13 +87,13 @@ describe("useDownloadsStore", () => {
   });
 
   it("ignores a second start while a download is already in flight", () => {
-    useDownloadsStore.getState().start("ada", ATT);
-    useDownloadsStore.getState().start("ada", ATT);
+    useDownloadsStore.getState().start(ATT);
+    useDownloadsStore.getState().start(ATT);
     expect(downloads.calls).toHaveLength(1);
   });
 
   it("keeps a removed attachment as a terminal tile", async () => {
-    useDownloadsStore.getState().start("ada", ATT);
+    useDownloadsStore.getState().start(ATT);
     lastCall().reject("removed");
     await flush();
     expect(entry("att-1")?.phase).toBe("removed");
@@ -105,7 +104,7 @@ describe("useDownloadsStore", () => {
   });
 
   it("clears the entry and toasts on a generic failure", async () => {
-    useDownloadsStore.getState().start("ada", ATT);
+    useDownloadsStore.getState().start(ATT);
     lastCall().reject(new Error("boom"));
     await flush();
     expect(entry("att-1")).toBeNull();
@@ -116,7 +115,7 @@ describe("useDownloadsStore", () => {
   });
 
   it("clears the entry silently when the save is cancelled", async () => {
-    useDownloadsStore.getState().start("ada", ATT);
+    useDownloadsStore.getState().start(ATT);
     lastCall().resolve("cancelled");
     await flush();
     expect(entry("att-1")).toBeNull();

@@ -43,6 +43,24 @@ export const vestadApiFixtures = {
       "ws_port": 4201
     }
   ],
+  "attachment_completed": {
+    "attachment": {
+      "height": 480,
+      "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "mime": "image/png",
+      "name": "photo.png",
+      "size": 1234,
+      "width": 640
+    }
+  },
+  "attachment_created": {
+    "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  },
+  "attachment_status": {
+    "finalized": true,
+    "received": 1234,
+    "size": 1234
+  },
   "backups": [
     {
       "agent_name": "sample-agent",
@@ -77,6 +95,47 @@ export const vestadApiFixtures = {
       "vestad_version": "0.1.0"
     }
   ],
+  "chat_history": {
+    "cursor": 1,
+    "events": [
+      {
+        "id": 1,
+        "input_method": "typed",
+        "intent_id": "c-sample-1",
+        "room": "dm:sample-agent",
+        "sender": "user",
+        "text": "are we still on for friday?",
+        "ts": "2026-09-04T09:00:00Z",
+        "type": "user"
+      },
+      {
+        "attachments": [
+          {
+            "height": 480,
+            "id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "mime": "image/png",
+            "name": "photo.png",
+            "size": 1234,
+            "width": 640
+          }
+        ],
+        "id": 2,
+        "room": "dm:sample-agent",
+        "sender": "sample-agent",
+        "text": "yes, 19:00 at the usual place",
+        "ts": "2026-09-04T09:00:04.123Z",
+        "type": "chat"
+      }
+    ]
+  },
+  "chat_import": {
+    "imported": 3,
+    "skipped": 1
+  },
+  "chat_post": {
+    "id": 2,
+    "ok": true
+  },
   "file_read": {
     "content": "hello",
     "encoding": "utf-8",
@@ -142,6 +201,40 @@ export const vestadApiFixtures = {
   "renamed": {
     "name": "sample-agent-2"
   },
+  "room_opened": {
+    "room": {
+      "agents": [
+        "sample-agent"
+      ],
+      "createdAt": 1756900000,
+      "id": "dm:sample-agent",
+      "lastMessageAt": 1756903000,
+      "name": null
+    }
+  },
+  "rooms": {
+    "rooms": [
+      {
+        "agents": [
+          "sample-agent"
+        ],
+        "createdAt": 1756900000,
+        "id": "dm:sample-agent",
+        "lastMessageAt": 1756903000,
+        "name": null
+      },
+      {
+        "agents": [
+          "sample-agent",
+          "scout"
+        ],
+        "createdAt": 1756900100,
+        "id": "grp-0011223344556677",
+        "lastMessageAt": null,
+        "name": "trip planning"
+      }
+    ]
+  },
   "start_all": {
     "results": [
       {
@@ -159,6 +252,27 @@ export const vestadApiFixtures = {
     "is_dir": false,
     "mode": 420,
     "path": "notes/todo.md"
+  },
+  "user_notifications": {
+    "notifications": [
+      {
+        "agent": "sample-agent",
+        "at": 1700000400,
+        "body": "hello",
+        "id": 3,
+        "kind": "message",
+        "room": "dm:sample-agent",
+        "title": "sample-agent"
+      },
+      {
+        "agent": "",
+        "at": 1700000000,
+        "body": "",
+        "id": 2,
+        "kind": "update_available",
+        "title": "gateway v0.3.0 available"
+      }
+    ]
   },
   "version": {
     "api_compat": "0.2",

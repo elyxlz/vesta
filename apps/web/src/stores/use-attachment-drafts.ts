@@ -1,8 +1,8 @@
 import { useCallback } from "react";
 import {
-  agentHoldKey,
   createDraftStore,
   createKeyedHoldStore,
+  roomHoldKey,
   type Connectivity,
   type DraftAttachment,
   type DraftSource,
@@ -118,13 +118,12 @@ export interface AttachmentDrafts extends Omit<DraftCell, "addSources"> {
   addFiles: (files: File[]) => void;
 }
 
-export function useAttachmentDrafts(agent: string): AttachmentDrafts {
-  const key = agentHoldKey(agent, getConnection()?.url ?? "");
+export function useAttachmentDrafts(roomId: string): AttachmentDrafts {
+  const key = roomHoldKey(roomId, getConnection()?.url ?? "");
   const { addSources, ...cell } = useDraftCell(
     draftStore,
     attachmentDrafts,
     key,
-    agent,
   );
   const addFiles = useCallback(
     (files: File[]) => {

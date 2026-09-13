@@ -329,7 +329,7 @@ impl AgentStatus {
     }
 
     /// True while the container is up with its WS/HTTP server bound and serving, in every state
-    /// reaching it: the app-chat echo and the event stream are credential-independent, so an
+    /// reaching it: the chat echo and the event stream are credential-independent, so an
     /// unauthenticated or unprovisioned agent still streams events and accepts relayed chat (the
     /// raw per-agent WS proxy this hub replaced served it regardless of auth). Excludes the
     /// transitional running states, which `dialable` covers, and every down state.

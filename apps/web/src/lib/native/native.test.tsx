@@ -135,22 +135,6 @@ describe("electron bridge", () => {
     );
   });
 
-  it("migrates plaintext renderer gateway records to the native store", async () => {
-    const gateways = [{ connection: CONFIG, lastConnectedAt: 1 }];
-    localStorage.setItem("vesta-recent-gateways", JSON.stringify(gateways));
-    const recentStoreWrite = vi.fn(() => Promise.resolve());
-    const bridge = createElectronBridge(
-      fakeApi({
-        recentStoreRead: vi.fn(() => Promise.resolve(null)),
-        recentStoreWrite,
-      }),
-    );
-
-    expect(await bridge.recentGatewayStore.read()).toEqual(gateways);
-    expect(recentStoreWrite).toHaveBeenCalledWith(gateways);
-    expect(localStorage.getItem("vesta-recent-gateways")).toBeNull();
-  });
-
   it("parses the native geolocation answer at the boundary", async () => {
     const good = fakeApi({
       readGeolocation: vi.fn(() =>

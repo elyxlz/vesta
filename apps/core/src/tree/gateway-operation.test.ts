@@ -20,7 +20,7 @@ function treeWith(operation: unknown): Tree {
     managed: false,
     operation,
   } as unknown as GatewayInfo;
-  return { gateway, agents: {}, devices: [] };
+  return { gateway, agents: {}, devices: [], rooms: [] };
 }
 
 describe("selectGatewayOperation", () => {

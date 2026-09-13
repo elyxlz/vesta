@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { Home, Plus } from "lucide-react";
+import { Home, MessageSquare, Plus } from "lucide-react";
 import { SettingsButton } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
@@ -23,20 +23,32 @@ function Leading() {
   // instead of routing into the create flow that needs a live gateway.
   if (isHome && (!reachable || agentsFetched)) {
     return (
-      <Button
-        variant="outline"
-        size="icon-lg"
-        aria-label="new agent"
-        onClick={() => {
-          if (!reachable) {
-            toast.error("can't reach the gateway right now");
-            return;
-          }
-          void navigate("/new");
-        }}
-      >
-        <Plus />
-      </Button>
+      <>
+        <Button
+          variant="outline"
+          size="icon-lg"
+          aria-label="new agent"
+          onClick={() => {
+            if (!reachable) {
+              toast.error("can't reach the gateway right now");
+              return;
+            }
+            void navigate("/new");
+          }}
+        >
+          <Plus />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-lg"
+          aria-label="chats"
+          onClick={() => {
+            void navigate("/chats");
+          }}
+        >
+          <MessageSquare />
+        </Button>
+      </>
     );
   }
 

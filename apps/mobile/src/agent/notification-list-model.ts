@@ -1,40 +1,14 @@
-import {
-  notificationRowKey,
-  type ChatMessage,
-  type NotificationView,
-} from "@vesta/core";
+import { mergePending, type NotificationEvent } from "@vesta/core";
 
-export function mergeLiveNotifications(
-  history: readonly NotificationView[],
-  liveEvents: readonly ChatMessage[],
-): NotificationView[] {
-  const seen = new Set(history.map(notificationRowKey));
-  const arrivals: NotificationView[] = [];
-
-  for (const event of liveEvents) {
-    if (event.type !== "notification") continue;
-    const key = notificationRowKey(event);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    arrivals.push(event);
-  }
-
-  return [...arrivals.reverse(), ...history];
-}
-
-export function getPendingNotificationIds(
-  pendingSeed: string[],
-  liveEvents: readonly ChatMessage[],
-): Set<string> {
-  const pending = new Set(pendingSeed);
-
-  for (const event of liveEvents) {
-    if (event.type === "notification" && event.notif_id) {
-      pending.add(event.notif_id);
-    } else if (event.type === "notification_cleared") {
-      pending.delete(event.notif_id);
-    }
-  }
-
-  return pending;
+// The rows the notifications page lists: the loaded page, newest first, with every pending
+// notification the page does not carry merged in above it. The pager renders the list inverted, so
+// it reads it as it stands; the standalone sheet lays its rows out bottom-aligned instead and so
+// reads the same list oldest first.
+export function notificationRows(
+  history: NotificationEvent[],
+  pending: NotificationEvent[],
+  standalone: boolean,
+): NotificationEvent[] {
+  const rows = mergePending(history, pending);
+  return standalone ? [...rows].reverse() : rows;
 }

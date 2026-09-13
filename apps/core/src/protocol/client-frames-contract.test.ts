@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { directRoomId } from "../tree/rooms";
 import { clientContextFrame, encodeFrame, reauthFrame } from "./frames";
 
 // The client-to-gateway half of the wire contract. This encoder writes the fixture (with
@@ -17,7 +18,7 @@ function fixtureContent(): string {
           focused: true,
           client: "mobile",
           resync: false,
-          viewing: "scout",
+          viewing: directRoomId("scout"),
           device: { id: "device-1", descriptor: "Vesta on iPhone" },
           context: {
             timezone: "Europe/London",
