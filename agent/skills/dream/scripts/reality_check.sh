@@ -69,9 +69,76 @@ fi
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
+# A RETIRED daemon's log is not a fault, and it goes RED for its last 24 hours and then again the
+# instant anyone re-enables it. Added 11 Sep 2026, the night after `hibob` was deliberately logged
+# out and stopped on the user's instruction: its frozen log still carried 239 errors and reported
+# RED, which is a producer that no longer exists being counted as a producer that is failing.
+# ONLY skip on POSITIVE evidence of retirement: the skill is named in daemons.sh and its start line
+# is commented out. A log whose name appears nowhere in that file (vesta.log, per-skill logs with no
+# daemon) is still scanned, because absence of a line is not evidence of retirement.
+retired_producer() {
+    skill="$1"
+    ds="$HOME/agent/skills/restart/daemons.sh"
+    [ -f "$ds" ] || return 1
+    grep -qE "^[[:space:]]*#[[:space:]]*${skill} daemon start" "$ds" || return 1
+    grep -qE "^[[:space:]]*${skill} daemon start" "$ds" && return 1
+    return 0
+}
+# The founding case of this probe is a LIVE daemon whose log has gone stale. The `continue`
+# below once fired before any reporting, so a log untouched in 24h was skipped in silence: no
+# OK line, no RED line. A daemon that dies stops writing, so staleness bought it an exemption
+# from the probe built to catch it. Measured 12 Sep: 19 of 23 logs scanned, 8 the night before,
+# both under "all probes green". So never skip silently, and let the daemon list decide whether
+# stale is a fault.
+log_age_hours() {
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$1" 2>/dev/null || echo "$now")
+    echo $(( (now - mtime) / 3600 ))
+}
+scanned=0
+skipped=0
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
-    [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
+    name=$(basename "$log" .log)
+    if retired_producer "$name"; then
+        skipped=$((skipped + 1))
+        ok "$(basename "$log"): producer retired in daemons.sh, not scanned"
+        continue
+    fi
+    if [ -z "$(find "$log" -mmin -1440 2>/dev/null)" ]; then
+        skipped=$((skipped + 1))
+        age=$(log_age_hours "$log")
+        # A QUIET DAEMON IS NOT A DEAD ONE. This branch once went RED on any live-in-daemons.sh
+        # skill whose log had not moved in 24h, and its first run produced ten REDs, every one a
+        # false positive: the daemons answered {"running": true}, they just had nothing to say.
+        # Liveness is already answered ABOVE by the pid probe (a recorded pid against a real
+        # process); log mtime adds nothing and cannot see a merely idle daemon. Lesson: measure a
+        # detector's false-positive rate before shipping. So report the age, never RED on staleness
+        # alone. The one remaining fault is a log whose skill is named live but has NO pid record,
+        # meaning it was never started this boot, which the pid probe cannot see (it iterates pids).
+        if grep -qE "^[[:space:]]*${name} daemon start" "$HOME/agent/skills/restart/daemons.sh" 2>/dev/null; then
+            if [ -e "$HOME/agent/data/daemons/${name}.pid" ]; then
+                ok "$(basename "$log"): ${name} is up with a pid record, log just quiet for ${age}h"
+            else
+                bad "$(basename "$log"): ${name} is LIVE in daemons.sh, has NO pid record, and its log is ${age}h old: it was never started this boot"
+            fi
+        else
+            ok "$(basename "$log"): not written in ${age}h and no daemon line, so nothing is expected to write it"
+        fi
+        continue
+    fi
+    scanned=$((scanned + 1))
+    # The date filter below only advances `recent` on lines that START with a timestamp, and
+    # `recent` begins at 1. So for a log whose lines never carry a leading date (hibob.log writes
+    # "[hibob] tick ..."), every line stays "recent" and the count is all-time over the tail, NOT
+    # two days. On 9 Sep 2026 that made 84 all-time errors from a completely dead daemon read as a
+    # reassuring two-day figure. Cannot be fixed by parsing harder: there is no timestamp to parse.
+    # So report the window we actually measured.
+    if tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | grep -qE '^\[?[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+        window="in the last 2 days"
+    else
+        window="in the last 2000 lines (this log carries no leading timestamps, so the window is lines, not days)"
+    fi
     errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
@@ -79,9 +146,9 @@ for log in "$HOME"/agent/logs/*.log; do
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
+        bad "$(basename "$log"): $errors error lines $window; read it and find the producer"
     else
-        ok "$(basename "$log"): $errors error lines in the last 2 days"
+        ok "$(basename "$log"): $errors error lines $window"
     fi
 done
 
@@ -130,5 +197,6 @@ if [ "$red" -gt 0 ]; then
     printf '%s RED: fix each tonight or write the reason off in the summary.\n' "$red"
     exit 1
 fi
-printf 'all probes green\n'
+printf 'all probes green (log scan covered %s of %s logs; %s reported unscanned above)\n' \
+    "$scanned" "$((scanned + skipped))" "$skipped"
 exit 0
