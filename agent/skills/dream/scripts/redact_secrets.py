@@ -869,6 +869,9 @@ class StoreReport:
     store: Store
     status: str
     hits: list[tuple[str, str]]
+    # Files the store could not read. A status beginning "scanned" reads as complete to the
+    # shortfall check, so a skipped count carried only inside that string is invisible to it.
+    skipped: int = 0
 
 
 def scan_channel_store(conn: sqlite3.Connection, store: Store) -> StoreReport:
@@ -993,7 +996,12 @@ def scan_files(root: Path) -> StoreReport:
                 continue
             scanned += 1
             hits.extend((f"file:{path}", snippet) for snippet in find_matches(text))
-    return StoreReport(store, f"scanned {scanned} file(s), {skipped} skipped (over {FILE_SCAN_MAX_BYTES // 1024}k or unreadable)", hits)
+    return StoreReport(
+        store,
+        f"scanned {scanned} file(s), {skipped} skipped (over {FILE_SCAN_MAX_BYTES // 1024}k or unreadable)",
+        hits,
+        skipped=skipped,
+    )
 
 
 def _run_scan() -> int:
@@ -1008,7 +1016,8 @@ def _run_scan() -> int:
         if report.status != "absent":
             line += f", {len(report.hits)} hit(s)"
         print(line)
-    partial = [report for report in reports if not report.status.startswith(("scanned", "absent"))]
+    # A store is short if it stopped early OR if it walked past files it could not read.
+    partial = [report for report in reports if not report.status.startswith(("scanned", "absent")) or report.skipped]
     hits = [hit for report in reports for hit in report.hits]
     if not hits:
         print("No secrets found." if not partial else "No secrets found in what was scanned; the coverage above shows what was not.")
