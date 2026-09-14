@@ -1,0 +1,424 @@
+#!/root/.local/share/uv/tools/vesta-browser/bin/python
+"""hibob - drive app.hibob.com's own internal web API as the logged-in user.
+
+This is NOT the public HiBob REST API (which needs an admin-created service token
+the user does not have) and it is NOT the Bob MCP server (which refuses task
+endpoints with `exception.permissions.forbidden` for a plain employee). Instead it
+does exactly what the website does: it runs `fetch('/api/...', {credentials:'include'})`
+from inside the already-logged-in browser page, so every call carries the signed-in user's
+real session cookie and returns exactly what he can see in the UI.
+
+Auth model: the session lives in the Camoufox profile at /root/.browser/profile,
+driven through the `vesta_browser` daemon. We never read, print, or persist the
+cookie ourselves; the browser holds it. Nothing is written under ~/.hibob by this
+tool. See SKILL.md for the endpoint map and what did NOT work.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+
+BROWSER_SRC = "/root/agent/skills/browser/cli/src"
+
+
+def _browser():
+    """The browser tool's admin+helpers, imported on first use.
+
+    Imported lazily because reaching them needs a sys.path entry, and setting that
+    at module level puts code before an import.
+    """
+    if BROWSER_SRC not in sys.path:
+        sys.path.insert(0, BROWSER_SRC)
+    from vesta_browser import admin, helpers
+
+    return admin, helpers
+
+BASE = "https://app.hibob.com"
+
+
+class ApiError(RuntimeError):
+    pass
+
+
+# Single-EXPRESSION IIFE (helpers.js wraps its arg in parens, so a multi-statement
+# script dies as "missing ) in parenthetical"). It kicks off a fetch and stashes the
+# result on a global, because Bob is an Angular app: Zone.js has replaced
+# window.Promise, and BiDi's awaitPromise only recognises a native promise, so
+# returning the promise serialises a ZoneAwarePromise and blows up. We return
+# synchronously and poll the global instead.
+_FETCH = """(() => {
+  window.__hb = null;
+  fetch(%(url)s, {method: %(method)s, credentials: 'include', headers: %(headers)s, body: %(body)s})
+    .then(r => r.text().then(t => { window.__hb = JSON.stringify({status: r.status, body: t}); }))
+    .catch(e => { window.__hb = JSON.stringify({status: -1, body: 'fetch failed: ' + String(e)}); });
+  return 'started';
+})()"""
+
+
+def _ensure_session() -> None:
+    """Make sure the daemon is up and the active tab is on the app.hibob.com origin.
+
+    The fetch is same-origin: if the tab has wandered off (e.g. a Google SSO
+    redirect) the call is cross-origin and the browser blocks it. So we park the
+    tab on /home first."""
+    admin, helpers = _browser()
+    try:
+        admin.ensure_daemon()
+    except (RuntimeError, OSError) as exc:
+        raise ApiError(
+            "no live browser session. A logged-in Bob profile lives at "
+            "/root/.browser/profile; start it with:\n"
+            "  browser launch --headless --user-data-dir /root/.browser/profile\n"
+            "then `browser navigate https://app.hibob.com/home`.\n"
+            f"(underlying error: {exc})"
+        ) from exc
+    try:
+        host = helpers.js("location.host")
+    except (RuntimeError, OSError) as exc:
+        raise ApiError(f"browser daemon is not answering: {exc}") from exc
+    if not host or "app.hibob.com" not in host:
+        helpers.goto(f"{BASE}/home")
+        helpers.wait(2)
+        host = helpers.js("location.host")
+        if not host or "app.hibob.com" not in host:
+            raise ApiError(
+                f"could not get the tab onto app.hibob.com (currently {host!r}); "
+                "the session may be logged out. Check `browser screenshot`."
+            )
+
+
+def api(path: str, method: str = "GET", body: dict | None = None, tries: int = 60):
+    """Call app.hibob.com/api/... from inside the page. Returns parsed JSON.
+
+    Fails LOUDLY: any non-2xx raises ApiError carrying the response body, and a
+    request error (CORS, network) raises too. A 200 with an empty list is a valid,
+    distinct result and is returned as-is."""
+    _ensure_session()
+    _, helpers = _browser()
+    url = path if path.startswith("http") else BASE + path
+    headers = {"Content-Type": "application/json"} if body is not None else {}
+    script = _FETCH % {
+        "url": json.dumps(url),
+        "method": json.dumps(method),
+        "headers": json.dumps(headers),
+        "body": json.dumps(json.dumps(body)) if body is not None else "null",
+    }
+    helpers.js(script)
+    raw = None
+    for _ in range(tries):
+        helpers.wait(0.5)
+        raw = helpers.js("window.__hb")
+        if raw:
+            break
+    if not raw:
+        raise ApiError(f"timed out waiting for {method} {url}")
+    out = json.loads(raw)
+    status = out["status"]
+    bodytext = out["body"]
+    if status == -1:
+        raise ApiError(f"{method} {url} failed in the browser: {bodytext}")
+    if not (200 <= status < 300):
+        raise ApiError(f"{method} {url} -> HTTP {status}\n{bodytext[:2000]}")
+    if not bodytext.strip():
+        return None
+    try:
+        return json.loads(bodytext)
+    except json.JSONDecodeError as exc:
+        raise ApiError(
+            f"{method} {url} -> HTTP {status} but body was not JSON:\n{bodytext[:800]}"
+        ) from exc
+
+
+# ── data helpers ──────────────────────────────────────────────
+
+def _me() -> dict:
+    """The logged-in employee. Raises rather than returning a hollow dict.
+
+    WHY THE CHECK (9 Sep 2026): when the Bob session expires, `/api/user` answers **200 with
+    `{}`**, not 401. Every caller then failed a different, misleading way. `hibob tasks list`
+    died on `KeyError: 'id'` with a raw traceback, 76 consecutive daemon polls deep. Worse,
+    `hibob whoami` printed `None  <None>  id=None  None (None)` and **exited 0**, so anything
+    checking the exit code read a dead session as a healthy one. That is the empty-output-is-not-
+    zero class: a 200 with no content looks exactly like a successful read.
+
+    So the emptiness is caught HERE, once, at the only place that knows what a real user looks
+    like, instead of in each of the four call sites."""
+    u = api("/api/user")
+    if not isinstance(u, dict) or not u.get("id"):
+        raise ApiError(
+            "Bob session is not signed in: /api/user returned no employee.\n"
+            "  Re-authenticate: browser navigate https://app.hibob.com/home\n"
+            "  then 'Continue with Okta' and his username; 'Keep me signed in' should be ticked.\n"
+            "  (An expired Bob session answers 200 with an empty body, never 401, so this is\n"
+            "   indistinguishable from a successful call without this check.)")
+    return u
+
+
+def _emit(obj, as_json: bool, human) -> None:
+    if as_json:
+        print(json.dumps(obj, indent=2, ensure_ascii=False))
+    else:
+        human(obj)
+
+
+# ── commands ──────────────────────────────────────────────────
+
+def cmd_whoami(args) -> int:
+    u = _me()
+    _emit(u, args.json, lambda u: print(
+        f"{u.get('displayName')}  <{u.get('email')}>  id={u.get('id')}  "
+        f"{u.get('companyName')} ({u.get('jobRoleDisplayName')})"))
+    return 0
+
+
+def cmd_me(args) -> int:
+    u = _me()
+    def human(u):
+        print(f"Name       : {u.get('displayName')}")
+        print(f"Email      : {u.get('email')}")
+        print(f"Employee id: {u.get('id')}")
+        print(f"Company    : {u.get('companyName')} (id {u.get('companyId')})")
+        print(f"Job role   : {u.get('jobRoleDisplayName')}")
+        print(f"Site       : {u.get('site')}")
+        print(f"Manager    : {'yes' if u.get('isManager') else 'no'}")
+        print(f"Timezone   : {u.get('timezone')}    Currency: {u.get('currency')}")
+        print(f"Session    : {u.get('sessionType')}   State: {u.get('state')}")
+    _emit(u, args.json, human)
+    return 0
+
+
+def cmd_tasks(args) -> int:
+    uid = _me()["id"]
+    status = [] if args.status == "all" else [args.status.capitalize()]
+    body = {
+        "viewSettings": {"limit": args.limit, "offset": 0,
+                         "orderBy": {"name": "dueDate", "order": "desc"}},
+        "filters": {"requestedFor": [], "taskList": [], "status": status,
+                    "dueDate": {"type": "predefined", "dateValue": "all_times"},
+                    "searchFor": "", "groupIds": []},
+    }
+    data = api(f"/api/tasks/types/general/{uid}", method="POST", body=body)
+    tasks = data.get("tasks", []) if isinstance(data, dict) else []
+    def human(d):
+        total = d.get("total", len(tasks))
+        print(f"{total} task(s):")
+        for t in tasks:
+            print(f"  [{t.get('status')}] due {t.get('dueDate')}  {t.get('title')}")
+            tl = t.get("taskList")
+            if tl:
+                print(f"        list: {tl}")
+    _emit(data, args.json, human)
+    return 0
+
+
+def _directory() -> list[dict]:
+    d = api("/api/employees/essentials")
+    if not isinstance(d, list):
+        raise ApiError(f"/api/employees/essentials returned {type(d).__name__}, expected a list")
+    return d
+
+
+def cmd_people(args) -> int:
+    q = args.query.lower()
+    people = _directory()
+    hits = [p for p in people if q in (
+        (p.get("displayName", "") + " " + p.get("email", "")).lower())]
+    def human(hits):
+        if not hits:
+            print(f"no match for {args.query!r} in {len(people)} employees")
+            return
+        print(f"{len(hits)} match(es):")
+        for p in hits:
+            w = p.get("work", {}) or {}
+            rt = (w.get("reportsTo") or {}).get("displayName")
+            print(f"  {p.get('displayName')}  <{p.get('email')}>"
+                  f"{'  site=' + w.get('site', '') if w.get('site') else ''}"
+                  f"{'  -> ' + rt if rt else ''}")
+    _emit(hits, args.json, human)
+    return 0
+
+
+def cmd_org(args) -> int:
+    people = _directory()
+    by_id = {p["id"]: p for p in people if p.get("id")}
+    children: dict[str, list[str]] = {}
+    roots: list[str] = []
+    for p in people:
+        w = p.get("work", {}) or {}
+        mgr = (w.get("reportsTo") or {}).get("id")
+        if mgr and mgr in by_id:
+            children.setdefault(mgr, []).append(p["id"])
+        else:
+            roots.append(p["id"])
+    start = roots
+    if args.root:
+        r = args.root.lower()
+        match = [pid for pid, p in by_id.items()
+                 if r in (p.get("displayName", "") + " " + p.get("email", "")).lower()]
+        if not match:
+            raise ApiError(f"no employee matches root {args.root!r}")
+        start = match
+    def name(pid):
+        p = by_id[pid]
+        return f"{p.get('displayName')} <{p.get('email')}>"
+    tree = {"roots": []}
+    def build(pid):
+        return {"name": by_id[pid].get("displayName"), "email": by_id[pid].get("email"),
+                "reports": [build(c) for c in sorted(children.get(pid, []),
+                            key=lambda x: by_id[x].get("displayName", ""))]}
+    tree["roots"] = [build(pid) for pid in sorted(start, key=lambda x: by_id[x].get("displayName", ""))]
+    def human(_):
+        def walk(pid, depth):
+            print("  " * depth + name(pid))
+            if depth >= args.depth:
+                return
+            for c in sorted(children.get(pid, []), key=lambda x: by_id[x].get("displayName", "")):
+                walk(c, depth + 1)
+        for pid in sorted(start, key=lambda x: by_id[x].get("displayName", "")):
+            walk(pid, 0)
+    _emit(tree, args.json, human)
+    return 0
+
+
+def cmd_timeoff(args) -> int:
+    uid = _me()["id"]
+    data = api(f"/api/timeoff/employees/{uid}/balance/policies/summary-metrics")
+    summary = data.get("summary", []) if isinstance(data, dict) else []
+    def human(_):
+        if not summary:
+            print("no time-off policies")
+            return
+        for s in summary:
+            print(f"{s.get('policyTypeDisplayName')} ({s.get('unit')}): "
+                  f"{s.get('headerMessage') or ''}")
+            cb = s.get("currentBalanceMetric") or {}
+            if cb.get("value") is not None:
+                print(f"    {cb.get('title')}: {cb.get('value')}")
+            print(f"    cycle: {s.get('cycleRange')}")
+    _emit(data, args.json, human)
+    return 0
+
+
+def cmd_docs(args) -> int:
+    uid = _me()["id"]
+    folders = api(f"/api/docs/employees/{uid}/folders?onboarding=false")
+    flist = folders.get("folders", []) if isinstance(folders, dict) else []
+    result = []
+    for f in flist:
+        folder = f.get("folder", {})
+        fid = folder.get("id")
+        docs = api(f"/api/docs/employees/{uid}/folders/{fid}/docs")
+        dl = docs.get("documents", []) if isinstance(docs, dict) else []
+        result.append({"folder": folder.get("name"), "folderId": fid,
+                       "documents": [{"name": d.get("documentName") or d.get("name"),
+                                      "status": d.get("status"),
+                                      "creationDate": d.get("creationDate"),
+                                      "id": d.get("id")} for d in dl]})
+    def human(_):
+        for r in result:
+            print(f"{r['folder']} ({len(r['documents'])} doc(s)):")
+            for d in r["documents"]:
+                print(f"    [{d['status']}] {d['creationDate'][:10]}  {d['name']}")
+    _emit(result, args.json, human)
+    return 0
+
+
+def cmd_task_action(args) -> int:
+    """Complete or reopen a task.
+
+    Endpoint found by a REVERSIBLE probe on 7 Sep 2026, not by guessing and hoping:
+    `POST /api/tasks/actions` with the verb and a taskDetailRequest list, answering
+    `{"toDosUpdated": N}`. Verified by completing one P3, seeing the open count drop
+    17 -> 16, reopening it, and seeing it come back. `toDosUpdated` is checked
+    because a 200 with zero rows updated is a silent no-op, which is exactly the
+    shape of failure that reads as success.
+    """
+    verb = "complete" if args.cmd_action == "complete" else "incomplete"
+    body = {
+        "tasksAction": verb,
+        "taskDetailRequest": [
+            {"taskType": "workflowToDoType",
+             "triggeredTaskId": int(args.task_id),
+             "isScheduled": False}
+        ],
+    }
+    data = api("/api/tasks/actions", method="POST", body=body)
+    updated = data.get("toDosUpdated") if isinstance(data, dict) else None
+    if not updated:
+        raise ApiError(
+            f"task {args.task_id}: server accepted the call but updated {updated!r} rows. "
+            "Nothing changed; check the id is a real open task."
+        )
+
+    def human(_):
+        word = "completed" if verb == "complete" else "reopened"
+        print(f"{word} task {args.task_id} ({updated} row)")
+
+    _emit(data, args.json, human)
+    return 0
+
+
+def cmd_daemon(args) -> int:
+    """Delegate to hibob-daemon, so `hibob daemon <verb>` matches every other skill.
+
+    The fleet contract is `<skill> daemon start|stop|restart|status`, and
+    `daemon_coverage.py` derives the expected pidfile stem from that first word. With
+    `hibob-daemon start` in daemons.sh it looked for `hibob-daemon.pid`, found only
+    `hibob.pid`, and reported a live daemon as DOWN.
+    """
+    import subprocess
+
+    script = str(pathlib.Path(__file__).resolve().parent / "hibob-daemon")
+    return subprocess.run([script, args.action]).returncode
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="hibob", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add(name, fn, help):
+        sp = sub.add_parser(name, help=help)
+        sp.add_argument("--json", action="store_true", help="raw JSON output")
+        sp.set_defaults(func=fn)
+        return sp
+
+    add("whoami", cmd_whoami, "one-line identity of the logged-in user")
+    add("me", cmd_me, "full profile of the logged-in user")
+    tp = add("tasks", cmd_tasks, "list your to-do tasks")
+    tp.add_argument("action", nargs="?", default="list", choices=["list"])
+    tp.add_argument("--status", default="Open", help="Open | Closed | all")
+    tp.add_argument("--limit", type=int, default=50)
+    pp = add("people", cmd_people, "search the company directory")
+    pp.add_argument("action", nargs="?", default="search", choices=["search"])
+    pp.add_argument("query", help="name or email substring")
+    op = add("org", cmd_org, "print the org tree from employee reporting lines")
+    op.add_argument("action", nargs="?", default="tree", choices=["tree"])
+    op.add_argument("--root", help="limit to a subtree rooted at this person")
+    op.add_argument("--depth", type=int, default=99)
+    tf = add("timeoff", cmd_timeoff, "your time-off balance / policies")
+    tf.add_argument("action", nargs="?", default="balance", choices=["balance"])
+    cp = add("complete", cmd_task_action, "mark a task done in Bob")
+    cp.add_argument("task_id", help="numeric task id from `hibob tasks list --json`")
+    cp.set_defaults(cmd_action="complete")
+    rp = add("reopen", cmd_task_action, "mark a completed task open again")
+    rp.add_argument("task_id", help="numeric task id")
+    rp.set_defaults(cmd_action="incomplete")
+    dp = add("docs", cmd_docs, "list your documents by folder")
+    dp.add_argument("action", nargs="?", default="list", choices=["list"])
+
+    dp2 = sub.add_parser("daemon", help="start|stop|restart|status the polling daemon")
+    dp2.add_argument("action", choices=["start", "stop", "restart", "status"])
+    dp2.set_defaults(func=cmd_daemon, json=False)
+
+    args = p.parse_args()
+    try:
+        return args.func(args)
+    except ApiError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
