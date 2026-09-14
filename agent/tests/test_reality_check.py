@@ -118,7 +118,8 @@ def test_agent_narration_does_not_count_as_an_error_storm(tmp_path):
     run = _run(home)
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "OK  vesta.log: 0 error lines in the last 2 days" in run.stdout
+    # This fixture carries no leading timestamps, so the window is reported in lines, not days.
+    assert "OK  vesta.log: 0 error lines in the last 2000 lines" in run.stdout
 
 
 def test_an_untagged_daemon_log_still_storms(tmp_path):
