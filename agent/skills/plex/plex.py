@@ -69,16 +69,40 @@ def _resolution(item):
     try:
         return item.media[0].videoResolution or "?"
     except (AttributeError, IndexError, TypeError):
-        return "?"
+        pass
+    # Container items (show, season) carry no direct media; borrow the first
+    # episode's resolution so a show never falsely reports "?".
+    episodes = getattr(item, "episodes", None)
+    if callable(episodes):
+        try:
+            eps = episodes()
+            if eps:
+                return eps[0].media[0].videoResolution or "?"
+        except (AttributeError, IndexError, TypeError, PlexApiException, RequestException):
+            pass
+    return "?"
 
 
 def _files(item):
     out = []
-    try:
-        for m in item.media:
-            out.extend({"file": p.file, "size": getattr(p, "size", 0)} for p in m.parts)
-    except (AttributeError, TypeError):
-        return []
+    media = getattr(item, "media", None)
+    if media:
+        try:
+            for m in media:
+                out.extend({"file": p.file, "size": getattr(p, "size", 0)} for p in m.parts)
+        except (AttributeError, TypeError):
+            pass
+        return out
+    # Container items (show, season) carry no direct media; aggregate the files
+    # of their episodes so size reflects what is actually on disk, not 0.
+    episodes = getattr(item, "episodes", None)
+    if callable(episodes):
+        try:
+            for ep in episodes():
+                for m in getattr(ep, "media", None) or []:
+                    out.extend({"file": p.file, "size": getattr(p, "size", 0)} for p in m.parts)
+        except (AttributeError, TypeError, PlexApiException, RequestException):
+            pass
     return out
 
 
