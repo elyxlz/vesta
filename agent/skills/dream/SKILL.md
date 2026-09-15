@@ -51,6 +51,17 @@ Calendar audit: every dated appointment, however informally arranged (mentioned 
 
 **Prove the calendar is reachable before auditing it.** Run the list command for the calendar the user actually connects: `email-client calendar list --days-ahead 7` for a CalDAV or Google account, the `microsoft` skill for an Outlook account. A walk of the day against a calendar that is not connected can never fail, so a clean result proves nothing. If the probe errors, the finding is a broken or missing calendar connection, a capability gap to surface to the user, never "no gaps found".
 
+**RUN `~/agent/skills/dream/scripts/reminder-task-dupes` in this phase, and again any time you
+create a reminder.** It lists tasks that have more than one pending reminder pointing at them, with a
+preview of each so its purpose is visible at a glance, and it baselines judged pairs so only NEW ones
+appear. A sweep that compares every reminder against the task it names does not stop the same session
+arming a second reminder for a task that already has one hours later, and a duplicate is worse than
+noise: one of the two carries the older premise, so it fires a claim that has since gone false. **A
+sweep is not a habit if it only runs after something has already gone wrong.** Several reminders on
+one task are usually legitimate (a near plus a far checkpoint, or prose that merely cross-references
+another task), which is why it shows previews and baselines instead of failing nightly: read both,
+keep the one matching the task's current state, log why in the other's metadata, then delete it.
+
 **Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. Every line is tagged by source: `[SYSTEM]` is the daemon, `[AGENT]` is you. Count `[SYSTEM]` lines, because `[AGENT]` lines are your own narration and match whatever word you are investigating, which is why a naive count climbs as you grep. The one distinction the tag cannot make is a refused turn: a rate-limit refusal's text is kept out of your `[ASSISTANT]` lines (the daemon logs a `Suppressed CLI rate-limit text` warning instead), and the turn leaves a `[SYSTEM] [USAGE] in=0 out=0 cache_read=0` record. So tell "refused" from "ran and said nothing" by the token count, not the tag: `in=0 out=0 cache_read=0` never ran, while a turn that ran and chose silence still shows a large `cache_read`. Count the day's `in=0 out=0` records before writing down how much of a silent day was refusal. A guessed cause aims the fix in the wrong direction. The local file is the readable path (the `/gateway/logs` HTTP endpoint also works, with your ordinary `X-Agent-Token`, per the `vestad` skill).
 
 **When you grep a tool's output to check that one of its sections still runs, take the search string from the tool's source (`grep -n` its own `echo` or `print` line), never from a note about the tool.** A note paraphrases, so searching the output for the paraphrase returns nothing whether or not the section is alive, and that nothing reads exactly like a dead instrument.
@@ -151,6 +162,18 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 ## Memory Curation
 
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate and cut to at most 85% of it: a trim that stops just under the cap is back at the ceiling after one ordinary day of additions. Don't let it overflow.
+
+**RUN `~/agent/skills/dream/scripts/userstate-diff` AFTER rewriting User State, BEFORE the summary.**
+The review below deliberately SKIPS `### User State` because it is rewritten nightly, **so the one
+section holding live open threads is the one section nothing audits.** The failure it catches: a
+sentence recording that an outbound message had gone out empty lived only in User State, the next
+rewrite dropped it, no task metadata held it, and the whole question was re-investigated from scratch
+a day later. The script diffs the old User State against the new one and lists every fact-bearing
+sentence no longer represented. Judge each: graduated into a task or contact file (name it), or
+genuinely closed (say so). **"I rewrote the snapshot" is not an answer: a snapshot may drop a stale
+fact, never a live one.** Its own first build failed its control because it split sentences on
+newlines while MEMORY.md is hard-wrapped, so a phrase search can be defeated by the text's SHAPE
+rather than its content.
 
 **Review what curation removed.** After curating, diff MEMORY.md against the last dream checkpoint: `git log -n1 --format=%H --grep '^dream: nightly checkpoint'`, then `git diff <sha> -- agent/MEMORY.md`. Every removed line needs an answer: graduated into a skill file (say where in tonight's summary), expired, or wrongly dropped, so restore it. `### User State` and the Self `**State**:` line are rewritten nightly by design; skip them. No prior checkpoint, no review. Old versions stay recoverable via `git show <sha>:agent/MEMORY.md`.
 
