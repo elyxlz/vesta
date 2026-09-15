@@ -25,7 +25,7 @@ reminders snooze <id> --at "2026-12-01T17:00:00"   # move it to a specific time
 reminders update <id> --message "..."
 reminders update <id> --tz "America/New_York"   # repoint a recurring schedule, same id
 reminders update <id> --unpin-tz                # back to the agent's own timezone
-reminders delete <id>
+reminders delete <id>   # close/clear a reminder; there is NO `complete` subcommand (a fired one-shot auto-completes, use delete to clear anything else)
 ```
 
 - Times are in the agent's own timezone. Pass `--tz` (an IANA name) only to pin a schedule to a different zone, such as a market or a flight.
