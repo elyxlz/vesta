@@ -108,11 +108,15 @@ are what separate the two.
   tree. Two symptoms of one mechanism (a stale install and a stale build behind the same
   gate) are one fix and one PR, never two.
 - **One file, one PR.** List your open PRs and their files before opening; two changes to
-  one file belong in one PR. Search open PRs for your scope
-  (`upstream gh pr list --state open --search "in:title <scope>"`); when one already names
+  one file belong in one PR. Search your scope across every state, not just open
+  (`upstream gh pr list --state all --search "in:title <scope>"`); when one already names
   your problem, do not file a second: the maintainer keeps one fix per problem and closes
   the rest, so the duplicate costs a consolidation and adds nothing. Add your evidence as
-  an issue if it is new.
+  an issue if it is new. A CLOSED PR is the one that matters most here: it was refused on
+  the merits, and its closing comment names the layer the fix belongs at or the PR that
+  superseded it. Read that comment before filing anything in its scope, because re-filing
+  a change that was already rejected spends the maintainer's review twice to reach the
+  same answer.
 - **Issue, PR, or both?** Fix in your workspace: PR + issue, with `Closes #N` on its own
   line in the PR body (never the commit). GitHub closes the issue when that PR merges, so
   the issue never lingers after the fix ships; a PR closed without merging does not fire it,
