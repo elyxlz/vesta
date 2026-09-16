@@ -129,6 +129,8 @@ def test_pr_list_mine_is_intercepted_under_either_spelling(monkeypatch, fake_gh,
         ["gh", "pr", "list", "--state", "open", "--author", "@me", "--limit", "50"],
         ["gh", "api", "search/issues", "--raw-field", "q=repo:elyxlz/vesta is:pr author:@me is:open"],
         ["gh", "api", "-X", "GET", "search/issues", "-f", "q=assignee:@me is:open"],
+        ["gh", "api", "--raw-field=q=repo:elyxlz/vesta author:@me", "search/issues"],
+        ["gh", "api", "search/issues?q=author:@me+is:open"],
     ],
 )
 def test_at_me_is_refused_because_it_means_the_shared_app(monkeypatch, capsys, argv):

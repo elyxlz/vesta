@@ -632,8 +632,7 @@ def canonical_gh_args(args) -> list[str]:
 
 _SHARED_IDENTITY_FLAGS = ("--author", "--assignee")
 _SHARED_IDENTITY_QUERY = ("author:@me", "assignee:@me")
-_BODY_BEARING_VERBS = [["pr", "create"], ["issue", "create"], ["pr", "comment"],
-                       ["issue", "comment"], ["pr", "edit"], ["issue", "edit"]]
+_BODY_BEARING_VERBS = [["pr", "create"], ["issue", "create"], ["pr", "comment"], ["issue", "comment"], ["pr", "edit"], ["issue", "edit"]]
 
 SHARED_IDENTITY_HELP = (
     "`@me` is not this agent.\n"
@@ -668,10 +667,9 @@ def _refuse_shared_identity_filter(args) -> None:
             if (a == flag and i + 1 < len(args) and args[i + 1] == "@me") or a == f"{flag}=@me":
                 print(SHARED_IDENTITY_HELP, file=sys.stderr)
                 sys.exit(2)
-        prev = args[i - 1] if i else ""
-        is_query = (a.startswith("q=")
-                    or (prev in ("-f", "-F", "--raw-field", "--field") and a.startswith("q="))
-                    or "?q=" in a or "&q=" in a)
+        # A query PARAMETER, not any argument that happens to contain the text: `q=...` as
+        # its own arg (`-f q=...`), glued to a flag (`--raw-field=q=...`), or in a URL.
+        is_query = a.startswith("q=") or any(m in a for m in ("?q=", "&q=", "=q="))
         if is_query and any(q in a for q in _SHARED_IDENTITY_QUERY):
             print(SHARED_IDENTITY_HELP, file=sys.stderr)
             sys.exit(2)
