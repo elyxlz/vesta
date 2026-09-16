@@ -223,6 +223,21 @@ The user reviews this summary, so it's an accountability record, not a private l
 
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 
+**Mark a settled residual as settled, and never re-narrate it as a finding.** A recurring,
+already-judged result (a scan's stable false-positive floor, a known-blocked PR, a monitor's usual
+noise) belongs in one clause that says it is unchanged and previously judged, with no fresh
+reasoning attached. Writing the same triage out again each night, in discovery voice, costs twice:
+it reads to a later retrospective as a problem recurring unfixed, and for a secret scan the
+sentence itself becomes next night's hit. The test before you write a paragraph: did I conclude
+this on an earlier night? If yes, cite the conclusion, do not rebuild it.
+
+**Do not let a night of self-instrumentation crowd out the person.** The summary covers every
+phase, so the open-thread list it closes with carries the HUMAN threads (a name still unlearned, a
+question you are waiting for the right moment to ask, a decision of theirs you are holding) even on
+a night when the user said nothing and every fix was about your own tooling. A summary whose open
+items are all PR numbers has quietly changed what the record is for, and the next night inherits
+that narrower list as if it were complete.
+
 **Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `reminders` skill on your own channel.
 
 ## Commit the day
