@@ -118,3 +118,60 @@ def test_pr_list_mine_is_intercepted_under_either_spelling(monkeypatch, fake_gh,
     assert run_main(monkeypatch, ["gh", "pr", verb, "--mine"]) == 0
     assert json.loads(record.read_text())["argv"][0] == "api"
     assert "as tester (vesta)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["gh", "pr", "list", "--author", "@me"],
+        ["gh", "pr", "list", "--author=@me"],
+        ["gh", "issue", "list", "--assignee", "@me"],
+        ["gh", "pr", "list", "--state", "open", "--author", "@me", "--limit", "50"],
+        ["gh", "api", "search/issues", "--raw-field", "q=repo:elyxlz/vesta is:pr author:@me is:open"],
+        ["gh", "api", "-X", "GET", "search/issues", "-f", "q=assignee:@me is:open"],
+    ],
+)
+def test_at_me_is_refused_because_it_means_the_shared_app(monkeypatch, capsys, argv):
+    """`@me` is the shared vesta-upstream App, so it answers a different question than asked.
+
+    The failure is silent: every row returned really is a PR, so a fleet-wide list reads as
+    a personal one. There is an exact right command for each intent, so this refuses rather
+    than warning, and the message must name both of them.
+    """
+    assert run_main(monkeypatch, argv) == 2
+    err = capsys.readouterr().err
+    assert "--mine" in err
+    assert "vesta-upstream[bot]" in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["gh", "pr", "list", "--mine"],
+        ["gh", "pr", "view", "2497"],
+        ["gh", "pr", "list", "--author", "someone-else"],
+        ["gh", "api", "search/issues", "-f", "q=repo:elyxlz/vesta is:pr is:merged"],
+    ],
+)
+def test_the_guard_does_not_touch_ordinary_calls(monkeypatch, argv):
+    """A guard that fires on healthy input is worse than none; these must reach dispatch."""
+    assert cli._refuse_shared_identity_filter(argv) is None
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["gh", "pr", "create", "--title", "t", "--body", "avoid -f q=... author:@me in queries"],
+        ["gh", "pr", "comment", "2497", "--body", "the guard catches author:@me"],
+        ["gh", "issue", "create", "--title", "t", "--body", "assignee:@me is the shared app"],
+        ["gh", "pr", "list", "--search", "review-requested:someone author-ish:@me-not-real"],
+    ],
+)
+def test_prose_mentioning_at_me_is_not_a_filter(monkeypatch, argv):
+    """A body DOCUMENTING the pattern is prose, not a filter.
+
+    The first version of this guard scanned every argument for the substring, and the very
+    first thing it refused was the `pr create` whose body explained it. A guard that fires
+    on healthy input is worse than no guard.
+    """
+    assert cli._refuse_shared_identity_filter(argv) is None

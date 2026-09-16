@@ -630,6 +630,53 @@ def canonical_gh_args(args) -> list[str]:
     return args
 
 
+_SHARED_IDENTITY_FLAGS = ("--author", "--assignee")
+_SHARED_IDENTITY_QUERY = ("author:@me", "assignee:@me")
+_BODY_BEARING_VERBS = [["pr", "create"], ["issue", "create"], ["pr", "comment"],
+                       ["issue", "comment"], ["pr", "edit"], ["issue", "edit"]]
+
+SHARED_IDENTITY_HELP = (
+    "`@me` is not this agent.\n"
+    "Every vesta box files through the SAME vesta-upstream GitHub App, so `@me` resolves to\n"
+    "that shared App and returns the whole fleet's PRs, not yours. The result looks personal\n"
+    "and is not: it is a plausible, wrong answer to `which are mine`.\n"
+    "  this box's PRs  ->  upstream gh pr list --mine [--state open|closed|all]\n"
+    "  the whole fleet ->  spell the identity out, e.g. --author 'vesta-upstream[bot]'\n"
+    "Ownership lives in commit authors (`<agent-name> (vesta)`), which is what --mine reads."
+)
+
+
+def _refuse_shared_identity_filter(args) -> None:
+    """Refuse `@me` as an author/assignee FILTER, in flag or search-query form.
+
+    WHY A REFUSAL AND NOT A WARNING. The failure is silent: the command succeeds, prints a
+    list, and every row really is a PR, so nothing about the output says it answered a
+    different question than the one asked. A warning on stderr is skimmed past precisely
+    when the list looks reasonable. There is an exact correct command for each of the two
+    intents, so refusing costs nothing and removes a whole class of confident wrong answer.
+
+    WHY THE SCOPE IS NARROW. The first version scanned every argument for the substring,
+    and the first thing it refused was the `pr create` that documented it: a PR body
+    naming `author:@me` as the pattern to avoid is prose, not a filter. A guard that fires
+    on healthy input is worse than no guard, so body-bearing verbs are exempt outright and
+    the query form must look like an actual query parameter, never merely contain the text.
+    """
+    if list(args[:2]) in _BODY_BEARING_VERBS:
+        return
+    for i, a in enumerate(args):
+        for flag in _SHARED_IDENTITY_FLAGS:
+            if (a == flag and i + 1 < len(args) and args[i + 1] == "@me") or a == f"{flag}=@me":
+                print(SHARED_IDENTITY_HELP, file=sys.stderr)
+                sys.exit(2)
+        prev = args[i - 1] if i else ""
+        is_query = (a.startswith("q=")
+                    or (prev in ("-f", "-F", "--raw-field", "--field") and a.startswith("q="))
+                    or "?q=" in a or "&q=" in a)
+        if is_query and any(q in a for q in _SHARED_IDENTITY_QUERY):
+            print(SHARED_IDENTITY_HELP, file=sys.stderr)
+            sys.exit(2)
+
+
 def main():
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -650,6 +697,7 @@ def main():
         print(USAGE, file=sys.stderr)
         sys.exit(2)
     args = canonical_gh_args(argv[1:])
+    _refuse_shared_identity_filter(args)
     if args[:2] == ["pr", "create"]:
         pr_create(args[2:])
     elif args[:2] == ["issue", "create"]:
