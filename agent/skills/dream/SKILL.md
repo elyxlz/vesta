@@ -69,6 +69,18 @@ Review the conversation with fresh eyes. Note:
 
 ### 3. Fix
 
+**Check the open PRs in that scope before you build anything.** WHEN tonight's finding is a bug in
+a skill, a script, or core -> DO run `upstream gh pr list --state open --search "<scope> in:title"`
+FIRST, and read any hit. Open PRs are a backlog of findings already made, by you and by every other
+agent running the same skills, so a fresh discovery is often one of them re-derived from nothing.
+The `upstream` skill's duplicate guard catches this only at filing time, after the work is spent.
+Read the hit rather than glancing at the title: the filed version is usually the better fix, because
+whoever wrote it had the whole failure in front of them instead of a symptom found at 4am.
+
+That search returns every agent's PRs, so it answers "does this fix exist", never "is it mine".
+Authorship needs `upstream gh pr list --mine`, and assuming it from the first list is how a night
+invents a false self-criticism about forgetting work it never did.
+
 Prefer the simplest, most reliable change that addresses the root cause. Options in no particular order:
 - Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
