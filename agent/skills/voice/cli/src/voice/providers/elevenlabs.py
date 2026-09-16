@@ -1,7 +1,11 @@
-"""ElevenLabs TTS provider — HTTP streaming."""
+"""ElevenLabs providers: TTS (HTTP streaming) and Scribe STT (WebSocket realtime)."""
 
+import asyncio
+import base64
+import json
 import logging
 import typing as tp
+from urllib.parse import urlencode
 
 import aiohttp
 from aiohttp import web
@@ -11,6 +15,7 @@ from .base import SettingDef
 logger = logging.getLogger("voice.elevenlabs")
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
+ELEVENLABS_WS = "wss://api.elevenlabs.io"
 MODEL_ID = "eleven_flash_v2_5"
 DEFAULT_VOICE_ID = "FGY2WhTYpPnrIDTdsKH5"  # Laura
 
@@ -238,3 +243,195 @@ async def _fetch_subscription(api_key: str) -> dict:
             return body
     except (TimeoutError, aiohttp.ClientError) as e:
         return {"error": str(e)}
+
+
+# --- Scribe v2 Realtime STT ---------------------------------------------------
+# WebSocket streaming STT. Audio is PCM 16-bit LE mono at 16 kHz (the browser's frame
+# format), sent base64-encoded inside input_audio_chunk JSON messages. commit_strategy=vad
+# lets the server detect end-of-speech from trailing silence and emit a committed_transcript,
+# which we map to the app's EndOfTurn. Silence window comes from the shared eot_timeout_ms.
+
+SCRIBE_MODEL = "scribe_v2_realtime"
+SCRIBE_SAMPLE_RATE = 16000
+# Default trailing silence that ends a turn. Shorter than the shared 5 s config default because
+# VAD silence IS the turn boundary here, so a snappy value keeps conversation turns responsive.
+SCRIBE_DEFAULT_SILENCE_MS = 800
+
+# Server-error message_types that should surface to the browser rather than be silently dropped.
+_SCRIBE_ERROR_TYPES = frozenset(
+    {
+        "error",
+        "auth_error",
+        "quota_exceeded",
+        "rate_limited",
+        "unaccepted_terms",
+        "input_error",
+        "invalid_request",
+        "transcriber_error",
+        "session_time_limit_exceeded",
+        "resource_exhausted",
+        "queue_overflow",
+    }
+)
+
+_WS_CLOSE = (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED)
+
+
+class ElevenLabsScribe:
+    name = "elevenlabs"
+
+    def settings_schema(self) -> list[SettingDef]:
+        return [
+            {
+                "key": "eot_timeout_ms",
+                "type": "number",
+                "label": "max silence timeout",
+                "description": "trailing silence that ends a turn; VAD commits the transcript after this much quiet",
+                "default": SCRIBE_DEFAULT_SILENCE_MS,
+                "min": 500,
+                "max": 10000,
+                "step": 100,
+                "unit": "ms",
+            },
+            {
+                "key": "interrupt_tts",
+                "type": "bool",
+                "label": "interrupt speech on talk",
+                "description": "stop text-to-speech playback when you start speaking",
+                "default": True,
+            },
+            {
+                "key": "multi_language",
+                "type": "bool",
+                "label": "multi-language detection",
+                "description": "auto-detect the spoken language per turn",
+                "default": False,
+            },
+        ]
+
+    async def relay(
+        self,
+        browser_ws: web.WebSocketResponse,
+        creds: dict[str, str],
+        stt_domain: dict,
+    ) -> None:
+        api_key = creds.get("api_key")
+        if not api_key:
+            await browser_ws.close(code=1008, message=b"missing api_key")
+            return
+
+        url = _scribe_url(stt_domain)
+        headers = {"xi-api-key": api_key}
+        session = aiohttp.ClientSession()
+        try:
+            try:
+                el_ws = await session.ws_connect(url, headers=headers, heartbeat=30.0)
+            except (TimeoutError, aiohttp.ClientError) as e:
+                logger.error("elevenlabs scribe connect failed: %s", e)
+                await browser_ws.close(code=1011, message=f"scribe connect failed: {e}".encode())
+                return
+            tasks = [
+                asyncio.create_task(_browser_to_scribe(browser_ws, el_ws)),
+                asyncio.create_task(_scribe_to_browser(el_ws, browser_ws)),
+            ]
+            try:
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for t in tasks:
+                    t.cancel()
+            finally:
+                if not el_ws.closed:
+                    await el_ws.close()
+        finally:
+            await session.close()
+
+    async def usage(self, _creds: dict[str, str]) -> dict:
+        # ElevenLabs meters STT against the same account subscription as TTS; the subscription
+        # payload (returned by balance) already carries usage, so there is no separate call.
+        return {}
+
+    async def balance(self, creds: dict[str, str]) -> dict:
+        return await _fetch_subscription(creds.get("api_key", ""))
+
+    async def validate(self, api_key: str) -> tuple[bool, str | None]:
+        result = await _fetch_subscription(api_key)
+        if "error" in result:
+            if "401" in str(result["error"]):
+                return False, "invalid api key"
+            return False, str(result["error"])
+        return True, None
+
+
+def _scribe_url(stt_domain: dict) -> str:
+    from voice import config as voice_config
+
+    eot_timeout_ms = int(stt_domain.get("eot_timeout_ms", SCRIBE_DEFAULT_SILENCE_MS))
+    eot_timeout_ms = max(
+        voice_config.EOT_TIMEOUT_MS_MIN,
+        min(voice_config.EOT_TIMEOUT_MS_MAX, eot_timeout_ms),
+    )
+    silence_secs = round(eot_timeout_ms / 1000, 3)
+    params: list[tuple[str, str]] = [
+        ("model_id", SCRIBE_MODEL),
+        ("audio_format", "pcm_16000"),
+        ("commit_strategy", "vad"),
+        ("vad_silence_threshold_secs", str(silence_secs)),
+    ]
+    if bool(stt_domain.get("multi_language")):
+        params.append(("include_language_detection", "true"))
+    keyterms = stt_domain.get("keyterms") or []
+    if isinstance(keyterms, list):
+        params.extend(("keyterms", term) for term in keyterms if isinstance(term, str))
+    return f"{ELEVENLABS_WS}/v1/speech-to-text/realtime?{urlencode(params)}"
+
+
+async def _browser_to_scribe(browser_ws: web.WebSocketResponse, el_ws: aiohttp.ClientWebSocketResponse) -> None:
+    async for msg in browser_ws:
+        if msg.type == aiohttp.WSMsgType.BINARY:
+            payload = {
+                "message_type": "input_audio_chunk",
+                "audio_base_64": base64.b64encode(msg.data).decode("ascii"),
+                "commit": False,
+                "sample_rate": SCRIBE_SAMPLE_RATE,
+            }
+            await el_ws.send_str(json.dumps(payload))
+        elif msg.type in _WS_CLOSE:
+            break
+
+
+async def _scribe_to_browser(el_ws: aiohttp.ClientWebSocketResponse, browser_ws: web.WebSocketResponse) -> None:
+    """Translate Scribe realtime events into the app's TurnInfo protocol.
+
+    partial_transcript -> interim transcript (StartOfTurn on the first of a turn);
+    committed_transcript -> the finalized turn, followed by EndOfTurn. In vad commit mode a
+    committed_transcript arrives when the speaker falls silent, so it is the turn boundary.
+    """
+    in_turn = False
+    async for msg in el_ws:
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            try:
+                data = json.loads(msg.data)
+            except json.JSONDecodeError:
+                continue
+            mt = data.get("message_type")
+            if mt == "partial_transcript":
+                text = (data.get("text") or "").strip()
+                if text:
+                    if not in_turn:
+                        in_turn = True
+                        await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "StartOfTurn"}))
+                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "transcript": text}))
+            elif mt in ("committed_transcript", "committed_transcript_with_timestamps"):
+                text = (data.get("text") or "").strip()
+                if text and not in_turn:
+                    in_turn = True
+                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "StartOfTurn"}))
+                if text:
+                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "transcript": text}))
+                if in_turn:
+                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "EndOfTurn"}))
+                    in_turn = False
+            elif mt in _SCRIBE_ERROR_TYPES:
+                await browser_ws.send_str(json.dumps({"type": "Error", "error": data.get("message") or mt}))
+            # session_started, warning, insufficient_audio_activity, commit_throttled: ignored.
+        elif msg.type in _WS_CLOSE:
+            break
