@@ -57,3 +57,22 @@ def test_get_without_a_notes_file_is_quiet(tmp_config: Config):
 def test_list_leaves_the_notes_out(tmp_config: Config):
     commands.remind_set(tmp_config, commands.ReminderSpec(message="pointer", in_hours=1))
     assert "metadata_content" not in commands.remind_list(tmp_config)[0]
+
+
+def test_field_choices_cover_every_key_get_returns(tmp_config: Config):
+    """REMINDER_FIELDS is what --field accepts, so it must not drift from remind_get's keys.
+
+    remind_get adds keys after _reminder_view, so a field can be returned and documented while
+    argparse still rejects it. Comparing both ways keeps the two honest in either direction.
+    """
+    created = commands.remind_set(tmp_config, commands.ReminderSpec(message="m", in_hours=1))
+    got = commands.remind_get(tmp_config, reminder_id=created["id"])
+    assert set(commands.REMINDER_FIELDS) == set(got)
+
+
+def test_metadata_fields_are_accepted_by_field(tmp_config: Config):
+    created = commands.remind_set(tmp_config, commands.ReminderSpec(message="m", in_hours=1))
+    got = commands.remind_get(tmp_config, reminder_id=created["id"])
+    for name in ("metadata_path", "metadata_content"):
+        assert name in commands.REMINDER_FIELDS
+        assert name in got
