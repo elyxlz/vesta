@@ -198,7 +198,6 @@ def _listen_url(stt_domain: dict, multi_language: bool) -> str:
             ("interim_results", "true"),
             ("utterance_end_ms", str(eot_timeout_ms)),
         ]
-        keyterm_param = "keywords"
         listen_path = "/v1/listen"
     else:
         params = [
@@ -210,8 +209,11 @@ def _listen_url(stt_domain: dict, multi_language: bool) -> str:
         ]
         keyterm_param = "keyterm"
         listen_path = "/v2/listen"
-    for term in keyterms:
-        params.append((keyterm_param, term))
+    # Keyterm boosting is not accepted with language=multi (Deepgram rejects the
+    # connection), so only send keyterms in single-language mode.
+    if not multi_language:
+        for term in keyterms:
+            params.append((keyterm_param, term))
     # Build the URL only after keyterms are appended, otherwise they are dropped.
     return f"{DEEPGRAM_WS}{listen_path}?{urlencode(params)}"
 
