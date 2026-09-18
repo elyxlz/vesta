@@ -59,34 +59,18 @@ while IFS= read -r line; do
   # Terms come from the heading AND the entry body, because a heading alone is too thin.
   body=$(sed -n "${lno},$((lno+25))p" "$file" 2>/dev/null)
 
-  # THE RARITY FILTER, and it is the whole point. The first version of this script keyed on
-  # long English words ("question", "authors", "second") and matched everything, which is my
-  # own lens pole: a signal that fires every time carries no information. Prior art is located
-  # by RARE tokens. So a candidate term is kept only if it appears in few enough files to
-  # actually point somewhere. Identifier-shaped tokens (dead_at, last_ok_at, REFUSAL_TRIP)
-  # survive this naturally; prose does not.
-  # IDENTIFIER-SHAPED ONLY. Iteration 2 also allowed long lowercase words and matched
-  # "animals", "arguing", "contributes": prose locates nothing. This finder is honest about
-  # its scope, it finds code identifiers and shouty constants, not conceptual echoes.
+  # IDENTIFIER-SHAPED ONLY: prose locates nothing. Earlier versions matched "question",
+  # "animals", "arguing" in every file, and a term that hits everywhere points nowhere.
   cands=$(printf '%s\n%s\n' "$heading" "$body" \
     | grep -oE '[A-Za-z_][A-Za-z0-9_]{4,}' \
     | grep -E '_|[A-Z]{3,}' \
     | grep -viE '^(NOTES|MEMORY|VERIFIED|SHIPPED|https?)$' \
     | sort -u | head -30)
 
-  # RANK BY RARITY, DO NOT TAKE THE FIRST N. Iteration 2 walked candidates in sort order and
-  # stopped after 3 hits. In the C locale ALLCAPS tokens sort first, so shouty prose words
-  # ate all three slots and `dead_at` was never reached, even though it passed the file-count
-  # threshold (6 files, limit 6). That term is the ONE that finds the 2026-09-12 flicker
-  # measurement ("deletes live cars at least 1 in 5") which I called unmeasured on 09-17.
-  #
-  # A useful pointer need not be rare in absolute terms, only the rarest thing in THIS entry.
-  # So score every candidate and take the rarest few, with no positional cap.
-  #
-  # HONESTY NOTE: when I first wrote this comment I blamed the file-count threshold. That was
-  # an inference, and checking it showed the threshold would have passed the term. Ordering
-  # was the cause. A wrong explanation in a comment is an instrument that misleads whoever
-  # reads it next, which is the same class of defect this script exists to reduce.
+  # RANK BY RARITY, NEVER TAKE THE FIRST N. A positional cap lets ALLCAPS tokens (which sort
+  # first in the C locale) eat every slot, so the term that actually locates the prior art is
+  # never reached. A useful pointer need not be rare in absolute terms, only the rarest thing
+  # in THIS entry.
   scored=""
   for t in $cands; do
     nfiles=$(grep -rails --include='*.md' -- "$t" "${stores[@]}" 2>/dev/null | wc -l)
