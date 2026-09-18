@@ -196,7 +196,9 @@ def _listen_url(stt_domain: dict, multi_language: bool) -> str:
             ("encoding", ENCODING),
             ("sample_rate", str(SAMPLE_RATE)),
             ("interim_results", "true"),
-            ("utterance_end_ms", str(eot_timeout_ms)),
+            # Deepgram rejects utterance_end_ms > 5000 on /v1/listen (400 INVALID_QUERY_PARAMETER),
+        # while eot_timeout_ms can be larger; clamp to the accepted max for this endpoint.
+        ("utterance_end_ms", str(min(eot_timeout_ms, 5000))),
         ]
         keyterm_param = "keywords"
         listen_path = "/v1/listen"
