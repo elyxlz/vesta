@@ -209,7 +209,14 @@ Write what you did and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-0
 
 The user reviews this summary, so it's an accountability record, not a private log.
 
-Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
+Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up, under a heading spelled
+exactly `## STILL OPEN`, as a NUMBERED list, one item per number.
+
+**That heading is a contract, not a style preference.** `carry_forward.sh` hands tomorrow-you this
+list as a checklist, and it finds the section by that exact heading and the items by their numbers.
+On 2026-09-19 it failed RED because the night before had closed with `## Unresolved, for tomorrow`:
+the wording of this very instruction ("what's still unresolved") led straight to a heading the
+reader could not parse. Prose is free everywhere else in the summary; this one heading is not.
 
 **Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `reminders` skill on your own channel.
 

@@ -38,21 +38,26 @@ fi
 
 # Section runs from the STILL OPEN heading to the next same-level heading.
 section="$(awk '
-    tolower($0) ~ /^## +still open/ { grab = 1; next }
+    tolower($0) ~ /^## +(still open|unresolved|open (items|threads))/ { grab = 1; next }
     grab && /^## / { exit }
     grab { print }
 ' "$prev")"
 
 if [ -z "$section" ]; then
-    echo "RED carry-forward: $(basename "$prev") has no '## STILL OPEN' section."
+    echo "RED carry-forward: $(basename "$prev") has no open-items section."
+    echo "    Looked for a '## STILL OPEN' heading (also accepted: Unresolved, Open items,"
+    echo "    Open threads). The canonical spelling is '## STILL OPEN'; see the dream skill."
     echo "    Either the previous dream skipped it, or the heading changed. Read the file before"
     echo "    assuming there is nothing to carry: an absent section is not an empty list."
     exit 1
 fi
 
 # One line per numbered item: the number plus the first line of its text.
+# An item is a numbered line OR a bullet. The canonical form is numbered (see the dream skill),
+# but a night that wrote bullets still has a real open list, and refusing to parse it would hand
+# tonight NOTHING, which is the precise false reassurance this script exists to prevent.
 items="$(printf '%s\n' "$section" | awk '
-    /^[0-9]+\./ {
+    /^[ \t]*([0-9]+\.|[-*+])[ \t]+/ {
         line = $0
         sub(/^[ \t]+/, "", line)
         print line
