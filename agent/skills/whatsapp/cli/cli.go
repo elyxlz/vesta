@@ -378,17 +378,13 @@ func boolValued(v flag.Value) bool {
 	return ok && b.IsBoolFlag()
 }
 
-// rejectDuplicateFlags rejects a repeated value-carrying flag before parsing, because Go's flag
-// package silently keeps only the LAST value of a repeated single-value flag: `send --message
-// "first" --message "second"` delivers only "second" and the first bubble vanishes with no
-// error anywhere, which reads to the user as a message going missing. Every command parses
-// through parseFlags, so one guard here covers every subcommand and every value flag (--to,
-// --message, --file-path, ...). The scan mirrors how flag itself consumes tokens, so it cannot
-// miscount: -name and --name are the same flag, = carries an inline value, the token after a
-// value-carrying flag name is its value (never a flag occurrence, so `--message --message`
-// passes: the second token is the text being sent), and everything after a bare -- is
-// positional. Unknown names are left for fs.Parse to judge, and repeated boolean flags stay
-// allowed: they carry no value to drop, so the repeat is harmless.
+// rejectDuplicateFlags rejects a repeated value-carrying flag before parsing: Go's flag silently
+// keeps only the LAST value of one, so `send --message "first" --message "second"` delivers only
+// "second" and the first bubble vanishes with no error anywhere. parseFlags is shared by every
+// command, so one guard covers every subcommand's value flags. The scan mirrors flag's own token
+// consumption, so it cannot miscount: -name and --name are one flag, = carries an inline value,
+// the token after a value-carrying flag is its value (never a flag occurrence), and -- ends the
+// flags. Unknown names stay with fs.Parse; repeated bool flags stay allowed (no value to drop).
 func rejectDuplicateFlags(fs *flag.FlagSet, args []string) error {
 	valueCarrying := map[string]bool{}
 	fs.VisitAll(func(f *flag.Flag) { valueCarrying[f.Name] = !boolValued(f.Value) })
