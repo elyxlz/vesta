@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Surface PRIOR ART for the notes written today, as a checklist demanding an outcome.
 #
-# WHY THIS EXISTS. On 2026-09-18 I verified a bug and wrote "the false-positive rate is
-# unmeasured". It was measured, by me, on 2026-09-12: listing flicker at "at least 1 in 5".
+# WHY THIS EXISTS. On 2026-09-17 I verified a bug and wrote that my evidence was "nowhere near
+# a false-positive measurement". It was measured, by me, on 2026-09-12: flicker at "at least 1 in 5".
 # The number was in my own dreamer summary and I never looked, because `notes <term>` only
 # fires if I remember to run it. Seven nights of retrospective say the same thing: an
 # artifact that needs remembering fails, and a CHECKLIST that demands an outcome works
@@ -59,11 +59,14 @@ while IFS= read -r line; do
   # Terms come from the heading AND the entry body, because a heading alone is too thin.
   body=$(sed -n "${lno},$((lno+25))p" "$file" 2>/dev/null)
 
-  # IDENTIFIER-SHAPED ONLY: prose locates nothing. Earlier versions matched "question",
-  # "animals", "arguing" in every file, and a term that hits everywhere points nowhere.
+  # IDENTIFIER-SHAPED ONLY: prose locates nothing, and an ALLCAPS clause readmitted it.
+  # Notes use CAPS for emphasis, so `_|[A-Z]{3,}` surfaced RISES, SHRINK, ANYWAY, WORSE.
+  # An identifier carries an underscore or a digit, which is what every term that has
+  # actually located prior art here looks like (dead_at, revived_at, _pgn, REVIVE_SHARE).
+  # A pure-prose entry now yields nothing, which beats its three rarest English words.
   cands=$(printf '%s\n%s\n' "$heading" "$body" \
     | grep -oE '[A-Za-z_][A-Za-z0-9_]{4,}' \
-    | grep -E '_|[A-Z]{3,}' \
+    | grep -E '_|[0-9]' \
     | grep -viE '^(NOTES|MEMORY|VERIFIED|SHIPPED|https?)$' \
     | sort -u | head -30)
 
