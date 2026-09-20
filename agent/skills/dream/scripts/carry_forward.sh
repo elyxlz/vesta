@@ -76,4 +76,40 @@ echo "Give EVERY line below an outcome in tonight's summary: fixed, blocked on <
 echo "dropped for <named reason>. An item must never leave the register by going unmentioned."
 echo
 printf '%s\n' "$items" | sed 's/^/  [ ] /' | cut -c1-160
+
+# ---------------------------------------------------------------------------
+# THE SECOND REGISTER. The list above is the SUMMARY register, and it is the
+# fragile one: it survives only if each night copies it forward. On 2026-09-18
+# the summary closed with '## Unresolved, for tomorrow' holding a 5-bullet
+# precis of an 11-item list, 09-19 carried those 5, and two items (the eBay 403
+# watch and the coverage-gap attribution) vanished from the summary chain after
+# four consecutive nights on it.
+#
+# They were NOT lost. Both were alive as scheduled reminders the whole time,
+# which is the escalation the dream skill prescribes for anything carried twice.
+# So there are two registers and nothing reconciled them: the summary could drop
+# an item silently while the durable copy sat in `reminders`, and the only thing
+# noticing was a subagent audit on 2026-09-20.
+#
+# Printing both together is the reconciliation. An open reminder with no matching
+# line above is either an item the summary dropped, or one that never reached it.
+# ---------------------------------------------------------------------------
+echo
+if command -v reminders >/dev/null 2>&1; then
+    rem="$(timeout 60 reminders list 2>/dev/null | grep -v '^$' || true)"
+    if [ -n "$rem" ]; then
+        n="$(printf '%s\n' "$rem" | grep -c .)"
+        echo "SCHEDULED REGISTER: $n open reminder(s). This is the DURABLE register; the list"
+        echo "above is not. Anything here without a matching line above is an item the summary"
+        echo "chain dropped, or never captured. Reconcile them, do not assume they agree."
+        echo
+        printf '%s\n' "$rem" | sed 's/^/  (r) /' | cut -c1-160
+    else
+        echo "SCHEDULED REGISTER: reminders returned nothing. That is UNVERIFIED, not empty:"
+        echo "a dead daemon and a genuinely clear list read identically here. Check by hand."
+    fi
+else
+    echo "SCHEDULED REGISTER: the 'reminders' command is not on PATH, so the durable register"
+    echo "could not be read. Do not treat the list above as the whole picture."
+fi
 exit 0
