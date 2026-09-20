@@ -77,23 +77,13 @@ echo "dropped for <named reason>. An item must never leave the register by going
 echo
 printf '%s\n' "$items" | sed 's/^/  [ ] /' | cut -c1-160
 
-# ---------------------------------------------------------------------------
-# THE SECOND REGISTER. The list above is the SUMMARY register, and it is the
-# fragile one: it survives only if each night copies it forward. On 2026-09-18
-# the summary closed with '## Unresolved, for tomorrow' holding a 5-bullet
-# precis of an 11-item list, 09-19 carried those 5, and two items (the eBay 403
-# watch and the coverage-gap attribution) vanished from the summary chain after
-# four consecutive nights on it.
-#
-# They were NOT lost. Both were alive as scheduled reminders the whole time,
-# which is the escalation the dream skill prescribes for anything carried twice.
-# So there are two registers and nothing reconciled them: the summary could drop
-# an item silently while the durable copy sat in `reminders`, and the only thing
-# noticing was a subagent audit on 2026-09-20.
-#
-# Printing both together is the reconciliation. An open reminder with no matching
-# line above is either an item the summary dropped, or one that never reached it.
-# ---------------------------------------------------------------------------
+# THE SECOND REGISTER. The list above survives only if each night copies it
+# forward, so it can drop an item silently: on 2026-09-18 an 11-item list was
+# carried forward as a 5-bullet precis and two items vanished from the chain.
+# Neither was lost, because both were live as scheduled reminders the whole
+# time, and nothing reconciled the two registers. Printing them together is
+# the reconciliation: an open reminder with no matching line above is either
+# an item the summary dropped, or one that never reached it.
 echo
 if command -v reminders >/dev/null 2>&1; then
     rem="$(timeout 60 reminders list 2>/dev/null | grep -v '^$' || true)"
