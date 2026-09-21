@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Run every dream instrument, VERDICT TABLE FIRST, exit codes captured before anything can pipe.
+
+WHY THIS EXISTS, and it is the most-recurring failure in the whole loop. A blind audit on 21 Sept
+2026 graded 33 claims across six nights and the top class, appearing on FOUR separate nights (16,
+17, 18 and 20 Sept), was **reading the wrong line of my own instrument**. Every single instance was
+the same mechanism: a pipe through `head`/`tail`/`grep`, or a `2>/dev/null`, that discarded the line
+where the tool admitted it had failed. On 16 Sept `$?` read the exit code of `tail`. On 20 Sept a
+scanner's `TRUNCATED after 120s` was cut off three times in one hour and the result reported clean.
+**And I did it twice more while fixing this, on the night the audit named it.**
+
+17 Sept wrote "Fixed the instance, not the class." That was accurate and it stayed true for four
+more nights, because every fix was a rule telling a future me to read more carefully, and the moment
+of failure is exactly when that reading does not happen.
+
+**So this removes the OCCASION rather than restating the rule.** There is no longer a reason to pipe
+an individual instrument during the retrospective: run one command, read a table. Three properties
+do the work:
+
+  1. **The verdict table is printed FIRST.** `head` now catches the important part rather than
+     missing it. The old shape hid its status at the bottom, which is precisely what `head` drops.
+  2. **Exit codes are captured by `subprocess.run`, before any shell exists to launder them.** A
+     pipe cannot overwrite what was never in `$?`.
+  3. **Exit 2 is surfaced as BLIND in its own column and counted separately from FAIL.** A blind
+     instrument and a passing one are the thing this loop keeps confusing, and they are opposite
+     kinds of news.
+
+Anything whose output is genuinely long still prints in full below the table, so nothing is lost;
+the table just means you do not have to go looking for the bad news.
+
+USAGE
+  dreamrun                 # everything
+  dreamrun --quiet         # table only, no detail bodies
+  dreamrun --only turn-burst --only ledgers
+
+Exit 1 if any instrument FAILED, 2 if any went BLIND with none failing, 0 only when all are clean.
+"""
+import argparse
+import os
+import subprocess
+import sys
+
+HERE = "/root/agent/skills/dream/scripts/"
+
+# (label, argv, what a nonzero means). Ordered roughly as the retrospective reads them.
+INSTRUMENTS = [
+    ("reality-check",   ["bash", HERE + "reality_check.sh"],        "RED lines present"),
+    ("burn-budget",     [HERE + "burn-budget"],                     "spend near ceiling"),
+    ("delivery-budget", [HERE + "delivery-budget"],                 "queue grew"),
+    ("turn-burst",      [HERE + "turn-burst"],                      "spoke into silence past the limit"),
+    ("turn-burst-now",  [HERE + "turn-burst", "--current"],         "the OPEN run is past the limit"),
+    ("ledgers",         [HERE + "ledgers"],                         "a ledger is stale"),
+    ("memory-budget",   [HERE + "memory-budget"],                   "memory grew two nights running"),
+    ("s5-invariants",   [HERE + "s5-invariants", "--strict"],       "a section 5 invariant dropped"),
+    ("stale-negatives", [HERE + "stale-negatives"],                 "frozen negative claims to re-read"),
+    ("reminder-dupes",  [HERE + "reminder-task-dupes"],             "one task, two reminders"),
+    ("reminder-clash",  [HERE + "reminder-collisions"],             "two reminders in one minute"),
+    ("absorbed",        [HERE + "absorbed-but-still-firing"],       "absorbed claim, still pending"),
+    ("orphan-audit",    [HERE + "task-orphan-audit"],               "tasks with no date and no trigger"),
+    ("staged-delivery", [HERE + "staged-delivery-audit"],           "staged files never judged"),
+    ("weekday-check",   [HERE + "weekday-check"],                   "a weekday claim is wrong"),
+]
+
+
+def verdict_line(out):
+    """Pull the most decision-bearing line, preferring the tool's own verdict wording."""
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    if not lines:
+        return "(no output)"
+    for key in ("BLIND", "REFUSED", "FAIL", "verdict:", "VERDICT", "RED", "WARN"):
+        for l in reversed(lines):
+            if key in l:
+                return l[:150]
+    return lines[-1][:150]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--quiet", action="store_true", help="table only")
+    ap.add_argument("--only", action="append", default=[], help="run just these labels")
+    ap.add_argument("--timeout", type=int, default=180)
+    a = ap.parse_args()
+
+    chosen = [i for i in INSTRUMENTS if not a.only or i[0] in a.only]
+    if a.only:
+        unknown = set(a.only) - {i[0] for i in INSTRUMENTS}
+        if unknown:
+            print(f"unknown instrument(s): {', '.join(sorted(unknown))}", file=sys.stderr)
+            print("known: " + ", ".join(i[0] for i in INSTRUMENTS), file=sys.stderr)
+            return 3
+
+    results, absent = [], []
+    for label, argv, meaning in chosen:
+        # An instrument that is not installed is NOT a blind instrument. Reporting it as BLIND
+        # would drown the real blindness in noise on any box that does not run every script here.
+        target = argv[-1] if argv[0] == "bash" else argv[0]
+        if not os.path.exists(target):
+            absent.append(label)
+            continue
+        try:
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=a.timeout)
+            out = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr.strip() else "")
+            results.append((label, p.returncode, out, meaning))
+        except subprocess.TimeoutExpired:
+            results.append((label, 124, f"TIMED OUT after {a.timeout}s", meaning))
+        except Exception as exc:
+            results.append((label, 125, f"COULD NOT RUN: {exc}", meaning))
+
+    failed = [r for r in results if r[1] == 1]
+    blind = [r for r in results if r[1] not in (0, 1)]
+
+    # THE TABLE COMES FIRST. This is the entire point of the script.
+    print("=" * 78)
+    print(f"DREAMRUN  {len(results)} instruments   FAIL {len(failed)}   BLIND/ERROR {len(blind)}   "
+          f"OK {len(results)-len(failed)-len(blind)}")
+    print("=" * 78)
+    for label, rc, out, meaning in results:
+        state = "OK   " if rc == 0 else ("FAIL " if rc == 1 else f"BLIND")
+        print(f"  {state} {label:16} exit {rc:<4} {verdict_line(out)}")
+    if absent:
+        print(f"  not installed on this box, skipped: {', '.join(absent)}")
+    if blind:
+        print()
+        print("  BLIND is NOT good news. An instrument that cannot see reports the same")
+        print("  nothing as a clean run. Fix the wiring before believing the quiet ones.")
+    print("=" * 78)
+
+    if not a.quiet:
+        for label, rc, out, meaning in results:
+            print(f"\n{'-'*78}\n## {label}  (exit {rc}; nonzero means: {meaning})\n{'-'*78}")
+            print(out.rstrip() or "(no output)")
+
+    return 1 if failed else (2 if blind else 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
