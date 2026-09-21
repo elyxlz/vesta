@@ -414,15 +414,9 @@ export const ChatEvent = memo(function ChatEvent({
               event.type === "user" ? event.attachments : undefined,
             )
           }
-          style={[
-            styles.retryPill,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}
+          style={styles.retryMark}
         >
-          <Ionicons name="alert-circle" size={13} color={colors.danger} />
-          <Text style={[styles.retryText, { color: colors.danger }]}>
-            Not sent
-          </Text>
+          <Ionicons name="alert-circle" size={20} color={colors.danger} />
         </Pressable>
       ) : null}
       <MessageContextMenu
@@ -602,15 +596,5 @@ const styles = StyleSheet.create({
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
-  retryPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginRight: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  retryText: { fontSize: 11 },
+  retryMark: { marginRight: 8 },
 });
