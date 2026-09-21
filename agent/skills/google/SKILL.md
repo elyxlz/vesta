@@ -82,6 +82,21 @@ calendar 403s until you re-run `google auth login` under your own client.
 
 Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to hard-disable sending. In this mode `email send`/`reply` (and `forward`, when present) are refused before any Gmail API call (non-zero exit with a clear message); only `email draft` works. Default off: unset/empty means today's behavior, no change.
 
+## Identifier masking at the read boundary
+
+Mail you read carries other people's text, and an agent cannot un-see what a tool prints. So
+`email search`, `email get` and the monitor's notification previews mask permanent personal
+identifiers before the text ever reaches you, replacing them with `[NI-REDACTED]`. The body that
+`email get` saves to disk is masked too, because a file you later grep is the same exposure one
+step later.
+
+Scope is deliberately narrow: identifiers that CANNOT be rotated, where a leaked copy stays
+valuable for life. A UK National Insurance number is the type case. Passwords and tokens are out of
+scope here because they can be rotated and rarely live in a mail body.
+
+This cannot clean a transcript retroactively. It stops the next copy, not the ones already stored.
+If you see the placeholder and genuinely need the value, ask the user; do not widen the filter.
+
 ## Notes
 - No `--account` needed. Google CLI uses a single authenticated account
 - Gmail uses `--label` (INBOX, SENT, DRAFT, etc.) instead of folders
