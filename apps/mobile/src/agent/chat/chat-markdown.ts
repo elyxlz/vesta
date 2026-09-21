@@ -110,9 +110,21 @@ function buildMarkdownStyles(colors: AppColors) {
       textAlign: "right" as const,
       fontVariant: ["tabular-nums"] as const,
     },
-    // minWidth 0 lets the content shrink below its text inside a shrink-to-fit bubble.
-    bullet_list_content: { flex: 1, minWidth: 0 },
-    ordered_list_content: { flex: 1, minWidth: 0 },
+    // An auto basis, not the library's flex 1 (basis 0): a zero basis adds nothing to a
+    // shrink-to-fit bubble's width, so a bubble holding only a list item collapsed to its
+    // marker and laid the text out at zero width. minWidth 0 lets the text still shrink.
+    bullet_list_content: {
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: "auto" as const,
+      minWidth: 0,
+    },
+    ordered_list_content: {
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: "auto" as const,
+      minWidth: 0,
+    },
     code_inline: {
       color: colors.text,
       fontFamily: fontNames.mono.native["400"],

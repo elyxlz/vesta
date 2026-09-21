@@ -116,6 +116,30 @@ const markdownTail: ChatMessage[] = [
     ].join("\n"),
     ts: "2026-08-01T09:23:20.000Z",
   },
+  {
+    id: 111,
+    type: "user",
+    text: "device log in pls",
+    ts: "2026-08-01T09:24:00.000Z",
+  },
+  {
+    id: 112,
+    type: "chat",
+    text: "device login, 2 steps:",
+    ts: "2026-08-01T09:24:10.000Z",
+  },
+  {
+    id: 113,
+    type: "chat",
+    text: "1. open https://github.com/login/device",
+    ts: "2026-08-01T09:24:12.000Z",
+  },
+  {
+    id: 114,
+    type: "chat",
+    text: "2. enter this code: 4415-ED92",
+    ts: "2026-08-01T09:24:14.000Z",
+  },
 ];
 const longHistory: ChatMessage[] = Array.from({ length: 40 }, (_, index) => {
   const day = 25 + Math.floor(index / 8);
