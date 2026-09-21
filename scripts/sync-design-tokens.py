@@ -160,6 +160,7 @@ def _native_config_json(tokens: dict[str, Any]) -> str:
         "splashBackground": _native_color(light["background"]),
         "splashBackgroundDark": _native_color(dark["background"]),
         "primary": _native_color(dark["primary"]),
+        "iconBackground": _native_color(tokens["icon"]["background"]),
     }
     return json.dumps(payload, indent=2) + "\n"
 

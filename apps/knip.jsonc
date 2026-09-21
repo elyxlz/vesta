@@ -28,9 +28,7 @@
     },
     "desktop": {
       "entry": ["src/preload.ts"],
-      "project": ["src/**/*.ts"],
-      // make-icons.py runs under uv, installed on the developer's machine, never a package.
-      "ignoreBinaries": ["uv"]
+      "project": ["src/**/*.ts"]
     },
     "mobile": {
       "entry": ["visual/**/*.ts", "visual/**/*.tsx"],

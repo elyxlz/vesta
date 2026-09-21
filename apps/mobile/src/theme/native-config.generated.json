@@ -2,5 +2,6 @@
   "background": "#0c0a08",
   "splashBackground": "#fffdfa",
   "splashBackgroundDark": "#0c0a08",
-  "primary": "#d5b993"
+  "primary": "#d5b993",
+  "iconBackground": "#faf9f7"
 }
