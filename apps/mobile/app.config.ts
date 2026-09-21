@@ -16,7 +16,10 @@ const bundleIdentifier =
   (isDevelopment ? "com.vesta.mobile.dev" : "com.vesta.mobile");
 const appIcon = isDevelopment
   ? "./assets/app-icon-dev.png"
-  : "../web/app-icon.png";
+  : "./assets/app-icon.png";
+const androidForegroundIcon = isDevelopment
+  ? appIcon
+  : "./assets/adaptive-icon.png";
 const notificationPlugins = localIosNoPush
   ? []
   : ([
@@ -66,8 +69,8 @@ const config: ExpoConfig = {
   android: {
     package: bundleIdentifier,
     adaptiveIcon: {
-      foregroundImage: appIcon,
-      backgroundColor: nativeConfigTokens.background,
+      foregroundImage: androidForegroundIcon,
+      backgroundColor: nativeConfigTokens.iconBackground,
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: true,
