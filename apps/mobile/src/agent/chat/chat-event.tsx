@@ -401,6 +401,30 @@ export const ChatEvent = memo(function ChatEvent({
         user ? styles.userRow : styles.agentRow,
       ]}
     >
+      {failed && intentId ? (
+        <Pressable
+          accessibilityLabel="Not delivered. Tap to retry"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() =>
+            onRetry(
+              intentId,
+              messageText,
+              event.type === "user" ? event.input_method : undefined,
+              event.type === "user" ? event.attachments : undefined,
+            )
+          }
+          style={[
+            styles.retryPill,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <Ionicons name="alert-circle" size={13} color={colors.danger} />
+          <Text style={[styles.retryText, { color: colors.danger }]}>
+            Not sent
+          </Text>
+        </Pressable>
+      ) : null}
       <MessageContextMenu
         actions={actions}
         menuRef={menuRef}
@@ -415,32 +439,6 @@ export const ChatEvent = memo(function ChatEvent({
       >
         {bubble}
       </MessageContextMenu>
-      {sendState === "sending" ? (
-        <Text style={[styles.sendStatus, { color: colors.tertiaryText }]}>
-          Sending…
-        </Text>
-      ) : null}
-      {failed && intentId ? (
-        <Pressable
-          accessibilityLabel="Retry sending message"
-          accessibilityRole="button"
-          hitSlop={6}
-          onPress={() =>
-            onRetry(
-              intentId,
-              messageText,
-              event.type === "user" ? event.input_method : undefined,
-              event.type === "user" ? event.attachments : undefined,
-            )
-          }
-          style={styles.sendRetry}
-        >
-          <Ionicons name="alert-circle" size={13} color={colors.danger} />
-          <Text style={[styles.sendStatus, { color: colors.danger }]}>
-            Not delivered. Tap to retry
-          </Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 });
@@ -550,10 +548,16 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
-  messageRow: { width: "100%", marginVertical: 3 },
+  // A row, so a failed send's pill sits beside the bubble instead of under it.
+  messageRow: {
+    width: "100%",
+    marginVertical: 3,
+    flexDirection: "row",
+    alignItems: "center",
+  },
   newBubbleGroup: { marginTop: 13 },
-  userRow: { alignItems: "flex-end" },
-  agentRow: { alignItems: "flex-start" },
+  userRow: { justifyContent: "flex-end" },
+  agentRow: { justifyContent: "flex-start" },
   bubbleMenu: { maxWidth: "88%" },
   bubble: {
     position: "relative",
@@ -598,12 +602,15 @@ const styles = StyleSheet.create({
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
-  sendStatus: { fontSize: 11, marginTop: 3, marginRight: 4 },
-  sendRetry: {
+  retryPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 3,
-    marginTop: 3,
-    marginRight: 4,
+    gap: 4,
+    marginRight: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
   },
+  retryText: { fontSize: 11 },
 });

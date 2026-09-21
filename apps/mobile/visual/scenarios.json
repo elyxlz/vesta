@@ -995,7 +995,7 @@
     {
       "id": "agent-chat-delivery",
       "title": "Chat, delivery states",
-      "description": "A bubble still sending and one the gateway refused.",
+      "description": "A bubble still sending, shown as any other, and one the gateway refused, with its Not sent pill beside it.",
       "group": "Chat"
     },
     {
