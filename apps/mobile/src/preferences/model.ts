@@ -23,7 +23,7 @@ export const initialPreferences: PreferencesState = {
   theme: "system",
   naturalChatPacingByAgent: {},
   showChatPage: true,
-  showDashboardPage: true,
+  showDashboardPage: false,
   showNotificationsPage: false,
   showLogsPage: false,
   remoteNotifications: true,
@@ -67,7 +67,7 @@ export function readStoredPreferences(value: string | null): PreferencesState {
       showDashboardPage:
         typeof parsed.showDashboardPage === "boolean"
           ? parsed.showDashboardPage
-          : true,
+          : false,
       showNotificationsPage:
         typeof parsed.showNotificationsPage === "boolean"
           ? parsed.showNotificationsPage

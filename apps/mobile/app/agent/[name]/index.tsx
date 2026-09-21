@@ -336,16 +336,18 @@ function AgentPages() {
         ))}
       </AnimatedPagerView>
       <HeaderFade />
-      <AgentPagerTabs
-        activePage={activePage}
-        bottom={insets.bottom + TAB_BOTTOM_MARGIN}
-        progress={pageProgress}
-        visibility={tabVisibility}
-        visible={tabsVisible}
-        interactive={tabsInteractive}
-        tabs={tabs}
-        onSelect={selectPage}
-      />
+      {pages.length > 1 ? (
+        <AgentPagerTabs
+          activePage={activePage}
+          bottom={insets.bottom + TAB_BOTTOM_MARGIN}
+          progress={pageProgress}
+          visibility={tabVisibility}
+          visible={tabsVisible}
+          interactive={tabsInteractive}
+          tabs={tabs}
+          onSelect={selectPage}
+        />
+      ) : null}
     </View>
   );
 }
