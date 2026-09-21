@@ -17,7 +17,12 @@ import {
   type InputMethod,
   type Tree,
 } from "@vesta/core";
-import { useChatSession, useReplica, useSyncState } from "@vesta/core/react";
+import {
+  useChatSession,
+  useHeld,
+  useReplica,
+  useSyncState,
+} from "@vesta/core/react";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
@@ -101,7 +106,10 @@ export function useAgentSocket(
     if (!naturalPacing) slot.get()?.flushPacing();
   }, [naturalPacing, slot]);
 
-  const state = useChatSession(session);
+  // Between controller epochs (backgrounded, or the foreground rebuild not yet landed) there is no
+  // session, and the held tail is what renders, so the chat never flashes to a skeleton.
+  const held = useHeld(agentHolds.chat, key);
+  const state = useChatSession(session, held);
 
   const activitySelector = useCallback(
     (tree: Tree | null) => selectAgentActivitySnapshot(tree, active, name),
