@@ -179,6 +179,16 @@ Each carries `number`, `title`, and `url`, and its `type` is one of:
   `upstream gh pr create` from the worktree after fetching and rebasing onto the branch's
   remote tip (the push is a force push); the result of that push arrives the same way.
   Every push resets the checks, so each settled result is reported once.
+
+  **A red check is not always yours, and `run rerun` cannot clear it.** Read the failing job's log
+  first (`upstream gh api repos/elyxlz/vesta/actions/jobs/<job id>/logs`): an infrastructure flake, a
+  container registry token fetch reset, a runner network drop, fails before any test executes, so no
+  change of yours can fix it. The App token has no `actions: write`, so `upstream gh run rerun <run>
+  --failed` answers "cannot be rerun; its workflow file may be broken", which blames the wrong layer
+  entirely; the raw API says `403 Resource not accessible by integration`. The only lever is a push,
+  so clear a flake with an empty commit (`git commit --allow-empty -m "ci: retrigger ..."`) pushed to
+  the PR's branch. A run also cannot be rerun while any job in it is still pending, which produces
+  the same misleading message for a different reason.
 - `pr_merged`: `author` is who merged it. Apply the fix locally if you have not (below).
 - `pr_closed`: closed without a merge; `message` is the closing comment and `author` who
   wrote it. Read it: it names the replacement (a consolidated PR, a fix already on master,
