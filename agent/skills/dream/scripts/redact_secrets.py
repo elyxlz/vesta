@@ -201,6 +201,17 @@ PATTERNS = [
     # A magic sign-in link carries its token as a bare path segment or fragment; the digit lookahead
     # keeps a docs anchor (magic-link#configure-magic-link) out.
     r"magic[_-]?link[#/](?=[A-Za-z0-9_\-:.=%+]*\d)[A-Za-z0-9_\-:.=%+]{16,}",
+    # A labelled SHORT numeric secret (PIN, CVV, passcode, OTP, door/gate/access code). Every family
+    # above keys on a long opaque token or a vendor prefix, so a three-to-eight digit code is
+    # invisible to them; recognisable only by the WORD in front, the same reasoning password= and
+    # api_key= already use. The qualifier list is CLOSED and bare `code` is deliberately NOT in it:
+    # otherwise "zip code is 90210" and "sort code is 601613" both match, and a sort code is not a
+    # secret. `[#*]?` sits on BOTH sides of the digits because an intercom code is normally written
+    # `#123456#` (the hashes are part of dialling it); without it the commonest real form is missed.
+    (
+        r"(?:pin|cvv|cvc|passcode|otp|(?:security|one[- ]time|verification|door|gate|access)[ ]+code)"
+        r"\b(?:[ ]+is)?[ ]*[:=]?[ ]*[#*]?[ ]*\d{3,8}[#*]?"
+    ),
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
