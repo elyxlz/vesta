@@ -88,6 +88,15 @@ Subagent (general-purpose):
     interaction, create throwaway data yourself, interact only with that, and delete it before
     you report.
 
+    The same goes for processes. Other daemons on this box serve real data and are started only
+    through their own `<skill> daemon start`, so never end a process by name pattern: no `pkill`,
+    no `killall`, no `ps | grep <name> | xargs kill`. A pattern like `server.py` matches the
+    skill daemons too, and killing one takes a live service down with no error on your side, so
+    the endpoint you are verifying can vanish under you and read as if it stopped on its own.
+    If you need a throwaway helper (a local proxy, a stub),
+    record its pid when you start it (`cmd & echo $! > /tmp/<name>.pid`) and stop exactly that
+    pid, or skip the helper and verify against the real endpoint with `curl`.
+
     ## Before you report: self-review
 
     - Completeness: did you build everything in the spec? Any content or interaction missed?
