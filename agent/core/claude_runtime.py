@@ -1,12 +1,43 @@
 """Prepare Claude Code's user-scoped runtime files before the first SDK session."""
 
+import asyncio
 import os
 import pathlib as pl
 import shutil
+import signal
 import subprocess
 
 from . import config as cfg
 from . import logger
+
+CLAUDE_CODE_INSTALL_TIMEOUT_SECS = 300
+
+
+async def ensure_claude_code_version(core_dir: pl.Path, *, timeout_secs: float = CLAUDE_CODE_INSTALL_TIMEOUT_SECS) -> bool:
+    """Run core's `claude-code-install.sh`, which puts the pinned CLI on PATH when the one there differs.
+
+    The pin is `core/claude-code-version`, and the read-only core mount carries a bumped pin to every
+    agent, so this is where an existing agent picks the new CLI up. A failed or hung install is
+    logged and the boot goes on with the CLI it has.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        str(core_dir / "claude-code-install.sh"),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,
+    )
+    try:
+        output, _ = await asyncio.wait_for(proc.communicate(), timeout_secs)
+    except TimeoutError:
+        # The script's own session, so a hung download child dies with it instead of holding the pipe.
+        os.killpg(proc.pid, signal.SIGKILL)
+        await proc.wait()
+        logger.warning(f"claude-code-install.sh did not finish in {timeout_secs}s; keeping the current CLI")
+        return False
+    if proc.returncode != 0:
+        logger.warning(f"claude-code-install.sh failed (exit {proc.returncode}); keeping the current CLI: {output.decode().strip()}")
+        return False
+    return True
 
 
 def _text_names(path: pl.Path) -> list[str]:

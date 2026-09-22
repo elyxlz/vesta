@@ -14,7 +14,7 @@ from . import config as cfg
 from . import lifecycle, logger, state_store
 from . import models as vm
 from .api import start_ws_server
-from .claude_runtime import reconcile_claude_runtime
+from .claude_runtime import ensure_claude_code_version, reconcile_claude_runtime
 from .diagnostics import format_crash_detail
 from .events import EventBus
 from .loops import (
@@ -274,6 +274,7 @@ async def async_main() -> bool:
 
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting on vesta v{vesta_version(config)}")
+    await ensure_claude_code_version(config.agent_dir / "core")
     # A previous harness may have refreshed its token after sign-in but before vestad stopped it.
     # Boot is the final enforcement point; the helper cross-checks the raw store before deleting.
     enforce_active_credentials(config)
