@@ -107,7 +107,7 @@ RUN /root/agent/skills/browser/install-engines.sh
 # site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must be
 # resolvable on PATH; the SDK then reuses this same binary. cc_sdk stays in the tree (tmux is
 # kept) but is dormant; if ever reactivated it fetches its own pinned binary under ~/.cache/cc-sdk.
-ARG CLAUDE_CODE_VERSION=2.1.226
+ARG CLAUDE_CODE_VERSION=2.1.280
 RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION" && \
     claude --version | grep -F "$CLAUDE_CODE_VERSION" && \
     mkdir -p /root/.claude
