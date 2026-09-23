@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTENT_SECURITY_POLICY,
   downloadDefaultPath,
+  microphoneAccessPlan,
   rendererPermissionDecision,
   resolveBundlePath,
   withContentSecurityPolicy,
@@ -59,6 +60,23 @@ describe("rendererPermissionDecision", () => {
     "maps $permission $mediaTypes to $expected",
     ({ permission, mediaTypes, expected }) => {
       expect(rendererPermissionDecision(permission, mediaTypes)).toBe(expected);
+    },
+  );
+});
+
+describe("microphoneAccessPlan", () => {
+  it.each<{ platform: NodeJS.Platform; status: string; expected: string }>([
+    { platform: "darwin", status: "not-determined", expected: "ask" },
+    { platform: "darwin", status: "granted", expected: "ask" },
+    { platform: "darwin", status: "denied", expected: "open-settings" },
+    { platform: "darwin", status: "restricted", expected: "deny" },
+    { platform: "win32", status: "granted", expected: "grant" },
+    { platform: "win32", status: "denied", expected: "open-settings" },
+    { platform: "linux", status: "unknown", expected: "grant" },
+  ])(
+    "on $platform with $status -> $expected",
+    ({ platform, status, expected }) => {
+      expect(microphoneAccessPlan(platform, status)).toBe(expected);
     },
   );
 });
