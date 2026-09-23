@@ -31,12 +31,14 @@ import {
 } from "@/components/ui/segmented-control";
 import { AppearancePreview } from "@/components/appearance-preview";
 import { Button, ButtonGroup } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import {
   FormGroup,
   FormRow,
   FormSection,
   SwitchRow,
 } from "@/components/ui/Form";
+import { Text } from "@/components/ui/Typography";
 import { useController } from "@/controller/context";
 import { requestLocationSharing } from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
@@ -68,7 +70,6 @@ const channelOptions: readonly OptionPickerOption<ReleaseChannel>[] = [
 ];
 type ActivePicker = "channel" | null;
 type ActiveConfirm =
-  | "update"
   | "restart"
   | "disconnect"
   | "location-settings"
@@ -103,6 +104,7 @@ export default function SettingsScreen() {
     controller.getDevice()?.id ?? null,
   );
   const preferences = usePreferences();
+  const colors = preferences.colors;
   const privacy = usePrivacy();
   const { showError } = useToast();
   const gatewayQueryKey = ["gateway", session.connection?.url] as const;
@@ -177,10 +179,6 @@ export default function SettingsScreen() {
   const gatewayControlsDisabled =
     !gateway.data || !roster.reachable || gatewaySettings.isPending;
 
-  const confirmGatewayUpdate = () => {
-    setActiveConfirm("update");
-  };
-
   const confirmGatewayRestart = () => {
     setActiveConfirm("restart");
   };
@@ -238,17 +236,6 @@ export default function SettingsScreen() {
           selectedValue={gateway.data?.settings.channel}
           onSelect={selectReleaseChannel}
           onDismiss={() => setActivePicker(null)}
-        />
-        <ConfirmDialog
-          visible={activeConfirm === "update"}
-          title="Update gateway?"
-          message="Agents will briefly restart."
-          confirmLabel="Update"
-          onConfirm={() => {
-            setActiveConfirm(null);
-            gatewayUpdate.mutate();
-          }}
-          onDismiss={() => setActiveConfirm(null)}
         />
         <ConfirmDialog
           visible={activeConfirm === "restart"}
@@ -403,25 +390,55 @@ export default function SettingsScreen() {
           <FormSection
             actions={
               <ButtonGroup>
-                <Button
-                  variant="card"
-                  loading={gatewayUpdate.isPending || updateCheck.isPending}
-                  onPress={
-                    updateAvailable
-                      ? confirmGatewayUpdate
-                      : () => updateCheck.mutate()
-                  }
-                >
-                  {updateCheck.isPending
-                    ? "Checking for updates"
-                    : updateAvailable
-                      ? "Update gateway"
+                {updateAvailable ? (
+                  <Card style={styles.updateCard}>
+                    <View style={styles.updateCardText}>
+                      <Text
+                        family="heading"
+                        style={[styles.updateTitle, { color: colors.text }]}
+                      >
+                        Update available
+                      </Text>
+                      <Text
+                        style={[styles.updateVersion, { color: colors.accent }]}
+                      >
+                        {roster.latestVersion
+                          ? `v${roster.latestVersion}`
+                          : "New version"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.updateNote,
+                          { color: colors.secondaryText },
+                        ]}
+                      >
+                        Agents will briefly restart.
+                      </Text>
+                    </View>
+                    <Button
+                      variant="primary"
+                      size="large"
+                      loading={gatewayUpdate.isPending}
+                      onPress={() => gatewayUpdate.mutate()}
+                    >
+                      Update
+                    </Button>
+                  </Card>
+                ) : (
+                  <Button
+                    variant="card"
+                    loading={updateCheck.isPending}
+                    onPress={() => updateCheck.mutate()}
+                  >
+                    {updateCheck.isPending
+                      ? "Checking for updates"
                       : updateCheck.isError
                         ? "Retry update check"
                         : updateCheck.isSuccess
                           ? "Check again for updates"
                           : "Check for updates"}
-                </Button>
+                  </Button>
+                )}
                 <Button
                   variant="card"
                   onPress={() => router.push("/gateway-logs")}
@@ -542,4 +559,9 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   appearanceRow: { paddingVertical: 10 },
   content: { gap: 24 },
+  updateCard: { gap: 16 },
+  updateCardText: { gap: 2 },
+  updateTitle: { fontSize: 17, fontWeight: "600" },
+  updateVersion: { fontSize: 15, fontWeight: "600" },
+  updateNote: { fontSize: 13, marginTop: 4 },
 });
