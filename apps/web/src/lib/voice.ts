@@ -1,6 +1,8 @@
 import * as core from "@vesta/core";
 import type { AudioCapture, SpeechPlayer } from "@vesta/core";
 import { authedUrl, httpClient, websocketUrl } from "@/api/client";
+// no-inline: an inlined data: worklet is refused by the desktop CSP (script-src 'self').
+import WORKLET_URL from "./pcm-worklet.js?url&no-inline";
 
 const SAMPLE_RATE = 16000;
 
@@ -97,7 +99,6 @@ export function browserPlayer(agentName: () => string | null): SpeechPlayer {
 
 // --- Audio preload ---
 
-const WORKLET_URL = new URL("./pcm-worklet.js", import.meta.url).href;
 let preloadPromise: Promise<void> | null = null;
 
 /**
@@ -131,8 +132,12 @@ export function voiceWsUrl(agentName: string): Promise<string> {
 export function browserCapture(muted?: () => boolean): AudioCapture {
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
+  // Bumped by every teardown, so a start still awaiting the microphone learns it was stopped
+  // and releases what it acquires instead of leaving the mic live.
+  let attempt = 0;
 
   const teardown = (): void => {
+    attempt += 1;
     if (audioCtx) {
       audioCtx.close().catch(() => {
         /* already closed */
@@ -149,8 +154,11 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
     start: async (onFrame) => {
       if (!("mediaDevices" in navigator))
         throw new Error("Microphone requires a secure connection");
+      teardown();
+      const mine = attempt;
+      let acquired: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        acquired = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
@@ -170,13 +178,20 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
         }
         throw new Error("Could not access microphone", { cause: err });
       }
+      if (mine !== attempt) {
+        acquired.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      stream = acquired;
       try {
         audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
         await audioCtx.audioWorklet.addModule(WORKLET_URL);
-      } catch {
+      } catch (err) {
+        if (mine !== attempt) return;
         teardown();
-        throw new Error("Could not initialize audio capture");
+        throw new Error("Could not initialize audio capture", { cause: err });
       }
+      if (mine !== attempt) return;
       const source = audioCtx.createMediaStreamSource(stream);
       const workletNode = new AudioWorkletNode(audioCtx, "pcm-processor", {
         numberOfInputs: 1,
