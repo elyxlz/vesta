@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { motion as m } from "motion/react";
 import { Mic, MicOff, X } from "lucide-react";
-import { conversationPhase, splitSpokenTail } from "@vesta/core";
+import {
+  conversationPhase,
+  conversationStage,
+  splitSpokenTail,
+} from "@vesta/core";
 import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
 import { sheetEase } from "@/lib/motion";
@@ -35,7 +39,7 @@ export function ConversationPanel() {
   // The session is already torn down while this panel plays its exit, so what it renders is
   // held at the last live values: reading the reset store would flash "connecting" on the
   // way out.
-  const live = useVoice((s) => s.recordingMode === "conversation");
+  const live = useVoice((s) => conversationStage(s) === "live");
   const { orbState, statusLabel } = useSelectedAgent();
   const listening = useVoice((s) => s.listening);
   const liveTranscript = useVoice((s) => s.liveTranscript);

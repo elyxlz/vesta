@@ -1,3 +1,16 @@
+// Where a conversation stands for the UI: "starting" while the microphone and the transcription
+// socket come up, "live" once both are. The panel opens only when live, so a start that fails
+// (a denied mic, an unreachable service) never flashes it open and shut.
+export type ConversationStage = "starting" | "live" | null;
+
+export function conversationStage(input: {
+  recordingMode: "dictation" | "conversation" | null;
+  listening: boolean;
+}): ConversationStage {
+  if (input.recordingMode !== "conversation") return null;
+  return input.listening ? "live" : "starting";
+}
+
 // What the conversation panel says between turns, in priority order: a session still dialing,
 // the agent talking, a muted mic, the agent thinking, else listening.
 export type ConversationPhase =

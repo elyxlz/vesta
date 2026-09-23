@@ -1,6 +1,7 @@
 import * as core from "@vesta/core";
 import type { AudioCapture, SpeechPlayer } from "@vesta/core";
 import { authedUrl, httpClient, websocketUrl } from "@/api/client";
+import { runtimeInfo, type RuntimeInfo } from "@/lib/native";
 // no-inline: an inlined data: worklet is refused by the desktop CSP (script-src 'self').
 import WORKLET_URL from "./pcm-worklet.js?url&no-inline";
 
@@ -126,6 +127,20 @@ export function voiceWsUrl(agentName: string): Promise<string> {
   return websocketUrl(core.sttListenPath(agentName));
 }
 
+// Where the user turns a denied microphone back on. In the desktop app the OS gates it (and the
+// app opens that settings page itself); in a browser, the site permission does.
+export function microphoneDeniedMessage(
+  runtime: Pick<RuntimeInfo, "isDesktopApp" | "platform">,
+): string {
+  if (!runtime.isDesktopApp)
+    return "Microphone access is blocked. Allow it for this site in your browser settings.";
+  if (runtime.platform === "macos")
+    return "Microphone access is off. Turn on Vesta in System Settings > Privacy & Security > Microphone.";
+  if (runtime.platform === "windows")
+    return "Microphone access is off. Turn it on in Settings > Privacy & security > Microphone.";
+  return "Microphone access was denied.";
+}
+
 // The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped. `muted` is read
 // per frame; a muted mic streams silence rather than nothing, so the STT stream stays alive
 // and a turn caught mid-sentence still gets its end (which releases the yield-to-user gate).
@@ -168,7 +183,9 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
       } catch (err) {
         if (err instanceof DOMException) {
           if (err.name === "NotAllowedError")
-            throw new Error("Microphone permission denied", { cause: err });
+            throw new Error(microphoneDeniedMessage(runtimeInfo), {
+              cause: err,
+            });
           if (err.name === "NotFoundError")
             throw new Error("No microphone found", { cause: err });
           if (err.name === "NotReadableError")

@@ -6,7 +6,7 @@ vi.mock("@/api/client", () => ({
   websocketUrl: vi.fn(),
 }));
 
-const { browserCapture } = await import("./voice");
+const { browserCapture, microphoneDeniedMessage } = await import("./voice");
 
 interface FakeTrack {
   stop: ReturnType<typeof vi.fn>;
@@ -46,4 +46,20 @@ describe("browserCapture", () => {
     expect(mic.track.stop).toHaveBeenCalledOnce();
     expect(mic.audioContext).not.toHaveBeenCalled();
   });
+});
+
+describe("microphoneDeniedMessage", () => {
+  it.each([
+    { isDesktopApp: true, platform: "macos", expected: "System Settings" },
+    { isDesktopApp: true, platform: "windows", expected: "Settings > Privacy" },
+    { isDesktopApp: false, platform: "macos", expected: "browser settings" },
+    { isDesktopApp: false, platform: "windows", expected: "browser settings" },
+  ] as const)(
+    "names where to turn it on ($platform, desktop app: $isDesktopApp)",
+    ({ isDesktopApp, platform, expected }) => {
+      expect(microphoneDeniedMessage({ isDesktopApp, platform })).toContain(
+        expected,
+      );
+    },
+  );
 });

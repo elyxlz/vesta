@@ -1,3 +1,4 @@
+import { conversationStage } from "@vesta/core";
 import { micHandlers } from "./mic-handlers";
 import type {
   ChangeEvent,
@@ -111,6 +112,7 @@ export function ChatComposer({
   const controls: ComposerControls = {
     voiceConfigured,
     recordingMode,
+    conversation: conversationStage({ recordingMode, listening }),
     inputDisabled,
     slot: rightSlot({ input, recordingMode, hasAttachments }),
     micHandlers: micHandlers(activation, startVoice, stopVoice),

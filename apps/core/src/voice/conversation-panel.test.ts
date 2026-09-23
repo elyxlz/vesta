@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { conversationPhase, splitSpokenTail } from "./conversation-panel";
+import {
+  conversationPhase,
+  conversationStage,
+  splitSpokenTail,
+} from "./conversation-panel";
+
+describe("conversation stage", () => {
+  it.each([
+    { recordingMode: null, listening: false, expected: null },
+    { recordingMode: "dictation", listening: true, expected: null },
+    { recordingMode: "conversation", listening: false, expected: "starting" },
+    { recordingMode: "conversation", listening: true, expected: "live" },
+  ] as const)(
+    "$recordingMode listening=$listening is $expected",
+    ({ recordingMode, listening, expected }) => {
+      expect(conversationStage({ recordingMode, listening })).toBe(expected);
+    },
+  );
+});
 
 describe("conversation phase", () => {
   const live = {
