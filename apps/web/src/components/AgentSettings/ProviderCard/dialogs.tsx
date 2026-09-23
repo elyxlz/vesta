@@ -20,9 +20,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
-import { planContextOptions } from "@/components/ProviderPicker/context-plan";
 import { providerModelOptions } from "@/components/ProviderPicker/model-options";
-import { contextForModel, fetchOpenRouterModels } from "@vesta/core";
+import {
+  contextForModel,
+  fetchOpenRouterModels,
+  planContextOptions,
+} from "@vesta/core";
 import type {
   OpenRouterModelOption,
   ProviderCatalog,

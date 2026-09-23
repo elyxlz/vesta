@@ -1,4 +1,10 @@
-import type { ProviderContextPolicy, ProviderContextPreset } from "@vesta/core";
+import type {
+  ProviderCatalog,
+  ProviderContextPolicy,
+  ProviderContextPreset,
+  ProviderKind,
+  ProviderSelection,
+} from "./provider";
 
 // The Claude plan tier drives which context windows the picker offers: the 1M-context beta is a
 // Max-only entitlement, so a Pro/Free agent that selects a >200K window would send an unentitled
@@ -61,4 +67,63 @@ export function planContextOptions(
         ? context.default
         : (presets[presets.length - 1]?.tokens ?? context.default);
   return { presets, initial };
+}
+
+// The setup flow's final selection, or null while an OAuth provider has no credentials yet.
+// A zero context means "the provider's own default" and is left off the wire.
+export function providerResult(
+  provider: ProviderKind,
+  credentials: string | null,
+  key: string,
+  model: string,
+  maxContextTokens: number,
+): ProviderSelection | null {
+  if (provider === "claude") {
+    return credentials === null
+      ? null
+      : {
+          kind: "claude",
+          credentials,
+          model: model || undefined,
+          maxContextTokens,
+        };
+  }
+  if (provider === "openai") {
+    return credentials === null
+      ? null
+      : {
+          kind: "openai",
+          credentials,
+          model,
+          ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
+        };
+  }
+  return {
+    kind: provider,
+    key,
+    model,
+    ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
+  };
+}
+
+// The initial model-step selection: the in-progress choice wins, else Claude
+// defaults to the "opus-latest" alias, else the catalog's per-provider default.
+export function modelStepInitialModel(
+  provider: ProviderKind | null,
+  model: string,
+  catalog: ProviderCatalog,
+): string {
+  if (model) return model;
+  if (provider === "claude") return "opus-latest";
+  if (provider === null) return "";
+  return catalog.providers[provider]?.default_model ?? "";
+}
+
+export function providerUsesOAuth(
+  provider: ProviderKind | null,
+  catalog: ProviderCatalog,
+): boolean {
+  if (provider === null) return false;
+  const authKind = catalog.providers[provider]?.auth_kind;
+  return authKind === "claude_oauth" || authKind === "device_oauth";
 }

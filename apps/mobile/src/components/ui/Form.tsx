@@ -134,6 +134,10 @@ export function FormSection({
 
 interface RowProps {
   label: string;
+  // A custom leading mark (a brand logo) in place of the icon tile.
+  leading?: ReactNode;
+  // A choice in a pick-one list: a checkmark marks the chosen row, and no chevron shows.
+  selected?: boolean;
   // A short secondary note on the label's own line, after the label.
   labelNote?: string;
   detail?: string;
@@ -152,6 +156,8 @@ interface RowProps {
 
 export function FormRow({
   label,
+  leading,
+  selected,
   labelNote,
   detail,
   icon,
@@ -170,6 +176,7 @@ export function FormRow({
     valueTone === "positive" ? colors.success : colors.secondaryText;
   const content = (
     <View style={styles.row}>
+      {leading ? <View style={styles.rowLeading}>{leading}</View> : null}
       {icon ? (
         <View style={[styles.rowIcon, { backgroundColor: colors.accentSoft }]}>
           <Ionicons
@@ -226,7 +233,13 @@ export function FormRow({
         <Text style={[styles.value, { color: valueColor }]}>{value}</Text>
       ) : null}
       {trailing ? <View style={styles.rowTrailing}>{trailing}</View> : null}
-      {onPress ? (
+      {selected !== undefined ? (
+        <Ionicons
+          name="checkmark"
+          size={20}
+          color={selected ? colors.accent : "transparent"}
+        />
+      ) : onPress ? (
         <Ionicons
           name={
             expanded === undefined
@@ -244,7 +257,13 @@ export function FormRow({
   return onPress ? (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={expanded === undefined ? undefined : { expanded }}
+      accessibilityState={
+        selected !== undefined
+          ? { selected }
+          : expanded === undefined
+            ? undefined
+            : { expanded }
+      }
       onPress={onPress}
       style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
     >
@@ -345,6 +364,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  rowLeading: { width: 32, alignItems: "center", justifyContent: "center" },
   rowText: { flex: 1, gap: 2 },
   rowTrailing: {
     alignSelf: "stretch",

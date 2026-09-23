@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { planContextOptions, planFromCredentials } from "./context-plan";
-import type { ProviderContextPolicy } from "@vesta/core";
+import {
+  modelStepInitialModel,
+  planContextOptions,
+  planFromCredentials,
+  providerResult,
+  providerUsesOAuth,
+} from "./provider-setup";
+import type {
+  ProviderCatalog,
+  ProviderCatalogEntry,
+  ProviderContextPolicy,
+} from "./provider";
 
 const claudeContext: ProviderContextPolicy = {
   default: 1000000,
@@ -114,5 +124,72 @@ describe("planFromCredentials", () => {
     ["the JSON is unparseable", "not json"],
   ])("returns null when %s", (_name, blob) => {
     expect(planFromCredentials(blob)).toBeNull();
+  });
+});
+
+function catalogEntry(
+  overrides: Partial<ProviderCatalogEntry>,
+): ProviderCatalogEntry {
+  return {
+    display: "Provider",
+    order: 1,
+    auth_kind: "api_key",
+    models: [],
+    default_model: null,
+    context: { default: 200000, max: null, presets: [] },
+    ...overrides,
+  };
+}
+
+const setupCatalog: ProviderCatalog = {
+  default_provider: "claude",
+  providers: {
+    claude: catalogEntry({ auth_kind: "claude_oauth", models: "live" }),
+    openai: catalogEntry({ auth_kind: "device_oauth", default_model: "gpt" }),
+    zai: catalogEntry({ auth_kind: "subscription_key", default_model: "glm" }),
+  },
+};
+
+describe("providerResult", () => {
+  it("waits for credentials before an OAuth provider can finish", () => {
+    expect(providerResult("claude", null, "", "opus-latest", 0)).toBeNull();
+    expect(providerResult("openai", null, "", "gpt", 0)).toBeNull();
+  });
+
+  it("builds a Claude selection from the stashed credentials", () => {
+    expect(providerResult("claude", "blob", "", "", 200000)).toEqual({
+      kind: "claude",
+      credentials: "blob",
+      model: undefined,
+      maxContextTokens: 200000,
+    });
+  });
+
+  it("leaves a zero context off a key provider's selection", () => {
+    expect(providerResult("openrouter", null, "sk", "vendor/model", 0)).toEqual(
+      { kind: "openrouter", key: "sk", model: "vendor/model" },
+    );
+  });
+});
+
+describe("modelStepInitialModel", () => {
+  it.each([
+    ["an in-progress choice", "zai", "glm-air", "glm-air"],
+    ["the Claude alias", "claude", "", "opus-latest"],
+    ["the catalog default", "zai", "", "glm"],
+    ["nothing without a provider", null, "", ""],
+  ] as const)("starts from %s", (_case, provider, model, expected) => {
+    expect(modelStepInitialModel(provider, model, setupCatalog)).toBe(expected);
+  });
+});
+
+describe("providerUsesOAuth", () => {
+  it.each([
+    ["claude", true],
+    ["openai", true],
+    ["zai", false],
+    [null, false],
+  ] as const)("answers %s with %s", (provider, expected) => {
+    expect(providerUsesOAuth(provider, setupCatalog)).toBe(expected);
   });
 });

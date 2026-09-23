@@ -286,6 +286,13 @@ export {
   canonicalClaudeModel,
   resolveProviderIdentity,
 } from "./provider/provider";
+export {
+  modelStepInitialModel,
+  planContextOptions,
+  planFromCredentials,
+  providerResult,
+  providerUsesOAuth,
+} from "./provider/provider-setup";
 export type {
   ProviderContextPolicy,
   ProviderContextPreset,
