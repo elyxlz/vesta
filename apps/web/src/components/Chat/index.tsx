@@ -19,6 +19,7 @@ import { useLayout } from "@/stores/use-layout";
 import { useComposerInset } from "./use-composer-inset";
 import { useAgentSocket } from "@/providers/AgentSocketProvider/context";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
+import { conversationStage } from "@vesta/core";
 import { useVoice } from "@/stores/use-voice";
 import { useChatDraft } from "@/stores/use-chat-draft";
 import { useAttachmentDrafts } from "@/stores/use-attachment-drafts";
@@ -145,7 +146,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     textareaRef.current?.focus({ preventScroll: true });
   }, [isMobile, pathname, name]);
 
-  const inConversation = recordingMode === "conversation";
+  const inConversation =
+    conversationStage({ recordingMode, listening }) === "live";
   const {
     cardRef,
     composerRef,

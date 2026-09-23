@@ -17,9 +17,10 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion as m } from "motion/react";
-import { composerExpandedNext } from "@vesta/core";
+import { composerExpandedNext, type ConversationStage } from "@vesta/core";
 import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   ConversationPanel,
   RECORDING_BUTTON,
@@ -34,6 +35,7 @@ import type { MicHandlers } from "./mic-handlers";
 export interface ComposerControls {
   voiceConfigured: boolean;
   recordingMode: VoiceMode | null;
+  conversation: ConversationStage;
   inputDisabled: boolean;
   slot: "conversation" | "send";
   micHandlers: MicHandlers;
@@ -80,7 +82,7 @@ export function FloatingComposer({
   onMorphSettled?: () => void;
   onHeightAnimation?: (animating: boolean) => void;
 }) {
-  const { inputDisabled, recordingMode } = controls;
+  const { inputDisabled, recordingMode, conversation: stage } = controls;
 
   // Expand (input onto its own full-width row above the buttons) once the text would wrap
   // past one line in the collapsed inline width. A hidden single-line mirror measured against
@@ -120,7 +122,7 @@ export function FloatingComposer({
     setExpanded(next);
   }, [value, expanded]);
 
-  const inConversation = recordingMode === "conversation";
+  const inConversation = stage === "live";
   const [contentBox, setContentBox] = useState({ height: 0, animated: false });
   const measureContentRef = useMeasuredSize(
     "height",
@@ -319,6 +321,7 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
   const {
     voiceConfigured,
     recordingMode,
+    conversation,
     inputDisabled,
     slot,
     micHandlers,
@@ -363,7 +366,13 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
     );
   }
 
-  const inConversation = recordingMode === "conversation";
+  const inConversation = conversation === "live";
+  const starting = conversation === "starting";
+  const conversationLabel = inConversation
+    ? "end conversation"
+    : starting
+      ? "cancel conversation"
+      : "start conversation";
   return (
     <>
       <div className="shrink-0">
@@ -371,7 +380,7 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
           type="button"
           size="icon"
           variant="secondary"
-          disabled={inputDisabled || inConversation}
+          disabled={inputDisabled || conversation !== null}
           {...micHandlers}
           aria-label="dictate"
           title="dictate"
@@ -389,13 +398,17 @@ function VoiceButtons({ controls }: { controls: ComposerControls }) {
           variant="default"
           disabled={inputDisabled}
           onClick={onConversation}
-          aria-label={
-            inConversation ? "end conversation" : "start conversation"
-          }
-          title={inConversation ? "end conversation" : "start conversation"}
+          aria-label={conversationLabel}
+          title={conversationLabel}
           className={cn(ACTION_BUTTON, inConversation && RECORDING_BUTTON)}
         >
-          {inConversation ? <Square fill="currentColor" /> : <AudioLines />}
+          {inConversation ? (
+            <Square fill="currentColor" />
+          ) : starting ? (
+            <Spinner aria-hidden />
+          ) : (
+            <AudioLines />
+          )}
         </Button>
       )}
     </>

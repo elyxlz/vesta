@@ -113,6 +113,32 @@ export function rendererPermissionDecision(
   return "deny";
 }
 
+// The OS microphone privacy page: once the user has denied Vesta there, the OS never asks again,
+// so a mic request opens the switch that fixes it rather than failing silently.
+const MICROPHONE_SETTINGS_URL: Partial<Record<NodeJS.Platform, string>> = {
+  darwin:
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+  win32: "ms-settings:privacy-microphone",
+};
+
+/** How a renderer mic request meets the OS gate, from the OS's current microphone status. */
+export function microphoneAccessPlan(
+  platform: NodeJS.Platform,
+  status: string,
+): "ask" | "grant" | "deny" | "open-settings" {
+  if (status === "denied") return "open-settings";
+  if (status === "restricted") return "deny";
+  // The hardened-runtime entitlement lets the app reach the microphone; asking obtains the OS
+  // grant (the TCC prompt) that Chromium's getUserMedia needs on top of it.
+  return platform === "darwin" ? "ask" : "grant";
+}
+
+function microphoneStatus(): string {
+  return process.platform === "darwin" || process.platform === "win32"
+    ? systemPreferences.getMediaAccessStatus("microphone")
+    : "unknown";
+}
+
 function allowRendererPermissions(): void {
   session.defaultSession.setPermissionRequestHandler(
     (_wc, permission, callback, details) => {
@@ -124,21 +150,22 @@ function allowRendererPermissions(): void {
         callback(decision === "grant");
         return;
       }
-      // The hardened-runtime entitlement lets the app reach the microphone; this obtains the
-      // OS grant (the TCC prompt) that Chromium's getUserMedia needs on top of it. macOS only;
-      // other platforms gate on the renderer callback alone.
-      if (process.platform !== "darwin") {
-        callback(true);
+      const plan = microphoneAccessPlan(process.platform, microphoneStatus());
+      if (plan === "ask") {
+        void systemPreferences.askForMediaAccess("microphone").then(
+          (granted) => {
+            callback(granted);
+          },
+          () => {
+            callback(false);
+          },
+        );
         return;
       }
-      void systemPreferences.askForMediaAccess("microphone").then(
-        (granted) => {
-          callback(granted);
-        },
-        () => {
-          callback(false);
-        },
-      );
+      const settingsUrl = MICROPHONE_SETTINGS_URL[process.platform];
+      if (plan === "open-settings" && settingsUrl !== undefined)
+        void shell.openExternal(settingsUrl);
+      callback(plan === "grant");
     },
   );
 }
