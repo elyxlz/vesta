@@ -7,7 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { StyleSheet, View } from "react-native";
+import { AppState, StyleSheet, View } from "react-native";
 import type { AgentActivityState, AgentStatus } from "@vesta/core";
 
 export type BootDestination = "connect" | "home" | "agent";
@@ -93,8 +93,18 @@ export function BootTransitionTarget({
 
   useEffect(() => {
     if (!transition?.active || !enabled) return;
-    const frame = requestAnimationFrame(measure);
-    return () => cancelAnimationFrame(frame);
+    let frame = requestAnimationFrame(measure);
+    // A launch in the background measures before the page settles (a carousel scrolled to its
+    // restored agent moves the target with no layout event), so the foreground measures again.
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      subscription.remove();
+    };
   }, [enabled, measure, transition?.active]);
 
   return (

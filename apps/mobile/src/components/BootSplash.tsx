@@ -225,6 +225,39 @@ export function BootSplash({
     return () => cancelAnimation(scale);
   }, [markHolding, nativeSplashHidden, reduceMotion, scale]);
 
+  const flyTo = useCallback(
+    (frame: BootTargetFrame) => {
+      const spring = {
+        stiffness: 150,
+        damping: 17,
+        mass: 0.82,
+        energyThreshold: TRAVEL_ENERGY_THRESHOLD,
+      } as const;
+      scale.set(withSpring(frame.width / ORB_SIZE, spring));
+      translateX.set(
+        withSpring(frame.x + frame.width / 2 - windowWidth / 2, spring),
+      );
+      translateY.set(
+        withSpring(
+          frame.y + frame.height / 2 - windowHeight / 2,
+          spring,
+          (finished) => {
+            if (finished) scheduleOnRN(startHandoff);
+          },
+        ),
+      );
+    },
+    [scale, startHandoff, translateX, translateY, windowHeight, windowWidth],
+  );
+
+  // A target can move after the flight starts: it may have been measured while the app launched
+  // in the background, before its carousel scrolled into place. The springs follow the new frame.
+  useEffect(() => {
+    if (!travelStarted.current || handoffStarted.current || !target) return;
+    if (reduceMotion) return;
+    flyTo(target);
+  }, [flyTo, reduceMotion, target]);
+
   useEffect(() => {
     if (
       !nativeSplashHidden ||
@@ -248,24 +281,10 @@ export function BootSplash({
           return;
         }
 
-        const destinationX = target.x + target.width / 2 - windowWidth / 2;
-        const destinationY = target.y + target.height / 2 - windowHeight / 2;
-        const spring = {
-          stiffness: 150,
-          damping: 17,
-          mass: 0.82,
-          energyThreshold: TRAVEL_ENERGY_THRESHOLD,
-        } as const;
         travelWatchdog.current = setTimeout(startHandoff, 3500);
         onReveal();
         backdropOpacity.set(withTiming(0, { duration: 280 }));
-        scale.set(withSpring(target.width / ORB_SIZE, spring));
-        translateX.set(withSpring(destinationX, spring));
-        translateY.set(
-          withSpring(destinationY, spring, (finished) => {
-            if (finished) scheduleOnRN(startHandoff);
-          }),
-        );
+        flyTo(target);
       });
     });
 
@@ -276,18 +295,14 @@ export function BootSplash({
   }, [
     nativeSplashHidden,
     backdropOpacity,
+    flyTo,
     holding,
     ready,
     reduceMotion,
     onReveal,
-    scale,
     startHandoff,
     target,
     targetExpected,
-    translateX,
-    translateY,
-    windowHeight,
-    windowWidth,
   ]);
 
   return (
