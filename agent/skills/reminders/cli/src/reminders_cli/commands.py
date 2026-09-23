@@ -301,11 +301,12 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                 if trigger_type == "date":
                     conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                     conn.commit()
-                elif trigger_type == "cron" and "fuzz_minutes" not in trigger_data:
-                    # Fuzzed cron rows run as chained one-shots; the job sync's restore computes
-                    # their next fuzzed fire and advances scheduled_time, so only plain cron
-                    # (whose job stays armed) updates it here.
-                    next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
+                elif trigger_type == "cron":
+                    # Advanced on fire so a restore never reads a fired occurrence as missed.
+                    if "fuzz_minutes" in trigger_data:
+                        next_fire = fuzzed_next_fire(reminder_id, trigger_data, _now_utc())
+                    else:
+                        next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, _now_utc())
                     if next_fire is not None:
                         conn.execute(
                             "UPDATE reminders SET scheduled_time = ? WHERE id = ?",
@@ -325,6 +326,29 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
 # ---------------------------------------------------------------------------
 # Reminder restore (for daemon startup + missed reminder handling)
 # ---------------------------------------------------------------------------
+
+
+def _restore_cron_trigger(row, trigger_data: TriggerData, now: datetime, notif_dir: Path | None, conn) -> CronTrigger | DateTrigger:
+    """Trigger to arm for a cron row, advancing its scheduled_time to the next fire."""
+    reminder_id = row["id"]
+    # scheduled_time is the next fire the daemon armed; one that passed unfired was missed
+    # while the daemon was down, reported once however many occurrences it spans.
+    armed = db.parse_datetime(row["scheduled_time"]) if row["scheduled_time"] else None
+    if armed is not None and armed < now - MISSED_GRACE:
+        logger.info("Reminder %s: occurrence at %s missed, sending missed notification", reminder_id, row["scheduled_time"])
+        if notif_dir:
+            write_reminder_notification(notif_dir, reminder_id, row["message"], notif_type="reminder_missed")
+    if "fuzz_minutes" in trigger_data:
+        # Fuzzed reminders run as chained one-shots: this job fires once at the fuzzed
+        # instant, then the serve loop's job sync restores the next one the same way.
+        fire = fuzzed_next_fire(reminder_id, trigger_data, now)
+        trigger = DateTrigger(run_date=fire)
+    else:
+        trigger = _cron_trigger_from_data(trigger_data)
+        fire = trigger.get_next_fire_time(None, now)
+    if fire is not None:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", (fire.isoformat(), reminder_id))
+    return trigger
 
 
 def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: Path | None, conn, config: Config) -> bool:
@@ -358,14 +382,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             trigger = DateTrigger(run_date=run_date)
 
         elif trigger_type == "cron":
-            if "fuzz_minutes" in trigger_data:
-                # Fuzzed reminders run as chained one-shots: this job fires once at the fuzzed
-                # instant, then the serve loop's job sync restores the next one the same way.
-                fire = fuzzed_next_fire(reminder_id, trigger_data, now)
-                conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", (fire.isoformat(), reminder_id))
-                trigger = DateTrigger(run_date=fire)
-            else:
-                trigger = _cron_trigger_from_data(trigger_data)
+            trigger = _restore_cron_trigger(row, trigger_data, now, notif_dir, conn)
 
         elif trigger_type == "interval":
             trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)
@@ -410,10 +427,10 @@ def cron_zone_moved(job: Job, trigger_data: TriggerData) -> bool:
 
 def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_dir: Path | None = None):
     """Load all active reminders from DB and register as APScheduler jobs.
-    Past-due one-time reminders fire missed notifications immediately."""
+    Past-due one-time reminders and cron occurrences passed during downtime fire missed notifications immediately."""
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute(f"SELECT id, message, trigger_data FROM reminders WHERE {LIVE_REMINDER}")
+        cursor = conn.execute(f"SELECT id, message, scheduled_time, trigger_data FROM reminders WHERE {LIVE_REMINDER}")
         for row in cursor:
             _restore_row(scheduler, row, now, notif_dir, conn, config)
         conn.commit()
@@ -425,7 +442,7 @@ def restore_jobs_by_ids(config: Config, scheduler: BackgroundScheduler, ids: set
     placeholders = ",".join("?" for _ in ids)
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(
-            f"SELECT id, message, trigger_data FROM reminders WHERE {LIVE_REMINDER} AND id IN ({placeholders})",
+            f"SELECT id, message, scheduled_time, trigger_data FROM reminders WHERE {LIVE_REMINDER} AND id IN ({placeholders})",
             list(ids),
         )
         for row in cursor:
