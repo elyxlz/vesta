@@ -1,0 +1,17 @@
+diff --git a/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m b/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m
+index fe1d9dd..2e55f04 100644
+--- a/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m
++++ b/node_modules/expo-location/ios/TaskConsumers/EXLocationTaskConsumer.m
+@@ -73,7 +73,11 @@
+     locationManager.pausesLocationUpdatesAutomatically = [self numberToBool:options[@"pausesUpdatesAutomatically"] defaultValue:true];
+     locationManager.showsBackgroundLocationIndicator = [self numberToBool:options[@"showsBackgroundLocationIndicator"] defaultValue:false];
+ 
+-    [locationManager startUpdatingLocation];
++    // Vesta patch: `significantChangesOnly` runs the cell and Wi-Fi monitor alone, so the GPS stays
++    // off between wake-ups and no location arrow stays in the status bar.
++    if (![self numberToBool:options[@"significantChangesOnly"] defaultValue:false]) {
++      [locationManager startUpdatingLocation];
++    }
+     [locationManager startMonitoringSignificantLocationChanges];
+   }];
+ }

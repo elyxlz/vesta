@@ -470,7 +470,7 @@ impl Client {
     }
 
     /// Report a device's context outside the `/sync` socket via `PUT /devices/{device_id}/context`
-    /// (client auth), the mobile background poll's carrier. `context` is `{timezone?, position?}`.
+    /// (client auth), the mobile background location task's carrier. `context` is `{timezone?, position?}`.
     pub fn report_device_context(&self, device_id: &str, context: &serde_json::Value) -> Result<(), String> {
         let resp = self.put_json(&format!("/devices/{device_id}/context"), context)?;
         check_response(resp)?;

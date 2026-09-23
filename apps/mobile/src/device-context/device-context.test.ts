@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BACKGROUND_FIX_TIMEOUT_MS,
   FRESH_FIX_TIMEOUT_MS,
   LAST_KNOWN_FIX_MAX_AGE_MS,
   readDeviceContext,
@@ -8,7 +9,6 @@ import {
 
 const location = vi.hoisted(() => ({
   granted: true,
-  backgroundGranted: false,
   permissionThrows: false,
   // A fresh fix that never settles (indoors, no satellites).
   pending: false,
@@ -30,13 +30,11 @@ vi.mock("expo-localization", () => ({
   getCalendars: () => [{ timeZone: "Asia/Tokyo" }],
 }));
 vi.mock("expo-location", () => ({
-  Accuracy: { Low: 1, Balanced: 3 },
+  Accuracy: { Balanced: 3 },
   getForegroundPermissionsAsync: () =>
     location.permissionThrows
       ? Promise.reject(new Error("no native module"))
       : Promise.resolve({ granted: location.granted }),
-  getBackgroundPermissionsAsync: () =>
-    Promise.resolve({ granted: location.backgroundGranted }),
   getCurrentPositionAsync: (options: { accuracy: number }) => {
     location.calls.push(`current:${String(options.accuracy)}`);
     return location.pending
@@ -91,7 +89,6 @@ describe("toDevicePosition", () => {
 describe("readDeviceContext", () => {
   beforeEach(() => {
     location.granted = true;
-    location.backgroundGranted = false;
     location.current = tokyo;
     location.last = tokyo;
     location.geocoded = [{ city: "Tokyo", region: null, country: "Japan" }];
@@ -121,15 +118,32 @@ describe("readDeviceContext", () => {
     }
   });
 
-  it("takes a low-power fresh fix in the background when location is allowed always", async () => {
-    location.backgroundGranted = true;
+  it("takes a balanced fresh fix in the background, with the last known one as the fallback", async () => {
     await readDeviceContext({ shareLocation: true, mode: "background" });
-    expect(location.calls).toEqual(["current:1"]);
-    // No fresh fix in time: the last known one is the fallback.
+    expect(location.calls).toEqual(["current:3"]);
     location.calls = [];
     location.current = null;
     await readDeviceContext({ shareLocation: true, mode: "background" });
-    expect(location.calls).toEqual(["current:1", "last"]);
+    expect(location.calls).toEqual(["current:3", "last"]);
+  });
+
+  it("waits for a background fresh fix only as long as a location wake-up lasts", async () => {
+    vi.useFakeTimers();
+    try {
+      location.pending = true;
+      const report = readDeviceContext({
+        shareLocation: true,
+        mode: "background",
+      });
+      await vi.advanceTimersByTimeAsync(BACKGROUND_FIX_TIMEOUT_MS);
+      await expect(report).resolves.toMatchObject({
+        position: { latitude: 35.6762, longitude: 139.6503 },
+      });
+      expect(location.calls).toEqual(["current:3", "last"]);
+    } finally {
+      location.pending = false;
+      vi.useRealTimers();
+    }
   });
 
   it("asks only for a recent last-known fix in the background", async () => {
@@ -148,7 +162,7 @@ describe("readDeviceContext", () => {
     }
   });
 
-  it("takes a fresh fix in the foreground and the last known one in the background", async () => {
+  it("reports the fresh fix with its place and zone", async () => {
     await expect(
       readDeviceContext({ shareLocation: true, mode: "foreground" }),
     ).resolves.toEqual({
@@ -161,9 +175,6 @@ describe("readDeviceContext", () => {
       },
     });
     expect(location.calls).toEqual(["current:3"]);
-    location.calls = [];
-    await readDeviceContext({ shareLocation: true, mode: "background" });
-    expect(location.calls).toEqual(["last"]);
   });
 
   it("reports the zone the fix falls in, not the device's own (roaming)", async () => {
@@ -207,6 +218,7 @@ describe("readDeviceContext", () => {
       readDeviceContext({ shareLocation: true, mode: "foreground" }),
     ).resolves.toEqual({ timezone: "Asia/Tokyo" });
     location.granted = true;
+    location.current = null;
     location.last = null;
     await expect(
       readDeviceContext({ shareLocation: true, mode: "background" }),

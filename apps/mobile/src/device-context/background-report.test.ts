@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@vesta/core";
 import {
-  BACKGROUND_REPORT_MIN_INTERVAL_MINUTES,
+  BACKGROUND_REPORT_MIN_DISTANCE_M,
   DEVICE_CONTEXT_TASK,
-  registerBackgroundReport,
   reportDeviceContextInBackground,
+  syncBackgroundReport,
 } from "./background-report";
 
 const state = vi.hoisted(() => ({
@@ -12,16 +12,22 @@ const state = vi.hoisted(() => ({
   preferences: null as string | null,
   context: {} as Record<string, unknown>,
   defined: [] as string[],
-  registered: [] as { name: string; options: unknown }[],
-  status: 2,
+  backgroundGranted: true,
+  started: false,
+  calls: [] as { call: string; options?: unknown }[],
   written: [] as ConnectionConfig[],
 }));
-vi.mock("expo-background-task", () => ({
-  BackgroundTaskStatus: { Restricted: 1, Available: 2 },
-  BackgroundTaskResult: { Success: 1, Failed: 2 },
-  getStatusAsync: () => Promise.resolve(state.status),
-  registerTaskAsync: (name: string, options: unknown) => {
-    state.registered.push({ name, options });
+vi.mock("expo-location", () => ({
+  Accuracy: { Balanced: 3 },
+  getBackgroundPermissionsAsync: () =>
+    Promise.resolve({ granted: state.backgroundGranted }),
+  startLocationUpdatesAsync: (name: string, options: unknown) => {
+    state.calls.push({ call: `start:${name}`, options });
+    return Promise.resolve();
+  },
+  hasStartedLocationUpdatesAsync: () => Promise.resolve(state.started),
+  stopLocationUpdatesAsync: (name: string) => {
+    state.calls.push({ call: `stop:${name}` });
     return Promise.resolve();
   },
 }));
@@ -126,25 +132,40 @@ describe("reportDeviceContextInBackground", () => {
   });
 });
 
-describe("registerBackgroundReport", () => {
+describe("syncBackgroundReport", () => {
   beforeEach(() => {
-    state.registered = [];
-    state.status = 2;
+    state.calls = [];
+    state.backgroundGranted = true;
+    state.started = false;
   });
 
-  it("registers the task with the interval floor when background tasks are available", async () => {
-    await registerBackgroundReport();
-    expect(state.registered).toEqual([
+  it("starts significant-change updates when sharing is on and location is allowed always", async () => {
+    await syncBackgroundReport(true);
+    expect(state.calls).toEqual([
       {
-        name: DEVICE_CONTEXT_TASK,
-        options: { minimumInterval: BACKGROUND_REPORT_MIN_INTERVAL_MINUTES },
+        call: `start:${DEVICE_CONTEXT_TASK}`,
+        options: {
+          accuracy: 3,
+          distanceInterval: BACKGROUND_REPORT_MIN_DISTANCE_M,
+          significantChangesOnly: true,
+        },
       },
     ]);
   });
 
-  it("skips registration where background tasks are restricted", async () => {
-    state.status = 1;
-    await registerBackgroundReport();
-    expect(state.registered).toEqual([]);
+  it("stops a started task when sharing turns off or the always-on grant is gone", async () => {
+    state.started = true;
+    await syncBackgroundReport(false);
+    state.backgroundGranted = false;
+    await syncBackgroundReport(true);
+    expect(state.calls).toEqual([
+      { call: `stop:${DEVICE_CONTEXT_TASK}` },
+      { call: `stop:${DEVICE_CONTEXT_TASK}` },
+    ]);
+  });
+
+  it("does nothing when no task runs and none should", async () => {
+    await syncBackgroundReport(false);
+    expect(state.calls).toEqual([]);
   });
 });

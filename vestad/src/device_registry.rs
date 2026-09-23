@@ -85,7 +85,7 @@ pub(crate) enum PositionReport {
 }
 
 /// What a device reports about itself beyond identity. Both fields optional so a web client reports
-/// its zone alone and a mobile background poll reports whatever it could read; an absent field
+/// its zone alone and a mobile background location report carries whatever it could read; an absent field
 /// leaves the stored value alone.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]

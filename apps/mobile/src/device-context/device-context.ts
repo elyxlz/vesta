@@ -5,13 +5,15 @@ import type { DeviceContext, DevicePlace, DevicePosition } from "@vesta/core";
 
 // What the phone reports about itself: its zone (always) and, with the user's opt-in, its position
 // plus the macro place the OS geocoder gives for it. One reader for the foreground reporter and the
-// background poll; `mode` picks a balanced fresh fix (foreground) or, in the background, a low-power
-// fresh fix when the always-on grant allows one and the OS's last known fix otherwise.
+// background location task; both take a balanced fresh fix, and `mode` sets how long the read waits
+// for it. The background falls back to the OS's last known fix, which is the one that woke the task.
 export type PositionMode = "foreground" | "background";
 
 // A fresh fix that takes longer than this (indoors, no satellites) is given up on, so the zone
 // report is never held back by the position.
 export const FRESH_FIX_TIMEOUT_MS = 15_000;
+// iOS gives a location wake-up about ten seconds, which must also cover the geocode and the report.
+export const BACKGROUND_FIX_TIMEOUT_MS = 5_000;
 // A last-known fix older than this is not reported: stamped as fresh by the gateway, a stale one
 // would place the user where they were, not where they are.
 export const LAST_KNOWN_FIX_MAX_AGE_MS = 60 * 60 * 1000;
@@ -71,25 +73,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 }
 
 async function freshFix(
-  accuracy: Location.LocationAccuracy,
+  timeoutMs: number,
 ): Promise<Location.LocationObject | null> {
   return withTimeout(
-    Location.getCurrentPositionAsync({ accuracy }),
-    FRESH_FIX_TIMEOUT_MS,
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+    timeoutMs,
   ).catch(() => null);
 }
 
 async function readFix(
   mode: PositionMode,
 ): Promise<Location.LocationObject | null> {
-  if (mode === "foreground") return freshFix(Location.Accuracy.Balanced);
-  const background = await Location.getBackgroundPermissionsAsync().catch(
-    () => null,
-  );
-  if (background?.granted) {
-    const fix = await freshFix(Location.Accuracy.Low);
-    if (fix) return fix;
-  }
+  if (mode === "foreground") return freshFix(FRESH_FIX_TIMEOUT_MS);
+  const fix = await freshFix(BACKGROUND_FIX_TIMEOUT_MS);
+  if (fix) return fix;
   return Location.getLastKnownPositionAsync({
     maxAge: LAST_KNOWN_FIX_MAX_AGE_MS,
   }).catch(() => null);

@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { ControllerContext } from "@/controller/context";
-import { registerBackgroundReport } from "@/device-context/background-report";
+import { syncBackgroundReport } from "@/device-context/background-report";
 import { readDeviceContext } from "@/device-context/device-context";
 import { requestLocationIfUndecided } from "@/device-context/location-consent";
 import { useViewedAgent } from "@/hooks/use-viewed-agent";
@@ -13,8 +13,8 @@ function isFocused(state: AppStateStatus): boolean {
 
 // Reports this device to vestad: app foreground (so it can suppress a push while a client is
 // focused), the agent whose page is open (so it drops the per-agent presence notification), and the
-// device context (zone, and position when shared) on each foreground edge, with the closed-app poll
-// registered alongside. Reports the open agent only while foregrounded; a backgrounded app is
+// device context (zone, and position when shared) on each foreground edge, where it also starts or
+// stops the background location task to match the toggle and the OS grant. Reports the open agent only while foregrounded; a backgrounded app is
 // viewing no one.
 export function PresenceReporter() {
   const controller = useContext(ControllerContext);
@@ -38,16 +38,6 @@ export function PresenceReporter() {
     controller.reportViewing(active ? agent : null);
   }, [controller, active, agent]);
 
-  // The closed-app poll reports the same context over HTTP; registering is idempotent.
-  useEffect(() => {
-    registerBackgroundReport().catch((cause: unknown) => {
-      console.warn(
-        "Could not register the background device context report:",
-        cause,
-      );
-    });
-  }, []);
-
   // On each foreground edge, read the phone's zone (and position, when shared) fresh and report it,
   // so a device that travelled reports as soon as the user opens the app. A shared read on a phone
   // the OS has never asked raises the location prompt first, which is what makes the default-on
@@ -57,6 +47,9 @@ export function PresenceReporter() {
     let current = true;
     const read = async () => {
       if (shareLocation) await requestLocationIfUndecided();
+      syncBackgroundReport(shareLocation).catch((cause: unknown) => {
+        console.warn("Could not sync the background location task:", cause);
+      });
       return readDeviceContext({ shareLocation, mode: "foreground" });
     };
     read()
