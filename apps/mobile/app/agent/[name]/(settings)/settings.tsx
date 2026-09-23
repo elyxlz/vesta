@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createBackup,
@@ -19,7 +19,7 @@ import {
   agentActionRequest,
   type AgentAction,
 } from "@/agent/agent-action-model";
-import { useController } from "@/controller/context";
+import { ControllerContext } from "@/controller/context";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { ProviderPill } from "@/components/ProviderPill";
 import { Screen } from "@/components/layout/Screen";
@@ -49,8 +49,8 @@ function AgentSettingsContent() {
   // This client's own request on the agent: held from the tap until the gateway answers and shown
   // on the orb app-wide; after that the roster carries the move. Work vestad is running counts
   // even when this phone did not start it.
-  const { requests } = useController();
-  const { request } = useAgentRequest(useController(), name);
+  const controller = use(ControllerContext);
+  const { request } = useAgentRequest(controller, name);
   const busy = request !== "idle" || (agent?.operation ?? null) !== null;
   const providerResource = useQuery({
     queryKey: ["provider", name],
@@ -70,7 +70,7 @@ function AgentSettingsContent() {
       return operation;
     },
     onMutate: (operation) => {
-      requests.set(name, agentActionRequest(operation));
+      controller?.requests.set(name, agentActionRequest(operation));
     },
     // A delete hands off to the agent's disappearance, not to a new status: it holds "deleting"
     // until the controller drops the request when the agent leaves the roster.
@@ -80,10 +80,10 @@ function AgentSettingsContent() {
         router.replace("/");
         return;
       }
-      requests.clear(name);
+      controller?.requests.clear(name);
     },
     onError: (error) => {
-      requests.set(
+      controller?.requests.set(
         name,
         "idle",
         error instanceof Error ? error.message : "The action failed",

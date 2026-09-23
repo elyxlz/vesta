@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { use, useState } from "react";
 import { Linking, StyleSheet, View } from "react-native";
 import { LoadingSpinner } from "@/components/loading-spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -39,7 +39,7 @@ import {
   SwitchRow,
 } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
-import { useController } from "@/controller/context";
+import { ControllerContext } from "@/controller/context";
 import { requestLocationSharing } from "@/device-context/location-consent";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
@@ -98,10 +98,10 @@ export default function SettingsScreen() {
   const queryClient = useQueryClient();
   const session = useSession();
   const roster = useRoster();
-  const controller = useController();
+  const controller = use(ControllerContext);
   const { self: thisDevice, others: otherDevices } = splitSelfDevice(
     roster.devices,
-    controller.getDevice()?.id ?? null,
+    controller?.getDevice()?.id ?? null,
   );
   const preferences = usePreferences();
   const colors = preferences.colors;

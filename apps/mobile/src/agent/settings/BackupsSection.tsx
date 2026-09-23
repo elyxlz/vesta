@@ -1,3 +1,4 @@
+import { use } from "react";
 import { Alert, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatSnapshotStamp, type BackupTimelinePoint } from "@vesta/core";
@@ -12,7 +13,7 @@ import {
 import { useAgentRequest } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
-import { useController } from "@/controller/context";
+import { ControllerContext } from "@/controller/context";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
@@ -121,8 +122,8 @@ export function BackupsSection() {
   });
   // This client's own request on the agent, shown on the orb and the badge app-wide from the tap
   // until the gateway answers; after that the roster's operation carries the work.
-  const { requests } = useController();
-  const request = useAgentRequest(useController(), name);
+  const controller = use(ControllerContext);
+  const request = useAgentRequest(controller, name);
   const action = useMutation({
     mutationFn: async (
       operation:
@@ -137,11 +138,11 @@ export function BackupsSection() {
     },
     onMutate: (operation) => {
       const held = backupRequest(operation.type);
-      if (held !== null) requests.set(name, held);
+      if (held !== null) controller?.requests.set(name, held);
     },
     onSuccess: (type) => {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
-      requests.clear(name);
+      controller?.requests.clear(name);
       if (type === "restore")
         Alert.alert(
           "Backup restored",
@@ -149,7 +150,7 @@ export function BackupsSection() {
         );
     },
     onError: (error) => {
-      requests.set(
+      controller?.requests.set(
         name,
         "idle",
         error instanceof Error ? error.message : "The backup action failed",
