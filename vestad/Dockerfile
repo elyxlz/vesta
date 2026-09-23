@@ -101,16 +101,14 @@ ENV PATH="/root/agent/.venv/bin:${PATH}"
 # Same script the browser-daemon migration runs on the fleet (fleet upgrades never rerun this file).
 RUN /root/agent/skills/browser/install-engines.sh
 
-# Install Claude Code on PATH, pinned: the fleet runs one known CLI version, and a release built
-# from a bumped pin rebuilds every agent container onto it, so upgrades are deliberate and
-# fleet-wide. claude_agent_sdk would otherwise fall back to its own bundled CLI (deep in
-# site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must be
-# resolvable on PATH; the SDK then reuses this same binary. cc_sdk stays in the tree (tmux is
+# Claude Code on PATH at the version core pins (agent/core/claude-code-version). The image bakes
+# it and every agent boot runs the same script, so a bumped pin reaches a running agent on its
+# next restart, not only a freshly created one (a container keeps its image, and a rebuild
+# snapshots its filesystem). claude_agent_sdk would otherwise fall back to its own bundled CLI
+# (deep in site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must
+# be resolvable on PATH; the SDK then reuses this same binary. cc_sdk stays in the tree (tmux is
 # kept) but is dormant; if ever reactivated it fetches its own pinned binary under ~/.cache/cc-sdk.
-ARG CLAUDE_CODE_VERSION=2.1.280
-RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION" && \
-    claude --version | grep -F "$CLAUDE_CODE_VERSION" && \
-    mkdir -p /root/.claude
+RUN /root/agent/core/claude-code-install.sh && mkdir -p /root/.claude
 WORKDIR /root
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall
