@@ -1,8 +1,5 @@
 import {
   type AuthStartResult,
-  providerResult,
-  modelStepInitialModel,
-  providerUsesOAuth,
   catalogIsLive,
   startProviderOAuth,
   keyStepCopy,
@@ -19,7 +16,6 @@ import { ChoiceStep, type ChoiceVariant } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
-import { planContextOptions, planFromCredentials } from "./context-plan";
 import type { ProviderKind, ProviderSelection } from "@vesta/core";
 import { useProviderCatalog } from "@/hooks/use-agent-catalogs";
 import { useClaudeModels } from "@/hooks/use-claude-models";
@@ -32,6 +28,11 @@ import {
   contextForModel,
   fetchClaudeModelsWithCredentials,
   fetchOpenRouterModels,
+  modelStepInitialModel,
+  planContextOptions,
+  planFromCredentials,
+  providerResult,
+  providerUsesOAuth,
   validateOpenRouterKey,
 } from "@vesta/core";
 import { httpClient } from "@/api/client";

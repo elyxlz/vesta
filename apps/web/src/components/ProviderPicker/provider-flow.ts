@@ -3,7 +3,6 @@ import type {
   ClaudeOAuthStart,
   OpenAIOAuthStart,
   ProviderCatalog,
-  ProviderSelection,
 } from "@vesta/core";
 import { startClaudeOAuth, startOpenAIOAuth } from "@vesta/core";
 import { httpClient } from "@/api/client";
@@ -34,72 +33,6 @@ export function keyStepCopy(provider: ProviderKind | null) {
     return KEY_STEP_COPY.openrouter;
   return KEY_STEP_COPY[provider];
 }
-
-export function providerResult(
-  provider: ProviderKind,
-  credentials: string | null,
-  key: string,
-  model: string,
-  maxContextTokens: number,
-): ProviderSelection | null {
-  if (provider === "claude") {
-    return credentials === null
-      ? null
-      : {
-          kind: "claude",
-          credentials,
-          model: model || undefined,
-          maxContextTokens,
-        };
-  }
-  if (provider === "openai") {
-    return credentials === null
-      ? null
-      : {
-          kind: "openai",
-          credentials,
-          model,
-          ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
-        };
-  }
-  return {
-    kind: provider,
-    key,
-    model,
-    ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
-  };
-}
-
-// The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus-latest" alias, else the catalog's per-provider default.
-
-// The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus-latest" alias, else the catalog's per-provider default.
-
-// The initial model-step selection: the in-progress choice wins, else Claude
-// defaults to the "opus-latest" alias, else the catalog's per-provider default.
-export function modelStepInitialModel(
-  provider: ProviderKind | null,
-  model: string,
-  catalog: ProviderCatalog,
-): string {
-  if (model) return model;
-  if (provider === "claude") return "opus-latest";
-  if (provider === null) return "";
-  return catalog.providers[provider]?.default_model ?? "";
-}
-
-export function providerUsesOAuth(
-  provider: ProviderKind | null,
-  catalog: ProviderCatalog,
-): boolean {
-  if (provider === null) return false;
-  const authKind = catalog.providers[provider]?.auth_kind;
-  return authKind === "claude_oauth" || authKind === "device_oauth";
-}
-
-// A live-catalog provider has no static default model, so even defaults-only
-// mode must walk the model (and context) steps.
 
 // A live-catalog provider has no static default model, so even defaults-only
 // mode must walk the model (and context) steps.

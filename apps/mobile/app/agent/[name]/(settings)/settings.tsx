@@ -56,10 +56,13 @@ function AgentSettingsContent() {
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
   });
+  const provider = providerResource.data?.provider ?? null;
   const providerIdentity = resolveProviderIdentity(
-    providerResource.data?.provider ?? null,
+    provider,
     providerResource.data?.catalog,
   );
+  // Only a loaded answer can say the agent needs a provider, so a slow fetch never flashes it.
+  const needsProvider = provider !== null && providerIdentity === null;
   const action = useMutation({
     mutationFn: async (operation: AgentAction) => {
       if (operation === "start") await startAgent(api, name);
@@ -126,6 +129,12 @@ function AgentSettingsContent() {
             >
               <ProviderPill identity={providerIdentity} />
             </Pressable>
+          ) : needsProvider ? (
+            <Button icon="flash-outline" onPress={() => open("provider")}>
+              {provider?.kind === "none"
+                ? "Set up a provider"
+                : "Sign in again"}
+            </Button>
           ) : null
         }
         style={styles.identityCard}
@@ -133,10 +142,12 @@ function AgentSettingsContent() {
       <FormGroup>
         <FormSection title="Agent">
           <FormRow label="Name" value={name} onPress={() => open("name")} />
-          <FormRow
-            label={sectionTitle("provider")}
-            onPress={() => open("provider")}
-          />
+          {needsProvider ? null : (
+            <FormRow
+              label={sectionTitle("provider")}
+              onPress={() => open("provider")}
+            />
+          )}
         </FormSection>
         <FormSection>
           <FormRow

@@ -11,6 +11,9 @@ vi.mock("expo-router/stack", () => ({
   default: Object.assign(() => null, { Screen: () => null }),
 }));
 vi.mock("@/agent/AgentProvider", () => ({ AgentProvider: () => null }));
+vi.mock("@/agent/settings/provider-draft", () => ({
+  ProviderDraftProvider: () => null,
+}));
 vi.mock("@/preferences/PreferencesProvider", () => ({
   usePreferences: () => ({ colors: { background: "white", text: "black" } }),
 }));
@@ -31,7 +34,7 @@ describe("agent sheet navigation", () => {
   });
 
   it("keeps direct-linked details and their back destination in the same sheet", () => {
-    const stack = AgentSettingsLayout();
+    const stack = AgentSettingsLayout().props.children;
     expect(settingsRoutes.anchor).toBe("settings");
     expect(stack.props.screenOptions.presentation).toBe("card");
     expect(
@@ -44,6 +47,10 @@ describe("agent sheet navigation", () => {
       "logs",
       "notifications",
       "file",
+      "provider/choose",
+      "provider/sign-in",
+      "provider/model",
+      "provider/context",
     ]);
   });
 
@@ -51,9 +58,12 @@ describe("agent sheet navigation", () => {
     "uses the appropriate header inside the %s sheet",
     (platform) => {
       vi.stubEnv("EXPO_OS", platform);
-      const stack = AgentSettingsLayout();
+      const stack = AgentSettingsLayout().props.children;
       expect(stack.props.screenOptions.headerShown).toBe(platform === "ios");
-      const file = stack.props.children.at(-1);
+      const file = stack.props.children.find(
+        (screen: ReactElement<{ name: string }>) =>
+          screen.props.name === "file",
+      );
       expect(file.props.name).toBe("file");
       expect(file.props.options).toBeUndefined();
     },
