@@ -546,16 +546,9 @@
     {
       "id": "settings-gateway-update-available",
       "title": "Gateway update available",
-      "description": "Gateway settings with a newer release ready to install.",
+      "description": "Gateway settings with a newer release ready to install, expanded into an update card with the version and a primary action.",
       "group": "Gateway update",
       "screenshot": "settings-gateway-update-available.png"
-    },
-    {
-      "id": "settings-gateway-update-confirm",
-      "title": "Confirm gateway update",
-      "description": "Native confirmation shown before the gateway and agents restart for an update.",
-      "group": "Gateway update",
-      "screenshot": "settings-gateway-update-confirm.png"
     },
     {
       "id": "gateway-update-snapshotting",
