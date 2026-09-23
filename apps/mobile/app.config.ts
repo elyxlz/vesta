@@ -149,13 +149,12 @@ const config: ExpoConfig = {
           "Let Vesta know where you are, even while the app is closed, to help you wherever you go.",
         locationAlwaysPermission:
           "Let Vesta know where you are while the app is closed, to help you wherever you go.",
-        // The closed-app poll reads a fresh fix, which needs the always-on grant on both platforms
-        // and, on iOS, the location background mode as well; the processing mode alone cannot get one.
+        // The background location task needs the always-on grant on both platforms and, on iOS, the
+        // location background mode.
         isIosBackgroundLocationEnabled: true,
         isAndroidBackgroundLocationEnabled: true,
       },
     ],
-    "expo-background-task",
     [
       "expo-splash-screen",
       {

@@ -117,7 +117,7 @@ impl UserContext {
 }
 
 /// Whether a report places the user at the reporting device. A focused, fresh socket frame or a
-/// background poll from a phone does; an unfocused frame or a resync replay stores its facts but
+/// background location report from a phone does; an unfocused frame or a resync replay stores its facts but
 /// tells no one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UserPresence {
@@ -156,7 +156,7 @@ async fn deliver(state: &SharedState, agent: &str, notification: &AgentNotificat
 }
 
 /// `PUT /devices/{device_id}/context`: a device reporting its context outside the `/sync` socket
-/// (the mobile background poll). Client-authed. The report is taken as the user being at that
+/// (the mobile background location task). Client-authed. The report is taken as the user being at that
 /// device, so a differing zone is news to the agents. A device the registry has never seen is
 /// refused: identity is minted by the `/sync` attach alone.
 pub(crate) async fn report_context_handler(

@@ -2,7 +2,7 @@ import type { DeviceContext } from "../protocol/frames";
 import { jsonInit, type HttpClient } from "../transport/http";
 
 // The out-of-socket carrier of a device's reported context (PUT /devices/{id}/context): what the
-// mobile background poll writes while the app is suspended and no /sync socket is open.
+// mobile background location task writes while the app is suspended and no /sync socket is open.
 export async function reportDeviceContext(
   http: HttpClient,
   deviceId: string,
