@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { use, useState } from "react";
 import {
   completeClaudeOAuth,
   completeOpenAIOAuth,
@@ -24,7 +24,7 @@ import { Text } from "@/components/ui/Typography";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAgentRequest } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
-import { useController } from "@/controller/context";
+import { ControllerContext } from "@/controller/context";
 import {
   buildModelOptions,
   resolveProviderKind,
@@ -120,16 +120,16 @@ export function ProviderSection() {
   const [requestBusy, setBusy] = useState(false);
   // Provisioning is this client's own request on the agent: the orb reads "signing in..." app-wide
   // until the gateway answers, then the roster's restart carries the rest.
-  const { requests } = useController();
-  const request = useAgentRequest(useController(), name);
+  const controller = use(ControllerContext);
+  const request = useAgentRequest(controller, name);
   const busy = requestBusy || request.request !== "idle";
   const provision = async (selection: ProviderSelection) => {
-    requests.set(name, "authenticating");
+    controller?.requests.set(name, "authenticating");
     try {
       await provisionAgent(api, name, selection);
-      requests.clear(name);
+      controller?.requests.clear(name);
     } catch (cause) {
-      requests.set(
+      controller?.requests.set(
         name,
         "idle",
         cause instanceof Error ? cause.message : "Provider sign-in failed",

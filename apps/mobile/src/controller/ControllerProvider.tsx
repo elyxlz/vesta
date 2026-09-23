@@ -37,7 +37,6 @@ const CLIENT_VERSION = resolveClientVersion(
   Constants.expoConfig?.extra?.appVariant === "development",
 );
 
-export { useController } from "./context";
 export { useSyncState };
 
 // Module scope keeps the selector identity stable across renders, which the replica store memo needs.
