@@ -16,7 +16,7 @@
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
-    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
     "@eslint/js": "^10.0.1",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
@@ -24,11 +24,11 @@
     "eslint-plugin-import-x": "^4.17.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "expo-router": "~57.0.18",
-    "knip": "^6.34.0",
-    "prettier": "^3.9.6",
+    "knip": "^6.37.0",
+    "prettier": "^3.9.8",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "typescript-eslint": "^8.68.0"
+    "typescript-eslint": "^8.70.0"
   },
   "scripts": {
     "postinstall": "patch-package --patch-dir mobile/patches",
