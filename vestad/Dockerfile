@@ -104,10 +104,11 @@ RUN /root/agent/skills/browser/install-engines.sh
 # Claude Code on PATH at the version core pins (agent/core/claude-code-version). The image bakes
 # it and every agent boot runs the same script, so a bumped pin reaches a running agent on its
 # next restart, not only a freshly created one (a container keeps its image, and a rebuild
-# snapshots its filesystem). claude_agent_sdk would otherwise fall back to its own bundled CLI
-# (deep in site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must
-# be resolvable on PATH; the SDK then reuses this same binary. cc_sdk stays in the tree (tmux is
-# kept) but is dormant; if ever reactivated it fetches its own pinned binary under ~/.cache/cc-sdk.
+# snapshots its filesystem). The harness is pointed at this binary explicitly (`cli_path` in
+# core/client.py): claude_agent_sdk ships its own bundled CLI and prefers it over PATH when given
+# no path, so without that the pin would govern only the skills that shell out to `claude`
+# (e.g. video-use). cc_sdk stays in the tree (tmux is kept) but is dormant; if ever reactivated
+# it fetches its own pinned binary under ~/.cache/cc-sdk.
 RUN /root/agent/core/claude-code-install.sh && mkdir -p /root/.claude
 WORKDIR /root
 

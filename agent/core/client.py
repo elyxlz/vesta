@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import pathlib as pl
+import shutil
 import time
 import typing as tp
 
@@ -713,6 +714,9 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=_harness_model(provider),
+        # The `claude` on PATH is the one core's pin governs (claude-code-install.sh). Left unset, the
+        # SDK spawns the CLI bundled inside its own package instead, whatever version that is.
+        cli_path=shutil.which("claude"),
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         # ENABLE_TASKS=0 leaves TaskOutput and TaskStop (gated separately) and re-enables the legacy
