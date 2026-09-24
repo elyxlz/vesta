@@ -59,11 +59,17 @@ while IFS= read -r line; do
   # Terms come from the heading AND the entry body, because a heading alone is too thin.
   body=$(sed -n "${lno},$((lno+25))p" "$file" 2>/dev/null)
 
-  # IDENTIFIER-SHAPED ONLY: prose locates nothing, and an ALLCAPS clause readmitted it.
-  # Notes use CAPS for emphasis, so `_|[A-Z]{3,}` surfaced RISES, SHRINK, ANYWAY, WORSE.
-  # An identifier carries an underscore or a digit, which is what every term that has
-  # actually located prior art here looks like (dead_at, revived_at, _pgn, REVIVE_SHARE).
-  # A pure-prose entry now yields nothing, which beats its three rarest English words.
+  # IDENTIFIER-SHAPED ONLY: prose locates nothing. Earlier versions matched "question",
+  # "animals", "arguing" in every file, and a term that hits everywhere points nowhere.
+  #
+  # THE ALLCAPS CLAUSE WAS THE SAME BUG WEARING A HAT, found on its first real run
+  # (2026-09-19). The filter used to accept `_` OR three consecutive capitals, and my notes
+  # use CAPS for emphasis on ordinary English, so it dutifully surfaced RISES, SHRINK,
+  # ANYWAY, WORSE, MYSELF and CARRIED: prose readmitted through the clause written to keep
+  # prose out. An identifier is now a token carrying an underscore or a digit, which is what
+  # every term that has ever actually located prior art here looks like (`dead_at`,
+  # `revived_at`, `_pgn`, `REVIVE_SHARE`). An entry of pure prose now yields NOTHING, and
+  # that is the correct answer rather than the three rarest English words in it.
   cands=$(printf '%s\n%s\n' "$heading" "$body" \
     | grep -oE '[A-Za-z_][A-Za-z0-9_]{4,}' \
     | grep -E '_|[0-9]' \
@@ -74,20 +80,31 @@ while IFS= read -r line; do
   # first in the C locale) eat every slot, so the term that actually locates the prior art is
   # never reached. A useful pointer need not be rare in absolute terms, only the rarest thing
   # in THIS entry.
+  # THE SAME FILE IS A STORE TOO. A notes file grows to thousands of lines, and an idea
+  # re-derived far below its first statement is the commonest miss, so a term found nowhere
+  # else still counts when it appears in this file ABOVE the oldest heading this run keys on.
+  # The entry's own lines and anything after them are today's work and are excluded.
+  cut=$(awk -F: -v f="$file" '$1==f {print $2}' "$tmp" | sort -n | head -1)
   scored=""
   for t in $cands; do
     nfiles=$(grep -rails --include='*.md' -- "$t" "${stores[@]}" 2>/dev/null | wc -l)
-    [ "$nfiles" -lt 2 ] && continue          # nothing to point at
-    scored="${scored}${nfiles} ${t}\n"
+    other=$(( nfiles > 0 ? nfiles - 1 : 0 ))   # the term came from $file, so $file is one of them
+    earlier=$(grep -an -- "$t" "$file" 2>/dev/null | awk -F: -v c="$cut" '$1 < c' | wc -l)
+    [ "$other" -eq 0 ] && [ "$earlier" -eq 0 ] && continue   # nothing to point at
+    places=$(( other + (earlier > 0 ? 1 : 0) ))
+    scored="${scored}${places} ${t}\n"
   done
 
   hits=""
   for pair in $(printf "%b" "$scored" | sort -n | head -"$TOPN" | tr ' ' ':'); do
     [ -z "$pair" ] && continue
-    nfiles="${pair%%:*}"; t="${pair#*:}"
+    places="${pair%%:*}"; t="${pair#*:}"
     found=$(grep -rains --include='*.md' -- "$t" "${stores[@]}" 2>/dev/null \
             | grep -v "^${file}:" | head -3)
-    [ -n "$found" ] && hits="${hits}    term '${t}' (in ${nfiles} files):\n${found}\n"
+    same=$(grep -an -- "$t" "$file" 2>/dev/null | awk -F: -v c="$cut" -v f="$file" '$1 < c {print f":"$0}' | tail -3)
+    [ -n "$same" ] && found="${found:+$found
+}${same}"
+    [ -n "$found" ] && hits="${hits}    term '${t}' (in ${places} places, same-file lines above ${cut} count):\n${found}\n"
   done
 
   if [ -n "$hits" ]; then
