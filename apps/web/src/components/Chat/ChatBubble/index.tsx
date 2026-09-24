@@ -161,7 +161,10 @@ function MessageBubble({
       <Bubble
         variant={isUser ? "default" : "secondary"}
         align={isUser ? "end" : "start"}
-        className="max-w-[85%]"
+        className={cn(
+          "max-w-[85%]",
+          !isUser && "*:data-[slot=bubble-content]:bg-bubble",
+        )}
       >
         <BubbleContent
           className={cn("flex items-end px-3.5 py-1.5", large && "text-base")}

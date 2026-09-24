@@ -54,7 +54,7 @@ interface ChatMessageAreaProps {
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
 // load reads as a conversation arriving rather than an empty/"needs to sign in" state.
-// Mirrors ChatBubble: bg-secondary on the left (agent), bg-primary on the right (you),
+// Mirrors ChatBubble: bg-bubble on the left (agent), bg-primary on the right (you),
 // clustered into runs like a real chat. The column is bottom-anchored and overflows the
 // top, so it reads as a thread continuing above the fold.
 const SKELETON_ROWS: { side: "agent" | "user"; size: string }[] = [
@@ -97,7 +97,7 @@ function ChatSkeleton({ bottomPad }: { bottomPad: number }) {
               className={cn(
                 "animate-pulse",
                 row.size,
-                isUser ? "bg-primary" : "bg-secondary",
+                isUser ? "bg-primary" : "bg-bubble",
               )}
               style={bubbleRadiusStyle(isUser, isGroupEnd)}
             />
@@ -435,7 +435,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
           <div className="px-4 pb-4">
             {isTyping && (
               <div className="flex justify-start mt-2">
-                <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
+                <div className="flex items-center gap-1 bg-bubble text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
                   <span className="sr-only">typing...</span>
                   <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
                   <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />

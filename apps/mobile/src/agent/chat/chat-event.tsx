@@ -242,7 +242,7 @@ export const ChatEvent = memo(function ChatEvent({
                 styles.timestampSpacer,
                 USES_NATIVE_BUBBLE_SHAPE
                   ? null
-                  : { color: user ? colors.accent : colors.card },
+                  : { color: user ? colors.accent : colors.bubble },
               ]}
             >
               {"\u00A0\u00A0\u00A0\u00A0"}
@@ -319,7 +319,7 @@ export const ChatEvent = memo(function ChatEvent({
         </QuotedBlock>
       ),
     }),
-    [colors.accent, colors.card, openMenuFromBlock, timestamp, user],
+    [colors.accent, colors.bubble, openMenuFromBlock, timestamp, user],
   );
   const markdownStyleSet = chatMarkdownStyleSet(colors);
   const sendState = event.type === "user" ? event.send_state : undefined;
@@ -370,7 +370,7 @@ export const ChatEvent = memo(function ChatEvent({
     );
   }
   if (event.type !== "user" && event.type !== "chat") return null;
-  const bubbleColor = user ? colors.accent : colors.card;
+  const bubbleColor = user ? colors.accent : colors.bubble;
   const attachments = event.attachments ?? [];
   // With no caption the markdown (and the spacer that reserves the timestamp's room) is absent,
   // so the timestamp renders as its own right-aligned line under the blocks instead.
@@ -549,13 +549,13 @@ export const TypingIndicator = memo(function TypingIndicator({
         style={[
           styles.typingBubble,
           {
-            backgroundColor: colors.card,
+            backgroundColor: colors.bubble,
             borderColor: colors.border,
             borderWidth: StyleSheet.hairlineWidth,
           },
         ]}
       >
-        <BubbleTail user={false} fill={colors.card} stroke={colors.border} />
+        <BubbleTail user={false} fill={colors.bubble} stroke={colors.border} />
         <View style={styles.typingDots}>
           {dots.map((dot, index) => (
             <Animated.View

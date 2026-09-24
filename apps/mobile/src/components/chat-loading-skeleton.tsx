@@ -33,7 +33,7 @@ export function ChatLoadingSkeleton() {
                 width: row.width,
                 height: row.height,
                 backgroundColor:
-                  row.side === "user" ? colors.accent : colors.card,
+                  row.side === "user" ? colors.accent : colors.bubble,
                 borderColor:
                   row.side === "agent" ? colors.border : "transparent",
               },
