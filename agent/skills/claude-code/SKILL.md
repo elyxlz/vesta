@@ -48,6 +48,12 @@ Parse `result` and report it. Capture `session_id` for follow-ups.
 - Pass the user's exact intent, not your paraphrase: Claude Code's prompt is tuned for natural-language coding tasks; don't pre-digest.
 - Don't nest claude calls inside the task string: if the task itself involves running `claude`, you've over-decomposed; just describe the goal.
 
+## Long runs (tens of minutes)
+
+A build or rebalance can run an hour. Launch it detached with its JSON redirected to a file, then wait on that file becoming non-empty (`while [ ! -s out.json ]; do sleep 30; done` as a background command), not on the process: `pgrep -f "claude -p"` matches the waiting loop's own command line, so it never reports the run as finished.
+
+While it runs, the worktree holds a half-finished diff. Report progress from it (files touched, what is being measured), never a cause or a result: a change mid-run is a hypothesis the run may still disprove or revert. Causes and numbers come from the final `result`, re-checked with one independent run of your own before you pass them on.
+
 ## Multi-turn (follow-ups)
 
 Sessions live on Claude Code's side. No Vesta storage needed: the `session_id` is just a string you hold in conversation context and pass back.
