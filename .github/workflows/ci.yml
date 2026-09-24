@@ -1123,10 +1123,29 @@ jobs:
       - mobile-native
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
     steps:
       - name: Check for failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED: ${{ contains(needs.*.result, 'failure') }}
+          CANCELLED: ${{ contains(needs.*.result, 'cancelled') }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "One or more required jobs failed or were cancelled"
+          if [[ "$FAILED" == "true" ]]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+          if [[ "$CANCELLED" == "true" ]]; then
+            # A run superseded on the same commit still reports this check there, and
+            # GitHub counts every result on a commit; the surviving run's verdict decides.
+            others=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA" \
+              --jq "[.workflow_runs[] | select(.id != $GITHUB_RUN_ID and .conclusion != \"cancelled\")] | length")
+            if [[ "$others" -gt 0 ]]; then
+              echo "Superseded by another CI run for $HEAD_SHA"
+              exit 0
+            fi
+            echo "One or more required jobs were cancelled"
             exit 1
           fi
