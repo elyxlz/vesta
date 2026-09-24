@@ -44,8 +44,11 @@ CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 REQUEST_TIMEOUT = 30
 MAX_REDIRECTS = 5
 
-NS = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
+NS = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav", "cs": "http://calendarserver.org/ns/"}
 CALENDAR_RESOURCETYPE = "{urn:ietf:params:xml:ns:caldav}calendar"
+# A calendar subscribed by URL: the server stores no events, only the feed URL in cs:source.
+SUBSCRIBED_RESOURCETYPE = "{http://calendarserver.org/ns/}subscribed"
+FEED_USER_AGENT = "vesta-email-client"
 
 PRINCIPAL_BODY = '<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>'
 HOME_BODY = (
@@ -53,8 +56,8 @@ HOME_BODY = (
     "<d:prop><c:calendar-home-set/><c:schedule-default-calendar-URL/></d:prop></d:propfind>"
 )
 CALENDARS_BODY = (
-    '<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
-    "<d:prop><d:displayname/><d:resourcetype/><c:supported-calendar-component-set/></d:prop></d:propfind>"
+    '<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/">'
+    "<d:prop><d:displayname/><d:resourcetype/><c:supported-calendar-component-set/><cs:source/></d:prop></d:propfind>"
 )
 UID_QUERY = (
     '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
@@ -92,6 +95,7 @@ class DavResource:
     principal_href: str | None = None
     home_href: str | None = None
     schedule_default_href: str | None = None
+    source_href: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -100,6 +104,11 @@ class CalendarInfo:
     name: str
     url: str
     primary: bool
+    source: str | None = None  # feed URL of a subscribed (read-only) calendar; never print it, it may embed a token
+
+
+class FeedError(Exception):
+    """A subscribed calendar's source feed could not be fetched; the message names only the feed host."""
 
 
 # -- account resolution -----------------------------------------------------
@@ -242,6 +251,9 @@ def _apply_props(record: DavResource, prop: ET.Element) -> None:
     schedule_default = _child_href(prop, "c:schedule-default-calendar-URL")
     if schedule_default:
         record.schedule_default_href = schedule_default
+    source = _child_href(prop, "cs:source")
+    if source:
+        record.source_href = source.strip()
 
 
 def parse_multistatus(text: str) -> list[DavResource]:
@@ -302,12 +314,41 @@ def _calendar_id(ctx: CalDavAccount, url: str) -> str:
     return segments[-1] if segments else url
 
 
+def _feed_url(source: str) -> str:
+    """A subscription source as a fetchable URL (webcal:// is served over https)."""
+    scheme, rest = source.split(":", 1) if ":" in source else ("", source)
+    if scheme.lower() in ("webcal", "webcals"):
+        return "https:" + rest
+    return source
+
+
+def feed_host(url: str) -> str:
+    return urllib.parse.urlsplit(url).hostname or "unknown host"
+
+
+def fetch_feed(url: str) -> str:
+    """GET a subscribed calendar's iCalendar feed, unauthenticated; raise FeedError on any failure."""
+    host = feed_host(url)
+    if urllib.parse.urlsplit(url).scheme.lower() not in ("http", "https"):
+        raise FeedError(f"subscribed calendar feed on {host} has an unsupported URL scheme")
+    req = urllib.request.Request(url, headers={"User-Agent": FEED_USER_AGENT, "Accept": "text/calendar"})
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise FeedError(f"subscribed calendar feed on {host} failed (HTTP {e.code})") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        reason = e.reason if isinstance(e, urllib.error.URLError) else e
+        raise FeedError(f"subscribed calendar feed on {host} could not be reached: {reason}") from None
+
+
 def list_calendars(ctx: CalDavAccount) -> list[CalendarInfo]:
     """The account's VEVENT calendar collections, with the primary flagged.
 
     Google's primary is keyed by the account email. On discovery providers the
     primary is the server's advertised scheduling default (RFC 6638) when
-    present, else the first listed calendar.
+    present, else the first listed writable calendar. Subscribed collections
+    are listed with their feed URL in ``source`` and are never primary.
     """
     if ctx.layout == "google":
         home = f"{ctx.base_url}/{urllib.parse.quote(ctx.user, safe='@')}/"
@@ -317,13 +358,15 @@ def list_calendars(ctx: CalDavAccount) -> list[CalendarInfo]:
     _, text, final = request(ctx, "PROPFIND", home, body=CALENDARS_BODY, depth="1")
     infos: list[CalendarInfo] = []
     for record in parse_multistatus(text):
-        if CALENDAR_RESOURCETYPE not in record.resourcetypes:
+        subscribed = SUBSCRIBED_RESOURCETYPE in record.resourcetypes and bool(record.source_href)
+        if CALENDAR_RESOURCETYPE not in record.resourcetypes and not subscribed:
             continue
         if record.components and "VEVENT" not in record.components:
             continue
         url = _with_slash(urllib.parse.urljoin(final, record.href))
         cal_id = _calendar_id(ctx, url)
-        infos.append(CalendarInfo(id=cal_id, name=record.displayname or cal_id, url=url, primary=False))
+        source = _feed_url(record.source_href) if subscribed and record.source_href else None
+        infos.append(CalendarInfo(id=cal_id, name=record.displayname or cal_id, url=url, primary=False, source=source))
     if not infos:
         sys.exit(f"no calendar collections found under {home}")
     if ctx.layout == "google":
@@ -332,33 +375,56 @@ def list_calendars(ctx: CalDavAccount) -> list[CalendarInfo]:
         # Compare by path: the default may be advertised on the principal host
         # while collections list on the per-user partition host.
         default_path = _with_slash(urllib.parse.urlsplit(default_url).path) if default_url else None
-        default_infos = [info for info in infos if default_path is not None and urllib.parse.urlsplit(info.url).path == default_path]
-        primary_id = default_infos[0].id if default_infos else infos[0].id
+        writable = [info for info in infos if info.source is None]
+        default_infos = [info for info in writable if default_path is not None and urllib.parse.urlsplit(info.url).path == default_path]
+        primary_id = default_infos[0].id if default_infos else writable[0].id if writable else None
     return [dataclasses.replace(info, primary=info.id == primary_id) for info in infos]
 
 
-def collection_url(ctx: CalDavAccount, calendar_id: str) -> str:
-    """Events-collection URL for a calendar id ('primary' resolves per provider)."""
+def calendar_info(ctx: CalDavAccount, calendar_id: str) -> CalendarInfo:
+    """Resolve a calendar id ('primary' resolves per provider) to its collection."""
     if ctx.layout == "google":
         # Google: 'primary' is keyed by the account email; any other id is a
         # Google calendar id (e.g. ...@group.calendar.google.com) used verbatim.
         cal = ctx.user if calendar_id == "primary" else calendar_id
-        return f"{ctx.base_url}/{urllib.parse.quote(cal, safe='@')}/events/"
+        url = f"{ctx.base_url}/{urllib.parse.quote(cal, safe='@')}/events/"
+        return CalendarInfo(id=cal, name=cal, url=url, primary=cal == ctx.user)
     calendars = list_calendars(ctx)
     if calendar_id == "primary":
-        return next(info.url for info in calendars if info.primary)
+        primary = next((info for info in calendars if info.primary), None)
+        if primary is None:
+            sys.exit("no writable calendar to use as primary; pass --calendar <id>")
+        return primary
     for info in calendars:
         if calendar_id in (info.id, info.name):
-            return info.url
+            return info
     sys.exit(f"unknown calendar {calendar_id!r}; known: {[info.id for info in calendars]}")
+
+
+def collection_url(ctx: CalDavAccount, calendar_id: str) -> str:
+    """Events-collection URL of a writable calendar; exits for a subscribed (read-only) one."""
+    info = calendar_info(ctx, calendar_id)
+    if info.source is not None:
+        sys.exit(
+            f"calendar {calendar_id!r} is a subscribed calendar and is read-only: its events come from a feed on "
+            f"{feed_host(info.source)}; read it with 'calendar list --calendar {info.id}'"
+        )
+    return info.url
 
 
 # -- event access ---------------------------------------------------------------
 
 
 def report_events(ctx: CalDavAccount, calendar_id: str, start: dt.datetime, end: dt.datetime) -> list[str]:
-    """calendar-query REPORT for events overlapping [start, end); one ics text per resource."""
-    collection = collection_url(ctx, calendar_id)
+    """calendar-query REPORT for events overlapping [start, end); one ics text per resource.
+
+    A subscribed calendar returns its whole source feed as one ics text (the
+    caller's expansion applies the window); a failed fetch raises FeedError.
+    """
+    info = calendar_info(ctx, calendar_id)
+    if info.source is not None:
+        return [fetch_feed(info.source)]
+    collection = info.url
     body = TIME_RANGE_QUERY.format(start=ics.format_utc(start), end=ics.format_utc(end))
     _, text, _ = request(ctx, "REPORT", collection, body=body, depth="1")
     return [record.calendar_data for record in parse_multistatus(text) if record.calendar_data]
