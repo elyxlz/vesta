@@ -259,7 +259,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         className={cn(
           "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base shadow-none",
           fullscreen && "bg-transparent ring-0",
-          isMobile && "bg-transparent overflow-visible",
+          isMobile && "overflow-visible",
         )}
       >
         <DropOverlay active={dragActive} agentName={name} />

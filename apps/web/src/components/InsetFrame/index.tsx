@@ -9,8 +9,8 @@ const FRAME_Z = 2147483647;
  * The web-desktop "framed window" look, done without clipping the layout.
  *
  *  - The content surface is in-flow (fills the fixed-viewport flex shell minus the
- *    gutter; --background, as on the mobile app, against the --muted gutter). No
- *    overflow clip — the rounded corners are faked by the overlay instead.
+ *    gutter; the body's --background shows through it). No overflow clip — the
+ *    rounded corners are faked by the overlay instead.
  *  - The overlay is PORTALED TO document.body (so it's a sibling of every dialog
  *    portal, not trapped inside #root) and pinned --frame-inset from each edge. Its
  *    `0 0 0 100vmax` box-shadow in --muted paints everything OUTSIDE its rounded
@@ -27,7 +27,7 @@ export function InsetFrame({ children }: { children: ReactNode }) {
   return (
     <>
       <div
-        className="relative flex min-h-0 flex-1 flex-col rounded-squircle-md bg-background [corner-shape:squircle]"
+        className="relative flex min-h-0 flex-1 flex-col rounded-squircle-md [corner-shape:squircle]"
         style={{ margin: "var(--frame-inset)" }}
       >
         {children}

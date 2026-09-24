@@ -85,13 +85,10 @@ export default function App() {
     return <InsetFrame>{content}</InsetFrame>;
   }
 
-  // Mobile / desktop app: the OS window is the frame, so just the muted
-  // surface and safe-area insets.
+  // Mobile / desktop app: the OS window is the frame, so just the safe-area insets.
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-muted">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
-        {content}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
+      {content}
     </div>
   );
 }
