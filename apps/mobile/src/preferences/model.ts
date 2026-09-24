@@ -28,7 +28,7 @@ export const initialPreferences: PreferencesState = {
   showLogsPage: false,
   remoteNotifications: true,
   pushChatReplies: true,
-  notificationPreviews: false,
+  notificationPreviews: true,
   shareLocation: true,
 };
 
@@ -85,7 +85,7 @@ export function readStoredPreferences(value: string | null): PreferencesState {
       notificationPreviews:
         typeof parsed.notificationPreviews === "boolean"
           ? parsed.notificationPreviews
-          : false,
+          : true,
       shareLocation:
         typeof parsed.shareLocation === "boolean" ? parsed.shareLocation : true,
     };

@@ -15,6 +15,15 @@ describe("preference persistence", () => {
     expect(initialPreferences.showNotificationsPage).toBe(false);
     expect(initialPreferences.showLogsPage).toBe(false);
     expect(initialPreferences.shareLocation).toBe(true);
+    expect(initialPreferences.notificationPreviews).toBe(true);
+  });
+
+  it("restores hidden message content instead of replacing it with the default", () => {
+    expect(
+      readStoredPreferences(JSON.stringify({ notificationPreviews: false })),
+    ).toMatchObject({
+      notificationPreviews: false,
+    });
   });
 
   it("defaults the dashboard page off for state saved before the field existed", () => {
@@ -71,7 +80,7 @@ describe("preference persistence", () => {
     const migrated = readStoredPreferences('{"theme":"unknown"}');
     expect(migrated).toMatchObject({
       theme: "system",
-      notificationPreviews: false,
+      notificationPreviews: true,
     });
     expect(readStoredPreferences("not json")).toEqual(initialPreferences);
   });
