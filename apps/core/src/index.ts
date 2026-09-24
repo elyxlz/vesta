@@ -11,6 +11,11 @@ export type { ReleaseNote } from "./release-notes/release-notes";
 
 export { parseAnsi, resolveAnsiColor } from "./ansi/ansi";
 export type { AnsiColor, AnsiStyle } from "./ansi/ansi";
+export {
+  CODE_TOKEN_COLORS,
+  highlightCode,
+} from "./code-highlight/code-highlight";
+export type { CodeToken } from "./code-highlight/code-highlight";
 
 export type {
   AgentActivityState,
