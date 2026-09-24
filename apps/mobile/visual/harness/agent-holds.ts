@@ -140,6 +140,12 @@ const markdownTail: ChatMessage[] = [
     text: "2. enter this code: 4415-ED92",
     ts: "2026-08-01T09:24:14.000Z",
   },
+  {
+    id: 115,
+    type: "chat",
+    text: "> Hi, please confirm the new instalment amounts. Thanks",
+    ts: "2026-08-01T09:24:16.000Z",
+  },
 ];
 const longHistory: ChatMessage[] = Array.from({ length: 40 }, (_, index) => {
   const day = 25 + Math.floor(index / 8);

@@ -46,5 +46,13 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
   },
   accent: { alignSelf: "stretch", width: 3, borderRadius: 2 },
-  copy: { flex: 1, minWidth: 0, gap: 1 },
+  // An auto basis, not flex 1 (basis 0): a zero basis adds nothing to a
+  // shrink-to-fit bubble, so a bubble holding only a quote collapsed to its bar.
+  copy: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: "auto",
+    minWidth: 0,
+    gap: 1,
+  },
 });
