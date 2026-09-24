@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { CodeBlock } from "@/components/CodeBlock";
 import { splitTextIntoLinks, type MdastNode } from "./bare-url";
 
 function linkifyNode(node: MdastNode): void {
@@ -44,25 +45,30 @@ export function Markdown({ children }: { children: string }) {
             className="underline underline-offset-2 break-all"
           />
         ),
-        code: ({ node: _n, className, children, ...props }) => {
-          const isBlock = (className ?? "").includes("language-");
-          return isBlock ? (
-            <code
-              {...props}
-              className="block whitespace-pre overflow-x-auto rounded bg-black/20 px-2 py-1 my-1 text-[12px] font-mono"
-            >
-              {children}
-            </code>
-          ) : (
-            <code
-              {...props}
-              className="rounded bg-black/15 px-1 py-0.5 text-[12px] font-mono"
-            >
-              {children}
-            </code>
-          );
+        code: ({ node: _n, className: _c, ...props }) => (
+          <code
+            {...props}
+            className="rounded-[5px] bg-code px-1 py-px font-mono text-[0.9em]"
+          />
+        ),
+        // A fence always parses to pre > code, with or without a language, so the
+        // block decision reads the tree instead of the class name.
+        pre: ({ node }) => {
+          const codeNode = node?.children[0];
+          if (codeNode?.type !== "element") return null;
+          const classes = codeNode.properties.className;
+          const language = Array.isArray(classes)
+            ? classes
+                .map(String)
+                .find((name) => name.startsWith("language-"))
+                ?.slice("language-".length)
+            : undefined;
+          const text = codeNode.children
+            .map((child) => (child.type === "text" ? child.value : ""))
+            .join("")
+            .replace(/\n$/, "");
+          return <CodeBlock code={text} info={language ?? null} />;
         },
-        pre: ({ children }) => <>{children}</>,
         ul: (p) => <ul {...p} className="list-disc pl-5 my-1" />,
         ol: (p) => <ol {...p} className="list-decimal pl-5 my-1" />,
         li: (p) => <li {...p} className="my-0.5" />,
