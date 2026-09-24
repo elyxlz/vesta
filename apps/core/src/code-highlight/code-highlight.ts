@@ -25,7 +25,7 @@ export type CodeTokenKind =
   | "variable"
   | "operator";
 
-export interface CodeToken {
+interface CodeToken {
   text: string;
   kind: CodeTokenKind;
 }

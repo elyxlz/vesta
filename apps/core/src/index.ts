@@ -15,7 +15,6 @@ export {
   CODE_TOKEN_COLORS,
   highlightCode,
 } from "./code-highlight/code-highlight";
-export type { CodeToken } from "./code-highlight/code-highlight";
 
 export type {
   AgentActivityState,
