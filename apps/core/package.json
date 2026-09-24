@@ -19,6 +19,8 @@
     "format:check": "prettier --check src"
   },
   "dependencies": {
+    "highlight.js": "^11.12.0",
+    "lowlight": "^3.3.0",
     "zustand": "^5.0.15"
   },
   "peerDependencies": {
@@ -32,6 +34,7 @@
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.3",
+    "@types/hast": "^3.0.4",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",

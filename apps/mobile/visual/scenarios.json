@@ -1000,7 +1000,7 @@
     {
       "id": "agent-chat-markdown",
       "title": "Chat, rich reply",
-      "description": "A reply with heading, code block, list, and link, then bubbles that each hold one list item, one quote, one table, or one long heading.",
+      "description": "A reply with heading, code block, list, and link, then bubbles that each hold one list item, one quote, one table, one long heading, or one code block.",
       "group": "Chat"
     },
     {
