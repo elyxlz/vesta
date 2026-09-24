@@ -59,17 +59,10 @@ while IFS= read -r line; do
   # Terms come from the heading AND the entry body, because a heading alone is too thin.
   body=$(sed -n "${lno},$((lno+25))p" "$file" 2>/dev/null)
 
-  # IDENTIFIER-SHAPED ONLY: prose locates nothing. Earlier versions matched "question",
-  # "animals", "arguing" in every file, and a term that hits everywhere points nowhere.
-  #
-  # THE ALLCAPS CLAUSE WAS THE SAME BUG WEARING A HAT, found on its first real run
-  # (2026-09-19). The filter used to accept `_` OR three consecutive capitals, and my notes
-  # use CAPS for emphasis on ordinary English, so it dutifully surfaced RISES, SHRINK,
-  # ANYWAY, WORSE, MYSELF and CARRIED: prose readmitted through the clause written to keep
-  # prose out. An identifier is now a token carrying an underscore or a digit, which is what
-  # every term that has ever actually located prior art here looks like (`dead_at`,
-  # `revived_at`, `_pgn`, `REVIVE_SHARE`). An entry of pure prose now yields NOTHING, and
-  # that is the correct answer rather than the three rarest English words in it.
+  # IDENTIFIER-SHAPED ONLY: a token carrying an underscore or a digit (`dead_at`, `_pgn`,
+  # `REVIVE_SHARE`). Prose locates nothing: a word that hits every file points nowhere, and
+  # an ALLCAPS clause readmits emphasis words (RISES, WORSE, MYSELF) as if they were names.
+  # An entry of pure prose yields NOTHING, which is the correct answer.
   cands=$(printf '%s\n%s\n' "$heading" "$body" \
     | grep -oE '[A-Za-z_][A-Za-z0-9_]{4,}' \
     | grep -E '_|[0-9]' \
