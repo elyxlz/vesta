@@ -137,7 +137,9 @@ function resolveLanguage(info: string | null): string | null {
 function scopeKind(element: Element, inherited: CodeTokenKind): CodeTokenKind {
   const classes = element.properties.className;
   if (!Array.isArray(classes)) return inherited;
-  const scope = classes.map((name) => name.replace(/^hljs-/, "")).join(".");
+  const scope = classes
+    .map((name) => String(name).replace(/^hljs-/, ""))
+    .join(".");
   const head = scope.split(".")[0] ?? "";
   return SCOPE_KINDS[scope] ?? SCOPE_KINDS[head] ?? inherited;
 }
