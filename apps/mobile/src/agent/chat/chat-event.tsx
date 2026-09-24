@@ -5,6 +5,7 @@ import {
   Easing,
   Linking,
   Pressable,
+  ScrollView,
   StyleSheet,
   View,
   useWindowDimensions,
@@ -251,6 +252,18 @@ export const ChatEvent = memo(function ChatEvent({
         >
           {children}
         </View>
+      ),
+      // A table wider than the bubble scrolls sideways instead of clipping columns.
+      table: (node, children, _parentNodes, markdownStyles) => (
+        <ScrollView
+          key={node.key}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.markdownTableScroll}
+          contentContainerStyle={styles.markdownTableContent}
+        >
+          <View style={markdownStyles._VIEW_SAFE_table}>{children}</View>
+        </ScrollView>
       ),
       blockquote: (node, children) => (
         <QuotedBlock
@@ -595,6 +608,8 @@ const styles = StyleSheet.create({
   finalMarkdownParagraph: { marginBottom: 0 },
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
+  markdownTableScroll: { flexGrow: 0, maxWidth: "100%" },
+  markdownTableContent: { flexGrow: 1 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
   retryMark: { marginRight: 8 },
 });

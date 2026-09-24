@@ -146,6 +146,23 @@ const markdownTail: ChatMessage[] = [
     text: "> Hi, please confirm the new instalment amounts. Thanks",
     ts: "2026-08-01T09:24:16.000Z",
   },
+  {
+    id: 116,
+    type: "chat",
+    text: [
+      "| Date | Amount | Status | Method | Reference |",
+      "| --- | --- | --- | --- | --- |",
+      "| 25 Oct | £116.88 | Due | Direct Debit | 151531693 |",
+      "| 25 Nov | £116.88 | Due | Direct Debit | 151531693 |",
+    ].join("\n"),
+    ts: "2026-08-01T09:24:18.000Z",
+  },
+  {
+    id: 117,
+    type: "chat",
+    text: "### A heading long enough to wrap onto a second line inside the bubble",
+    ts: "2026-08-01T09:24:20.000Z",
+  },
 ];
 const longHistory: ChatMessage[] = Array.from({ length: 40 }, (_, index) => {
   const day = 25 + Math.floor(index / 8);
