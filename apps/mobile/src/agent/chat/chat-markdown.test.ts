@@ -19,6 +19,36 @@ describe("chat markdown list layout", () => {
   );
 });
 
+describe("chat markdown block layout", () => {
+  it.each([
+    "heading1",
+    "heading2",
+    "heading3",
+    "heading4",
+    "heading5",
+    "heading6",
+  ] as const)("lays %s out as a column so a long heading wraps", (heading) => {
+    const { base } = chatMarkdownStyleSet(lightColors);
+    expect(base[heading]).toMatchObject({
+      flexDirection: "column",
+      flexWrap: "nowrap",
+    });
+  });
+
+  it.each(["th", "td"] as const)(
+    "gives %s a minimum width so a bubble holding only a table has width",
+    (cell) => {
+      const { base } = chatMarkdownStyleSet(lightColors);
+      expect(base[cell]).toMatchObject({ minWidth: 72 });
+    },
+  );
+
+  it("gives an image a minimum width so a bubble holding only an image has height", () => {
+    const { base } = chatMarkdownStyleSet(lightColors);
+    expect(base.image).toMatchObject({ flex: 1, minWidth: 200 });
+  });
+});
+
 describe("chat markdown contrast", () => {
   it.each([lightColors, darkColors])(
     "uses the accent foreground for quotes inside outgoing bubbles",

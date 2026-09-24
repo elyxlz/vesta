@@ -2,6 +2,20 @@ import { StyleSheet } from "react-native";
 import { darkColors, lightColors, type AppColors } from "@/theme/colors";
 import { fontNames } from "@/theme/typography";
 
+// A column, not the library's row: a heading's text in a row is measured at its
+// one-line width on Android and overflows the bubble instead of wrapping.
+const HEADING_LAYOUT = {
+  flexDirection: "column" as const,
+  flexWrap: "nowrap" as const,
+};
+// A cell keeps the library's flex 1, so every row splits its width into the
+// same columns, but a zero basis adds nothing to a shrink-to-fit bubble: the
+// minimum width is what gives a table-only bubble its width.
+const TABLE_CELL_MIN_WIDTH = 72;
+// FitImage takes its height from its laid-out width, so a zero-width image in
+// a shrink-to-fit bubble has no height either.
+const IMAGE_MIN_WIDTH = 200;
+
 function buildMarkdownStyles(colors: AppColors) {
   return {
     body: {
@@ -11,6 +25,7 @@ function buildMarkdownStyles(colors: AppColors) {
       lineHeight: 23,
     },
     heading1: {
+      ...HEADING_LAYOUT,
       color: colors.text,
       fontFamily: fontNames.heading.native["600"],
       fontSize: 22,
@@ -19,6 +34,7 @@ function buildMarkdownStyles(colors: AppColors) {
       marginBottom: 8,
     },
     heading2: {
+      ...HEADING_LAYOUT,
       color: colors.text,
       fontFamily: fontNames.heading.native["600"],
       fontSize: 20,
@@ -27,6 +43,7 @@ function buildMarkdownStyles(colors: AppColors) {
       marginBottom: 7,
     },
     heading3: {
+      ...HEADING_LAYOUT,
       color: colors.text,
       fontFamily: fontNames.heading.native["600"],
       fontSize: 18,
@@ -35,6 +52,7 @@ function buildMarkdownStyles(colors: AppColors) {
       marginBottom: 6,
     },
     heading4: {
+      ...HEADING_LAYOUT,
       color: colors.text,
       fontFamily: fontNames.sans.native["600"],
       fontSize: 16,
@@ -43,6 +61,7 @@ function buildMarkdownStyles(colors: AppColors) {
       marginBottom: 5,
     },
     heading5: {
+      ...HEADING_LAYOUT,
       color: colors.secondaryText,
       fontFamily: fontNames.sans.native["600"],
       fontSize: 15,
@@ -51,6 +70,7 @@ function buildMarkdownStyles(colors: AppColors) {
       marginBottom: 4,
     },
     heading6: {
+      ...HEADING_LAYOUT,
       color: colors.secondaryText,
       fontFamily: fontNames.sans.native["600"],
       fontSize: 13,
@@ -172,6 +192,7 @@ function buildMarkdownStyles(colors: AppColors) {
       borderWidth: StyleSheet.hairlineWidth,
       borderRadius: 9,
       borderCurve: "continuous" as const,
+      flexGrow: 1,
       marginVertical: 7,
       overflow: "hidden" as const,
     },
@@ -180,10 +201,19 @@ function buildMarkdownStyles(colors: AppColors) {
       borderBottomColor: colors.border,
       borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    th: { paddingHorizontal: 7, paddingVertical: 6 },
-    td: { paddingHorizontal: 7, paddingVertical: 6 },
+    th: {
+      minWidth: TABLE_CELL_MIN_WIDTH,
+      paddingHorizontal: 7,
+      paddingVertical: 6,
+    },
+    td: {
+      minWidth: TABLE_CELL_MIN_WIDTH,
+      paddingHorizontal: 7,
+      paddingVertical: 6,
+    },
     image: {
       flex: 1,
+      minWidth: IMAGE_MIN_WIDTH,
       borderRadius: 11,
       borderCurve: "continuous" as const,
       marginVertical: 6,
