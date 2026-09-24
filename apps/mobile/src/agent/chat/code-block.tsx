@@ -23,12 +23,14 @@ export const CodeBlock = memo(function CodeBlock({
   const [copied, setCopied] = useState(false);
   const palette = dark ? designTokens.colors.dark : designTokens.colors.light;
   const copy = () => {
-    void Clipboard.setStringAsync(code).then(() => {
-      setCopied(true);
-      setTimeout(() => {
-        setCopied(false);
-      }, COPIED_MS);
-    });
+    void Clipboard.setStringAsync(code)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => {
+          setCopied(false);
+        }, COPIED_MS);
+      })
+      .catch(() => undefined);
   };
   return (
     <Pressable

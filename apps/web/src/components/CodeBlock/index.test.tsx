@@ -74,3 +74,19 @@ describe("Markdown code", () => {
     expect(screen.getByText("ls").tagName).toBe("CODE");
   });
 });
+
+describe("Markdown contrast in a user bubble", () => {
+  it("tints inline code from the bubble's own text color", () => {
+    render(<Markdown>{"run `ls` now"}</Markdown>);
+    const chip = screen.getByText("ls");
+    expect(chip.className).toContain("bg-current/10");
+    expect(chip.className).not.toContain("bg-code");
+  });
+
+  it("draws links in the bubble text color inside a user bubble", () => {
+    render(<Markdown>{"[docs](https://vesta.run)"}</Markdown>);
+    expect(screen.getByText("docs").className).toContain(
+      "group-data-[variant=default]/bubble:text-current",
+    );
+  });
+});

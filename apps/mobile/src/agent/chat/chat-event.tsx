@@ -279,7 +279,9 @@ export const ChatEvent = memo(function ChatEvent({
             <View style={markdownStyles._VIEW_SAFE_table}>{children}</View>
           </ScrollView>
           {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
-            <View style={styles.timestampLine} />
+            // The absolute timestamp has no text line to share after a block, so an
+            // invisible copy reserves its row at the same font scale.
+            <Text style={styles.timestampLine}>{timestamp}</Text>
           ) : null}
         </View>
       ),
@@ -291,7 +293,7 @@ export const ChatEvent = memo(function ChatEvent({
             onLongPress={openMenuFromBlock}
           />
           {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
-            <View style={styles.timestampLine} />
+            <Text style={styles.timestampLine}>{timestamp}</Text>
           ) : null}
         </View>
       ),
@@ -303,7 +305,7 @@ export const ChatEvent = memo(function ChatEvent({
             onLongPress={openMenuFromBlock}
           />
           {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
-            <View style={styles.timestampLine} />
+            <Text style={styles.timestampLine}>{timestamp}</Text>
           ) : null}
         </View>
       ),
@@ -652,7 +654,7 @@ const styles = StyleSheet.create({
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
   markdownTableScroll: { flexGrow: 0, maxWidth: "100%" },
   markdownTableContent: { flexGrow: 1 },
-  timestampLine: { height: 14 },
+  timestampLine: { fontSize: 12, opacity: 0 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
   retryMark: { marginRight: 8 },
 });

@@ -42,13 +42,13 @@ export function Markdown({ children }: { children: string }) {
             {...props}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-interactive underline decoration-1 underline-offset-2 wrap-anywhere"
+            className="font-medium text-interactive group-data-[variant=default]/bubble:text-current underline decoration-1 underline-offset-2 wrap-anywhere"
           />
         ),
         code: ({ node: _n, className: _c, ...props }) => (
           <code
             {...props}
-            className="rounded-[5px] bg-code px-1 py-px font-mono text-[0.9em]"
+            className="rounded-[5px] bg-current/10 px-1 py-px font-mono text-[0.9em]"
           />
         ),
         // A fence always parses to pre > code, with or without a language, so the
