@@ -694,9 +694,10 @@ def test_writes_to_subscribed_calendar_are_refused(monkeypatch, capsys, argv):
     recorder = _subscribed_ctx(monkeypatch)
     with pytest.raises(SystemExit) as exc:
         _run(["calendar", *argv, "--calendar", "feed-sub"], capsys)
-    assert "read-only" in str(exc.value)
-    assert "lms.example.edu" in str(exc.value)
-    assert "SECRET-TOKEN" not in str(exc.value)
+    assert str(exc.value) == (
+        "calendar 'feed-sub' is a subscribed calendar and is read-only: its events come from a feed on "
+        "lms.example.edu; read it with 'calendar list --calendar feed-sub'"
+    )
     assert not any(c["method"] in ("PUT", "DELETE", "REPORT") for c in recorder.calls)
 
 
