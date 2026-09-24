@@ -86,7 +86,16 @@ def test_no_notice_without_a_stored_fire(tmp_config: Config, reminder: dict, not
     assert _missed(notif_dir) == []
 
 
-def test_no_notice_for_an_occurrence_firing_right_now(tmp_config: Config, reminder: dict, notif_dir: Path):
+def test_short_downtime_is_reported_on_startup(tmp_config: Config, reminder: dict, notif_dir: Path):
+    # A fresh scheduler has no worker in flight, so even a fire seconds past was missed.
     _set_scheduled_time(tmp_config, reminder["id"], datetime.now(UTC) - timedelta(seconds=5))
     _restart(tmp_config, notif_dir)
+    assert len(_missed(notif_dir)) == 1
+
+
+def test_job_sync_skips_an_occurrence_firing_right_now(tmp_config: Config, reminder: dict, notif_dir: Path):
+    # Mid-run, a just-passed fire is most likely executing in a worker, so the sync stays quiet.
+    scheduler = create_scheduler()
+    _set_scheduled_time(tmp_config, reminder["id"], datetime.now(UTC) - timedelta(seconds=5))
+    commands.restore_jobs_by_ids(tmp_config, scheduler, {reminder["id"]}, notif_dir=notif_dir)
     assert _missed(notif_dir) == []

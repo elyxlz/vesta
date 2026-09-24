@@ -119,8 +119,10 @@ def _echo_local(value: str | datetime | None) -> str | None:
 # job was armed; the fire is stale and the job sync re-arms it at the new time.
 STALE_FIRE_SLACK = timedelta(seconds=60)
 
-# A past-due one-shot younger than this is most likely firing right now in a scheduler worker
-# (the job leaves the scheduler before completed=1 commits), not missed during downtime.
+# During the serve loop's job sync, a past-due fire younger than this is most likely firing right
+# now in a scheduler worker (the job leaves the scheduler before its DB write commits), not missed.
+# Startup restore uses no grace: a fresh scheduler has no worker in flight, so any passed fire
+# was missed during the downtime, however brief.
 MISSED_GRACE = timedelta(seconds=30)
 
 # How many upcoming fires to sample when bounding fuzz to half the smallest gap.
@@ -328,13 +330,15 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
 # ---------------------------------------------------------------------------
 
 
-def _restore_cron_trigger(row, trigger_data: TriggerData, now: datetime, notif_dir: Path | None, conn) -> CronTrigger | DateTrigger:
+def _restore_cron_trigger(
+    row, trigger_data: TriggerData, now: datetime, notif_dir: Path | None, conn, grace: timedelta
+) -> CronTrigger | DateTrigger:
     """Trigger to arm for a cron row, advancing its scheduled_time to the next fire."""
     reminder_id = row["id"]
     # scheduled_time is the next fire the daemon armed; one that passed unfired was missed
     # while the daemon was down, reported once however many occurrences it spans.
     armed = db.parse_datetime(row["scheduled_time"]) if row["scheduled_time"] else None
-    if armed is not None and armed < now - MISSED_GRACE:
+    if armed is not None and armed < now - grace:
         logger.info("Reminder %s: occurrence at %s missed, sending missed notification", reminder_id, row["scheduled_time"])
         if notif_dir:
             write_reminder_notification(notif_dir, reminder_id, row["message"], notif_type="reminder_missed")
@@ -351,7 +355,7 @@ def _restore_cron_trigger(row, trigger_data: TriggerData, now: datetime, notif_d
     return trigger
 
 
-def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: Path | None, conn, config: Config) -> bool:
+def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: Path | None, conn, config: Config, grace: timedelta) -> bool:
     """Restore a single reminder row into the scheduler. Returns True if handled, False to skip."""
     reminder_id = row["id"]
     try:
@@ -364,7 +368,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
                 return False
             run_date = db.parse_datetime(trigger_data["run_date"])
             if run_date < now:
-                if run_date > now - MISSED_GRACE:
+                if run_date > now - grace:
                     # Probably firing right now in a scheduler worker; a later tick either finds
                     # it completed or declares it missed for real.
                     return False
@@ -382,7 +386,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             trigger = DateTrigger(run_date=run_date)
 
         elif trigger_type == "cron":
-            trigger = _restore_cron_trigger(row, trigger_data, now, notif_dir, conn)
+            trigger = _restore_cron_trigger(row, trigger_data, now, notif_dir, conn, grace)
 
         elif trigger_type == "interval":
             trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)
@@ -432,7 +436,7 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute(f"SELECT id, message, scheduled_time, trigger_data FROM reminders WHERE {LIVE_REMINDER}")
         for row in cursor:
-            _restore_row(scheduler, row, now, notif_dir, conn, config)
+            _restore_row(scheduler, row, now, notif_dir, conn, config, grace=timedelta(0))
         conn.commit()
 
 
@@ -446,7 +450,7 @@ def restore_jobs_by_ids(config: Config, scheduler: BackgroundScheduler, ids: set
             list(ids),
         )
         for row in cursor:
-            _restore_row(scheduler, row, now, notif_dir, conn, config)
+            _restore_row(scheduler, row, now, notif_dir, conn, config, grace=MISSED_GRACE)
         conn.commit()
 
 
