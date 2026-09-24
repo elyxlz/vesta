@@ -12,7 +12,7 @@ HOST_DISK_RED_PERCENT=97
 DU_TIMEOUT_SECS=120
 # A nightly cadence is 24h and a missed night reads as 48h, so the lapse bound sits between them.
 DREAM_LAPSE_HOURS=30
-# One or two refused turns are a transient the next turn absorbs; three in a day is a window binding.
+# One or two refused turns are a transient the next turn absorbs; three in two days is a window binding.
 REFUSED_TURNS_RED=3
 
 red=0
@@ -87,12 +87,13 @@ done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
-# refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+# refusal leaves, so count those lines rather than the daemon's rate-limit warnings. The dream runs
+# a few hours after midnight, so yesterday is the day under review and must be counted with today.
+refused=$(grep -hE "($today|$yesterday) .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
-    bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
+    bad "the provider refused $refused turns in the last 2 days: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
-    ok "the provider refused $refused turns today"
+    ok "the provider refused $refused turns in the last 2 days"
 fi
 
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
