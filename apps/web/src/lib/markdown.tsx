@@ -42,7 +42,7 @@ export function Markdown({ children }: { children: string }) {
             {...props}
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 break-all"
+            className="font-medium text-interactive underline decoration-1 underline-offset-2 wrap-anywhere"
           />
         ),
         code: ({ node: _n, className: _c, ...props }) => (
@@ -69,26 +69,70 @@ export function Markdown({ children }: { children: string }) {
             .replace(/\n$/, "");
           return <CodeBlock code={text} info={language ?? null} />;
         },
-        ul: (p) => <ul {...p} className="list-disc pl-5 my-1" />,
-        ol: (p) => <ol {...p} className="list-decimal pl-5 my-1" />,
-        li: (p) => <li {...p} className="my-0.5" />,
-        p: (p) => <p {...p} className="my-1 first:mt-0 last:mb-0" />,
-        h1: (p) => <h1 {...p} className="text-base font-semibold my-1" />,
-        h2: (p) => <h2 {...p} className="text-sm font-semibold my-1" />,
-        h3: (p) => <h3 {...p} className="text-sm font-semibold my-1" />,
-        blockquote: (p) => (
-          <blockquote {...p} className="border-l-2 pl-2 opacity-80 my-1" />
+        ul: (p) => (
+          <ul
+            {...p}
+            className="my-1 list-disc pl-5 marker:text-muted-foreground"
+          />
         ),
-        hr: () => <hr className="my-2 border-current opacity-20" />,
+        ol: (p) => (
+          <ol
+            {...p}
+            className="my-1 list-decimal pl-5 marker:text-muted-foreground"
+          />
+        ),
+        li: (p) => <li {...p} className="my-1 pl-0.5" />,
+        p: (p) => <p {...p} className="mb-2 last:mb-0" />,
+        h1: (p) => (
+          <h1
+            {...p}
+            className="mt-1 mb-1.5 text-[1.25em] leading-tight font-semibold"
+          />
+        ),
+        h2: (p) => (
+          <h2
+            {...p}
+            className="mt-1 mb-1 text-[1.125em] leading-tight font-semibold"
+          />
+        ),
+        h3: (p) => <h3 {...p} className="mt-1 mb-1 font-semibold" />,
+        h4: (p) => (
+          <h4
+            {...p}
+            className="mt-1 mb-1 text-[0.9375em] font-semibold text-muted-foreground"
+          />
+        ),
+        h5: (p) => (
+          <h5
+            {...p}
+            className="mt-1 mb-1 text-[0.9375em] font-semibold text-muted-foreground"
+          />
+        ),
+        h6: (p) => (
+          <h6
+            {...p}
+            className="mt-1 mb-1 text-[0.9375em] font-semibold text-muted-foreground"
+          />
+        ),
+        blockquote: (p) => (
+          <blockquote
+            {...p}
+            className="relative my-1.5 rounded-2xl bg-current/10 py-1.5 pr-2.5 pl-5 before:absolute before:top-2 before:bottom-2 before:left-2.5 before:w-[3px] before:rounded-full before:bg-current before:opacity-60 before:content-['']"
+          />
+        ),
+        hr: () => <hr className="my-3 border-border" />,
         table: (p) => (
-          <div className="overflow-x-auto my-1">
-            <table {...p} className="border-collapse text-[12px]" />
+          <div className="my-2 overflow-x-auto rounded-[9px] border border-border">
+            <table {...p} className="w-full border-collapse text-[0.875em]" />
           </div>
         ),
         th: (p) => (
-          <th {...p} className="border border-current/20 px-2 py-1 text-left" />
+          <th
+            {...p}
+            className="border-b border-border bg-input px-2 py-1.5 text-left font-semibold"
+          />
         ),
-        td: (p) => <td {...p} className="border border-current/20 px-2 py-1" />,
+        td: (p) => <td {...p} className="border-t border-border px-2 py-1.5" />,
       }}
     >
       {children}

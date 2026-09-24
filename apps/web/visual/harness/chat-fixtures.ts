@@ -129,6 +129,19 @@ export const MARKDOWN_REPLY: VestaEvent[] = [
     ].join("\n"),
     11,
   ),
+  agentMessage(
+    [
+      "> the old key stops working at once",
+      "",
+      "```python",
+      "def rotate(gateway: str) -> None:",
+      '    """Rotate the key and print the new connect link."""',
+      '    print(f"rotated {gateway}")  # a long trailing comment that forces the block to scroll sideways',
+      "```",
+    ].join("\n"),
+    10,
+  ),
+  agentMessage(["```", "plain fence, no language", "```"].join("\n"), 9),
 ];
 
 // The chunked-upload contract as the composer drives it. One static id per scenario is enough:
