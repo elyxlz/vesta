@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import Markdown, {
   MarkdownIt,
+  type ASTNode,
   type RenderRules,
 } from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
@@ -44,6 +45,7 @@ import {
   AttachmentContent,
   type OpenViewerRequest,
 } from "@/agent/chat/attachment-content";
+import { CodeBlock } from "@/agent/chat/code-block";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
 import {
   chatDateLabel,
@@ -52,6 +54,13 @@ import {
 } from "@/agent/chat/chat-message-model";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+
+// react-native-markdown-display keeps the fence info string on the node, outside its declared type.
+function fenceInfo(node: ASTNode): string | null {
+  return "sourceInfo" in node && typeof node.sourceInfo === "string"
+    ? node.sourceInfo
+    : null;
+}
 const CHAT_MARKDOWN = new MarkdownIt({
   linkify: true,
   typographer: true,
@@ -199,8 +208,13 @@ export const ChatEvent = memo(function ChatEvent({
   // Android's menu wrapper loses the long-press to a pressable attachment block, so blocks get
   // a handler that reopens the menu; iOS's native interaction needs none.
   const menuRef = useRef<MessageMenuHandle | null>(null);
-  const openMenuFromBlock =
-    process.env.EXPO_OS === "ios" ? undefined : () => menuRef.current?.show?.();
+  const openMenuFromBlock = useMemo(
+    () =>
+      process.env.EXPO_OS === "ios"
+        ? undefined
+        : () => menuRef.current?.show?.(),
+    [],
+  );
   // Memoized because toLocaleTimeString builds an Intl formatter per call and
   // rows legitimately re-render (bubble-group flips on each appended message).
   const timestamp = useMemo(
@@ -254,16 +268,44 @@ export const ChatEvent = memo(function ChatEvent({
         </View>
       ),
       // A table wider than the bubble scrolls sideways instead of clipping columns.
-      table: (node, children, _parentNodes, markdownStyles) => (
-        <ScrollView
-          key={node.key}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.markdownTableScroll}
-          contentContainerStyle={styles.markdownTableContent}
-        >
-          <View style={markdownStyles._VIEW_SAFE_table}>{children}</View>
-        </ScrollView>
+      table: (node, children, parentNodes, markdownStyles) => (
+        <View key={node.key}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.markdownTableScroll}
+            contentContainerStyle={styles.markdownTableContent}
+          >
+            <View style={markdownStyles._VIEW_SAFE_table}>{children}</View>
+          </ScrollView>
+          {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
+            <View style={styles.timestampLine} />
+          ) : null}
+        </View>
+      ),
+      fence: (node, _children, parentNodes) => (
+        <View key={node.key}>
+          <CodeBlock
+            code={node.content.replace(/\n$/, "")}
+            info={fenceInfo(node)}
+            onLongPress={openMenuFromBlock}
+          />
+          {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
+            <View style={styles.timestampLine} />
+          ) : null}
+        </View>
+      ),
+      code_block: (node, _children, parentNodes) => (
+        <View key={node.key}>
+          <CodeBlock
+            code={node.content.replace(/\n$/, "")}
+            info={null}
+            onLongPress={openMenuFromBlock}
+          />
+          {timestamp && isFinalMarkdownNode(node, parentNodes) ? (
+            <View style={styles.timestampLine} />
+          ) : null}
+        </View>
       ),
       blockquote: (node, children) => (
         <QuotedBlock
@@ -275,7 +317,7 @@ export const ChatEvent = memo(function ChatEvent({
         </QuotedBlock>
       ),
     }),
-    [colors.accent, colors.card, timestamp, user],
+    [colors.accent, colors.card, openMenuFromBlock, timestamp, user],
   );
   const markdownStyleSet = chatMarkdownStyleSet(colors);
   const sendState = event.type === "user" ? event.send_state : undefined;
@@ -610,6 +652,7 @@ const styles = StyleSheet.create({
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
   markdownTableScroll: { flexGrow: 0, maxWidth: "100%" },
   markdownTableContent: { flexGrow: 1 },
+  timestampLine: { height: 14 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
   retryMark: { marginRight: 8 },
 });

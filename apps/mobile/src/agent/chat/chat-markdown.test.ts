@@ -47,6 +47,27 @@ describe("chat markdown block layout", () => {
     const { base } = chatMarkdownStyleSet(lightColors);
     expect(base.image).toMatchObject({ flex: 1, minWidth: 200 });
   });
+
+  it.each([
+    ["heading1", 20],
+    ["heading2", 18],
+    ["heading3", 16],
+    ["heading4", 15],
+    ["heading5", 15],
+    ["heading6", 15],
+  ] as const)("sizes %s at %d", (heading, fontSize) => {
+    const { base } = chatMarkdownStyleSet(lightColors);
+    expect(base[heading].fontSize).toBe(fontSize);
+  });
+
+  it.each(["heading4", "heading5", "heading6"] as const)(
+    "draws %s in the muted color",
+    (heading) => {
+      expect(chatMarkdownStyleSet(lightColors).base[heading].color).toBe(
+        lightColors.secondaryText,
+      );
+    },
+  );
 });
 
 describe("chat markdown contrast", () => {

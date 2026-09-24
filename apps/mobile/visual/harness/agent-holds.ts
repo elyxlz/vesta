@@ -163,6 +163,24 @@ const markdownTail: ChatMessage[] = [
     text: "### A heading long enough to wrap onto a second line inside the bubble",
     ts: "2026-08-01T09:24:20.000Z",
   },
+  {
+    id: 118,
+    type: "chat",
+    text: [
+      "```python",
+      "def rotate(gateway: str) -> None:",
+      '    """Rotate the key."""',
+      '    print(f"rotated {gateway}")  # long enough to scroll sideways in the bubble',
+      "```",
+    ].join("\n"),
+    ts: "2026-08-01T09:24:22.000Z",
+  },
+  {
+    id: 119,
+    type: "chat",
+    text: ["```", "plain fence, no language", "```"].join("\n"),
+    ts: "2026-08-01T09:24:24.000Z",
+  },
 ];
 const longHistory: ChatMessage[] = Array.from({ length: 40 }, (_, index) => {
   const day = 25 + Math.floor(index / 8);
