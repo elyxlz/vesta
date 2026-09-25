@@ -1978,36 +1978,41 @@ async fn current_sidecar_id(docker: &Docker, agent_name: &str) -> Option<String>
     info.id
 }
 
-struct Sidecar {
-    id: String,
-    /// The sidecar restarted to load a changed config, so a running agent in its namespace
-    /// lost its network and must restart too.
-    reloaded: bool,
-}
-
-/// Bring `agent_name`'s sidecar in line with `proxy` and leave it running.
+/// Bring `agent_name`'s sidecar in line with `proxy` and leave it running, returning its id.
+/// When the config changes on an already-running sidecar, `running_agent` (the agent's own
+/// container name) is the one owner of the reload decision for that case: with it `Some`, the
+/// agent is stopped before the sidecar reloads and started again after, so its traffic is never
+/// live in the gap between the sidecar's clean shutdown (which drops its ip rules and tun0) and
+/// the fresh ones coming up; `None` means no running agent rides on this sidecar right now.
 async fn ensure_sidecar(
     docker: &Docker,
     agents_dir: &std::path::Path,
     agent_name: &str,
     proxy: &crate::egress::ProxyUrl,
-) -> Result<Sidecar, DockerError> {
+    running_agent: Option<&str>,
+) -> Result<String, DockerError> {
     let image = ensure_egress_image(docker).await?;
     let config =
         crate::egress::write_config(agents_dir, agent_name, proxy).map_err(egress_failed)?;
     if let Some(id) = current_sidecar_id(docker, agent_name).await {
         let running = container_status(docker, &id).await == ContainerStatus::Running;
         if running && config.changed {
+            let reason = &crate::lifecycle::CONTAINER_UPDATE;
+            if let Some(cname) = running_agent {
+                handoff_shutdown_reason(docker, agent_name, cname, reason).await;
+                stop_container_with_timeout(docker, cname, CONTAINER_STOP_TIMEOUT_SECS).await?;
+            }
             docker
                 .restart_container(&id, None::<RestartContainerOptions>)
                 .await?;
-            return Ok(Sidecar { id, reloaded: true });
+            if let Some(cname) = running_agent {
+                handoff_boot_reason(docker, agent_name, cname, reason).await;
+                start_agent(docker, agent_name, None).await?;
+            }
+            return Ok(id);
         }
         start_if_stopped(docker, &id).await?;
-        return Ok(Sidecar {
-            id,
-            reloaded: false,
-        });
+        return Ok(id);
     }
 
     let sidecar = crate::egress::sidecar_name(agent_name);
@@ -2058,10 +2063,7 @@ async fn ensure_sidecar(
         )
         .await?;
     start_if_stopped(docker, &created.id).await?;
-    Ok(Sidecar {
-        id: created.id,
-        reloaded: false,
-    })
+    Ok(created.id)
 }
 
 /// Remove `agent_name`'s sidecar and its config. Best-effort and idempotent. It must run before
@@ -2172,8 +2174,13 @@ pub enum EgressChange {
 }
 
 /// Store an agent's new egress choice and make it live. A URL change on a current sidecar only
-/// reloads the sidecar; adding or removing the proxy changes the layout, so it rebuilds. The
-/// stored choice is written first: if applying it fails, reconcile converges at the next boot.
+/// reloads the sidecar; adding or removing the proxy changes the layout, so it rebuilds.
+///
+/// The rebuild decision is made from the agent's current `network_mode` alone, before anything
+/// is stored: setting a proxy needs a rebuild unless the agent is already joined to a sidecar,
+/// clearing one needs a rebuild only if it is. That lets the disk guard for the rebuild case run
+/// before the choice is stored, so a refusal changes nothing. Only past the guard is the choice
+/// written: if applying it still fails, reconcile converges at the next boot.
 pub async fn apply_egress_change(
     docker: &Docker,
     name: &str,
@@ -2187,42 +2194,41 @@ pub async fn apply_egress_change(
     let raw = docker.inspect_container(&cname, None).await?;
     let was_running = raw.state.as_ref().and_then(|s| s.running) == Some(true);
     let agents_dir = &env_config.agents_dir;
+    let actual = raw
+        .host_config
+        .as_ref()
+        .and_then(|h| h.network_mode.as_deref())
+        .unwrap_or("");
+    let currently_joined = actual.starts_with(CONTAINER_NETWORK_PREFIX);
+    let needs_rebuild = match change {
+        EgressChange::Set(_) => !currently_joined,
+        EgressChange::Clear => currently_joined,
+    };
+    if needs_rebuild && reconcile_blocked_by_disk(docker_storage_available_bytes(docker).await) {
+        return Err(DockerError::Failed(format!(
+            "cannot apply the proxy change for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+        )));
+    }
     match change {
         EgressChange::Set(proxy) => {
             crate::egress::save_proxy(agents_dir, name, proxy).map_err(egress_failed)?;
         }
         EgressChange::Clear => crate::egress::delete_proxy(agents_dir, name),
     }
-    let reason = &crate::lifecycle::CONTAINER_UPDATE;
-    let actual = raw
-        .host_config
-        .as_ref()
-        .and_then(|h| h.network_mode.as_deref())
-        .unwrap_or("");
-    if actual == expected_network_mode(docker, agents_dir, name).await {
+    if !needs_rebuild {
         if let EgressChange::Set(proxy) = change {
-            let sidecar = ensure_sidecar(docker, agents_dir, name, proxy).await?;
-            if sidecar.reloaded && was_running {
-                handoff_shutdown_reason(docker, name, &cname, reason).await;
-                handoff_boot_reason(docker, name, &cname, reason).await;
-                docker
-                    .restart_container(
-                        &cname,
-                        Some(RestartContainerOptions {
-                            t: Some(CONTAINER_RESTART_TIMEOUT_SECS),
-                            signal: None,
-                        }),
-                    )
-                    .await?;
-            }
+            ensure_sidecar(
+                docker,
+                agents_dir,
+                name,
+                proxy,
+                was_running.then_some(cname.as_str()),
+            )
+            .await?;
         }
         return Ok(());
     }
-    if reconcile_blocked_by_disk(docker_storage_available_bytes(docker).await) {
-        return Err(DockerError::Failed(format!(
-            "cannot apply the proxy change for '{name}': disk is critically low (a recreate needs free space); free space and retry"
-        )));
-    }
+    let reason = &crate::lifecycle::CONTAINER_UPDATE;
     if was_running {
         handoff_shutdown_reason(docker, name, &cname, reason).await;
     }
@@ -2444,8 +2450,10 @@ pub async fn create_container(
     let proxy =
         crate::egress::load_proxy(&env_config.agents_dir, agent_name).map_err(egress_failed)?;
     let (network_mode, extra_hosts) = if let Some(proxy) = proxy {
-        let sidecar = ensure_sidecar(docker, &env_config.agents_dir, agent_name, &proxy).await?;
-        (format!("{CONTAINER_NETWORK_PREFIX}{}", sidecar.id), None)
+        // No running agent container rides on this sidecar yet: it's being (re)created fresh.
+        let sidecar_id =
+            ensure_sidecar(docker, &env_config.agents_dir, agent_name, &proxy, None).await?;
+        (format!("{CONTAINER_NETWORK_PREFIX}{sidecar_id}"), None)
     } else {
         remove_sidecar(docker, &env_config.agents_dir, agent_name).await;
         (network_name, Some(vec![host_docker_internal_mapping()]))
