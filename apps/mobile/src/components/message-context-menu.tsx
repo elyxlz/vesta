@@ -32,6 +32,7 @@ interface MessageContextMenuProps<Id extends string> {
   actions: MessageMenuAction<Id>[];
   children: ReactElement;
   onAction: (id: Id) => void;
+  onOpenChange?: (open: boolean) => void;
   menuRef?: Ref<MessageMenuHandle>;
   style?: StyleProp<ViewStyle>;
   tailSide?: TailSide;
@@ -44,9 +45,10 @@ interface MessageContextMenuProps<Id extends string> {
 
 interface NativeMessageContextMenuProps extends Omit<
   MessageContextMenuProps<string>,
-  "onAction"
+  "onAction" | "onOpenChange"
 > {
   onAction: (event: NativeSyntheticEvent<{ id: string }>) => void;
+  onOpenChange: (event: NativeSyntheticEvent<{ open: boolean }>) => void;
 }
 
 const NativeMessageContextMenu =
@@ -61,6 +63,7 @@ export function MessageContextMenu<Id extends string = string>({
   actions,
   children,
   onAction,
+  onOpenChange,
   menuRef,
   style,
   tailSide = "none",
@@ -91,6 +94,7 @@ export function MessageContextMenu<Id extends string = string>({
         bubbleStrokeColor={bubbleStrokeColor}
         bubbleStrokeWidth={bubbleStrokeWidth}
         onAction={({ nativeEvent }) => emitAction(nativeEvent.id)}
+        onOpenChange={({ nativeEvent }) => onOpenChange?.(nativeEvent.open)}
         previewCornerRadius={previewCornerRadius}
         style={[style, tailLayout]}
         tailOverhang={tailOverhang}
@@ -114,6 +118,8 @@ export function MessageContextMenu<Id extends string = string>({
         },
       }))}
       onPressAction={({ nativeEvent }) => emitAction(nativeEvent.event)}
+      onOpenMenu={() => onOpenChange?.(true)}
+      onCloseMenu={() => onOpenChange?.(false)}
       shouldOpenOnLongPress
       style={style}
     >
