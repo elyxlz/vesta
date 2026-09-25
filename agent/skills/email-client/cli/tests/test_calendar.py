@@ -616,6 +616,52 @@ def test_get_falls_back_to_resource_name_when_report_precondition_fails(rec, cap
     assert [c["method"] for c in rec.calls] == ["REPORT", "GET"]
 
 
+DECOY_ICS = EXISTING_ICS.replace("UID:evt-timed@google.com", "UID:evt-decoy@example.com").replace("Old title", "Someone else's event")
+
+
+def _two_event_report(first_ics, second_ics):
+    """A multistatus with two responses, as Google returns when it ignores the UID filter."""
+    responses = "".join(
+        f"<D:response><D:href>/caldav/v2/me%40gmail.com/events/{i}.ics</D:href>"
+        "<D:propstat><D:status>HTTP/1.1 200 OK</D:status>"
+        f"<D:prop><D:getetag>&quot;e{i}&quot;</D:getetag><caldav:calendar-data>{ics_text}</caldav:calendar-data></D:prop>"
+        "</D:propstat></D:response>"
+        for i, ics_text in enumerate((first_ics, second_ics))
+    )
+    return f'<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav">{responses}</D:multistatus>'
+
+
+def test_get_skips_non_matching_records_when_server_ignores_uid_filter(rec, capsys):
+    # Google ignores UID prop-filters and answers with the whole collection:
+    # the requested event is in the body, but not first. Only the record whose
+    # UID matches may be returned (delete/update/respond build on this).
+    rec.responses = [("REPORT", "/events/", (207, _two_event_report(DECOY_ICS, EXISTING_ICS)))]
+    out = json.loads(_run(["calendar", "get", "--id", "evt-timed@google.com"], capsys))
+    assert out["id"] == "evt-timed@google.com"
+    assert out["summary"] == "Old title"
+    assert [c["method"] for c in rec.calls] == ["REPORT"]  # no fallback needed
+
+
+def test_get_falls_back_when_report_returns_only_non_matching_events(rec, capsys):
+    rec.responses = [
+        ("REPORT", "/events/", (207, _report_body(DECOY_ICS))),
+        ("GET", "/events/evt-timed%40google.com.ics", (200, EXISTING_ICS)),
+    ]
+    out = json.loads(_run(["calendar", "get", "--id", "evt-timed@google.com"], capsys))
+    assert out["summary"] == "Old title"
+    assert [c["method"] for c in rec.calls] == ["REPORT", "GET"]
+
+
+def test_get_rejects_a_resource_name_hit_that_holds_a_different_uid(rec, capsys):
+    rec.responses = [
+        ("REPORT", "/events/", (207, '<D:multistatus xmlns:D="DAV:"/>')),
+        ("GET", "/events/evt-timed%40google.com.ics", (200, DECOY_ICS)),
+    ]
+    with pytest.raises(SystemExit) as ei:
+        _run(["calendar", "get", "--id", "evt-timed@google.com"], capsys)
+    assert "not found" in str(ei.value)
+
+
 # -- create ------------------------------------------------------------
 
 
