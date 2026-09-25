@@ -129,15 +129,18 @@ function buildMarkdownStyles(colors: AppColors) {
       fontVariant: ["tabular-nums"] as const,
     },
     // An auto basis, not the library's flex 1 (basis 0): a zero basis adds nothing to a
-    // shrink-to-fit bubble's width, so a bubble holding only a list item collapsed to its
-    // marker and laid the text out at zero width. minWidth 0 lets the text still shrink.
+    // shrink-to-fit bubble's width, so list text squeezed to the widest sibling or to zero.
+    // flex 0 overrides the library's default, since Yoga resolves any positive flex to a
+    // zero basis whatever flexBasis says. minWidth 0 lets the text still shrink.
     bullet_list_content: {
+      flex: 0,
       flexGrow: 1,
       flexShrink: 1,
       flexBasis: "auto" as const,
       minWidth: 0,
     },
     ordered_list_content: {
+      flex: 0,
       flexGrow: 1,
       flexShrink: 1,
       flexBasis: "auto" as const,
