@@ -2099,7 +2099,7 @@ pub(crate) async fn expected_network_mode(
 
 /// Install the egress image before a recreate removes anything, so a host that cannot download
 /// it keeps the agent on its old container instead of stranding it with none.
-async fn prepare_egress(
+pub(crate) async fn prepare_egress(
     docker: &Docker,
     agents_dir: &std::path::Path,
     agent_name: &str,

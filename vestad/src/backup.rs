@@ -5,8 +5,8 @@ use bollard::Docker;
 use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status,
     create_container, ensure_container_removed, env_file_names, guard_alive, handoff_boot_reason,
-    handoff_shutdown_reason, read_env_value, start_container, stop_container_with_timeout,
-    validate_name, AgentEnvConfig, ContainerStatus, DockerError,
+    handoff_shutdown_reason, prepare_egress, read_env_value, start_container,
+    stop_container_with_timeout, validate_name, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -210,6 +210,11 @@ pub async fn restore_backup(
     if let Some(refusal) = newer_state_refusal(backup_id, info.vestad_version.as_deref(), env!("CARGO_PKG_VERSION")) {
         return Err(refusal);
     }
+
+    // Install the egress image, if this agent is proxied, before anything below removes the
+    // container: an offline host that cannot download it keeps the agent running untouched
+    // instead of stranding it with none (mirrors `rebuild_agent`'s own pre-check).
+    prepare_egress(docker, &env_config.agents_dir, name).await?;
 
     let status = container_status(docker, &cname).await;
     let container_present = status != ContainerStatus::NotFound;
