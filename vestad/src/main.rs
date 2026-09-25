@@ -17,6 +17,7 @@ mod channel;
 mod device_registry;
 mod docker;
 mod egress;
+mod egress_net;
 mod jwt;
 mod lifecycle;
 mod maintenance;
