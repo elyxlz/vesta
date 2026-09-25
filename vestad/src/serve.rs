@@ -2532,7 +2532,10 @@ async fn set_proxy_handler(
     if !std::path::Path::new(docker::TUN_DEVICE).exists() {
         return Err(err_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "this host has no /dev/net/tun, so it cannot run an egress proxy",
+            &format!(
+                "this host has no {}, so it cannot run an egress proxy",
+                docker::TUN_DEVICE
+            ),
         ));
     }
     docker::ensure_egress_image(&state.docker)

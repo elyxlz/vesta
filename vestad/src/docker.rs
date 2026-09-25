@@ -2002,12 +2002,21 @@ async fn ensure_sidecar(
                 handoff_shutdown_reason(docker, agent_name, cname, reason).await;
                 stop_container_with_timeout(docker, cname, CONTAINER_STOP_TIMEOUT_SECS).await?;
             }
-            docker
+            if let Err(e) = docker
                 .restart_container(&id, None::<RestartContainerOptions>)
-                .await?;
+                .await
+            {
+                if running_agent.is_some() {
+                    tracing::warn!(agent = %agent_name, error = %e, "failed to reload the egress sidecar; the agent was left stopped");
+                }
+                return Err(e.into());
+            }
             if let Some(cname) = running_agent {
                 handoff_boot_reason(docker, agent_name, cname, reason).await;
-                start_agent(docker, agent_name, None).await?;
+                if let Err(e) = start_agent(docker, agent_name, None).await {
+                    tracing::warn!(agent = %agent_name, error = %e, "failed to restart the agent after an egress reload; it was left stopped");
+                    return Err(e);
+                }
             }
             return Ok(id);
         }
@@ -2082,6 +2091,20 @@ async fn remove_sidecar(docker: &Docker, agents_dir: &std::path::Path, agent_nam
 /// missing or on another image, so `needs_rebuild` always rebuilds it.
 const SIDECAR_MISSING_NETWORK_MODE: &str = "container:<missing-egress-sidecar>";
 
+/// The `network_mode` `create_container` would give `agent_name` for `proxy_wanted`: its own
+/// network with none, its current sidecar's namespace (or the missing-sidecar sentinel) with one.
+/// The one owner of that decision, shared by `expected_network_mode` (reconcile, from the stored
+/// proxy) and `apply_egress_change` (an in-flight change, before it is stored).
+async fn network_mode_for(docker: &Docker, agent_name: &str, proxy_wanted: bool) -> String {
+    if !proxy_wanted {
+        return agent_network_name(agent_name);
+    }
+    match current_sidecar_id(docker, agent_name).await {
+        Some(id) => format!("{CONTAINER_NETWORK_PREFIX}{id}"),
+        None => SIDECAR_MISSING_NETWORK_MODE.to_string(),
+    }
+}
+
 /// The `network_mode` `create_container` would give `agent_name` now: its own network without a
 /// proxy, its current sidecar's namespace with one. An unreadable proxy file counts as a proxy,
 /// so a doubt never moves an agent off its sidecar.
@@ -2090,13 +2113,8 @@ pub(crate) async fn expected_network_mode(
     agents_dir: &std::path::Path,
     agent_name: &str,
 ) -> String {
-    if matches!(crate::egress::load_proxy(agents_dir, agent_name), Ok(None)) {
-        return agent_network_name(agent_name);
-    }
-    match current_sidecar_id(docker, agent_name).await {
-        Some(id) => format!("{CONTAINER_NETWORK_PREFIX}{id}"),
-        None => SIDECAR_MISSING_NETWORK_MODE.to_string(),
-    }
+    let proxy_wanted = !matches!(crate::egress::load_proxy(agents_dir, agent_name), Ok(None));
+    network_mode_for(docker, agent_name, proxy_wanted).await
 }
 
 /// Install the egress image before a recreate removes anything, so a host that cannot download
@@ -2175,14 +2193,14 @@ pub enum EgressChange {
     Clear,
 }
 
-/// Store an agent's new egress choice and make it live. A URL change on a current sidecar only
-/// reloads the sidecar; adding or removing the proxy changes the layout, so it rebuilds.
-///
-/// The rebuild decision is made from the agent's current `network_mode` alone, before anything
-/// is stored: setting a proxy needs a rebuild unless the agent is already joined to a sidecar,
-/// clearing one needs a rebuild only if it is. That lets the disk guard for the rebuild case run
-/// before the choice is stored, so a refusal changes nothing. Only past the guard is the choice
-/// written: if applying it still fails, reconcile converges at the next boot.
+/// Store an agent's new egress choice and make it live. A URL change on a current, healthy
+/// sidecar only reloads it; adding or removing the proxy, or a `Set` whose sidecar is missing or
+/// on another image (so `ensure_sidecar` would otherwise tear down and replace the sidecar the
+/// agent is joined to, stranding it on the dead id), changes the layout and rebuilds instead.
+/// The rebuild decision compares the agent's actual `network_mode` against what `change` should
+/// leave it as (`network_mode_for`), before anything is stored, so the disk guard below can run
+/// before the choice is stored and a refusal changes nothing; only past it is the choice written,
+/// and if applying it still fails, reconcile converges at the next boot.
 pub async fn apply_egress_change(
     docker: &Docker,
     name: &str,
@@ -2201,11 +2219,9 @@ pub async fn apply_egress_change(
         .as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
-    let currently_joined = actual.starts_with(CONTAINER_NETWORK_PREFIX);
-    let needs_rebuild = match change {
-        EgressChange::Set(_) => !currently_joined,
-        EgressChange::Clear => currently_joined,
-    };
+    let proxy_wanted = matches!(change, EgressChange::Set(_));
+    let expected = network_mode_for(docker, name, proxy_wanted).await;
+    let needs_rebuild = actual != expected;
     if needs_rebuild && reconcile_blocked_by_disk(docker_storage_available_bytes(docker).await) {
         return Err(DockerError::Failed(format!(
             "cannot apply the proxy change for '{name}': disk is critically low (a recreate needs free space); free space and retry"
@@ -5237,6 +5253,84 @@ mod tests {
             needs_rebuild(&cname, &expected, &info, &[]),
             "a missing sidecar must rebuild"
         );
+    }
+
+    /// Regression test: `apply_egress_change` used to decide `needs_rebuild` from whether the
+    /// agent's actual `network_mode` merely started with `container:`, true even when that
+    /// container (its sidecar) no longer exists. A `Set` then skipped the rebuild and the disk
+    /// guard and called `ensure_sidecar` directly, which tore down and replaced the sidecar the
+    /// agent was joined to -- but the agent's `network_mode` is baked in at creation, so it stayed
+    /// pointed at the dead id and could never start. The fix compares against the network mode
+    /// `change` should actually leave the agent with (`network_mode_for`), so this now rebuilds.
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn set_after_a_missing_sidecar_rebuilds_instead_of_stranding_the_agent() {
+        let docker = test_docker();
+        let agent = format!("egress-missing-sidecar-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        // The sidecar dies and its container is reaped (a pin bump has the same effect on
+        // `current_sidecar_id`), leaving the agent's baked-in `network_mode` pointed at nothing.
+        remove_container_force(&docker, &sidecar)
+            .await
+            .expect("remove sidecar");
+
+        let tracker = RebuildTracker::default();
+        apply_egress_change(
+            &docker,
+            &agent,
+            &env_config,
+            &[],
+            &EgressChange::Set(proxy),
+            &tracker,
+        )
+        .await
+        .expect("apply");
+
+        let agent_info = docker
+            .inspect_container(&cname, None)
+            .await
+            .expect("agent");
+        let network_mode = agent_info
+            .host_config
+            .expect("host config")
+            .network_mode
+            .expect("network mode");
+        assert!(
+            network_mode.starts_with(CONTAINER_NETWORK_PREFIX),
+            "agent must be joined to a sidecar, got {network_mode}"
+        );
+        let sidecar_id = network_mode
+            .strip_prefix(CONTAINER_NETWORK_PREFIX)
+            .expect("prefix");
+        let sidecar_info = docker
+            .inspect_container(sidecar_id, None)
+            .await
+            .expect("the agent's claimed sidecar must actually exist");
+        assert_eq!(sidecar_info.state.and_then(|s| s.running), Some(true));
     }
 
     /// `docker commit` copies an agent's labels onto the image a backup exports through, so the
