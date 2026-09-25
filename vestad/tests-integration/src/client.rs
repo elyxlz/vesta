@@ -667,6 +667,23 @@ impl Client {
         Ok(())
     }
 
+    /// `DELETE /agents/{name}/proxy` with the api key, returning `(status, body)` so a test can
+    /// assert on a refusal (an unknown agent) instead of treating every non-2xx as an error.
+    pub fn clear_proxy_status(&self, name: &str) -> Result<(u16, String), String> {
+        let response = self
+            .agent
+            .delete(&format!("{}/agents/{name}/proxy", self.base_url))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .call()
+            .map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
     /// Register a service via `POST /agents/{name}/services`, the agent-token tier the
     /// in-container `register-service` script calls. Exposure is left unspecified, so the
     /// response's `public` reports vestad's own default for a fresh registration.

@@ -394,6 +394,59 @@ fn a_restarted_sidecar_brings_the_agent_back_online() {
         wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS),
         "vestad restarts the agent into the sidecar's new namespace"
     );
+    // The repair must also drop the cached bridge IP, or a resolve that hit before the sidecar's
+    // restart keeps the tap dialing the dead address and the roster never converges past Starting.
+    client
+        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("agent status converges to running after the repair restart");
+}
+
+#[test]
+fn a_proxy_given_by_hostname_resolves_and_routes() {
+    let client = SERVER.client();
+    let agent = running_agent(&client, "egress-hostname");
+    install_egress_image(&client, &agent.name);
+    let proxy = TestProxy::start(&agent.name);
+
+    // sslip.io maps `a-b-c-d.sslip.io` to `a.b.c.d`, a public DNS name that resolves to the
+    // proxy's own container IP, so the sidecar must resolve the proxy's hostname itself.
+    let ip_format = format!(
+        "{{{{(index .NetworkSettings.Networks \"{}\").IPAddress}}}}",
+        agent_network(&agent.name)
+    );
+    let ip = docker_cmd(&["inspect", "-f", &ip_format, &proxy.container])
+        .expect("proxy ip")
+        .trim()
+        .to_string();
+    let hostname = ip.replace('.', "-");
+    let url = format!(
+        "socks5://{TEST_PROXY_USER}:{TEST_PROXY_PASSWORD}@{hostname}.sslip.io:{TEST_PROXY_PORT}"
+    );
+    let before = proxy.connections();
+
+    let (status, body) = client.set_proxy(&agent.name, &url).expect("set");
+    assert_eq!(status, 200, "{body}");
+    client
+        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("agent running on its sidecar");
+
+    assert!(
+        wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS),
+        "the agent reaches the internet through a proxy given by hostname"
+    );
+    assert!(
+        proxy.connections() > before,
+        "the request reached the proxy resolved by its sslip.io hostname"
+    );
+}
+
+#[test]
+fn clearing_the_proxy_of_an_unknown_agent_is_a_404() {
+    let client = SERVER.client();
+    let (status, _) = client
+        .clear_proxy_status(&unique_agent("egress-missing"))
+        .expect("delete");
+    assert_eq!(status, 404);
 }
 
 #[test]
