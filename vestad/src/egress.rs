@@ -140,7 +140,7 @@ impl ProxyUrl {
         outbound.insert("tag".into(), "proxy".into());
         outbound.insert("server".into(), self.host.clone().into());
         outbound.insert("server_port".into(), self.port.into());
-        outbound.insert("domain_resolver".into(), "local".into());
+        outbound.insert("domain_resolver".into(), "bootstrap".into());
         if let Some(user) = &self.username {
             outbound.insert("username".into(), user.clone().into());
         }
@@ -151,8 +151,15 @@ impl ProxyUrl {
             "log": {"level": "warn"},
             "dns": {
                 "servers": [
-                    {"type": "tcp", "tag": "remote", "server": SIDECAR_DNS, "detour": "proxy"},
-                    {"type": "local", "tag": "local"}
+                    // Over HTTPS, since a plain proxy may allow CONNECT to 443 only. Unverified:
+                    // the sidecar image carries no CA bundle, only `/sing-box`, so a verified
+                    // handshake to this hardcoded, well-known address fails closed on every
+                    // lookup (`x509: certificate signed by unknown authority`); the actual
+                    // traffic this resolves for still gets its own, ordinary TLS verification.
+                    {"type": "https", "tag": "remote", "server": SIDECAR_DNS, "detour": "proxy", "tls": {"insecure": true}},
+                    // No detour, so this leaves directly: only the lookup of the proxy's own
+                    // hostname (`domain_resolver` on the outbound), never a forwarded query.
+                    {"type": "udp", "tag": "bootstrap", "server": SIDECAR_DNS}
                 ],
                 "final": "remote"
             },
@@ -404,8 +411,8 @@ mod tests {
             "log": {"level": "warn"},
             "dns": {
                 "servers": [
-                    {"type": "tcp", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
-                    {"type": "local", "tag": "local"}
+                    {"type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy", "tls": {"insecure": true}},
+                    {"type": "udp", "tag": "bootstrap", "server": "1.1.1.1"}
                 ],
                 "final": "remote"
             },
@@ -429,7 +436,7 @@ mod tests {
                 "tag": "proxy",
                 "server": "gw.example.com",
                 "server_port": 1080,
-                "domain_resolver": "local",
+                "domain_resolver": "bootstrap",
                 "username": "u",
                 "password": "p"
             }],
@@ -450,7 +457,7 @@ mod tests {
             "tag": "proxy",
             "server": "gw.example.com",
             "server_port": 8080,
-            "domain_resolver": "local"
+            "domain_resolver": "bootstrap"
         });
         assert_eq!(proxy.sing_box_config()["outbounds"][0], expected);
     }
