@@ -831,9 +831,13 @@ async fn repair_egress_drift(
         );
         let docker = docker.clone();
         let agent_name = entry.name.clone();
+        let cache = cache.clone();
         tokio::spawn(async move {
             let _operation = operation;
             docker::restart_into_sidecar(&docker, &agent_name, &cname).await;
+            // The restarted sidecar can carry a new address; drop the cached one so the next
+            // resolve picks it up instead of dialing the dead one indefinitely.
+            cache.clear_bridge_ip(&agent_name);
         });
     }
 }
