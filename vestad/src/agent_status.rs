@@ -177,20 +177,6 @@ async fn combined_status(
     match info.status {
         docker::ContainerStatus::Running => {
             let agent_name = docker::name_from_cname(cname);
-            // A proxied agent whose sidecar restarted on its own sits in an empty namespace. The
-            // tap has no heartbeat to notice, so each poll checks; planned work is left alone.
-            if let Some(sidecar_id) = &info.network_holder {
-                if cache.operation(&agent_name).is_none() {
-                    docker::repair_egress_namespace(
-                        docker,
-                        &agent_name,
-                        cname,
-                        sidecar_id,
-                        info.started_at.as_deref(),
-                    )
-                    .await;
-                }
-            }
             // Resolve the agent's address before anything can return: the tap dial loop reads
             // the cached address and never resolves one itself, so a status that returned first
             // would deadlock it (no address, so no tap, so no address).
@@ -812,6 +798,46 @@ fn tappable_agents(agents: &[ListEntry]) -> HashMap<String, u16> {
         .collect()
 }
 
+/// Repairs each proxied agent's sidecar-crash namespace drift. Lives in the poll, never a read
+/// path: the tap has no heartbeat for a sidecar-only restart, and a GET must never restart a
+/// container. The operation is registered before the repair is spawned, so the next poll's
+/// `cache.operation` check is the single-flight guard against restarting an agent twice.
+async fn repair_egress_drift(
+    docker: &Docker,
+    cache: &Arc<AgentStatusCache>,
+    agents_dir: &std::path::Path,
+    rebuilding: &docker::RebuildTracker,
+    agents: &[ListEntry],
+) {
+    for entry in agents {
+        let proxied = matches!(
+            crate::egress::load_proxy(agents_dir, &entry.name),
+            Ok(Some(_))
+        );
+        if !proxied
+            || cache.operation(&entry.name).is_some()
+            || rebuilding.is_rebuilding(&entry.name)
+        {
+            continue;
+        }
+        let cname = docker::container_name(&entry.name);
+        if !docker::egress_repair_needed(docker, &cname).await {
+            continue;
+        }
+        let operation = PublishedOperation::new(
+            cache.clone(),
+            &entry.name,
+            docker::AgentOperation::Restarting,
+        );
+        let docker = docker.clone();
+        let agent_name = entry.name.clone();
+        tokio::spawn(async move {
+            let _operation = operation;
+            docker::restart_into_sidecar(&docker, &agent_name, &cname).await;
+        });
+    }
+}
+
 /// Spawns the background polling loop that keeps the cache fresh and manages
 /// internal WebSocket connections to observe live events from alive agents.
 pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
@@ -834,6 +860,8 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
         loop {
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
+
+            repair_egress_drift(&docker, &cache, &agents_dir, &rebuilding, &agents).await;
 
             // Lifecycle notifications come from vestad's authoritative agent list, never the
             // agent EventBus's thinking/idle activity. Each observed transition is routed into

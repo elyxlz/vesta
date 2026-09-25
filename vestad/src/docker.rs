@@ -2126,27 +2126,34 @@ fn started_after(later: Option<&str>, earlier: Option<&str>) -> bool {
     matches!((parse(later), parse(earlier)), (Some(later), Some(earlier)) if later > earlier)
 }
 
-/// Rejoin an agent to its sidecar after the sidecar restarted on its own (a crash that Docker's
-/// `on-failure` recovered). The restart gave the sidecar a new namespace and left the agent in the
-/// old, empty one, so the agent restarts too. A stopped sidecar is started first.
-pub(crate) async fn repair_egress_namespace(
-    docker: &Docker,
-    agent_name: &str,
-    cname: &str,
-    sidecar_id: &str,
-    agent_started_at: Option<&str>,
-) {
-    if let Err(e) = start_if_stopped(docker, sidecar_id).await {
-        tracing::warn!(agent = %agent_name, error = %e, "failed to start the egress sidecar");
-        return;
-    }
-    let Ok(sidecar) = docker.inspect_container(sidecar_id, None).await else {
-        return;
+/// True when `cname`'s sidecar restarted on its own after the agent last started (a crash that
+/// Docker's `on-failure` recovered): the restart gave the sidecar a fresh namespace and left the
+/// agent joined to the old, empty one. A stopped sidecar is started first, so a merely-stopped one
+/// doesn't read as drifted.
+pub(crate) async fn egress_repair_needed(docker: &Docker, cname: &str) -> bool {
+    let Ok(info) = docker.inspect_container(cname, None).await else {
+        return false;
     };
-    let sidecar_started_at = sidecar.state.as_ref().and_then(|s| s.started_at.as_deref());
-    if !started_after(sidecar_started_at, agent_started_at) {
-        return;
+    if info.state.as_ref().and_then(|s| s.running) != Some(true) {
+        return false;
     }
+    let Some(sidecar_id) = network_holder_of(&info) else {
+        return false;
+    };
+    if let Err(e) = start_if_stopped(docker, &sidecar_id).await {
+        tracing::warn!(container = %cname, error = %e, "failed to start the egress sidecar");
+        return false;
+    }
+    let Ok(sidecar) = docker.inspect_container(&sidecar_id, None).await else {
+        return false;
+    };
+    let agent_started_at = info.state.as_ref().and_then(|s| s.started_at.as_deref());
+    let sidecar_started_at = sidecar.state.as_ref().and_then(|s| s.started_at.as_deref());
+    started_after(sidecar_started_at, agent_started_at)
+}
+
+/// Restart the agent so it rejoins its sidecar's fresh network namespace.
+pub(crate) async fn restart_into_sidecar(docker: &Docker, agent_name: &str, cname: &str) {
     tracing::info!(agent = %agent_name, "egress sidecar restarted; restarting the agent to rejoin its network");
     let reason = &crate::lifecycle::CONTAINER_UPDATE;
     handoff_shutdown_reason(docker, agent_name, cname, reason).await;
