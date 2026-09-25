@@ -47,6 +47,7 @@ import {
 } from "@/agent/chat/attachment-content";
 import { CodeBlock } from "@/agent/chat/code-block";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
+import { SwipeToReply } from "@/agent/chat/swipe-to-reply";
 import {
   chatDateLabel,
   isFinalMarkdownNode,
@@ -356,6 +357,9 @@ export const ChatEvent = memo(function ChatEvent({
     },
     [messageText, onEditAndResend, onReadAloud, onReply, user],
   );
+  const replyFromSwipe = useCallback(() => {
+    onReply(messageText, user);
+  }, [messageText, onReply, user]);
   if (event.type === "error" || event.type === "rate_limited") {
     const text =
       event.type === "rate_limited"
@@ -451,7 +455,8 @@ export const ChatEvent = memo(function ChatEvent({
   );
   const failed = sendState === "failed" || sendState === "retry";
   return (
-    <View
+    <SwipeToReply
+      onReply={replyFromSwipe}
       style={[
         styles.messageRow,
         startsNewBubbleGroup ? styles.newBubbleGroup : null,
@@ -490,7 +495,7 @@ export const ChatEvent = memo(function ChatEvent({
       >
         {bubble}
       </MessageContextMenu>
-    </View>
+    </SwipeToReply>
   );
 });
 
