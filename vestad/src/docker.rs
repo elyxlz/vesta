@@ -679,9 +679,6 @@ pub struct ContainerInfo {
     /// Container start time (RFC3339 from Docker `State.StartedAt`), `None` for one that has never
     /// started. Changes on every restart, so the web app uses it to retire a "restart to apply" flag.
     pub started_at: Option<String>,
-    /// The container whose network namespace this one joins (`network_mode: container:<id>`),
-    /// which for an agent is its egress sidecar. `None` for a container on its own network.
-    pub network_holder: Option<String>,
 }
 
 // The Go zero time Docker reports for a container that has never started; not a real boot.
@@ -734,13 +731,11 @@ pub(crate) fn container_info_from(
         .as_ref()
         .and_then(|s| s.started_at.clone())
         .filter(|t| !t.is_empty() && t != NEVER_STARTED_AT);
-    let network_holder = network_holder_of(info);
     ContainerInfo {
         status,
         port,
         id,
         started_at,
-        network_holder,
     }
 }
 
@@ -765,7 +760,6 @@ pub(crate) async fn inspect_container(
             port: None,
             id: None,
             started_at: None,
-            network_holder: None,
         },
     }
 }
@@ -3964,28 +3958,20 @@ mod tests {
     }
 
     #[test]
-    fn container_info_names_the_network_holder_of_a_joined_container() {
+    fn network_holder_of_names_the_container_a_joined_network_mode_points_at() {
         let mut joined = inspect_with_started_at(Some("2026-07-07T10:00:00Z"));
         joined.host_config = Some(bollard::models::HostConfig {
             network_mode: Some("container:abc123".to_string()),
             ..Default::default()
         });
-        assert_eq!(
-            container_info_from("vesta-bot", &joined, None)
-                .network_holder
-                .as_deref(),
-            Some("abc123")
-        );
+        assert_eq!(network_holder_of(&joined).as_deref(), Some("abc123"));
 
         let mut own_network = inspect_with_started_at(Some("2026-07-07T10:00:00Z"));
         own_network.host_config = Some(bollard::models::HostConfig {
             network_mode: Some("vesta-agent-emi-bot".to_string()),
             ..Default::default()
         });
-        assert_eq!(
-            container_info_from("vesta-bot", &own_network, None).network_holder,
-            None
-        );
+        assert_eq!(network_holder_of(&own_network), None);
     }
 
     #[test]
