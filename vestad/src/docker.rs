@@ -110,7 +110,6 @@ fn host_docker_internal_mapping() -> String {
 /// Marks an agent's egress sidecar and names the agent it serves. Deliberately not
 /// `LABEL_MANAGED`, so `list_managed_agents` never lists a sidecar as an agent.
 const LABEL_EGRESS_FOR: &str = "vesta.egress_for";
-const EGRESS_CONFIG_MOUNT_DEST: &str = "/etc/egress.json";
 /// Where the sidecar's TUN device comes from. A host without it cannot run the sidecar.
 pub(crate) const TUN_DEVICE: &str = "/dev/net/tun";
 /// Docker's network mode for a container that joins another container's network namespace.
@@ -2024,8 +2023,9 @@ async fn ensure_sidecar(
     labels.insert(LABEL_EGRESS_FOR.to_string(), agent_name.to_string());
     let host_config = bollard::models::HostConfig {
         binds: Some(vec![format!(
-            "{}:{EGRESS_CONFIG_MOUNT_DEST}:ro,z",
-            config.path.display()
+            "{}:{}:ro,z",
+            config.path.display(),
+            crate::egress::CONFIG_MOUNT_PATH
         )]),
         network_mode: Some(network),
         extra_hosts: Some(vec![host_docker_internal_mapping()]),
@@ -2045,11 +2045,12 @@ async fn ensure_sidecar(
     let body = ContainerCreateBody {
         image: Some(image),
         labels: Some(labels),
+        // Busybox first drops the shared namespace's direct default route into a table only
+        // sing-box's own marked sockets can reach, then execs sing-box (see egress::init_script).
         cmd: Some(vec![
-            crate::egress_net::BINARY_IN_IMAGE.to_string(),
-            "run".to_string(),
-            "-c".to_string(),
-            EGRESS_CONFIG_MOUNT_DEST.to_string(),
+            crate::egress::BUSYBOX_IN_IMAGE.to_string(),
+            "sh".to_string(),
+            crate::egress::EGRESS_INIT_IN_IMAGE.to_string(),
         ]),
         host_config: Some(host_config),
         ..Default::default()

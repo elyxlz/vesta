@@ -16,18 +16,59 @@ const TUN_MTU: u16 = 1500;
 /// The DNS server the sidecar hands Docker's embedded resolver. A public address, so each
 /// forwarded lookup enters the TUN and sing-box answers it through the proxy.
 pub const SIDECAR_DNS: &str = "1.1.1.1";
-/// Destinations that never enter the TUN: loopback plus every private and link-local range,
-/// which is where vestad and the Docker networks live.
-const DIRECT_RANGES: &[&str] = &[
-    "127.0.0.0/8",
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "169.254.0.0/16",
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
-];
+/// Private IPv4 ranges: excluded from the TUN below and, in the init script, routed via eth0 in
+/// the main table before that table's default route is removed, so LAN and Docker traffic still
+/// reaches them. The one owner of this list.
+const PRIVATE_IPV4_RANGES: &[&str] = &["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+
+/// Every destination that never enters the TUN: loopback, the private ranges above, and
+/// link-local, for v4 and v6, which is where vestad and the Docker networks live.
+fn direct_ranges() -> Vec<&'static str> {
+    let mut ranges = vec!["127.0.0.0/8"];
+    ranges.extend_from_slice(PRIVATE_IPV4_RANGES);
+    ranges.extend_from_slice(&["169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"]);
+    ranges
+}
+
+/// The in-image paths the init script and the sidecar's container command reference; the image
+/// tar (`egress_net.rs`) places its assets at exactly these paths.
+pub const SING_BOX_IN_IMAGE: &str = "/sing-box";
+pub const BUSYBOX_IN_IMAGE: &str = "/busybox";
+pub const EGRESS_INIT_IN_IMAGE: &str = "/egress-init.sh";
+/// Where the sidecar's rendered config is bind-mounted: read by the bind mount (`docker.rs`) and
+/// by the init script's `sing-box run -c` argument.
+pub const CONFIG_MOUNT_PATH: &str = "/etc/egress.json";
+
+/// The fwmark sing-box's own outbound sockets carry (`route.default_mark` below) and the init
+/// script's `ip rule` matches: only those sockets see the routing table it sets up, so nothing
+/// else, including a socket bound directly to eth0, keeps a default route.
+const ROUTING_MARK: u32 = 0x2023;
+/// The policy-routing table id holding the one surviving default route. Busybox `ip` accepts
+/// table ids up to 255 only; also reused as the `ip rule` priority in the init script.
+const ROUTING_TABLE: u32 = 100;
+
+/// The sidecar's entrypoint, run as `/busybox sh` before sing-box starts. The shared namespace
+/// keeps eth0 with a direct default route in the main table, which a socket bound to eth0 (
+/// `SO_BINDTODEVICE`) can use to skip the TUN entirely; this moves that route to a table only
+/// sing-box's marked sockets can reach, then deletes the main table's. POSIX sh: busybox has no
+/// bash.
+pub fn init_script() -> String {
+    let ranges = PRIVATE_IPV4_RANGES.join(" ");
+    [
+        "set -e".to_string(),
+        format!("B={BUSYBOX_IN_IMAGE}"),
+        "GW=$($B ip route show default | $B awk '{print $3; exit}')".to_string(),
+        format!("$B ip route replace default via \"$GW\" dev eth0 table {ROUTING_TABLE}"),
+        format!(
+            "$B ip rule add fwmark 0x{ROUTING_MARK:x} lookup {ROUTING_TABLE} priority {ROUTING_TABLE}"
+        ),
+        format!("for range in {ranges}; do $B ip route replace \"$range\" via \"$GW\" dev eth0; done"),
+        "$B ip route del default".to_string(),
+        format!("exec {SING_BOX_IN_IMAGE} run -c {CONFIG_MOUNT_PATH}"),
+        String::new(),
+    ]
+    .join("\n")
+}
 
 #[derive(Debug)]
 pub struct EgressError(String);
@@ -179,14 +220,15 @@ impl ProxyUrl {
                 "mtu": TUN_MTU,
                 "auto_route": true,
                 "strict_route": true,
-                "route_exclude_address": DIRECT_RANGES,
+                "route_exclude_address": direct_ranges(),
                 "stack": "gvisor"
             }],
             "outbounds": [outbound],
             "route": {
                 "rules": [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}],
                 "final": "proxy",
-                "auto_detect_interface": true
+                "default_interface": "eth0",
+                "default_mark": ROUTING_MARK
             }
         })
     }
@@ -451,7 +493,8 @@ mod tests {
             "route": {
                 "rules": [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}],
                 "final": "proxy",
-                "auto_detect_interface": true
+                "default_interface": "eth0",
+                "default_mark": 8227
             }
         });
         assert_eq!(proxy.sing_box_config(), expected);
@@ -542,6 +585,44 @@ mod tests {
         assert_eq!(
             name,
             format!("vesta-egress-{}-bot", crate::paths::current_user())
+        );
+    }
+
+    #[test]
+    fn init_script_carries_the_mark_table_and_private_ranges_from_their_one_owner() {
+        let script = init_script();
+        assert!(script.starts_with("set -e\n"), "{script}");
+        assert!(script.contains("fwmark 0x2023"), "{script}");
+        assert!(
+            script.contains("table 100") && script.contains("lookup 100 priority 100"),
+            "{script}"
+        );
+        for range in PRIVATE_IPV4_RANGES {
+            assert!(script.contains(range), "{script}");
+        }
+        assert!(script.contains("B=/busybox"), "{script}");
+        assert!(
+            script.contains("exec /sing-box run -c /etc/egress.json"),
+            "{script}"
+        );
+        assert!(script.trim_end().ends_with("/etc/egress.json"), "{script}");
+        assert!(script.ends_with('\n'), "{script}");
+    }
+
+    #[test]
+    fn direct_ranges_matches_the_verified_tun_exclude_list() {
+        assert_eq!(
+            direct_ranges(),
+            vec![
+                "127.0.0.0/8",
+                "10.0.0.0/8",
+                "172.16.0.0/12",
+                "192.168.0.0/16",
+                "169.254.0.0/16",
+                "::1/128",
+                "fc00::/7",
+                "fe80::/10",
+            ]
         );
     }
 }

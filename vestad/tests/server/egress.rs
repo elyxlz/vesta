@@ -359,6 +359,56 @@ fn agent_traffic_leaves_through_the_proxy() {
     );
 }
 
+/// C1 (the full-block fix): a socket bound straight to `eth0` (`SO_BINDTODEVICE`, which `curl
+/// --interface` and this UDP probe both use) skips sing-box's TUN rules entirely, since
+/// `auto_route`/`strict_route` only steer sockets that go through the normal routing table
+/// lookup. The init script removes eth0's direct default route from the main table, so a
+/// bound socket has no direct path to fall back on, whichever way the proxy is doing.
+#[test]
+fn an_interface_bound_socket_cannot_bypass_the_proxy() {
+    let client = SERVER.client();
+    let (agent, proxy) = proxied_agent(&client, "egress-bind");
+    let cname = agent_container_name(&agent.name);
+
+    assert!(
+        wait_for_fetch(&agent.name, REQUEST_TIMEOUT_SECS * 2),
+        "ordinary (unbound) traffic must reach the internet through the proxy"
+    );
+
+    let eth0_tcp = || exec_in_container(&cname, "curl --interface eth0 -m 8 https://1.1.1.1/");
+    assert!(
+        eth0_tcp().is_err(),
+        "an eth0-bound TCP connection must not reach the internet directly (proxy up)"
+    );
+
+    let udp_probe = r#"
+python3 - << 'PYEOF'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b'eth0')
+s.settimeout(5)
+s.sendto(b'\x1b' + b'\x00' * 47, ('162.159.200.1', 123))
+try:
+    s.recvfrom(48)
+    print('answered')
+except socket.timeout:
+    print('blocked')
+PYEOF
+"#;
+    let result = exec_in_container(&cname, udp_probe).expect("udp probe ran");
+    assert_eq!(
+        result.trim(),
+        "blocked",
+        "an eth0-bound UDP socket must not reach the internet directly (proxy up)"
+    );
+
+    docker_cmd(&["stop", &proxy.container]).expect("stop proxy");
+    assert!(
+        eth0_tcp().is_err(),
+        "an eth0-bound TCP connection must not reach the internet directly (proxy stopped)"
+    );
+}
+
 #[test]
 fn the_agent_still_reaches_vestad_directly() {
     let client = SERVER.client();
