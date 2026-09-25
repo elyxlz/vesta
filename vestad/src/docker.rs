@@ -111,7 +111,8 @@ fn host_docker_internal_mapping() -> String {
 /// `LABEL_MANAGED`, so `list_managed_agents` never lists a sidecar as an agent.
 const LABEL_EGRESS_FOR: &str = "vesta.egress_for";
 const EGRESS_CONFIG_MOUNT_DEST: &str = "/etc/egress.json";
-const TUN_DEVICE: &str = "/dev/net/tun";
+/// Where the sidecar's TUN device comes from. A host without it cannot run the sidecar.
+pub(crate) const TUN_DEVICE: &str = "/dev/net/tun";
 /// Docker's network mode for a container that joins another container's network namespace.
 pub(crate) const CONTAINER_NETWORK_PREFIX: &str = "container:";
 

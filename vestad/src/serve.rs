@@ -176,13 +176,11 @@ fn ensure_not_rebuilding(
 /// Spawning runs the op to completion regardless of the client; the request only observes its result
 /// (so a still-connected app caller still gets a truthful response). JSON analogue of the SSE
 /// `spawn_pipeline_sse` used by backup/restore, which fixed this same drop-cancellation class.
-async fn spawn_detached<Fut>(
-    op: Fut,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
+async fn spawn_detached<T, Fut>(op: Fut) -> Result<T, (StatusCode, Json<serde_json::Value>)>
 where
-    Fut: std::future::Future<
-            Output = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>,
-        > + Send
+    T: Send + 'static,
+    Fut: std::future::Future<Output = Result<T, (StatusCode, Json<serde_json::Value>)>>
+        + Send
         + 'static,
 {
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -837,7 +835,7 @@ async fn restart_agent_handler(
     // Detached from this request's connection: a self-restart's client is the agent inside the very
     // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
-    spawn_detached(async move {
+    Box::pin(spawn_detached(async move {
         let _guard = agent_write_guard(&state, &name).await;
         // A vestad-performed restart (often the agent restarting itself, e.g. after the nightly
         // dream) is planned work: registering it keeps the stop/start cycle out of the lifecycle push.
@@ -858,18 +856,18 @@ async fn restart_agent_handler(
             let settings = state.settings.read().await;
             settings.agent_mounts(&name)
         };
-        docker::restart_agent(
+        Box::pin(docker::restart_agent(
             &state.docker,
             &name,
             &state.env_config,
             &user_mounts,
             reason,
             &state.rebuilding,
-        )
+        ))
         .await
         .map_err(map_docker_err)?;
         Ok(ok_json())
-    })
+    }))
     .await
 }
 
@@ -2506,13 +2504,11 @@ struct SetProxyBody {
     url: String,
 }
 
-/// Where the sidecar's TUN device comes from. A host without it cannot run the sidecar.
-const TUN_DEVICE_PATH: &str = "/dev/net/tun";
-
 async fn get_proxy_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
     let proxy = crate::egress::load_proxy(&state.env_config.agents_dir, &name)
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
     Ok(Json(
@@ -2533,7 +2529,7 @@ async fn set_proxy_handler(
     )
     .map_err(map_docker_err)?;
     ensure_not_rebuilding(&state.rebuilding, &name)?;
-    if !std::path::Path::new(TUN_DEVICE_PATH).exists() {
+    if !std::path::Path::new(docker::TUN_DEVICE).exists() {
         return Err(err_response(
             StatusCode::UNPROCESSABLE_ENTITY,
             "this host has no /dev/net/tun, so it cannot run an egress proxy",
@@ -2547,7 +2543,7 @@ async fn set_proxy_handler(
         .map_err(|e| err_response(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()))?;
     tracing::info!(agent = %name, proxy = %proxy.masked(), "setting egress proxy");
     let masked = proxy.masked();
-    let _ = apply_proxy_change(state, name, docker::EgressChange::Set(proxy)).await?;
+    Box::pin(apply_proxy_change(state, name, docker::EgressChange::Set(proxy))).await?;
     Ok(Json(serde_json::json!({ "url": masked })))
 }
 
@@ -2555,9 +2551,14 @@ async fn clear_proxy_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::guard_alive(
+        docker::container_status(&state.docker, &docker::container_name(&name)).await,
+        &name,
+    )
+    .map_err(map_docker_err)?;
     ensure_not_rebuilding(&state.rebuilding, &name)?;
     tracing::info!(agent = %name, "clearing egress proxy");
-    let _ = apply_proxy_change(state, name, docker::EgressChange::Clear).await?;
+    Box::pin(apply_proxy_change(state, name, docker::EgressChange::Clear)).await?;
     Ok(ok_json())
 }
 
@@ -2567,7 +2568,7 @@ async fn apply_proxy_change(
     state: SharedState,
     name: String,
     change: docker::EgressChange,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     spawn_detached(async move {
         let _guard = agent_write_guard(&state, &name).await;
         let _operation = agent_status::PublishedOperation::new(
@@ -2587,7 +2588,7 @@ async fn apply_proxy_change(
         .await;
         state.agent_status_cache.clear_bridge_ip(&name);
         applied.map_err(map_docker_err)?;
-        Ok(ok_json())
+        Ok(())
     })
     .await
 }
