@@ -640,6 +640,33 @@ impl Client {
         Ok(self.proxy_get(path, auth)?.0)
     }
 
+    /// `PUT /agents/{name}/proxy` with the api key, returning `(status, body)` so a test can
+    /// assert on a refusal.
+    pub fn set_proxy(&self, name: &str, url: &str) -> Result<(u16, String), String> {
+        let response = self
+            .agent
+            .put(&format!("{}/agents/{name}/proxy", self.base_url))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(serde_json::json!({ "url": url }))
+            .map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// `GET /agents/{name}/proxy` with a chosen credential, returning `(status, body)`.
+    pub fn get_proxy_as(&self, name: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
+        self.proxy_get(&format!("/agents/{name}/proxy"), auth)
+    }
+
+    pub fn clear_proxy(&self, name: &str) -> Result<(), String> {
+        self.delete(&format!("/agents/{name}/proxy"))?;
+        Ok(())
+    }
+
     /// Register a service via `POST /agents/{name}/services`, the agent-token tier the
     /// in-container `register-service` script calls. Exposure is left unspecified, so the
     /// response's `public` reports vestad's own default for a fresh registration.

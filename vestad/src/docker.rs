@@ -2166,6 +2166,74 @@ pub(crate) async fn restart_into_sidecar(docker: &Docker, agent_name: &str, cnam
     }
 }
 
+pub enum EgressChange {
+    Set(crate::egress::ProxyUrl),
+    Clear,
+}
+
+/// Store an agent's new egress choice and make it live. A URL change on a current sidecar only
+/// reloads the sidecar; adding or removing the proxy changes the layout, so it rebuilds. The
+/// stored choice is written first: if applying it fails, reconcile converges at the next boot.
+pub async fn apply_egress_change(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    change: &EgressChange,
+    rebuilding: &RebuildTracker,
+) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let raw = docker.inspect_container(&cname, None).await?;
+    let was_running = raw.state.as_ref().and_then(|s| s.running) == Some(true);
+    let agents_dir = &env_config.agents_dir;
+    match change {
+        EgressChange::Set(proxy) => {
+            crate::egress::save_proxy(agents_dir, name, proxy).map_err(egress_failed)?;
+        }
+        EgressChange::Clear => crate::egress::delete_proxy(agents_dir, name),
+    }
+    let reason = &crate::lifecycle::CONTAINER_UPDATE;
+    let actual = raw
+        .host_config
+        .as_ref()
+        .and_then(|h| h.network_mode.as_deref())
+        .unwrap_or("");
+    if actual == expected_network_mode(docker, agents_dir, name).await {
+        if let EgressChange::Set(proxy) = change {
+            let sidecar = ensure_sidecar(docker, agents_dir, name, proxy).await?;
+            if sidecar.reloaded && was_running {
+                handoff_shutdown_reason(docker, name, &cname, reason).await;
+                handoff_boot_reason(docker, name, &cname, reason).await;
+                docker
+                    .restart_container(
+                        &cname,
+                        Some(RestartContainerOptions {
+                            t: Some(CONTAINER_RESTART_TIMEOUT_SECS),
+                            signal: None,
+                        }),
+                    )
+                    .await?;
+            }
+        }
+        return Ok(());
+    }
+    if reconcile_blocked_by_disk(docker_storage_available_bytes(docker).await) {
+        return Err(DockerError::Failed(format!(
+            "cannot apply the proxy change for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+        )));
+    }
+    if was_running {
+        handoff_shutdown_reason(docker, name, &cname, reason).await;
+    }
+    rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
+    handoff_boot_reason(docker, name, &cname, reason).await;
+    if was_running {
+        start_agent(docker, name, None).await?;
+    }
+    Ok(())
+}
+
 // --- Snapshot ---
 
 const SNAPSHOT_TIMEOUT_SECS: u64 = 7200; // 2 hours — 25GB+ containers can take a long time

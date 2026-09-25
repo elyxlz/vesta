@@ -2501,6 +2501,97 @@ async fn set_mounts_handler(
     ))
 }
 
+#[derive(Deserialize)]
+struct SetProxyBody {
+    url: String,
+}
+
+/// Where the sidecar's TUN device comes from. A host without it cannot run the sidecar.
+const TUN_DEVICE_PATH: &str = "/dev/net/tun";
+
+async fn get_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let proxy = crate::egress::load_proxy(&state.env_config.agents_dir, &name)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "url": proxy.map(|p| p.masked()) }),
+    ))
+}
+
+async fn set_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetProxyBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let proxy = crate::egress::ProxyUrl::parse(&body.url)
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    docker::guard_alive(
+        docker::container_status(&state.docker, &docker::container_name(&name)).await,
+        &name,
+    )
+    .map_err(map_docker_err)?;
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
+    if !std::path::Path::new(TUN_DEVICE_PATH).exists() {
+        return Err(err_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "this host has no /dev/net/tun, so it cannot run an egress proxy",
+        ));
+    }
+    docker::ensure_egress_image(&state.docker)
+        .await
+        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
+    crate::egress_net::preflight(&proxy)
+        .await
+        .map_err(|e| err_response(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()))?;
+    tracing::info!(agent = %name, proxy = %proxy.masked(), "setting egress proxy");
+    let masked = proxy.masked();
+    let _ = apply_proxy_change(state, name, docker::EgressChange::Set(proxy)).await?;
+    Ok(Json(serde_json::json!({ "url": masked })))
+}
+
+async fn clear_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
+    tracing::info!(agent = %name, "clearing egress proxy");
+    let _ = apply_proxy_change(state, name, docker::EgressChange::Clear).await?;
+    Ok(ok_json())
+}
+
+/// Apply a proxy change as planned work, detached from the request like a restart, and drop the
+/// cached address: the agent's address moves between its own network and its sidecar's.
+async fn apply_proxy_change(
+    state: SharedState,
+    name: String,
+    change: docker::EgressChange,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    spawn_detached(async move {
+        let _guard = agent_write_guard(&state, &name).await;
+        let _operation = agent_status::PublishedOperation::new(
+            state.agent_status_cache.clone(),
+            &name,
+            docker::AgentOperation::Restarting,
+        );
+        let user_mounts = state.settings.read().await.agent_mounts(&name);
+        let applied = docker::apply_egress_change(
+            &state.docker,
+            &name,
+            &state.env_config,
+            &user_mounts,
+            &change,
+            &state.rebuilding,
+        )
+        .await;
+        state.agent_status_cache.clear_bridge_ip(&name);
+        applied.map_err(map_docker_err)?;
+        Ok(ok_json())
+    })
+    .await
+}
+
 /// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
 /// host filesystem (common mount roots + home media folders), so it is API-key only — never the
 /// agent token; an agent must not enumerate the host. The scan is blocking `std::fs` (and a hung
@@ -2682,6 +2773,7 @@ pub fn build_router(state: SharedState) -> Router {
             axum::routing::delete(delete_agent_backup_settings_handler),
         )
         .route("/agents/{name}/mounts", put(set_mounts_handler))
+        .route("/agents/{name}/proxy", get(get_proxy_handler))
         .route("/host/folders", get(host_folder_suggestions_handler))
         .route(
             "/mobile/devices",
@@ -2706,6 +2798,10 @@ pub fn build_router(state: SharedState) -> Router {
     // Create runs an image build; the longrun deadline keeps it from 408ing (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
+        .route(
+            "/agents/{name}/proxy",
+            put(set_proxy_handler).delete(clear_proxy_handler),
+        )
         .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
