@@ -440,3 +440,15 @@ def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "no dreamer summaries yet" in run.stdout
+
+
+def test_preempted_turns_are_not_refused_turns(tmp_path):
+    # A turn cut short by a preempt leaves the same zero usage record as a refusal, but it did run.
+    home = _healthy_home(tmp_path)
+    preempt = f"{_day(0)} 03:00:00 [DEBUG] [SYSTEM] [RUNTIME] Preempt sent (priority=now)\n"
+    (home / "agent" / "logs" / "vesta.log").write_text((preempt + _usage_line(_day(0), cache_read=0)) * 5)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  the provider refused 0 turns in the last 2 days" in run.stdout

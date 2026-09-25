@@ -89,7 +89,14 @@ done
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
 # refusal leaves, so count those lines rather than the daemon's rate-limit warnings. The dream runs
 # a few hours after midnight, so yesterday is the day under review and must be counted with today.
-refused=$(grep -hE "($today|$yesterday) .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+# A turn interrupted by a preempt leaves the same zero record, so a record after "Preempt sent" is skipped.
+refused=$(cat "$HOME"/agent/logs/vesta.log* 2>/dev/null | awk -v today="$today" -v yesterday="$yesterday" '
+    /Preempt sent/ { preempted = 1; next }
+    /\[USAGE\] in=/ {
+        if ($0 ~ /\[USAGE\] in=0 out=0 cache_read=0 / && !preempted && ($0 ~ today || $0 ~ yesterday)) n++
+        preempted = 0
+    }
+    END { print n + 0 }')
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
     bad "the provider refused $refused turns in the last 2 days: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
