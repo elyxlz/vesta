@@ -2,12 +2,42 @@
 //! proxy, moves the agent into its sidecar's namespace, and hides the password everywhere.
 //! Needs Docker and internet (the sing-box download and the preflight to api.anthropic.com).
 
-use vesta_tests::{agent_container_name, docker_cmd, unique_agent, ProxyAuth, TestAgent, SERVER};
+use vesta_tests::{
+    agent_container_name, docker_cmd, exec_in_container, unique_agent, ProxyAuth, TestAgent, SERVER,
+};
 
 const AGENT_RUNNING_TIMEOUT_SECS: u64 = 90;
 const TEST_PROXY_PORT: u16 = 1080;
 const TEST_PROXY_USER: &str = "egress-user";
 const TEST_PROXY_PASSWORD: &str = "egress-secret";
+const PROXY_LISTEN_TIMEOUT_SECS: u64 = 10;
+
+/// Block until `ip:port` accepts a TCP connection, or the timeout passes. `docker run -d`
+/// returns as soon as the container starts, not once sing-box's listener is up, and vestad's
+/// own preflight can otherwise race ahead of it under back-to-back test runs.
+fn wait_for_listener(ip: &str, port: u16) {
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(PROXY_LISTEN_TIMEOUT_SECS);
+    loop {
+        let addr = format!("{ip}:{port}");
+        if let Ok(mut addrs) = std::net::ToSocketAddrs::to_socket_addrs(&addr) {
+            if let Some(socket_addr) = addrs.next() {
+                if std::net::TcpStream::connect_timeout(
+                    &socket_addr,
+                    std::time::Duration::from_millis(500),
+                )
+                .is_ok()
+                {
+                    return;
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
 
 pub(crate) fn sidecar_name(agent: &str) -> String {
     let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
@@ -93,6 +123,7 @@ impl TestProxy {
             .expect("proxy ip")
             .trim()
             .to_string();
+        wait_for_listener(&ip, TEST_PROXY_PORT);
         Self {
             container,
             url: format!("socks5://{TEST_PROXY_USER}:{TEST_PROXY_PASSWORD}@{ip}:{TEST_PROXY_PORT}"),
@@ -100,10 +131,18 @@ impl TestProxy {
         }
     }
 
-    /// How many outbound connections the proxy has opened so far.
+    /// How many outbound connections the proxy has opened so far. sing-box logs to the
+    /// container's stderr stream, and `docker logs` replays each stream to the matching
+    /// stream of its own process, so this reads both rather than `docker_cmd`'s stdout-only.
     pub(crate) fn connections(&self) -> usize {
-        docker_cmd(&["logs", &self.container])
-            .unwrap_or_default()
+        let output = std::process::Command::new("docker")
+            .args(["logs", &self.container])
+            .output();
+        let Ok(output) = output else {
+            return 0;
+        };
+        let combined = [output.stdout, output.stderr].concat();
+        String::from_utf8_lossy(&combined)
             .matches("outbound connection to")
             .count()
     }
@@ -263,4 +302,148 @@ fn a_stopped_agent_stays_stopped_through_a_proxy_change() {
         "stopped"
     );
     assert!(network_mode(&agent_container_name(&agent.name)).starts_with("container:"));
+}
+
+const REQUEST_TIMEOUT_SECS: u64 = 15;
+const REPAIR_TIMEOUT_SECS: u64 = 90;
+
+/// The HTTP status of an agent's request to a public site, or the curl failure text.
+fn agent_fetch(agent: &str) -> Result<String, String> {
+    exec_in_container(
+        &agent_container_name(agent),
+        &format!("curl -s -m {REQUEST_TIMEOUT_SECS} -o /dev/null -w '%{{http_code}}' https://example.org/"),
+    )
+}
+
+fn wait_for_fetch(agent: &str, timeout_secs: u64) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    while std::time::Instant::now() < deadline {
+        if agent_fetch(agent).is_ok_and(|code| code.trim() == "200") {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    false
+}
+
+fn proxied_agent<'client>(
+    client: &'client vesta_tests::client::Client,
+    prefix: &str,
+) -> (TestAgent<'client>, TestProxy) {
+    let agent = running_agent(client, prefix);
+    install_egress_image(client, &agent.name);
+    let proxy = TestProxy::start(&agent.name);
+    let (status, body) = client
+        .set_proxy(&agent.name, &proxy.url)
+        .expect("set proxy");
+    assert_eq!(status, 200, "{body}");
+    client
+        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("agent running on its sidecar");
+    (agent, proxy)
+}
+
+#[test]
+fn agent_traffic_leaves_through_the_proxy() {
+    let client = SERVER.client();
+    let (agent, proxy) = proxied_agent(&client, "egress-route");
+    let before = proxy.connections();
+
+    assert!(
+        wait_for_fetch(&agent.name, REQUEST_TIMEOUT_SECS * 2),
+        "the agent reaches the internet"
+    );
+    assert!(
+        proxy.connections() > before,
+        "the request went through the proxy"
+    );
+}
+
+#[test]
+fn the_agent_still_reaches_vestad_directly() {
+    let client = SERVER.client();
+    let (agent, _proxy) = proxied_agent(&client, "egress-local");
+    let code = exec_in_container(
+        &agent_container_name(&agent.name),
+        ". /run/vestad-env && curl -sk -m 10 -o /dev/null -w '%{http_code}' https://$BOX_HOST:$VESTAD_PORT/health",
+    )
+    .expect("reach vestad");
+    assert_eq!(code.trim(), "200");
+}
+
+#[test]
+fn a_stopped_proxy_blocks_traffic_instead_of_going_direct() {
+    let client = SERVER.client();
+    let (agent, proxy) = proxied_agent(&client, "egress-closed");
+    docker_cmd(&["stop", &proxy.container]).expect("stop proxy");
+
+    let result = agent_fetch(&agent.name);
+    assert!(
+        !result.is_ok_and(|code| code.trim() == "200"),
+        "with the proxy down, the request must fail"
+    );
+}
+
+#[test]
+fn a_restarted_sidecar_brings_the_agent_back_online() {
+    let client = SERVER.client();
+    let (agent, _proxy) = proxied_agent(&client, "egress-repair");
+    docker_cmd(&["restart", &sidecar_name(&agent.name)]).expect("restart sidecar");
+
+    assert!(
+        wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS),
+        "vestad restarts the agent into the sidecar's new namespace"
+    );
+}
+
+#[test]
+fn a_url_change_reloads_the_sidecar_without_a_rebuild() {
+    let client = SERVER.client();
+    let (agent, _first) = proxied_agent(&client, "egress-change");
+    let sidecar_before =
+        docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)]).expect("sidecar");
+    let second = TestProxy::start_named(&agent.name, "b");
+    let (status, body) = client.set_proxy(&agent.name, &second.url).expect("change");
+    assert_eq!(status, 200, "{body}");
+
+    let sidecar_after =
+        docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)]).expect("sidecar");
+    assert_eq!(
+        sidecar_before, sidecar_after,
+        "a URL change keeps the sidecar"
+    );
+    let before = second.connections();
+    assert!(wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS));
+    assert!(
+        second.connections() > before,
+        "traffic moved to the new proxy"
+    );
+}
+
+#[test]
+fn destroy_and_rename_leave_no_egress_residue() {
+    let client = SERVER.client();
+    let (mut agent, proxy) = proxied_agent(&client, "egress-residue");
+    let old_name = agent.name.clone();
+    let new_name = unique_agent("egress-renamed");
+    drop(proxy);
+
+    let returned = client.rename_agent(&old_name, &new_name).expect("rename");
+    agent.name = returned.clone();
+    assert!(
+        docker_cmd(&["inspect", &sidecar_name(&old_name)]).is_err(),
+        "old sidecar removed"
+    );
+    assert!(!agents_dir().join(format!("{old_name}.proxy")).exists());
+    assert!(agents_dir().join(format!("{new_name}.proxy")).exists());
+
+    client.destroy_agent(&new_name).expect("destroy");
+    assert!(
+        docker_cmd(&["inspect", &sidecar_name(&new_name)]).is_err(),
+        "sidecar removed"
+    );
+    assert!(!agents_dir().join(format!("{new_name}.proxy")).exists());
+    assert!(!agents_dir()
+        .join(format!("{new_name}.egress.json"))
+        .exists());
 }
