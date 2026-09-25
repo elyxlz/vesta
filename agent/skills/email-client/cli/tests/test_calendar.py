@@ -577,6 +577,145 @@ def test_event_ops_use_discovered_collection(monkeypatch, capsys):
     assert out["ics_href"] == "https://p42-caldav.icloud.com/12345/calendars/home/abc.ics"
 
 
+# -- subscribed (feed-backed) calendars --------------------------------
+
+FEED_URL = "webcal://lms.example.edu/feeds/ical/SECRET-TOKEN/calendar.ics"
+
+SUBSCRIBED_RESPONSE = f"""
+ <D:response><D:href>/12345/calendars/feed-sub/</D:href>
+  <D:propstat><D:status>HTTP/1.1 200 OK</D:status>
+   <D:prop><D:displayname>Course timetable</D:displayname>
+    <D:resourcetype><D:collection/><CS:subscribed/></D:resourcetype>
+    <CS:source><D:href>{FEED_URL}</D:href></CS:source>
+   </D:prop></D:propstat>
+  <D:propstat><D:status>HTTP/1.1 404 Not Found</D:status>
+   <D:prop><caldav:supported-calendar-component-set/></D:prop></D:propstat>
+ </D:response>
+</D:multistatus>"""
+
+ICLOUD_CALENDARS_WITH_SUBSCRIBED = ICLOUD_CALENDARS.replace(
+    'xmlns:caldav="urn:ietf:params:xml:ns:caldav">', 'xmlns:caldav="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">', 1
+).replace("</D:multistatus>", SUBSCRIBED_RESPONSE)
+
+FEED_ICS = "\r\n".join(
+    [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:lecture-1",
+        "DTSTART:20260714T090000Z",
+        "DTEND:20260714T100000Z",
+        "SUMMARY:Lecture",
+        "RRULE:FREQ=WEEKLY;COUNT=3",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:exam-far-future",
+        "DTSTART:20270101T090000Z",
+        "DTEND:20270101T100000Z",
+        "SUMMARY:Out of window",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ]
+)
+
+
+def _subscribed_ctx(monkeypatch):
+    recorder = _icloud_ctx(monkeypatch)
+    recorder.responses[1] = ("PROPFIND", "/12345/calendars/", (207, ICLOUD_CALENDARS_WITH_SUBSCRIBED))
+    return recorder
+
+
+def _fake_feed(monkeypatch, body=FEED_ICS, error=None):
+    """Serve the feed from a fake urlopen; the caldav ``request`` choke point is never used for it."""
+    seen = []
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        seen.append({"url": req.full_url, "headers": dict(req.header_items()), "timeout": timeout})
+        if error is not None:
+            raise error
+        return _Resp(body.encode())
+
+    monkeypatch.setattr(caldav_client.urllib.request, "urlopen", fake_urlopen)
+    return seen
+
+
+def test_list_calendars_includes_subscribed_with_feed_host_only(monkeypatch, capsys):
+    recorder = _subscribed_ctx(monkeypatch)
+    raw = _run(["calendar", "list-calendars"], capsys)
+    out = json.loads(raw)
+    assert {"id": "home", "summary": "Home", "primary": True} in out
+    assert {
+        "id": "feed-sub",
+        "summary": "Course timetable",
+        "primary": False,
+        "subscribed": True,
+        "read_only": True,
+        "source_host": "lms.example.edu",
+    } in out
+    assert "SECRET-TOKEN" not in raw
+    assert "<cs:source/>" in recorder.calls[2]["body"]
+
+
+def test_list_subscribed_calendar_reads_events_from_feed_in_window(monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    recorder = _subscribed_ctx(monkeypatch)
+    seen = _fake_feed(monkeypatch)
+    out = json.loads(_run(["calendar", "list", "--calendar", "feed-sub", "--days-ahead", "14"], capsys))
+    assert [(e["summary"], e["start"]["dateTime"]) for e in out] == [
+        ("Lecture", "2026-07-14T09:00:00+00:00"),
+        ("Lecture", "2026-07-21T09:00:00+00:00"),
+    ]
+    # webcal:// is fetched over https, without the account's credentials.
+    assert seen[0]["url"] == "https://lms.example.edu/feeds/ical/SECRET-TOKEN/calendar.ics"
+    assert "Authorization" not in seen[0]["headers"]
+    assert seen[0]["headers"]["User-agent"] == caldav_client.FEED_USER_AGENT
+    assert seen[0]["timeout"] == caldav_client.REQUEST_TIMEOUT
+    assert not any(c["method"] == "REPORT" for c in recorder.calls)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["create", "--subject", "x", "--start", "2026-07-20"],
+        ["update", "--id", "lecture-1", "--subject", "x"],
+        ["delete", "--id", "lecture-1"],
+        ["respond", "--id", "lecture-1", "--response", "accept"],
+    ],
+)
+def test_writes_to_subscribed_calendar_are_refused(monkeypatch, capsys, argv):
+    recorder = _subscribed_ctx(monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        _run(["calendar", *argv, "--calendar", "feed-sub"], capsys)
+    assert str(exc.value) == (
+        "calendar 'feed-sub' is a subscribed calendar and is read-only: its events come from a feed on "
+        "lms.example.edu; read it with 'calendar list --calendar feed-sub'"
+    )
+    assert not any(c["method"] in ("PUT", "DELETE", "REPORT") for c in recorder.calls)
+
+
+def test_subscribed_feed_failure_is_reported_for_that_calendar_only(monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    recorder = _subscribed_ctx(monkeypatch)
+    recorder.responses.insert(0, ("REPORT", "/calendars/home/", (207, _report_body(EXISTING_ICS, href="/12345/calendars/home/abc.ics"))))
+    _fake_feed(monkeypatch, error=urllib.error.HTTPError(FEED_URL, 404, "Not Found", {}, None))
+    raw = _run(["calendar", "list", "--calendar", "feed-sub"], capsys)
+    out = json.loads(raw)
+    assert out == [{"calendar": "feed-sub", "feed_error": "subscribed calendar feed on lms.example.edu failed (HTTP 404)"}]
+    assert "SECRET-TOKEN" not in raw
+    # The account's own calendars are unaffected by the broken feed.
+    out = json.loads(_run(["calendar", "list", "--calendar", "home", "--days-ahead", "14"], capsys))
+    assert [e["summary"] for e in out] == ["Old title"]
+    assert {"id": "home", "summary": "Home", "primary": True} in json.loads(_run(["calendar", "list-calendars"], capsys))
+
+
 # -- get ---------------------------------------------------------------
 
 
