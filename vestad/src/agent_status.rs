@@ -177,6 +177,20 @@ async fn combined_status(
     match info.status {
         docker::ContainerStatus::Running => {
             let agent_name = docker::name_from_cname(cname);
+            // A proxied agent whose sidecar restarted on its own sits in an empty namespace. The
+            // tap has no heartbeat to notice, so each poll checks; planned work is left alone.
+            if let Some(sidecar_id) = &info.network_holder {
+                if cache.operation(&agent_name).is_none() {
+                    docker::repair_egress_namespace(
+                        docker,
+                        &agent_name,
+                        cname,
+                        sidecar_id,
+                        info.started_at.as_deref(),
+                    )
+                    .await;
+                }
+            }
             // Resolve the agent's address before anything can return: the tap dial loop reads
             // the cached address and never resolves one itself, so a status that returned first
             // would deadlock it (no address, so no tap, so no address).
