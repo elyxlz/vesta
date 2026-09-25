@@ -128,6 +128,10 @@ export default function ChatPage() {
   const composerKeyboardOffset =
     insets.bottom + COMPOSER_CLOSED_GAP - COMPOSER_KEYBOARD_GAP;
   const keyboard = useReanimatedKeyboardAnimation();
+  // A message menu closes the keyboard on iOS; the transcript holds its place under the menu,
+  // and the keyboard it closed comes back when the menu does.
+  const menuOpen = useSharedValue(false);
+  const keyboardOpenAtMenuRef = useRef(false);
   const {
     attachList,
     handleScroll,
@@ -135,7 +139,11 @@ export default function ChatPage() {
     isAwayFromLatest,
     renderScrollComponent,
     scrollToLatest,
-  } = useInvertedChatScroll<ChatRow>(composerInset, composerKeyboardOffset);
+  } = useInvertedChatScroll<ChatRow>(
+    composerInset,
+    composerKeyboardOffset,
+    menuOpen,
+  );
   const rows = useMemo(
     () => createInvertedChatRows(socket.events, socket.isTyping),
     [socket.events, socket.isTyping],
@@ -265,6 +273,19 @@ export default function ChatPage() {
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
   }, []);
+  const handleMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        keyboardOpenAtMenuRef.current = keyboard.progress.get() > 0;
+        menuOpen.set(true);
+        return;
+      }
+      menuOpen.set(false);
+      if (keyboardOpenAtMenuRef.current) inputRef.current?.focus();
+      keyboardOpenAtMenuRef.current = false;
+    },
+    [keyboard.progress, menuOpen],
+  );
   const cancelReply = useCallback(() => setReplyTarget(null), [setReplyTarget]);
   const replyToMessage = useCallback(
     (text: string, user: boolean) => {
@@ -373,6 +394,7 @@ export default function ChatPage() {
         onReadAloud={readAloud}
         onRetry={socket.retry}
         onOpenAttachment={openAttachment}
+        onMenuOpenChange={handleMenuOpenChange}
       />
       <AttachmentViewer
         api={api}
