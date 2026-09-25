@@ -9,11 +9,11 @@ const FRAME_Z = 2147483647;
  * The web-desktop "framed window" look, done without clipping the layout.
  *
  *  - The content surface is in-flow (fills the fixed-viewport flex shell minus the
- *    gutter; bg-muted distinguishes it from the --background gutter). No overflow
- *    clip — the rounded corners are faked by the overlay instead.
+ *    gutter; the body's --background shows through it). No overflow clip — the
+ *    rounded corners are faked by the overlay instead.
  *  - The overlay is PORTALED TO document.body (so it's a sibling of every dialog
  *    portal, not trapped inside #root) and pinned --frame-inset from each edge. Its
- *    `0 0 0 100vmax` box-shadow in --background paints everything OUTSIDE its rounded
+ *    `0 0 0 100vmax` box-shadow in --muted paints everything OUTSIDE its rounded
  *    rect — the gutter plus anything sliding past the squircle corners, including
  *    portaled dialog/popover overlays — so the whole app reads as a clipped window.
  *    A hairline border draws the frame line. pointer-events-none so it never eats
@@ -27,7 +27,7 @@ export function InsetFrame({ children }: { children: ReactNode }) {
   return (
     <>
       <div
-        className="relative flex min-h-0 flex-1 flex-col rounded-squircle-md bg-muted [corner-shape:squircle]"
+        className="relative flex min-h-0 flex-1 flex-col rounded-squircle-md [corner-shape:squircle]"
         style={{ margin: "var(--frame-inset)" }}
       >
         {children}
@@ -40,7 +40,7 @@ export function InsetFrame({ children }: { children: ReactNode }) {
           style={{
             inset: "var(--frame-inset)",
             zIndex: FRAME_Z,
-            boxShadow: "0 0 0 100vmax var(--background)",
+            boxShadow: "0 0 0 100vmax var(--muted)",
           }}
         >
           <div className="absolute inset-0 rounded-[inherit] border border-border [corner-shape:inherit]" />

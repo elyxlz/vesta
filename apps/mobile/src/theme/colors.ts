@@ -4,6 +4,7 @@ export interface AppColors {
   background: string;
   elevated: string;
   card: string;
+  bubble: string;
   text: string;
   secondaryText: string;
   tertiaryText: string;
@@ -25,6 +26,7 @@ function appColors(theme: "light" | "dark"): AppColors {
     background: colors.background,
     elevated: colors.popover,
     card: colors.card,
+    bubble: colors.bubble,
     text: colors.foreground,
     secondaryText: colors["muted-foreground"],
     tertiaryText: colors["tertiary-foreground"],
