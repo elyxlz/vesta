@@ -55,7 +55,7 @@ impl ProxyScheme {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProxyUrl {
     scheme: ProxyScheme,
     host: String,
@@ -63,6 +63,14 @@ pub struct ProxyUrl {
     username: Option<String>,
     password: Option<String>,
     raw: String,
+}
+
+/// Prints only the masked form, never the password, so a stray `{proxy:?}` in a log line
+/// cannot leak the credential.
+impl std::fmt::Debug for ProxyUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ProxyUrl").field(&self.masked()).finish()
+    }
 }
 
 impl ProxyUrl {
@@ -518,6 +526,14 @@ mod tests {
 
         delete_config(dir.path(), "bot");
         assert!(!written.path.exists());
+    }
+
+    #[test]
+    fn debug_never_prints_the_password() {
+        let proxy = ProxyUrl::parse("socks5://user:secret@gw.example.com:1080").expect("parse");
+        let printed = format!("{proxy:?}");
+        assert!(!printed.contains("secret"), "{printed}");
+        assert!(printed.contains("***"), "{printed}");
     }
 
     #[test]
