@@ -467,6 +467,18 @@ def _sync_sent(acc: str | None, profile: dict, out: Outbound) -> None:
 
 
 def _sync_sent_message(acc: str | None, profile: dict, message: EmailMessage) -> None:
+    # Gmail's SMTP server already saves a copy of everything sent through it
+    # to the account's Sent folder, so APPENDing here leaves Sent with two
+    # copies of every message (verified empirically on a live Gmail account:
+    # one copy from Gmail's autosave, one from this APPEND). Skip the APPEND
+    # for gmail accounts unless explicitly forced via EMAIL_CLIENT_FORCE_SENT_SYNC=1.
+    try:
+        provider_name, _ = account_profile(acc)
+    except Exception:
+        provider_name = ""
+    if provider_name == "gmail" and _env("EMAIL_CLIENT_FORCE_SENT_SYNC") != "1":
+        print("gmail auto-saves sent mail; skipped local append (set EMAIL_CLIENT_FORCE_SENT_SYNC=1 to override)")
+        return
     # Strip Bcc before APPEND (those addresses must not appear in
     # the stored copy that the user can later read in their mail UI).
     del message["Bcc"]
