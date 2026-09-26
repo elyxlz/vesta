@@ -71,6 +71,10 @@ A pooled account (a couple's joint card) is just a member: `--members "Alice,Bob
 - **Account repays**: `add-transfer pot --from Joint --to Bob --amount 30`.
 - Everyday spending straight off the joint card needn't be logged.
 
+### Proportional split
+
+When members should fund the pot in proportion to income rather than equally, store weights once (any positive numbers, e.g. each salary): `moneypot pot weights pot "Alice:90000,Bob:60000"` (`--clear` reverts to equal). `contributions` then adds a section per member: net stake, fair share of the total by weight, over or under, and the top-up that brings everyone into proportion without anyone withdrawing. `--weights` gives one-off weights without storing them. Run the command rather than doing this arithmetic by hand.
+
 `contributions pot --account Joint` then reports who's paid in how much and the top-up the lower one needs to stay level, plus what the account still owes each person:
 
 ```
@@ -80,6 +84,8 @@ contributions into 'Joint':
 'Joint' still owes (out-of-pocket, net of repayments):
    Bob  £50.00
 ```
+
+`contributions` counts money paid IN over the pot's life. Once the account has paid anyone back out, it also prints each member's **net stake** (paid in, minus paid back out, plus out-of-pocket the account owes them) and who is behind on that basis. Quote the net stake when the question is "whose money is in there now".
 
 ## HTTP API (optional)
 

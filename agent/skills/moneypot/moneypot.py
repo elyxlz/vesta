@@ -377,7 +377,54 @@ def balance(data, pot_id) -> dict:
     }
 
 
-def contributions(data, pot_id, account) -> dict:
+def parse_weights(pot: dict, weights) -> dict[str, Decimal]:
+    """Validate a {member: weight} map (e.g. salaries). Weights are relative, any positive numbers."""
+    out = {}
+    for m, w in (weights or {}).items():
+        if m not in pot["members"]:
+            raise MoneypotError(f"'{m}' is not a member of this pot")
+        try:
+            d = Decimal(str(w).replace(",", "").replace("£", "").strip())
+        except InvalidOperation:
+            raise MoneypotError(f"bad weight for {m}: {w!r}") from None
+        if d <= 0:
+            raise MoneypotError(f"weight for {m} must be positive")
+        out[m] = d
+    return out
+
+
+def set_weights(data, pot_id, weights) -> dict:
+    """Store contribution weights on a pot (e.g. each member's salary) so contributions() splits the
+    fair share proportionally instead of equally. An empty map clears them."""
+    pot = get_pot(data, pot_id)
+    parsed = parse_weights(pot, weights)
+    if parsed:
+        pot["weights"] = {m: str(w) for m, w in parsed.items()}
+    else:
+        pot.pop("weights", None)
+    return pot
+
+
+def _proportional(net_in: dict[str, int], weights: dict[str, Decimal]) -> dict:
+    missing = [m for m in net_in if m not in weights]
+    if missing:
+        raise MoneypotError(f"no weight for: {', '.join(missing)}")
+    wsum = sum(weights[m] for m in net_in)
+    total = sum(net_in.values())
+    share = {m: weights[m] / wsum for m in net_in}
+    fair = {m: int((Decimal(total) * share[m]).to_integral_value()) for m in net_in}
+    # top-up so everyone reaches the proportion set by whoever is furthest ahead (nobody withdraws)
+    lead = max(Decimal(net_in[m]) / weights[m] for m in net_in)
+    topup = {m: max(0, int((lead * weights[m]).to_integral_value()) - net_in[m]) for m in net_in}
+    return {
+        "share": {m: float(round(share[m], 4)) for m in net_in},
+        "fair": fair,
+        "vs_fair": {m: net_in[m] - fair[m] for m in net_in},
+        "topup_to_proportion": topup,
+    }
+
+
+def contributions(data, pot_id, account, weights=None) -> dict:
     pot = get_pot(data, pot_id)
     if account not in pot["members"]:
         raise MoneypotError(f"'{account}' is not a member of this pot")
@@ -395,14 +442,22 @@ def contributions(data, pot_id, account) -> dict:
         elif e["type"] == "expense" and e["payer"] in owed_back:
             owed_back[e["payer"]] += e["split"].get(account, 0)
     target = max(contributed.values())
-    return {
+    # net stake: paid in, minus what the account paid back out to them, plus out-of-pocket it owes
+    net_in = {m: contributed[m] + owed_back[m] for m in others}
+    out = {
         "pot": pot_id,
         "currency": pot["currency"],
         "account": account,
         "contributed": contributed,
         "topup_to_match": {m: target - contributed[m] for m in others},
         "account_owes": {m: owed_back[m] for m in others if owed_back[m] != 0},
+        "net_in": net_in,
     }
+    w = parse_weights(pot, weights) if weights else parse_weights(pot, pot.get("weights"))
+    if w:
+        out["weights"] = {m: str(v) for m, v in w.items()}
+        out["proportional"] = _proportional(net_in, w)
+    return out
 
 
 # ---------- CLI ----------
@@ -566,7 +621,7 @@ def cmd_balance(args):
 
 def cmd_contributions(args):
     data = load()
-    c = contributions(data, args.id, args.account)
+    c = contributions(data, args.id, args.account, _weights_map(args.weights) if args.weights else None)
     cur = c["currency"]
     if args.json:
         print(json.dumps(c, indent=2))
@@ -583,6 +638,43 @@ def cmd_contributions(args):
         print(f"  '{c['account']}' still owes (out-of-pocket, net of repayments):")
         for m, amt in c["account_owes"].items():
             print(f"     {m}  {fmt(amt, cur)}")
+    if c["net_in"] != c["contributed"]:
+        top = max(c["net_in"].values())
+        print(f"  {_rule(44)}")
+        print("  net stake now (paid in, minus paid back out, plus out-of-pocket owed):")
+        for m, net in c["net_in"].items():
+            gap = top - net
+            tail = f"  ({fmt(gap, cur)} behind)" if gap > 0 else "  (ahead or level)"
+            print(f"  {m:<16} {fmt(net, cur):>12}{tail}")
+    if "proportional" in c:
+        pr = c["proportional"]
+        total = sum(c["net_in"].values())
+        print(f"  {_rule(44)}")
+        print(f"  proportional to weights (net of withdrawals), total {fmt(total, cur)}:")
+        for m, net in c["net_in"].items():
+            diff = pr["vs_fair"][m]
+            state = f"over by {fmt(diff, cur)}" if diff > 0 else (f"under by {fmt(-diff, cur)}" if diff < 0 else "exact")
+            print(f"  {m:<10} {pr['share'][m] * 100:5.1f}%  in {fmt(net, cur):>10}  fair {fmt(pr['fair'][m], cur):>10}  {state}")
+        for m, amt in pr["topup_to_proportion"].items():
+            if amt > 0:
+                print(f"  -> {m} adds {fmt(amt, cur)} to be in proportion (nobody takes money out)")
+
+
+def _weights_map(csv: str) -> dict[str, str]:
+    out = {}
+    for part in csv.split(","):
+        if ":" not in part:
+            _die(f"bad weight {part!r}; use 'Name:number,Name:number'")
+        k, v = part.split(":", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def cmd_pot_weights(args):
+    data = load()
+    pot = set_weights(data, args.id, {} if args.clear else _weights_map(args.weights or _die("give weights or --clear")))
+    save(data)
+    print(f"weights for {args.id}: {pot.get('weights', 'cleared (equal split)')}")
 
 
 def cmd_delete_entry(args):
@@ -608,6 +700,11 @@ def _add_pot_parsers(sub) -> None:
     pd.add_argument("id")
     pd.add_argument("--yes", action="store_true")
     pd.set_defaults(func=cmd_pot_delete)
+    pw = potsub.add_parser("weights", help="set contribution weights (e.g. salaries) for a proportional split")
+    pw.add_argument("id")
+    pw.add_argument("weights", nargs="?", help="e.g. 'Alice:90000,Bob:60000'")
+    pw.add_argument("--clear", action="store_true")
+    pw.set_defaults(func=cmd_pot_weights)
 
 
 def _add_member_parser(sub) -> None:
@@ -658,6 +755,7 @@ def _add_view_parsers(sub) -> None:
     con = sub.add_parser("contributions", help="joint-account view: contribution equality + what the account owes")
     con.add_argument("id")
     con.add_argument("--account", required=True, help="the pooled-account member, e.g. Joint")
+    con.add_argument("--weights", default=None, help="one-off weights, overrides the pot's stored ones")
     con.add_argument("--json", action="store_true")
     con.set_defaults(func=cmd_contributions)
 
