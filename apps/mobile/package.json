@@ -25,7 +25,7 @@
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "12.0.1",
-    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-query": "^5.103.2",
     "@vesta/core": "*",
     "expo": "~57.0.19",
     "expo-audio": "~57.0.4",
@@ -76,7 +76,7 @@
     "react-native-webview": "13.16.1",
     "react-native-worklets": "0.10.1",
     "tz-lookup": "^6.1.25",
-    "zod": "^4.5.1"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -88,6 +88,6 @@
     "globals": "^17.11.0",
     "patch-package": "^8.0.1",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.1"
   }
 }
