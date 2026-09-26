@@ -21,6 +21,7 @@ export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
     onAppSettings: state.onAppSettings,
     onAgentSettings: state.onAgentSettings,
     onSwitchGateway: state.onSwitchGateway,
+    onNotifications: state.onNotifications,
   });
 
   return (

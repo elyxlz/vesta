@@ -1,6 +1,7 @@
 import {
   Archive,
   ArrowLeftRight,
+  Bell,
   Globe,
   KeyRound,
   Play,
@@ -28,6 +29,7 @@ export interface AgentActionsInput {
   onAgentSettings?: () => void;
   onSwitchGateway?: () => void;
   onDelete?: () => void;
+  onNotifications?: () => void;
 }
 
 interface ActionItem {
@@ -127,6 +129,14 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
 // The "Other" section's items, each present only when its handler is supplied.
 function buildOtherItems(input: AgentActionsInput): ActionItem[] {
   const items: ActionItem[] = [];
+  if (input.onNotifications) {
+    items.push({
+      key: "notifications",
+      icon: Bell,
+      label: "notifications",
+      onClick: input.onNotifications,
+    });
+  }
   if (input.onAgentSettings) {
     items.push({
       key: "agent-settings",

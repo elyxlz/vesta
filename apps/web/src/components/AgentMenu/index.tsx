@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { MoreVertical } from "lucide-react";
 import {
@@ -8,7 +8,8 @@ import {
   DialogTitle,
 } from "@/components/Dialog";
 import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useNavLayout } from "@/hooks/use-nav-layout";
+import { NotificationsPillContext } from "@/providers/NotificationsPillProvider/context";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
@@ -33,7 +34,8 @@ export function AgentMenu() {
 
   const [open, setOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
-  const isMobile = useIsMobile();
+  const navLayout = useNavLayout();
+  const pill = useContext(NotificationsPillContext);
 
   const isRunning =
     agent.status !== "stopped" &&
@@ -63,6 +65,11 @@ export function AgentMenu() {
       : undefined,
     isAuthenticated: !agentNeedsUser(agent.status),
     onDelete: () => openDialog("deleteAgent", true),
+    // A narrow mouse window drops the navbar bell, so its history opens here.
+    onNotifications:
+      pill && navLayout === "mouse-narrow"
+        ? () => pill.showSurface("dialog")
+        : undefined,
   };
 
   const trigger = (
@@ -73,7 +80,7 @@ export function AgentMenu() {
 
   return (
     <>
-      {isMobile ? (
+      {navLayout === "touch-narrow" ? (
         <MobileMenu
           state={state}
           open={open}

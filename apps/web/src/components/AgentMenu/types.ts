@@ -14,6 +14,7 @@ export interface MenuState {
   onAuthenticate?: () => void;
   isAuthenticated?: boolean;
   onDelete: () => void;
+  onNotifications?: () => void;
 }
 
 export interface MenuProps {
