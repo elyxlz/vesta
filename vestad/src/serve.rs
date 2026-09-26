@@ -2729,9 +2729,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/start", post(start_all_handler))
         .route(
             "/agents/{name}",
-            get(agent_status_handler)
-                .delete(destroy_agent_handler)
-                .patch(rename_agent_handler),
+            get(agent_status_handler).delete(destroy_agent_handler),
         )
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
@@ -2806,9 +2804,11 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Create runs an image build; the longrun deadline keeps it from 408ing (see the const).
+    // Create runs an image build and rename snapshots and recreates the container (plus its egress
+    // sidecar); the longrun deadline keeps either from 408ing mid-operation (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
+        .route("/agents/{name}", axum::routing::patch(rename_agent_handler))
         .route(
             "/agents/{name}/proxy",
             put(set_proxy_handler).delete(clear_proxy_handler),
