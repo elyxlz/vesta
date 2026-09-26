@@ -39,7 +39,7 @@ export function FileEditor({
         setValue(e.target.value);
         onChange(e.target.value);
       }}
-      className="field-sizing-fixed h-full resize-none rounded-none border-0 bg-transparent px-4 py-3 font-mono text-xs leading-relaxed shadow-none focus-visible:border-0 focus-visible:ring-0"
+      className="field-sizing-fixed h-full resize-none rounded-none border-0 bg-transparent px-4 py-3 font-mono text-xs leading-relaxed shadow-none"
     />
   );
 }
