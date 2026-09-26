@@ -8,7 +8,8 @@ import {
   DialogTitle,
 } from "@/components/Dialog";
 import { Button } from "@/components/ui/button";
-import { useIsMobile, useIsTouchNarrow } from "@/hooks/use-mobile";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsTouchNarrow } from "@/hooks/use-touch-narrow";
 import { NotificationsPillContext } from "@/providers/NotificationsPillProvider/context";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
