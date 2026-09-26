@@ -14,6 +14,7 @@ import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
@@ -24,6 +25,7 @@ import { useRestartPending } from "@/stores/use-restart-pending";
 import { agentNeedsUser, type AgentStatus } from "@vesta/core";
 import { PILL_EXPANDED_HEIGHT } from "@/providers/NotificationsPillProvider/context";
 import { Navbar } from "..";
+import { pageSwitchFor, type PageSwitch } from "./page-switch";
 
 export function AgentNavbar({
   chatCollapsed,
@@ -41,6 +43,10 @@ export function AgentNavbar({
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
+  // A mouse has no use for a thumb-reach tab bar: a narrow window on a mouse
+  // switches dashboard and chat from the top bar instead.
+  const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)");
+  const bottomNav = isMobile && !finePointer;
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const restartPending = useRestartPending((s) =>
     Boolean(name && s.pending[name]?.reasons.length),
@@ -63,13 +69,18 @@ export function AgentNavbar({
   const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
   const settingsMatch = useMatch({ path: "/agent/:name/settings", end: true });
 
-  const showMobileNavbar = isMobile && (!!agentDashboardMatch || !!chatMatch);
-  const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
+  const showMobileNavbar = bottomNav && (!!agentDashboardMatch || !!chatMatch);
+  const hideMobileNavbar = bottomNav && !!chatMatch && chatKeyboardFocused;
   // Subpages go back to wherever they were opened from (chat or dashboard); a
   // deep link has no in-app history (location.key === "default"), so fall back
   // to the dashboard, replacing the entry so browser back still exits the app.
   const showBack = !!logsMatch || !!settingsMatch;
-  const showDashboardBack = !isMobile && !!chatMatch;
+  const pageSwitch = pageSwitchFor({
+    bottomNav,
+    narrow: isMobile,
+    onDashboard: !!agentDashboardMatch,
+    onChat: !!chatMatch,
+  });
   const goBack = () => {
     if (location.key === "default") {
       void navigate(`/agent/${encodeURIComponent(name)}`, { replace: true });
@@ -90,7 +101,7 @@ export function AgentNavbar({
         leading={
           <AgentNavbarLeading
             showBack={showBack}
-            showDashboardBack={showDashboardBack}
+            pageSwitch={pageSwitch}
             goBack={goBack}
             name={name}
           />
@@ -121,12 +132,12 @@ export function AgentNavbar({
 
 function AgentNavbarLeading({
   showBack,
-  showDashboardBack,
+  pageSwitch,
   goBack,
   name,
 }: {
   showBack: boolean;
-  showDashboardBack: boolean;
+  pageSwitch: PageSwitch;
   goBack: () => void;
   name: string;
 }) {
@@ -135,25 +146,35 @@ function AgentNavbarLeading({
   if (showBack) {
     return <LeadingButton label="back" icon={<ArrowLeft />} onClick={goBack} />;
   }
-  if (showDashboardBack) {
-    return (
+  const base = `/agent/${encodeURIComponent(name)}`;
+  return (
+    <>
       <LeadingButton
-        label="dashboard"
-        icon={<LayoutDashboard />}
+        label="home"
+        icon={<Home />}
         onClick={() => {
-          void navigate(`/agent/${encodeURIComponent(name)}`);
+          void navigate("/");
         }}
       />
-    );
-  }
-  return (
-    <LeadingButton
-      label="home"
-      icon={<Home />}
-      onClick={() => {
-        void navigate("/");
-      }}
-    />
+      {pageSwitch === "dashboard" && (
+        <LeadingButton
+          label="dashboard"
+          icon={<LayoutDashboard />}
+          onClick={() => {
+            void navigate(base);
+          }}
+        />
+      )}
+      {pageSwitch === "chat" && (
+        <LeadingButton
+          label="chat"
+          icon={<MessageSquare />}
+          onClick={() => {
+            void navigate(`${base}/chat`);
+          }}
+        />
+      )}
+    </>
   );
 }
 

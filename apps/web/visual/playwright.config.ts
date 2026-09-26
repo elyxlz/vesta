@@ -21,6 +21,8 @@ const projects = Object.entries(PLATFORMS)
     name,
     use: {
       viewport: VIEWPORTS[platform.frame] ?? WEB,
+      // A phone frame is a touch device: the app picks its tab bar by pointer.
+      hasTouch: platform.frame === "phone-browser",
       colorScheme: "light" as const,
     },
   }));
