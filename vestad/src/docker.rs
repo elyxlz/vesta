@@ -1624,7 +1624,14 @@ async fn remove_replaced_snapshot(docker: &Docker, prev: Option<&str>, keep: &st
 /// the tag the new container now depends on (a defensive guard -- the two never match in practice
 /// because every snapshot tag carries a unique timestamp).
 fn is_removable_snapshot(prev: &str, keep: &str) -> bool {
-    prev != keep && SNAPSHOT_IMAGE_PREFIXES.iter().any(|p| prev.starts_with(p))
+    prev != keep && is_snapshot_image(prev)
+}
+
+/// Whether `image` is one of our throwaway snapshot images, which a rebuild removes once replaced.
+fn is_snapshot_image(image: &str) -> bool {
+    SNAPSHOT_IMAGE_PREFIXES
+        .iter()
+        .any(|prefix| image.starts_with(prefix))
 }
 
 /// Split a rebuild snapshot tag into the agent it belongs to and the epoch it was taken at.
@@ -1860,9 +1867,9 @@ pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
     info.size_rw.and_then(|size| u64::try_from(size).ok())
 }
 
-/// Total size of the container's root filesystem (image layers + writable layer).
-/// This is what `docker export` streams out, so it's the right basis for sizing
-/// the first, full restic snapshot.
+/// Total size of the container's root filesystem (image layers + writable layer). An upper
+/// bound on what `docker export` streams: a file deleted or rewritten since the image was
+/// built still counts here, which is the dead weight compaction reclaims.
 pub async fn container_size_root_fs(docker: &Docker, cname: &str) -> Option<u64> {
     let info = docker
         .inspect_container(cname, Some(InspectContainerOptions { size: true }))
@@ -2266,16 +2273,107 @@ pub async fn apply_egress_change(
         }
         return Ok(());
     }
-    let reason = &crate::lifecycle::CONTAINER_UPDATE;
+    recreate_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+        &crate::lifecycle::CONTAINER_UPDATE,
+    )
+    .await
+}
+
+/// Rebuild an agent's container with `reason` handed to both ends, starting it again only if it
+/// was running.
+async fn recreate_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    rebuilding: &RebuildTracker,
+    reason: &crate::lifecycle::LifecycleReason,
+) -> Result<(), DockerError> {
+    let cname = container_name(name);
+    let was_running = container_status(docker, &cname).await == ContainerStatus::Running;
     if was_running {
         handoff_shutdown_reason(docker, name, &cname, reason).await;
     }
-    rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
+    Box::pin(rebuild_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+    ))
+    .await?;
     handoff_boot_reason(docker, name, &cname, reason).await;
     if was_running {
         start_agent(docker, name, None).await?;
     }
     Ok(())
+}
+
+/// A container a compaction can shrink: whether it runs, and its size across every layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionTarget {
+    pub running: bool,
+    pub root_fs_bytes: u64,
+}
+
+/// Read a container as a compaction target, `None` when its image outlives a rebuild (a base or
+/// restore image stays, and its dead weight with it). The image is read before the size, whose
+/// measure walks every layer.
+pub async fn compaction_target(docker: &Docker, cname: &str) -> Option<CompactionTarget> {
+    let raw = docker.inspect_container(cname, None).await.ok()?;
+    if !is_snapshot_image(raw.config.as_ref()?.image.as_deref()?) {
+        return None;
+    }
+    Some(CompactionTarget {
+        running: raw.state.as_ref().and_then(|state| state.running) == Some(true),
+        root_fs_bytes: container_size_root_fs(docker, cname).await?,
+    })
+}
+
+/// Recreate an agent from its live filesystem, dropping the dead weight its image holds. Refused
+/// unless the disk holds the new image beside the old one; a failed recreate starts a running agent
+/// again, so optional work never leaves it stopped until the next boot.
+pub async fn compact_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    live_bytes: u64,
+    target: CompactionTarget,
+    rebuilding: &RebuildTracker,
+) -> Result<(), DockerError> {
+    validate_name(name)?;
+    if !compaction_has_room(docker_storage_available_bytes(docker).await, live_bytes) {
+        return Err(DockerError::Failed(format!(
+            "cannot compact '{name}': the disk has no room for a {live_bytes}-byte image beside the current one"
+        )));
+    }
+    let recreated = recreate_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+        &crate::lifecycle::DISK_COMPACTION,
+    )
+    .await;
+    if recreated.is_err() && target.running {
+        if let Err(start_error) = start_agent(docker, name, None).await {
+            tracing::error!(agent = %name, error = %start_error, "could not start the agent after a failed compaction");
+        }
+    }
+    recreated
+}
+
+/// Whether the disk can take a compaction's new image with the reconcile floor to spare. Unknown
+/// free space refuses: a compaction is optional work, never worth an import that fills the disk.
+fn compaction_has_room(available: Option<u64>, live_bytes: u64) -> bool {
+    available.is_some_and(|bytes| bytes >= live_bytes.saturating_add(MIN_RECONCILE_DISK_BYTES))
 }
 
 // --- Snapshot ---
@@ -4152,6 +4250,25 @@ mod tests {
         assert!(!reconcile_blocked_by_disk(Some(
             MIN_RECONCILE_DISK_BYTES + 1
         )));
+    }
+
+    #[test]
+    fn compaction_refuses_when_free_space_unknown() {
+        assert!(!compaction_has_room(None, 1));
+    }
+
+    #[test]
+    fn compaction_needs_room_for_the_new_image_plus_the_reconcile_floor() {
+        const LIVE: u64 = 54_000_000_000;
+        assert!(!compaction_has_room(Some(LIVE), LIVE));
+        assert!(!compaction_has_room(
+            Some(LIVE + MIN_RECONCILE_DISK_BYTES - 1),
+            LIVE
+        ));
+        assert!(compaction_has_room(
+            Some(LIVE + MIN_RECONCILE_DISK_BYTES),
+            LIVE
+        ));
     }
 
     #[test]

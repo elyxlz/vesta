@@ -3101,7 +3101,8 @@ async fn run_maintenance(state: &SharedState) {
 
 /// Snapshot every agent the pass selects, restart-free and concurrently (bounded). After a
 /// successful pre-update snapshot the agent's periodic snapshots are superseded and deleted;
-/// an agent whose snapshot failed keeps them as its fallback rollback point.
+/// an agent whose snapshot failed keeps them as its fallback rollback point. A routine pass then
+/// compacts the bloated agents one at a time, so two imports never race for the same free space.
 async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
     use futures_util::StreamExt;
 
@@ -3123,13 +3124,22 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
 
     let kind = &kind;
     let backup_settings = &backup_settings;
-    futures_util::stream::iter(agents)
-        .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| async move {
+    let taken: Vec<(String, crate::types::BackupInfo)> = futures_util::stream::iter(agents)
+        .map(|name| async move {
             // Each failure already logged itself; a routine pass has no caller to report to.
-            let _ = maintenance::snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
+            let taken = maintenance::snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
+            taken.ok().flatten().map(|snapshot| (name, snapshot))
         })
+        .buffer_unordered(maintenance::SNAPSHOT_CONCURRENCY)
+        .filter_map(std::future::ready)
+        .collect()
         .await;
     tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
+    if *kind == maintenance::PassKind::Routine {
+        for (name, snapshot) in &taken {
+            maintenance::compact_if_bloated(state, name, snapshot).await;
+        }
+    }
 }
 
 /// Settle whatever the previous vestad left behind, once, before anything serves: an update that
