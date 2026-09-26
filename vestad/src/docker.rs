@@ -2096,17 +2096,25 @@ fn sidecar_network_mode(sidecar_id: &str) -> String {
     format!("{CONTAINER_NETWORK_PREFIX}{sidecar_id}")
 }
 
-/// The `network_mode` `create_container` would give `agent_name` for `proxy_wanted`: its own
-/// network with none, its current sidecar's namespace (or the missing-sidecar sentinel) with one.
+/// Whether an agent's network should be its own or a sidecar's, the input `network_mode_for`
+/// decides on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Egress {
+    Direct,
+    Proxied,
+}
+
+/// The `network_mode` `create_container` would give `agent_name` for `egress`: its own network
+/// with `Direct`, its current sidecar's namespace (or the missing-sidecar sentinel) with `Proxied`.
 /// The one owner of that decision, shared by `expected_network_mode` (reconcile, from the stored
 /// proxy) and `apply_egress_change` (an in-flight change, before it is stored).
-async fn network_mode_for(docker: &Docker, agent_name: &str, proxy_wanted: bool) -> String {
-    if !proxy_wanted {
-        return agent_network_name(agent_name);
-    }
-    match current_sidecar_id(docker, agent_name).await {
-        Some(id) => sidecar_network_mode(&id),
-        None => SIDECAR_MISSING_NETWORK_MODE.to_string(),
+async fn network_mode_for(docker: &Docker, agent_name: &str, egress: Egress) -> String {
+    match egress {
+        Egress::Direct => agent_network_name(agent_name),
+        Egress::Proxied => match current_sidecar_id(docker, agent_name).await {
+            Some(id) => sidecar_network_mode(&id),
+            None => SIDECAR_MISSING_NETWORK_MODE.to_string(),
+        },
     }
 }
 
@@ -2117,8 +2125,12 @@ pub(crate) async fn expected_network_mode(
     agents_dir: &std::path::Path,
     agent_name: &str,
 ) -> String {
-    let proxy_wanted = crate::egress::proxy_configured(agents_dir, agent_name);
-    network_mode_for(docker, agent_name, proxy_wanted).await
+    let egress = if crate::egress::proxy_configured(agents_dir, agent_name) {
+        Egress::Proxied
+    } else {
+        Egress::Direct
+    };
+    network_mode_for(docker, agent_name, egress).await
 }
 
 /// Install the egress image before a recreate removes anything, so a host that cannot download
@@ -2224,8 +2236,11 @@ pub async fn apply_egress_change(
         .as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
-    let proxy_wanted = matches!(change, EgressChange::Set(_));
-    let expected = network_mode_for(docker, name, proxy_wanted).await;
+    let egress = match change {
+        EgressChange::Set(_) => Egress::Proxied,
+        EgressChange::Clear => Egress::Direct,
+    };
+    let expected = network_mode_for(docker, name, egress).await;
     let needs_rebuild = actual != expected;
     if needs_rebuild && reconcile_blocked_by_disk(docker_storage_available_bytes(docker).await) {
         return Err(DockerError::Failed(format!(
