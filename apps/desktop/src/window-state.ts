@@ -3,7 +3,7 @@ import { readWindowState, writeWindowState } from "./store";
 
 // resize and move fire continuously during a drag; write once the gesture settles.
 const SAVE_DEBOUNCE_MS = 500;
-// A restored window must show at least this much of itself on some display.
+// A restored window must show this much of its top (drag) edge on some display.
 const MIN_VISIBLE_PX = 80;
 
 export interface WindowState {
@@ -35,20 +35,16 @@ export function parseWindowState(value: unknown): WindowState | null {
   return { bounds: value.bounds, maximized: value.maximized };
 }
 
-function overlap(
-  a: Rectangle,
-  b: Rectangle,
-): { width: number; height: number } {
-  return {
-    width: Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x),
-    height: Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y),
-  };
-}
-
-/** Whether the saved bounds still land on a connected display (a monitor may be gone). */
+/** Whether the saved bounds still land on a connected display with a draggable top edge. */
 export function isOnScreen(bounds: Rectangle, workAreas: Rectangle[]): boolean {
+  const topEdge = { ...bounds, height: MIN_VISIBLE_PX };
   return workAreas.some((area) => {
-    const { width, height } = overlap(bounds, area);
+    const width =
+      Math.min(topEdge.x + topEdge.width, area.x + area.width) -
+      Math.max(topEdge.x, area.x);
+    const height =
+      Math.min(topEdge.y + topEdge.height, area.y + area.height) -
+      Math.max(topEdge.y, area.y);
     return width >= MIN_VISIBLE_PX && height >= MIN_VISIBLE_PX;
   });
 }
@@ -63,21 +59,24 @@ export async function loadWindowState(): Promise<WindowState | null> {
 /** Persist the window's normal bounds and maximized flag whenever either changes. */
 export function trackWindowState(window: BrowserWindow): void {
   let timer: NodeJS.Timeout | undefined;
+  const write = () => {
+    clearTimeout(timer);
+    if (window.isDestroyed()) return;
+    const state: WindowState = {
+      bounds: window.getNormalBounds(),
+      maximized: window.isMaximized(),
+    };
+    writeWindowState(state).catch((cause: unknown) => {
+      console.warn("could not save window state", cause);
+    });
+  };
   const save = () => {
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (window.isDestroyed()) return;
-      const state: WindowState = {
-        bounds: window.getNormalBounds(),
-        maximized: window.isMaximized(),
-      };
-      writeWindowState(state).catch((cause: unknown) => {
-        console.warn("could not save window state", cause);
-      });
-    }, SAVE_DEBOUNCE_MS);
+    timer = setTimeout(write, SAVE_DEBOUNCE_MS);
   };
   window.on("resize", save);
   window.on("move", save);
   window.on("maximize", save);
   window.on("unmaximize", save);
+  window.on("close", write);
 }

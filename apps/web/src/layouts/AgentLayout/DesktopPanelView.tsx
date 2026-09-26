@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/resizable";
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
+import { agentSubpage } from "@/lib/agent-subpage";
 import { cn } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
 import { setChatFullscreen } from "@/stores/use-preferences";
@@ -31,14 +32,15 @@ export function DesktopPanelView({
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
-  const base = `/agent/${encodeURIComponent(name ?? "")}`;
-  const isChat = location.pathname === `${base}/chat`;
-  const isPanel = location.pathname === base;
+  const isChat =
+    location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
+  const onPanelOrChat =
+    name !== undefined && agentSubpage(location.pathname, name) === null;
 
   // Remember which of the two views the agent was left in; logs and settings keep it.
   useEffect(() => {
-    if (name && (isChat || isPanel)) setChatFullscreen(name, isChat);
-  }, [name, isChat, isPanel]);
+    if (name && onPanelOrChat) setChatFullscreen(name, isChat);
+  }, [name, onPanelOrChat, isChat]);
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: DASHBOARD_CHAT_LAYOUT_ID,

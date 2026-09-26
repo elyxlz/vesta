@@ -102,17 +102,20 @@ export function naturalPacingFor(agent: string): boolean {
   return usePreferences.getState().naturalPacingByAgent[agent] ?? true;
 }
 
+function withAgent(agents: string[], agent: string, member: boolean): string[] {
+  const without = agents.filter((name) => name !== agent);
+  return member ? [...without, agent] : without;
+}
+
 export function setChatCollapsed(agent: string, collapsed: boolean): void {
   const { chatCollapsed, update } = usePreferences.getState();
-  const without = chatCollapsed.filter((name) => name !== agent);
-  update({ chatCollapsed: collapsed ? [...without, agent] : without });
+  update({ chatCollapsed: withAgent(chatCollapsed, agent, collapsed) });
 }
 
 export function setChatFullscreen(agent: string, fullscreen: boolean): void {
   const { chatFullscreen, update } = usePreferences.getState();
   if (chatFullscreen.includes(agent) === fullscreen) return;
-  const without = chatFullscreen.filter((name) => name !== agent);
-  update({ chatFullscreen: fullscreen ? [...without, agent] : without });
+  update({ chatFullscreen: withAgent(chatFullscreen, agent, fullscreen) });
 }
 
 // Where opening an agent lands on desktop: the view it was last left in.

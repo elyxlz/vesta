@@ -33,6 +33,11 @@ describe("isOnScreen", () => {
     expect(isOnScreen(bounds, [PRIMARY])).toBe(false);
   });
 
+  it("drops a window whose top edge sits above every display", () => {
+    const bounds = { x: 100, y: -600, width: 1200, height: 750 };
+    expect(isOnScreen(bounds, [PRIMARY])).toBe(false);
+  });
+
   it("drops a window that only shows a sliver on any display", () => {
     const bounds = { x: 1880, y: 100, width: 1200, height: 750 };
     expect(isOnScreen(bounds, [PRIMARY])).toBe(false);

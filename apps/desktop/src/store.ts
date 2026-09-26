@@ -70,24 +70,32 @@ function parseEncryptedStore(value: unknown): EncryptedStore | null {
   return { version: STORE_VERSION, encrypted: value.encrypted };
 }
 
-async function writeStore(filename: string, value: unknown): Promise<void> {
+async function writeJson(filename: string, value: unknown): Promise<void> {
   const target = storePath(filename);
   await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   const temporary = `${target}.tmp`;
-  await fs.writeFile(temporary, JSON.stringify(payload(value)), {
+  await fs.writeFile(temporary, JSON.stringify(value), {
     encoding: "utf8",
     mode: 0o600,
   });
   await fs.rename(temporary, target);
 }
 
-async function readStore(filename: string): Promise<unknown> {
-  let parsed: unknown;
+async function readJson(filename: string): Promise<unknown> {
   try {
-    parsed = JSON.parse(await fs.readFile(storePath(filename), "utf8"));
+    return JSON.parse(await fs.readFile(storePath(filename), "utf8"));
   } catch {
     return null;
   }
+}
+
+function writeStore(filename: string, value: unknown): Promise<void> {
+  return writeJson(filename, payload(value));
+}
+
+async function readStore(filename: string): Promise<unknown> {
+  const parsed = await readJson(filename);
+  if (parsed === null) return null;
 
   const encrypted = parseEncryptedStore(parsed);
   if (encrypted) {
@@ -141,10 +149,11 @@ export function clearRecentGateways(): Promise<void> {
   return clearStore(RECENT_GATEWAYS_FILE);
 }
 
+// Plain JSON, not safeStorage: read before the first window exists, so no keychain prompt.
 export function readWindowState(): Promise<unknown> {
-  return readStore(WINDOW_STATE_FILE);
+  return readJson(WINDOW_STATE_FILE);
 }
 
 export function writeWindowState(value: unknown): Promise<void> {
-  return writeStore(WINDOW_STATE_FILE, value);
+  return writeJson(WINDOW_STATE_FILE, value);
 }
