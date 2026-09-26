@@ -95,9 +95,8 @@ pub fn agent_needs_snapshot(
     }
 }
 
-/// The bytes a compaction would reclaim, when that is worth a restart. `root_fs_bytes` counts every
-/// layer the container holds; `live_bytes` is what its export streamed, only the visible files. A
-/// zero live size is an unmeasured snapshot, never an empty agent.
+/// The bytes a compaction would reclaim (every layer minus the streamed live files), when worth a
+/// restart. A zero live size is an unmeasured snapshot, never an empty agent.
 pub fn compaction_worth(root_fs_bytes: u64, live_bytes: u64) -> Option<u64> {
     let dead = root_fs_bytes.saturating_sub(live_bytes);
     let worth = live_bytes > 0
@@ -106,24 +105,35 @@ pub fn compaction_worth(root_fs_bytes: u64, live_bytes: u64) -> Option<u64> {
     worth.then_some(dead)
 }
 
-/// Compact one agent after its routine snapshot when its image carries enough dead weight. The
-/// snapshot is the live-size measure and the rollback point should the recreate go wrong.
+/// Compact one idle agent whose image carries enough dead weight, right after its routine snapshot:
+/// the live-size measure and the rollback point. A busy agent waits for a later night.
 pub(crate) async fn compact_if_bloated(state: &AppState, name: &str, snapshot: &BackupInfo) {
-    let cname = crate::docker::container_name(name);
-    let Some(root_fs_bytes) = crate::docker::container_size_root_fs(&state.docker, &cname).await
-    else {
-        return;
-    };
-    let Some(dead_bytes) = compaction_worth(root_fs_bytes, snapshot.size) else {
-        return;
-    };
     let _guard = agent_write_guard(state, name).await;
-    // The stop/start cycle is planned work, kept out of the lifecycle push.
-    let _operation = crate::agent_status::PublishedOperation::new(
-        state.agent_status_cache.clone(),
-        name,
-        crate::docker::AgentOperation::Restarting,
-    );
+    let idle = state
+        .agent_status_cache
+        .subscribe_activity()
+        .borrow()
+        .get(name)
+        .is_none_or(|activity| activity == "idle");
+    if !idle {
+        tracing::info!(agent = %name, "maintenance: agent busy, compaction deferred");
+        return;
+    }
+    let cname = crate::docker::container_name(name);
+    let Some(target) = crate::docker::compaction_target(&state.docker, &cname).await else {
+        return;
+    };
+    let Some(dead_bytes) = compaction_worth(target.root_fs_bytes, snapshot.size) else {
+        return;
+    };
+    // Planned work stays out of the lifecycle push; a stopped agent never starts, so it stays stopped.
+    let _operation = target.running.then(|| {
+        crate::agent_status::PublishedOperation::new(
+            state.agent_status_cache.clone(),
+            name,
+            crate::docker::AgentOperation::Restarting,
+        )
+    });
     tracing::info!(agent = %name, dead_bytes, live_bytes = snapshot.size, "maintenance: compacting");
     let user_mounts = state.settings.read().await.agent_mounts(name);
     match crate::docker::compact_agent(
@@ -132,12 +142,13 @@ pub(crate) async fn compact_if_bloated(state: &AppState, name: &str, snapshot: &
         &state.env_config,
         &user_mounts,
         snapshot.size,
+        target,
         &state.rebuilding,
     )
     .await
     {
         Ok(()) => tracing::info!(agent = %name, dead_bytes, "maintenance: compacted"),
-        Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: compaction failed"),
+        Err(error) => tracing::error!(agent = %name, %error, "maintenance: compaction failed"),
     }
     // A recreated container can come up on a new address.
     state.agent_status_cache.clear_bridge_ip(name);

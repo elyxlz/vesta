@@ -1624,7 +1624,14 @@ async fn remove_replaced_snapshot(docker: &Docker, prev: Option<&str>, keep: &st
 /// the tag the new container now depends on (a defensive guard -- the two never match in practice
 /// because every snapshot tag carries a unique timestamp).
 fn is_removable_snapshot(prev: &str, keep: &str) -> bool {
-    prev != keep && SNAPSHOT_IMAGE_PREFIXES.iter().any(|p| prev.starts_with(p))
+    prev != keep && is_snapshot_image(prev)
+}
+
+/// Whether `image` is one of our throwaway snapshot images, which a rebuild removes once replaced.
+fn is_snapshot_image(image: &str) -> bool {
+    SNAPSHOT_IMAGE_PREFIXES
+        .iter()
+        .any(|prefix| image.starts_with(prefix))
 }
 
 /// Split a rebuild snapshot tag into the agent it belongs to and the epoch it was taken at.
@@ -2278,8 +2285,7 @@ pub async fn apply_egress_change(
 }
 
 /// Rebuild an agent's container with `reason` handed to both ends, starting it again only if it
-/// was running. A recreate that fails while the old container still stands starts that one again,
-/// so optional work never leaves the agent stopped until the next boot.
+/// was running.
 async fn recreate_agent(
     docker: &Docker,
     name: &str,
@@ -2293,22 +2299,14 @@ async fn recreate_agent(
     if was_running {
         handoff_shutdown_reason(docker, name, &cname, reason).await;
     }
-    if let Err(error) = Box::pin(rebuild_agent(
+    Box::pin(rebuild_agent(
         docker,
         name,
         env_config,
         user_mounts,
         rebuilding,
     ))
-    .await
-    {
-        if was_running {
-            if let Err(start_error) = start_agent(docker, name, None).await {
-                tracing::error!(agent = %name, error = %start_error, "could not start the agent after a failed recreate");
-            }
-        }
-        return Err(error);
-    }
+    .await?;
     handoff_boot_reason(docker, name, &cname, reason).await;
     if was_running {
         start_agent(docker, name, None).await?;
@@ -2316,15 +2314,37 @@ async fn recreate_agent(
     Ok(())
 }
 
-/// Recreate an agent from its live filesystem. Overlay keeps every file the agent deletes or
-/// rewrites in the image below its writable layer, so disk use only grows until the image is
-/// rebuilt from what is live. Refused unless the disk holds the new image beside the old one.
+/// A container a compaction can shrink: whether it runs, and its size across every layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionTarget {
+    pub running: bool,
+    pub root_fs_bytes: u64,
+}
+
+/// Read a container as a compaction target, `None` when its image outlives a rebuild (a base or
+/// restore image stays, and its dead weight with it). The image is read before the size, whose
+/// measure walks every layer.
+pub async fn compaction_target(docker: &Docker, cname: &str) -> Option<CompactionTarget> {
+    let raw = docker.inspect_container(cname, None).await.ok()?;
+    if !is_snapshot_image(raw.config.as_ref()?.image.as_deref()?) {
+        return None;
+    }
+    Some(CompactionTarget {
+        running: raw.state.as_ref().and_then(|state| state.running) == Some(true),
+        root_fs_bytes: container_size_root_fs(docker, cname).await?,
+    })
+}
+
+/// Recreate an agent from its live filesystem, dropping the dead weight its image holds. Refused
+/// unless the disk holds the new image beside the old one; a failed recreate starts a running agent
+/// again, so optional work never leaves it stopped until the next boot.
 pub async fn compact_agent(
     docker: &Docker,
     name: &str,
     env_config: &AgentEnvConfig,
     user_mounts: &[crate::mounts::HostMount],
     live_bytes: u64,
+    target: CompactionTarget,
     rebuilding: &RebuildTracker,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
@@ -2333,7 +2353,7 @@ pub async fn compact_agent(
             "cannot compact '{name}': the disk has no room for a {live_bytes}-byte image beside the current one"
         )));
     }
-    recreate_agent(
+    let recreated = recreate_agent(
         docker,
         name,
         env_config,
@@ -2341,7 +2361,13 @@ pub async fn compact_agent(
         rebuilding,
         &crate::lifecycle::DISK_COMPACTION,
     )
-    .await
+    .await;
+    if recreated.is_err() && target.running {
+        if let Err(start_error) = start_agent(docker, name, None).await {
+            tracing::error!(agent = %name, error = %start_error, "could not start the agent after a failed compaction");
+        }
+    }
+    recreated
 }
 
 /// Whether the disk can take a compaction's new image with the reconcile floor to spare. Unknown
