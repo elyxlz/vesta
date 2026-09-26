@@ -1,5 +1,6 @@
 import {
   BrowserWindow,
+  Menu,
   app,
   net,
   protocol,
@@ -192,6 +193,32 @@ function routeDownloadsToDisk(): void {
   });
 }
 
+type EditRole = "cut" | "copy" | "paste" | "selectAll";
+
+/** The native edit items a right click offers: the full set in a text field, copy on a selection, else none. */
+export function contextMenuItems(params: {
+  isEditable: boolean;
+  selectionText: string;
+  editFlags: {
+    canCut: boolean;
+    canCopy: boolean;
+    canPaste: boolean;
+    canSelectAll: boolean;
+  };
+}): { role: EditRole; enabled: boolean }[] {
+  const { canCut, canCopy, canPaste, canSelectAll } = params.editFlags;
+  if (params.isEditable)
+    return [
+      { role: "cut", enabled: canCut },
+      { role: "copy", enabled: canCopy },
+      { role: "paste", enabled: canPaste },
+      { role: "selectAll", enabled: canSelectAll },
+    ];
+  if (params.selectionText.trim() !== "")
+    return [{ role: "copy", enabled: true }];
+  return [];
+}
+
 export function createMainWindow(saved: WindowState | null): BrowserWindow {
   handleAppProtocol();
   allowRendererPermissions();
@@ -241,6 +268,11 @@ export function createMainWindow(saved: WindowState | null): BrowserWindow {
       ? url.startsWith(DEV_SERVER_URL)
       : url.startsWith(APP_ORIGIN);
     if (!allowed) event.preventDefault();
+  });
+
+  window.webContents.on("context-menu", (_event, params) => {
+    const items = contextMenuItems(params);
+    if (items.length > 0) Menu.buildFromTemplate(items).popup({ window });
   });
 
   const sendFocus = (focused: boolean) => () => {

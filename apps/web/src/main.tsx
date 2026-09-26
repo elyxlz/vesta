@@ -15,9 +15,6 @@ if (isDesktopApp) {
   if (vibrancy) {
     d.classList.add("vibrancy");
   }
-  if (import.meta.env.PROD) {
-    window.addEventListener("contextmenu", (e) => e.preventDefault());
-  }
 }
 
 await Promise.all([
