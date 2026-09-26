@@ -1,3 +1,4 @@
+import { autoUpdater as squirrelMac } from "electron";
 import { autoUpdater } from "electron-updater";
 
 /**
@@ -21,7 +22,9 @@ export interface AppUpdateStatus {
 // check -> download -> install within a run.
 function updater(): typeof autoUpdater {
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  // On macOS this flag is what hands the download to Squirrel.Mac for staging; the install still
+  // waits for the relaunch click. Elsewhere it would install silently on quit.
+  autoUpdater.autoInstallOnAppQuit = process.platform === "darwin";
   autoUpdater.allowDowngrade = false;
   return autoUpdater;
 }
@@ -40,8 +43,28 @@ export async function getAppUpdate(): Promise<AppUpdateStatus> {
 }
 
 /**
- * Download the pending update, reporting progress as a 0-100 percentage. The package is staged
- * for install; nothing changes until quitAndInstallUpdate.
+ * Squirrel.Mac installs from its own staged copy: it unpacks and verifies the zip electron-updater
+ * serves it, and until then quitAndInstall silently waits. Resolves once that copy is staged.
+ */
+function squirrelStaged(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onStaged = () => {
+      squirrelMac.off("error", onError);
+      resolve();
+    };
+    const onError = (error: Error) => {
+      squirrelMac.off("update-downloaded", onStaged);
+      reject(error);
+    };
+    squirrelMac.once("update-downloaded", onStaged);
+    squirrelMac.once("error", onError);
+  });
+}
+
+/**
+ * Download the pending update, reporting progress as a 0-100 percentage. Resolves only once the
+ * update can install at once, so the relaunch click quits immediately on every platform; nothing
+ * changes until quitAndInstallUpdate.
  */
 export async function downloadAppUpdate(
   onProgress: (percent: number) => void,
@@ -52,7 +75,11 @@ export async function downloadAppUpdate(
     onProgress(progress.percent);
   });
   await instance.checkForUpdates();
-  await instance.downloadUpdate();
+  if (process.platform !== "darwin") {
+    await instance.downloadUpdate();
+    return;
+  }
+  await Promise.all([squirrelStaged(), instance.downloadUpdate()]);
 }
 
 /**
