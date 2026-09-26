@@ -5110,6 +5110,98 @@ mod tests {
             .exists());
     }
 
+    /// Poll until the sidecar's main IPv6 table drops its default route (the init script's last
+    /// v6 step), bounded so a script that never converges fails the test instead of hanging.
+    async fn wait_for_ipv6_default_moved_out_of_main(sidecar: &str) -> ExecResult {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let main = docker_exec(sidecar, &["/busybox", "ip", "-6", "route"]);
+            if main.success && !main.stdout.lines().any(|line| line.starts_with("default")) {
+                return main;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "sidecar {sidecar}'s v6 default route was never moved out of the main table: {}",
+                main.stdout
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    /// On a host whose Docker hands new networks an IPv6 default route (verified on this host
+    /// with an explicit `--ipv6` network), the shared namespace carries one in the main table
+    /// too, exactly like the IPv4 one this sidecar already moves. This pre-creates the agent's
+    /// own network with IPv6 itself, since `ensure_agent_network` never asks for it, and checks
+    /// the init script's IPv6 branch clears it the same way.
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn a_proxied_agent_on_an_ipv6_network_loses_its_direct_v6_default_route() {
+        let docker = test_docker();
+        let agent = format!("egress-v6-{}", std::process::id());
+        let network = agent_network_name(&agent);
+        let v6_subnet = format!("fd00:e6e5:{:x}::/64", std::process::id() % 0xffff);
+        let v4_subnet = format!("10.254.{}.0/24", std::process::id() % 250);
+        let created = std::process::Command::new("docker")
+            .args([
+                "network", "create", "--ipv6", "--subnet", &v6_subnet, "--subnet", &v4_subnet,
+                &network,
+            ])
+            .status()
+            .expect("docker network create runs");
+        assert!(
+            created.success(),
+            "pre-creating the ipv6 agent network must succeed"
+        );
+        let _net_cleanup = TestNetwork {
+            name: network.clone(),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        wait_for_ipv6_default_moved_out_of_main(&sidecar).await;
+
+        let table_routes = docker_exec(
+            &sidecar,
+            &["/busybox", "ip", "-6", "route", "show", "table", "100"],
+        );
+        assert!(table_routes.success, "{}", table_routes.stdout);
+        assert!(
+            table_routes
+                .stdout
+                .lines()
+                .any(|line| line.starts_with("default")),
+            "the moved v6 default route must land in the routing table: {}",
+            table_routes.stdout
+        );
+
+        let rules = docker_exec(&sidecar, &["/busybox", "ip", "-6", "rule"]);
+        assert!(rules.success, "{}", rules.stdout);
+        assert!(
+            rules.stdout.contains("fwmark 0x2023 lookup 100"),
+            "the fwmark rule must reach the moved v6 table: {}",
+            rules.stdout
+        );
+    }
+
     #[tokio::test]
     #[ignore = "requires Docker and internet (downloads sing-box)"]
     async fn start_container_starts_a_stopped_sidecar_first() {
@@ -5166,11 +5258,14 @@ mod tests {
     }
 
     /// Regression for the fix that has `repair_egress_drift`'s spawned task re-check under the
-    /// agent's write lock: the recheck is only safe because a stopped agent reads as
-    /// not-needing-repair. This pins that not-running branch directly.
+    /// agent's write lock: the recheck is only safe because a not-running agent reads as
+    /// not-needing-repair, so a user's stop that lands first is never undone by it. This pins
+    /// that branch directly (a not-yet-started agent takes the same `running != Some(true)` path
+    /// a freshly stopped one does); `a_proxied_agent_through_its_whole_life` in
+    /// `tests/server/egress.rs` still covers the drifted-and-running repair happy path end to end.
     #[tokio::test]
     #[ignore = "requires Docker and internet (downloads sing-box)"]
-    async fn egress_repair_needed_never_restarts_a_stopped_agent() {
+    async fn egress_repair_needed_is_false_for_a_not_running_agent() {
         let docker = test_docker();
         let agent = format!("egress-repair-{}", std::process::id());
         let _net_cleanup = TestNetwork {
@@ -5197,30 +5292,20 @@ mod tests {
         )
         .await
         .expect("create");
-        assert!(
-            start_container(&docker, &cname).await,
-            "agent start must succeed"
-        );
 
-        // The sidecar crashes and Docker's on-failure policy revives it with a fresh namespace:
-        // the drift `egress_repair_needed` exists to detect.
+        // The sidecar (created and started as part of `create_container`) restarts on its own,
+        // giving it a fresh namespace and a `started_at` newer than the agent's: the drift
+        // `egress_repair_needed` exists to detect once an agent is actually running.
         docker
             .restart_container(&sidecar, None::<RestartContainerOptions>)
             .await
             .expect("restart sidecar");
-        assert!(
-            egress_repair_needed(&docker, &cname).await,
-            "a sidecar restarted after the agent must read as drifted"
-        );
 
-        // The user stops the agent before the repair's spawned task takes the write lock and
-        // re-checks; the not-running branch is what must turn that recheck into a no-op.
-        stop_container_with_timeout(&docker, &cname, 5)
-            .await
-            .expect("stop agent");
+        // The agent was never started, so it fails the same `running != Some(true)` check a
+        // user's stop racing the repair relies on: this must be false despite the sidecar drift.
         assert!(
             !egress_repair_needed(&docker, &cname).await,
-            "a stopped agent must never be reported as needing the repair restart"
+            "a not-running agent must never be reported as needing the repair restart"
         );
     }
 

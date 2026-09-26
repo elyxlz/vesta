@@ -20,13 +20,19 @@ pub const SIDECAR_DNS: &str = "1.1.1.1";
 /// the main table before that table's default route is removed, so LAN and Docker traffic still
 /// reaches them. The one owner of this list.
 const PRIVATE_IPV4_RANGES: &[&str] = &["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+/// Private IPv6 range, handled the same way as `PRIVATE_IPV4_RANGES` in the init script's IPv6
+/// branch. Link-local (`fe80::/10`) needs no route here: the kernel keeps it on-link.
+const PRIVATE_IPV6_RANGES: &[&str] = &["fc00::/7"];
 
 /// Every destination that never enters the TUN: loopback, the private ranges above, and
 /// link-local, for v4 and v6, which is where vestad and the Docker networks live.
 fn direct_ranges() -> Vec<&'static str> {
     let mut ranges = vec!["127.0.0.0/8"];
     ranges.extend_from_slice(PRIVATE_IPV4_RANGES);
-    ranges.extend_from_slice(&["169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"]);
+    ranges.push("169.254.0.0/16");
+    ranges.push("::1/128");
+    ranges.extend_from_slice(PRIVATE_IPV6_RANGES);
+    ranges.push("fe80::/10");
     ranges
 }
 
@@ -50,10 +56,12 @@ const ROUTING_TABLE: u32 = 100;
 /// The sidecar's entrypoint, run as `/busybox sh` before sing-box starts. The shared namespace
 /// keeps eth0 with a direct default route in the main table, which a socket bound to eth0 (
 /// `SO_BINDTODEVICE`) can use to skip the TUN entirely; this moves that route to a table only
-/// sing-box's marked sockets can reach, then deletes the main table's. POSIX sh: busybox has no
-/// bash.
+/// sing-box's marked sockets can reach, then deletes the main table's. Repeated for IPv6 when the
+/// namespace carries a v6 default route (a v4-only network has none, so that branch is skipped:
+/// an empty `$GW6` under `set -e` is not itself a failure). POSIX sh: busybox has no bash.
 pub fn init_script() -> String {
     let ranges = PRIVATE_IPV4_RANGES.join(" ");
+    let ranges6 = PRIVATE_IPV6_RANGES.join(" ");
     [
         "set -e".to_string(),
         format!("B={BUSYBOX_IN_IMAGE}"),
@@ -64,6 +72,19 @@ pub fn init_script() -> String {
         ),
         format!("for range in {ranges}; do $B ip route replace \"$range\" via \"$GW\" dev eth0; done"),
         "$B ip route del default".to_string(),
+        "GW6=$($B ip -6 route show default | $B awk '{print $3; exit}')".to_string(),
+        "if [ -n \"$GW6\" ]; then".to_string(),
+        format!(
+            "  $B ip -6 route replace default via \"$GW6\" dev eth0 table {ROUTING_TABLE}"
+        ),
+        format!(
+            "  $B ip -6 rule add fwmark 0x{ROUTING_MARK:x} lookup {ROUTING_TABLE} priority {ROUTING_TABLE}"
+        ),
+        format!(
+            "  for range in {ranges6}; do $B ip -6 route replace \"$range\" via \"$GW6\" dev eth0; done"
+        ),
+        "  $B ip -6 route del default".to_string(),
+        "fi".to_string(),
         format!("exec {SING_BOX_IN_IMAGE} run -c {CONFIG_MOUNT_PATH}"),
         String::new(),
     ]
@@ -645,6 +666,41 @@ mod tests {
         );
         assert!(script.trim_end().ends_with("/etc/egress.json"), "{script}");
         assert!(script.ends_with('\n'), "{script}");
+    }
+
+    #[test]
+    fn init_script_guards_its_ipv6_branch_on_an_empty_gateway() {
+        let script = init_script();
+        let gw6_line = script
+            .lines()
+            .find(|line| line.starts_with("GW6="))
+            .expect("script reads the v6 default gateway");
+        assert!(gw6_line.contains("ip -6 route show default"), "{gw6_line}");
+        assert!(script.contains("if [ -n \"$GW6\" ]; then"), "{script}");
+        assert!(script.contains("fi\n"), "{script}");
+        assert!(
+            script.contains("ip -6 route replace default via \"$GW6\" dev eth0 table 100"),
+            "{script}"
+        );
+        assert!(
+            script.contains("ip -6 rule add fwmark 0x2023 lookup 100 priority 100"),
+            "{script}"
+        );
+        assert!(script.contains("ip -6 route del default"), "{script}");
+        let for_range6_line = script
+            .lines()
+            .find(|line| line.contains("for range in") && line.contains("ip -6 route replace"))
+            .expect("script walks the v6 direct ranges");
+        for range in PRIVATE_IPV6_RANGES {
+            assert!(for_range6_line.contains(range), "{for_range6_line}");
+        }
+        // The v6 block must fall entirely inside the guard, before the unconditional exec.
+        let guard_start = script
+            .find("if [ -n \"$GW6\" ]; then")
+            .expect("guard start");
+        let guard_end = script.find("\nfi\n").expect("guard end") + 1;
+        let exec_pos = script.find("exec /sing-box").expect("exec line");
+        assert!(guard_start < guard_end && guard_end < exec_pos, "{script}");
     }
 
     #[test]
