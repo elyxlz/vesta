@@ -1860,9 +1860,9 @@ pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
     info.size_rw.and_then(|size| u64::try_from(size).ok())
 }
 
-/// Total size of the container's root filesystem (image layers + writable layer).
-/// This is what `docker export` streams out, so it's the right basis for sizing
-/// the first, full restic snapshot.
+/// Total size of the container's root filesystem (image layers + writable layer). An upper
+/// bound on what `docker export` streams: a file deleted or rewritten since the image was
+/// built still counts here, which is the dead weight compaction reclaims.
 pub async fn container_size_root_fs(docker: &Docker, cname: &str) -> Option<u64> {
     let info = docker
         .inspect_container(cname, Some(InspectContainerOptions { size: true }))
@@ -2266,16 +2266,88 @@ pub async fn apply_egress_change(
         }
         return Ok(());
     }
-    let reason = &crate::lifecycle::CONTAINER_UPDATE;
+    recreate_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+        &crate::lifecycle::CONTAINER_UPDATE,
+    )
+    .await
+}
+
+/// Rebuild an agent's container with `reason` handed to both ends, starting it again only if it
+/// was running. A recreate that fails while the old container still stands starts that one again,
+/// so optional work never leaves the agent stopped until the next boot.
+async fn recreate_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    rebuilding: &RebuildTracker,
+    reason: &crate::lifecycle::LifecycleReason,
+) -> Result<(), DockerError> {
+    let cname = container_name(name);
+    let was_running = container_status(docker, &cname).await == ContainerStatus::Running;
     if was_running {
         handoff_shutdown_reason(docker, name, &cname, reason).await;
     }
-    rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
+    if let Err(error) = Box::pin(rebuild_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+    ))
+    .await
+    {
+        if was_running {
+            if let Err(start_error) = start_agent(docker, name, None).await {
+                tracing::error!(agent = %name, error = %start_error, "could not start the agent after a failed recreate");
+            }
+        }
+        return Err(error);
+    }
     handoff_boot_reason(docker, name, &cname, reason).await;
     if was_running {
         start_agent(docker, name, None).await?;
     }
     Ok(())
+}
+
+/// Recreate an agent from its live filesystem. Overlay keeps every file the agent deletes or
+/// rewrites in the image below its writable layer, so disk use only grows until the image is
+/// rebuilt from what is live. Refused unless the disk holds the new image beside the old one.
+pub async fn compact_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    live_bytes: u64,
+    rebuilding: &RebuildTracker,
+) -> Result<(), DockerError> {
+    validate_name(name)?;
+    if !compaction_has_room(docker_storage_available_bytes(docker).await, live_bytes) {
+        return Err(DockerError::Failed(format!(
+            "cannot compact '{name}': the disk has no room for a {live_bytes}-byte image beside the current one"
+        )));
+    }
+    recreate_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+        &crate::lifecycle::DISK_COMPACTION,
+    )
+    .await
+}
+
+/// Whether the disk can take a compaction's new image with the reconcile floor to spare. Unknown
+/// free space refuses: a compaction is optional work, never worth an import that fills the disk.
+fn compaction_has_room(available: Option<u64>, live_bytes: u64) -> bool {
+    available.is_some_and(|bytes| bytes >= live_bytes.saturating_add(MIN_RECONCILE_DISK_BYTES))
 }
 
 // --- Snapshot ---
@@ -4152,6 +4224,25 @@ mod tests {
         assert!(!reconcile_blocked_by_disk(Some(
             MIN_RECONCILE_DISK_BYTES + 1
         )));
+    }
+
+    #[test]
+    fn compaction_refuses_when_free_space_unknown() {
+        assert!(!compaction_has_room(None, 1));
+    }
+
+    #[test]
+    fn compaction_needs_room_for_the_new_image_plus_the_reconcile_floor() {
+        const LIVE: u64 = 54_000_000_000;
+        assert!(!compaction_has_room(Some(LIVE), LIVE));
+        assert!(!compaction_has_room(
+            Some(LIVE + MIN_RECONCILE_DISK_BYTES - 1),
+            LIVE
+        ));
+        assert!(compaction_has_room(
+            Some(LIVE + MIN_RECONCILE_DISK_BYTES),
+            LIVE
+        ));
     }
 
     #[test]

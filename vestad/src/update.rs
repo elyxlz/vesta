@@ -608,7 +608,7 @@ async fn run_update(run: UpdateRun) {
         |warning| run.state.operation.warn(warning),
         |agent| {
             let (state, kind, settings) = (&run.state, &kind, &backup_settings);
-            async move { crate::maintenance::snapshot_agent(state, &agent, kind, settings, now_epoch).await }
+            async move { crate::maintenance::snapshot_agent(state, &agent, kind, settings, now_epoch).await.map(drop) }
         },
     )
     .await;
