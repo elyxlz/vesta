@@ -21,6 +21,7 @@ import {
 } from "@vesta/core/react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
+import { agentViewPath } from "@/stores/use-preferences";
 import {
   NotificationsPillContext,
   PILL_BUTTON_SIZE,
@@ -103,16 +104,14 @@ export function NotificationsPillProvider({
   const openAgent = useCallback(
     (agent: string) => {
       dismiss();
-      void navigate(agent ? `/agent/${encodeURIComponent(agent)}` : "/");
+      void navigate(agent ? agentViewPath(agent) : "/");
     },
     [dismiss, navigate],
   );
   const openEntry = useCallback(
     (entry: LoggedUserNotification) => {
       showSurface("none");
-      void navigate(
-        entry.agent ? `/agent/${encodeURIComponent(entry.agent)}` : "/",
-      );
+      void navigate(entry.agent ? agentViewPath(entry.agent) : "/");
     },
     [navigate, showSurface],
   );

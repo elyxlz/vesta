@@ -5,6 +5,7 @@ import path from "node:path";
 const STORE_VERSION = 1;
 const CONNECTION_FILE = "connection.json";
 const RECENT_GATEWAYS_FILE = "recent-gateways.json";
+const WINDOW_STATE_FILE = "window-state.json";
 
 interface EncryptedStore {
   version: number;
@@ -138,4 +139,12 @@ export function writeRecentGateways(value: unknown): Promise<void> {
 
 export function clearRecentGateways(): Promise<void> {
   return clearStore(RECENT_GATEWAYS_FILE);
+}
+
+export function readWindowState(): Promise<unknown> {
+  return readStore(WINDOW_STATE_FILE);
+}
+
+export function writeWindowState(value: unknown): Promise<void> {
+  return writeStore(WINDOW_STATE_FILE, value);
 }

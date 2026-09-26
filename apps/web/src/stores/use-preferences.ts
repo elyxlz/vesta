@@ -19,6 +19,8 @@ export interface Preferences {
   conversationYield: boolean;
   // Agents whose desktop panel remembers a collapsed chat with the dashboard full-page.
   chatCollapsed: string[];
+  // Agents whose desktop view was the full-screen chat when last left, so opening them returns there.
+  chatFullscreen: string[];
   // The most recently opened agent, so the home carousel can center it on return.
   lastAgent: string | null;
   // The gateway version whose release notes this browser has seen.
@@ -37,6 +39,7 @@ const DEFAULTS: Preferences = {
   conversationAutoEnd: true,
   conversationYield: true,
   chatCollapsed: [],
+  chatFullscreen: [],
   lastAgent: null,
   whatsNewLastSeen: null,
 };
@@ -79,6 +82,7 @@ function legacyPreferences(): Preferences {
     conversationAutoEnd: flag("voice-conversation-auto-end", true),
     conversationYield: flag("voice-conversation-yield", true),
     chatCollapsed,
+    chatFullscreen: [],
     lastAgent: localStorage.getItem("vesta:last-agent"),
     whatsNewLastSeen: localStorage.getItem("vesta:whats-new-last-seen"),
   };
@@ -102,4 +106,19 @@ export function setChatCollapsed(agent: string, collapsed: boolean): void {
   const { chatCollapsed, update } = usePreferences.getState();
   const without = chatCollapsed.filter((name) => name !== agent);
   update({ chatCollapsed: collapsed ? [...without, agent] : without });
+}
+
+export function setChatFullscreen(agent: string, fullscreen: boolean): void {
+  const { chatFullscreen, update } = usePreferences.getState();
+  if (chatFullscreen.includes(agent) === fullscreen) return;
+  const without = chatFullscreen.filter((name) => name !== agent);
+  update({ chatFullscreen: fullscreen ? [...without, agent] : without });
+}
+
+// Where opening an agent lands on desktop: the view it was last left in.
+export function agentViewPath(agent: string): string {
+  const base = `/agent/${encodeURIComponent(agent)}`;
+  return usePreferences.getState().chatFullscreen.includes(agent)
+    ? `${base}/chat`
+    : base;
 }

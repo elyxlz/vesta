@@ -13,6 +13,7 @@ import { useAgentVisualStatus } from "@vesta/core/react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
+import { agentViewPath } from "@/stores/use-preferences";
 
 interface AgentCardProps {
   agent: AgentRow;
@@ -36,7 +37,11 @@ export function AgentCard({ agent }: AgentCardProps) {
         type="button"
         aria-label={`open ${agent.name}`}
         onClick={() => {
-          void navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`);
+          void navigate(
+            isMobile
+              ? `/agent/${encodeURIComponent(agent.name)}/chat`
+              : agentViewPath(agent.name),
+          );
         }}
         className="flex h-full w-full items-center justify-center rounded-squircle-md border border-transparent [corner-shape:squircle] outline-none transition-all hover:bg-muted/40 active:scale-[0.99] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
       >
