@@ -1,6 +1,12 @@
 //! The per-agent egress proxy API end to end: vestad installs the sing-box image, checks the
 //! proxy, moves the agent into its sidecar's namespace, and hides the password everywhere.
 //! Needs Docker and internet (the sing-box download and the preflight to api.anthropic.com).
+//!
+//! Setting or clearing a proxy, a rename, and a restore each rebuild the agent container (a
+//! `docker export | import` snapshot of a multi-GB image), so each test below walks as few
+//! agents through as few rebuilds as possible rather than giving every behavior its own agent.
+//! Every assertion still gets its own step, tagged in its failure message so a break says which
+//! behavior broke.
 
 use vesta_tests::{
     agent_container_name, docker_cmd, exec_in_container, unique_agent, ProxyAuth, TestAgent, SERVER,
@@ -73,6 +79,7 @@ pub(crate) fn started_at(container: &str) -> String {
 pub(crate) struct TestProxy {
     pub(crate) container: String,
     pub(crate) url: String,
+    pub(crate) ip: String,
     _config_dir: tempfile::TempDir,
 }
 
@@ -115,20 +122,39 @@ impl TestProxy {
             "/proxy.json",
         ])
         .expect("start test proxy");
-        let ip_format = format!(
-            "{{{{(index .NetworkSettings.Networks \"{}\").IPAddress}}}}",
-            agent_network(agent)
-        );
-        let ip = docker_cmd(&["inspect", "-f", &ip_format, &container])
-            .expect("proxy ip")
-            .trim()
-            .to_string();
+        let ip = Self::inspect_ip(agent, &container);
         wait_for_listener(&ip, TEST_PROXY_PORT);
         Self {
             container,
             url: format!("socks5://{TEST_PROXY_USER}:{TEST_PROXY_PASSWORD}@{ip}:{TEST_PROXY_PORT}"),
+            ip,
             _config_dir: config_dir,
         }
+    }
+
+    fn inspect_ip(agent: &str, container: &str) -> String {
+        let ip_format = format!(
+            "{{{{(index .NetworkSettings.Networks \"{}\").IPAddress}}}}",
+            agent_network(agent)
+        );
+        docker_cmd(&["inspect", "-f", &ip_format, container])
+            .expect("proxy ip")
+            .trim()
+            .to_string()
+    }
+
+    /// A hostname that resolves, via sslip.io's public DNS, straight back to this proxy's own
+    /// container IP: `a-b-c-d.sslip.io` maps to `a.b.c.d`. Used to prove the sidecar resolves the
+    /// proxy's hostname itself rather than being handed a bare IP.
+    pub(crate) fn sslip_hostname_url(&self) -> String {
+        let hostname = self.ip.replace('.', "-");
+        format!("socks5://{TEST_PROXY_USER}:{TEST_PROXY_PASSWORD}@{hostname}.sslip.io:{TEST_PROXY_PORT}")
+    }
+
+    /// Bring a stopped proxy back and wait for its listener, mirroring the wait `start` does.
+    pub(crate) fn restart(&self) {
+        docker_cmd(&["start", &self.container]).expect("restart test proxy");
+        wait_for_listener(&self.ip, TEST_PROXY_PORT);
     }
 
     /// How many outbound connections the proxy has opened so far. sing-box logs to the
@@ -173,6 +199,10 @@ fn egress_image() -> String {
 /// A dead proxy URL: nothing listens on this port of the documentation address range.
 pub(crate) const DEAD_PROXY: &str = "socks5://u:dead-secret@192.0.2.1:1080";
 
+/// A loopback proxy URL: refused before the image install or the preflight, since the host's
+/// loopback is never the sidecar's.
+const LOOPBACK_PROXY: &str = "socks5://127.0.0.1:1080";
+
 pub(crate) fn install_egress_image(client: &vesta_tests::client::Client, agent: &str) {
     let (status, _) = client.set_proxy(agent, DEAD_PROXY).expect("set dead proxy");
     assert_eq!(
@@ -191,117 +221,6 @@ pub(crate) fn running_agent<'client>(
         .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running");
     agent
-}
-
-#[test]
-fn a_dead_proxy_is_refused_and_changes_nothing() {
-    let client = SERVER.client();
-    let agent = running_agent(&client, "egress-dead");
-    let before = network_mode(&agent_container_name(&agent.name));
-
-    let (status, body) = client.set_proxy(&agent.name, DEAD_PROXY).expect("set");
-    assert_eq!(status, 422, "{body}");
-    assert!(
-        !body.contains("dead-secret"),
-        "the error must not leak the password: {body}"
-    );
-    assert_eq!(network_mode(&agent_container_name(&agent.name)), before);
-    assert!(!agents_dir().join(format!("{}.proxy", agent.name)).exists());
-}
-
-#[test]
-fn an_unsupported_scheme_is_a_bad_request() {
-    let client = SERVER.client();
-    let agent = running_agent(&client, "egress-scheme");
-    let (status, _) = client
-        .set_proxy(&agent.name, "https://gw.example.com:443")
-        .expect("set");
-    assert_eq!(status, 400);
-}
-
-#[test]
-fn the_proxy_routes_are_refused_to_the_agent_token() {
-    let client = SERVER.client();
-    let agent = running_agent(&client, "egress-token");
-    let token = client.read_agent_token(&agent.name).expect("agent token");
-    let (status, _) = client
-        .get_proxy_as(&agent.name, ProxyAuth::AgentToken(&token))
-        .expect("get");
-    assert_eq!(status, 401);
-}
-
-#[test]
-fn set_masks_the_password_and_moves_the_agent_into_its_sidecar() {
-    let client = SERVER.client();
-    let agent = running_agent(&client, "egress-set");
-    install_egress_image(&client, &agent.name);
-    let proxy = TestProxy::start(&agent.name);
-
-    let (status, body) = client.set_proxy(&agent.name, &proxy.url).expect("set");
-    assert_eq!(status, 200, "{body}");
-    assert!(!body.contains(TEST_PROXY_PASSWORD), "{body}");
-    assert!(body.contains("***"), "{body}");
-
-    let (status, body) = client
-        .get_proxy_as(&agent.name, ProxyAuth::ApiKey)
-        .expect("get");
-    assert_eq!(status, 200);
-    assert!(!body.contains(TEST_PROXY_PASSWORD), "{body}");
-    assert!(body.contains(TEST_PROXY_USER), "{body}");
-
-    let sidecar_id = docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)])
-        .expect("sidecar exists")
-        .trim()
-        .to_string();
-    assert_eq!(
-        network_mode(&agent_container_name(&agent.name)),
-        format!("container:{sidecar_id}")
-    );
-    client
-        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
-        .expect("agent running on its sidecar");
-
-    // The same URL again changes nothing, so the agent does not restart.
-    let before = started_at(&agent_container_name(&agent.name));
-    let (status, _) = client
-        .set_proxy(&agent.name, &proxy.url)
-        .expect("set again");
-    assert_eq!(status, 200);
-    assert_eq!(started_at(&agent_container_name(&agent.name)), before);
-
-    client.clear_proxy(&agent.name).expect("clear");
-    assert_eq!(
-        network_mode(&agent_container_name(&agent.name)),
-        agent_network(&agent.name)
-    );
-    assert!(
-        docker_cmd(&["inspect", &sidecar_name(&agent.name)]).is_err(),
-        "sidecar removed"
-    );
-    let (_, body) = client
-        .get_proxy_as(&agent.name, ProxyAuth::ApiKey)
-        .expect("get");
-    assert_eq!(body.trim(), r#"{"url":null}"#);
-}
-
-#[test]
-fn a_stopped_agent_stays_stopped_through_a_proxy_change() {
-    let client = SERVER.client();
-    let agent = running_agent(&client, "egress-stopped");
-    install_egress_image(&client, &agent.name);
-    let proxy = TestProxy::start(&agent.name);
-    client.stop_agent(&agent.name).expect("stop");
-    client
-        .wait_until_stopped(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
-        .expect("stopped");
-
-    let (status, body) = client.set_proxy(&agent.name, &proxy.url).expect("set");
-    assert_eq!(status, 200, "{body}");
-    assert_eq!(
-        client.agent_status(&agent.name).expect("status").status,
-        "stopped"
-    );
-    assert!(network_mode(&agent_container_name(&agent.name)).starts_with("container:"));
 }
 
 const REQUEST_TIMEOUT_SECS: u64 = 15;
@@ -326,61 +245,159 @@ fn wait_for_fetch(agent: &str, timeout_secs: u64) -> bool {
     false
 }
 
-fn proxied_agent<'client>(
-    client: &'client vesta_tests::client::Client,
-    prefix: &str,
-) -> (TestAgent<'client>, TestProxy) {
-    let agent = running_agent(client, prefix);
-    install_egress_image(client, &agent.name);
-    let proxy = TestProxy::start(&agent.name);
+/// No proxy is ever stored against this agent, so none of these checks rebuild its container:
+/// every refusal happens before `apply_proxy_change` runs.
+#[test]
+fn requests_refused_before_any_proxy_is_stored() {
+    let client = SERVER.client();
+    let agent = running_agent(&client, "egress-static");
+    let cname = agent_container_name(&agent.name);
+    let before = network_mode(&cname);
+
+    // [bad scheme] an unsupported scheme is a bad request.
+    let (status, _) = client
+        .set_proxy(&agent.name, "https://gw.example.com:443")
+        .expect("[bad scheme] request");
+    assert_eq!(status, 400, "[bad scheme] unsupported scheme must be a 400");
+
+    // [loopback] a loopback proxy is refused: the host reaches it, the sidecar never would.
     let (status, body) = client
-        .set_proxy(&agent.name, &proxy.url)
-        .expect("set proxy");
-    assert_eq!(status, 200, "{body}");
+        .set_proxy(&agent.name, LOOPBACK_PROXY)
+        .expect("[loopback] request");
+    assert_eq!(
+        status, 422,
+        "[loopback] a loopback proxy must be refused: {body}"
+    );
+
+    // [dead proxy] refused by the preflight; this PUT is also what installs the egress image,
+    // since a loopback/scheme refusal above never reaches that step.
+    let (status, body) = client
+        .set_proxy(&agent.name, DEAD_PROXY)
+        .expect("[dead proxy] request");
+    assert_eq!(
+        status, 422,
+        "[dead proxy] an unreachable proxy must be refused: {body}"
+    );
+    assert!(
+        !body.contains("dead-secret"),
+        "[dead proxy] the error must not leak the password: {body}"
+    );
+
+    // [no residue] none of the refusals above touched the agent or persisted a proxy file.
+    assert_eq!(
+        network_mode(&cname),
+        before,
+        "[no residue] network mode must be untouched by any refusal"
+    );
+    assert!(
+        !agents_dir().join(format!("{}.proxy", agent.name)).exists(),
+        "[no residue] no .proxy file stored by any refusal"
+    );
+
+    // [agent token] the proxy routes are refused to the agent's own token.
+    let token = client
+        .read_agent_token(&agent.name)
+        .expect("[agent token] agent token");
+    let (status, _) = client
+        .get_proxy_as(&agent.name, ProxyAuth::AgentToken(&token))
+        .expect("[agent token] get");
+    assert_eq!(
+        status, 401,
+        "[agent token] must be refused to the agent's own token"
+    );
+
+    // [unknown agent] clearing the proxy of an agent that does not exist is a 404.
+    let (status, _) = client
+        .clear_proxy_status(&unique_agent("egress-missing"))
+        .expect("[unknown agent] delete");
+    assert_eq!(status, 404, "[unknown agent] must be a 404");
+}
+
+/// One agent walked through its whole proxied life: set, mask, route traffic, resist an
+/// interface-bound bypass, no-op re-set, change proxy by hostname with no rebuild, go dark when
+/// the proxy stops, repair after the sidecar restarts, then clear. One rebuild to move the agent
+/// into its sidecar (the first `set`) and one to move it back out (the final `clear`); everything
+/// in between reuses that same sidecar.
+#[test]
+fn a_proxied_agent_through_its_whole_life() {
+    let client = SERVER.client();
+    let agent = running_agent(&client, "egress-life");
+    install_egress_image(&client, &agent.name);
+    let cname = agent_container_name(&agent.name);
+    let proxy_a = TestProxy::start(&agent.name);
+
+    // [set] masks the password and moves the agent into its sidecar.
+    let (status, body) = client
+        .set_proxy(&agent.name, &proxy_a.url)
+        .expect("[set] request");
+    assert_eq!(status, 200, "[set] {body}");
+    assert!(
+        !body.contains(TEST_PROXY_PASSWORD),
+        "[set] response must not leak the password: {body}"
+    );
+    assert!(
+        body.contains("***"),
+        "[set] response must mask the password: {body}"
+    );
+
+    // [get] reads back masked too.
+    let (status, body) = client
+        .get_proxy_as(&agent.name, ProxyAuth::ApiKey)
+        .expect("[get] request");
+    assert_eq!(status, 200, "[get] {body}");
+    assert!(
+        !body.contains(TEST_PROXY_PASSWORD),
+        "[get] response must not leak the password: {body}"
+    );
+    assert!(
+        body.contains(TEST_PROXY_USER),
+        "[get] response must name the user: {body}"
+    );
+
+    let sidecar_id = docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)])
+        .expect("[set] sidecar exists")
+        .trim()
+        .to_string();
+    assert_eq!(
+        network_mode(&cname),
+        format!("container:{sidecar_id}"),
+        "[set] agent must move into the sidecar's namespace"
+    );
     client
         .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
-        .expect("agent running on its sidecar");
-    (agent, proxy)
-}
+        .expect("[set] agent running on its sidecar");
 
-#[test]
-fn agent_traffic_leaves_through_the_proxy() {
-    let client = SERVER.client();
-    let (agent, proxy) = proxied_agent(&client, "egress-route");
-    let before = proxy.connections();
-
+    // [traffic] ordinary requests leave through the proxy.
+    let before = proxy_a.connections();
     assert!(
         wait_for_fetch(&agent.name, REQUEST_TIMEOUT_SECS * 2),
-        "the agent reaches the internet"
+        "[traffic] the agent must reach the internet"
     );
     assert!(
-        proxy.connections() > before,
-        "the request went through the proxy"
-    );
-}
-
-/// C1 (the full-block fix): a socket bound straight to `eth0` (`SO_BINDTODEVICE`, which `curl
-/// --interface` and this UDP probe both use) skips sing-box's TUN rules entirely, since
-/// `auto_route`/`strict_route` only steer sockets that go through the normal routing table
-/// lookup. The init script removes eth0's direct default route from the main table, so a
-/// bound socket has no direct path to fall back on, whichever way the proxy is doing.
-#[test]
-fn an_interface_bound_socket_cannot_bypass_the_proxy() {
-    let client = SERVER.client();
-    let (agent, proxy) = proxied_agent(&client, "egress-bind");
-    let cname = agent_container_name(&agent.name);
-
-    assert!(
-        wait_for_fetch(&agent.name, REQUEST_TIMEOUT_SECS * 2),
-        "ordinary (unbound) traffic must reach the internet through the proxy"
+        proxy_a.connections() > before,
+        "[traffic] the request must have gone through the proxy"
     );
 
+    // [vestad direct] the agent still reaches vestad itself, never through the proxy.
+    let code = exec_in_container(
+        &cname,
+        ". /run/vestad-env && curl -sk -m 10 -o /dev/null -w '%{http_code}' https://$BOX_HOST:$VESTAD_PORT/health",
+    )
+    .expect("[vestad direct] reach vestad");
+    assert_eq!(
+        code.trim(),
+        "200",
+        "[vestad direct] vestad must be reachable directly"
+    );
+
+    // [interface bind] (C1) a socket bound straight to eth0 (`SO_BINDTODEVICE`, which `curl
+    // --interface` and this UDP probe both use) must not skip sing-box's TUN rules, for TCP or
+    // UDP, while the proxy is up.
     let eth0_tcp = || exec_in_container(&cname, "curl --interface eth0 -m 8 https://1.1.1.1/");
     assert!(
         eth0_tcp().is_err(),
-        "an eth0-bound TCP connection must not reach the internet directly (proxy up)"
+        "[interface bind] an eth0-bound TCP connection must not reach the internet directly (proxy up)"
     );
-
     let udp_probe = r#"
 python3 - << 'PYEOF'
 import socket
@@ -395,158 +412,168 @@ except socket.timeout:
     print('blocked')
 PYEOF
 "#;
-    let result = exec_in_container(&cname, udp_probe).expect("udp probe ran");
+    let result = exec_in_container(&cname, udp_probe).expect("[interface bind] udp probe ran");
     assert_eq!(
         result.trim(),
         "blocked",
-        "an eth0-bound UDP socket must not reach the internet directly (proxy up)"
+        "[interface bind] an eth0-bound UDP socket must not reach the internet directly (proxy up)"
     );
 
-    docker_cmd(&["stop", &proxy.container]).expect("stop proxy");
+    // [idempotent set] the same URL again changes nothing, so the agent must not restart.
+    let started_before = started_at(&cname);
+    let (status, _) = client
+        .set_proxy(&agent.name, &proxy_a.url)
+        .expect("[idempotent set] request");
+    assert_eq!(status, 200, "[idempotent set] repeating the same url");
+    assert_eq!(
+        started_at(&cname),
+        started_before,
+        "[idempotent set] the agent must not restart"
+    );
+
+    // [url change] a second proxy, given by an sslip.io hostname, keeps the same sidecar (no
+    // rebuild) and moves traffic to it: covers both the url-change and the hostname-resolve
+    // behaviors in one step.
+    let proxy_b = TestProxy::start_named(&agent.name, "b");
+    let (status, body) = client
+        .set_proxy(&agent.name, &proxy_b.sslip_hostname_url())
+        .expect("[url change] request");
+    assert_eq!(status, 200, "[url change] {body}");
+    let sidecar_after = docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)])
+        .expect("[url change] sidecar")
+        .trim()
+        .to_string();
+    assert_eq!(
+        sidecar_id, sidecar_after,
+        "[url change] a url change must keep the sidecar"
+    );
+    let before = proxy_b.connections();
     assert!(
-        eth0_tcp().is_err(),
-        "an eth0-bound TCP connection must not reach the internet directly (proxy stopped)"
+        wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS),
+        "[url change] the agent must reach the internet through the new proxy"
     );
-}
+    assert!(
+        proxy_b.connections() > before,
+        "[url change] traffic must have moved to the new proxy, resolved by its sslip.io hostname"
+    );
 
-#[test]
-fn the_agent_still_reaches_vestad_directly() {
-    let client = SERVER.client();
-    let (agent, _proxy) = proxied_agent(&client, "egress-local");
-    let code = exec_in_container(
-        &agent_container_name(&agent.name),
-        ". /run/vestad-env && curl -sk -m 10 -o /dev/null -w '%{http_code}' https://$BOX_HOST:$VESTAD_PORT/health",
-    )
-    .expect("reach vestad");
-    assert_eq!(code.trim(), "200");
-}
-
-#[test]
-fn a_stopped_proxy_blocks_traffic_instead_of_going_direct() {
-    let client = SERVER.client();
-    let (agent, proxy) = proxied_agent(&client, "egress-closed");
-    docker_cmd(&["stop", &proxy.container]).expect("stop proxy");
-
+    // [proxy stopped] stopping the active proxy blocks traffic instead of going direct, and an
+    // eth0-bound request still fails.
+    docker_cmd(&["stop", &proxy_b.container]).expect("[proxy stopped] stop proxy");
     let result = agent_fetch(&agent.name);
     assert!(
         !result.is_ok_and(|code| code.trim() == "200"),
-        "with the proxy down, the request must fail"
+        "[proxy stopped] with the proxy down, the request must fail"
     );
-}
-
-#[test]
-fn a_restarted_sidecar_brings_the_agent_back_online() {
-    let client = SERVER.client();
-    let (agent, _proxy) = proxied_agent(&client, "egress-repair");
-    docker_cmd(&["restart", &sidecar_name(&agent.name)]).expect("restart sidecar");
-
     assert!(
-        wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS),
-        "vestad restarts the agent into the sidecar's new namespace"
+        eth0_tcp().is_err(),
+        "[proxy stopped] an eth0-bound TCP connection must not reach the internet directly (proxy stopped)"
     );
+
+    // [repair] a restarted sidecar brings the agent back online, once its proxy is back up too.
     // The repair must also drop the cached bridge IP, or a resolve that hit before the sidecar's
     // restart keeps the tap dialing the dead address and the roster never converges past Starting.
-    client
-        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
-        .expect("agent status converges to running after the repair restart");
-}
-
-#[test]
-fn a_proxy_given_by_hostname_resolves_and_routes() {
-    let client = SERVER.client();
-    let agent = running_agent(&client, "egress-hostname");
-    install_egress_image(&client, &agent.name);
-    let proxy = TestProxy::start(&agent.name);
-
-    // sslip.io maps `a-b-c-d.sslip.io` to `a.b.c.d`, a public DNS name that resolves to the
-    // proxy's own container IP, so the sidecar must resolve the proxy's hostname itself.
-    let ip_format = format!(
-        "{{{{(index .NetworkSettings.Networks \"{}\").IPAddress}}}}",
-        agent_network(&agent.name)
-    );
-    let ip = docker_cmd(&["inspect", "-f", &ip_format, &proxy.container])
-        .expect("proxy ip")
-        .trim()
-        .to_string();
-    let hostname = ip.replace('.', "-");
-    let url = format!(
-        "socks5://{TEST_PROXY_USER}:{TEST_PROXY_PASSWORD}@{hostname}.sslip.io:{TEST_PROXY_PORT}"
-    );
-    let before = proxy.connections();
-
-    let (status, body) = client.set_proxy(&agent.name, &url).expect("set");
-    assert_eq!(status, 200, "{body}");
-    client
-        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
-        .expect("agent running on its sidecar");
-
+    proxy_b.restart();
+    docker_cmd(&["restart", &sidecar_name(&agent.name)]).expect("[repair] restart sidecar");
     assert!(
         wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS),
-        "the agent reaches the internet through a proxy given by hostname"
+        "[repair] vestad must restart the agent into the sidecar's new namespace"
     );
-    assert!(
-        proxy.connections() > before,
-        "the request reached the proxy resolved by its sslip.io hostname"
-    );
-}
+    client
+        .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("[repair] agent status must converge to running after the repair restart");
 
-#[test]
-fn clearing_the_proxy_of_an_unknown_agent_is_a_404() {
-    let client = SERVER.client();
-    let (status, _) = client
-        .clear_proxy_status(&unique_agent("egress-missing"))
-        .expect("delete");
-    assert_eq!(status, 404);
-}
-
-#[test]
-fn a_url_change_reloads_the_sidecar_without_a_rebuild() {
-    let client = SERVER.client();
-    let (agent, _first) = proxied_agent(&client, "egress-change");
-    let sidecar_before =
-        docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)]).expect("sidecar");
-    let second = TestProxy::start_named(&agent.name, "b");
-    let (status, body) = client.set_proxy(&agent.name, &second.url).expect("change");
-    assert_eq!(status, 200, "{body}");
-
-    let sidecar_after =
-        docker_cmd(&["inspect", "-f", "{{.Id}}", &sidecar_name(&agent.name)]).expect("sidecar");
+    // [clear] deletes the proxy, returning the agent to its own network and removing the sidecar.
+    client.clear_proxy(&agent.name).expect("[clear] delete");
     assert_eq!(
-        sidecar_before, sidecar_after,
-        "a URL change keeps the sidecar"
+        network_mode(&cname),
+        agent_network(&agent.name),
+        "[clear] agent must return to its own network"
     );
-    let before = second.connections();
-    assert!(wait_for_fetch(&agent.name, REPAIR_TIMEOUT_SECS));
     assert!(
-        second.connections() > before,
-        "traffic moved to the new proxy"
+        docker_cmd(&["inspect", &sidecar_name(&agent.name)]).is_err(),
+        "[clear] sidecar must be removed"
+    );
+    let (_, body) = client
+        .get_proxy_as(&agent.name, ProxyAuth::ApiKey)
+        .expect("[clear] get");
+    assert_eq!(
+        body.trim(),
+        r#"{"url":null}"#,
+        "[clear] proxy must read back as null"
     );
 }
 
+/// A stopped agent takes a proxy without waking up, then that same agent is renamed and
+/// destroyed, proving both leave no egress residue behind. One rebuild (the `set` while stopped)
+/// plus the rename's own snapshot; no traffic is exercised, so no running sidecar is needed.
 #[test]
-fn destroy_and_rename_leave_no_egress_residue() {
+fn a_stopped_agent_through_a_proxy_change_rename_and_destroy() {
     let client = SERVER.client();
-    let (mut agent, proxy) = proxied_agent(&client, "egress-residue");
-    let old_name = agent.name.clone();
-    let new_name = unique_agent("egress-renamed");
+    let mut agent = running_agent(&client, "egress-stopped");
+    install_egress_image(&client, &agent.name);
+    let proxy = TestProxy::start(&agent.name);
+    client.stop_agent(&agent.name).expect("[stop] stop");
+    client
+        .wait_until_stopped(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("[stop] agent must reach stopped");
+
+    // [set while stopped] a stopped agent stays stopped through a proxy change, and still gets
+    // the container: layout.
+    let (status, body) = client
+        .set_proxy(&agent.name, &proxy.url)
+        .expect("[set while stopped] request");
+    assert_eq!(status, 200, "[set while stopped] {body}");
+    assert_eq!(
+        client
+            .agent_status(&agent.name)
+            .expect("[set while stopped] status")
+            .status,
+        "stopped",
+        "[set while stopped] the agent must stay stopped"
+    );
+    assert!(
+        network_mode(&agent_container_name(&agent.name)).starts_with("container:"),
+        "[set while stopped] agent must get the sidecar's container: layout"
+    );
+
+    // The rename/destroy flow below never checks live traffic, so the test proxy's job is done.
     drop(proxy);
 
-    let returned = client.rename_agent(&old_name, &new_name).expect("rename");
+    // [rename] the old sidecar is gone and the `.proxy` file moves with the agent.
+    let old_name = agent.name.clone();
+    let new_name = unique_agent("egress-renamed");
+    let returned = client
+        .rename_agent(&old_name, &new_name)
+        .expect("[rename] rename");
     agent.name = returned.clone();
     assert!(
         docker_cmd(&["inspect", &sidecar_name(&old_name)]).is_err(),
-        "old sidecar removed"
+        "[rename] old sidecar must be removed"
     );
-    assert!(!agents_dir().join(format!("{old_name}.proxy")).exists());
-    assert!(agents_dir().join(format!("{new_name}.proxy")).exists());
+    assert!(
+        !agents_dir().join(format!("{old_name}.proxy")).exists(),
+        "[rename] old .proxy file must be gone"
+    );
+    assert!(
+        agents_dir().join(format!("{new_name}.proxy")).exists(),
+        "[rename] new .proxy file must exist"
+    );
 
-    client.destroy_agent(&new_name).expect("destroy");
+    // [destroy] the sidecar and both proxy files are gone.
+    client.destroy_agent(&new_name).expect("[destroy] destroy");
     assert!(
         docker_cmd(&["inspect", &sidecar_name(&new_name)]).is_err(),
-        "sidecar removed"
+        "[destroy] sidecar must be removed"
     );
-    assert!(!agents_dir().join(format!("{new_name}.proxy")).exists());
-    assert!(!agents_dir()
-        .join(format!("{new_name}.egress.json"))
-        .exists());
+    assert!(
+        !agents_dir().join(format!("{new_name}.proxy")).exists(),
+        "[destroy] .proxy file must be gone"
+    );
+    assert!(
+        !agents_dir()
+            .join(format!("{new_name}.egress.json"))
+            .exists(),
+        "[destroy] egress config file must be gone"
+    );
 }
