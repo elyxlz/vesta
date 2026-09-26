@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CHANNEL } from "./channels";
+import { trackWindowState, type WindowState } from "./window-state";
 
 const APP_SCHEME = "vesta";
 const APP_ORIGIN = `${APP_SCHEME}://bundle`;
@@ -191,15 +192,14 @@ function routeDownloadsToDisk(): void {
   });
 }
 
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(saved: WindowState | null): BrowserWindow {
   handleAppProtocol();
   allowRendererPermissions();
   routeDownloadsToDisk();
 
   const window = new BrowserWindow({
     title: "Vesta",
-    width: WINDOW_WIDTH,
-    height: WINDOW_HEIGHT,
+    ...(saved?.bounds ?? { width: WINDOW_WIDTH, height: WINDOW_HEIGHT }),
     minWidth: WINDOW_MIN_SIZE,
     minHeight: WINDOW_MIN_SIZE,
     show: true,
@@ -254,6 +254,9 @@ export function createMainWindow(): BrowserWindow {
   };
   window.on("maximize", sendMax(true));
   window.on("unmaximize", sendMax(false));
+
+  if (saved?.maximized) window.maximize();
+  trackWindowState(window);
 
   void window.loadURL(DEV_SERVER_URL ?? `${APP_ORIGIN}/`);
   return window;

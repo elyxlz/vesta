@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useDefaultLayout } from "react-resizable-panels";
 import {
@@ -7,8 +8,10 @@ import {
 } from "@/components/ui/resizable";
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
+import { agentSubpage } from "@/lib/agent-subpage";
 import { cn } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
+import { setChatFullscreen } from "@/stores/use-preferences";
 
 const DASHBOARD_CHAT_LAYOUT_ID = "agent-dashboard-chat";
 const DASHBOARD_PANEL_ID = "dashboard";
@@ -31,6 +34,13 @@ export function DesktopPanelView({
   const location = useLocation();
   const isChat =
     location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
+  const onPanelOrChat =
+    name !== undefined && agentSubpage(location.pathname, name) === null;
+
+  // Remember which of the two views the agent was left in; logs and settings keep it.
+  useEffect(() => {
+    if (name && onPanelOrChat) setChatFullscreen(name, isChat);
+  }, [name, onPanelOrChat, isChat]);
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: DASHBOARD_CHAT_LAYOUT_ID,

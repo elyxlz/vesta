@@ -15,12 +15,13 @@ import { Scrim } from "@/components/Scrim";
 import { WhatsNewDialog } from "@/components/WhatsNew";
 import { SwitchGatewayDialog } from "@/components/SwitchGatewayDialog";
 import { router } from "@/router";
+import { agentViewPath } from "@/stores/use-preferences";
 import { useAutoHideScrollbars } from "./use-auto-hide-scrollbars";
 import { useIsMobile } from "./hooks/use-mobile";
 import { runtimeInfo } from "@/lib/native";
 
 function openAgent(agentName: string): void {
-  void router.navigate(`/agent/${encodeURIComponent(agentName)}`);
+  void router.navigate(agentViewPath(agentName));
 }
 
 function AppContent() {
