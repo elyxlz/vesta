@@ -11,9 +11,8 @@ const SING_BOX_AMD64_SHA256: &str =
 const SING_BOX_ARM64_SHA256: &str =
     "675297394f9430cebb72b3c48ba8bce0d6f7c750a9d68a8f7f88c515c8255cd1";
 const RELEASE_BASE: &str = "https://github.com/SagerNet/sing-box/releases/download";
-/// Bumped whenever the sidecar image's content changes (a new file, a changed pin), so
-/// `current_sidecar_id` treats a sidecar on the old tag as drift and rebuilds it.
-pub const EGRESS_IMAGE_REVISION: &str = "1";
+/// Hex digits of the image content digest kept in the tag (see `image_tag`).
+const IMAGE_DIGEST_LEN: usize = 12;
 const IMAGE_REPO: &str = "vesta-egress";
 const SING_BOX_FILE: &str = "sing-box";
 const SING_BOX_MODE: u32 = 0o755;
@@ -48,8 +47,19 @@ impl std::fmt::Display for EgressNetError {
 
 impl std::error::Error for EgressNetError {}
 
+/// The sing-box pin plus a digest of the rest of the image's content (the busybox pin and the
+/// generated init script), so any content change is a new tag and `current_sidecar_id` treats
+/// a sidecar on the old one as drift.
 pub fn image_tag() -> String {
-    format!("{IMAGE_REPO}:{SING_BOX_VERSION}-{EGRESS_IMAGE_REVISION}")
+    let content = format!(
+        "{BUSYBOX_VERSION}\n{BUSYBOX_SNAPSHOT}\n{}",
+        crate::egress::init_script()
+    );
+    let digest = sha256_hex(content.as_bytes());
+    format!(
+        "{IMAGE_REPO}:{SING_BOX_VERSION}-{}",
+        &digest[..IMAGE_DIGEST_LEN]
+    )
 }
 
 /// `x86_64` -> Docker/Debian's `amd64`, `aarch64` -> `arm64`. Shared by the sing-box and busybox
@@ -200,6 +210,28 @@ fn extract_busybox_from_deb(deb: &[u8]) -> Result<Vec<u8>, EgressNetError> {
     )))
 }
 
+/// Download a pinned asset and check it against its pinned checksum.
+async fn download_verified(
+    http: &reqwest::Client,
+    url: &str,
+    sha256: &str,
+) -> Result<bytes::Bytes, EgressNetError> {
+    let fail = |e: reqwest::Error| EgressNetError(format!("failed to download {url}: {e}"));
+    let body = http
+        .get(url)
+        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(fail)?
+        .error_for_status()
+        .map_err(fail)?
+        .bytes()
+        .await
+        .map_err(fail)?;
+    verify_sha256(&body, sha256)?;
+    Ok(body)
+}
+
 async fn fetch_sing_box(http: &reqwest::Client) -> Result<Vec<u8>, EgressNetError> {
     let asset = release_asset(std::env::consts::ARCH).ok_or_else(|| {
         EgressNetError(format!(
@@ -211,19 +243,7 @@ async fn fetch_sing_box(http: &reqwest::Client) -> Result<Vec<u8>, EgressNetErro
         "{RELEASE_BASE}/v{SING_BOX_VERSION}/{}.tar.gz",
         asset.dir_name
     );
-    let fail = |e: reqwest::Error| EgressNetError(format!("failed to download {url}: {e}"));
-    let tarball = http
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-        .send()
-        .await
-        .map_err(fail)?
-        .error_for_status()
-        .map_err(fail)?
-        .bytes()
-        .await
-        .map_err(fail)?;
-    verify_sha256(&tarball, asset.sha256)?;
+    let tarball = download_verified(http, &url, asset.sha256).await?;
     tokio::task::spawn_blocking(move || sing_box_binary_from_release(&tarball, &asset.dir_name))
         .await
         .map_err(|e| EgressNetError(format!("sing-box unpack task failed: {e}")))?
@@ -236,19 +256,7 @@ async fn fetch_busybox(http: &reqwest::Client) -> Result<Vec<u8>, EgressNetError
             std::env::consts::ARCH
         ))
     })?;
-    let fail = |e: reqwest::Error| EgressNetError(format!("failed to download {url}: {e}"));
-    let deb = http
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-        .send()
-        .await
-        .map_err(fail)?
-        .error_for_status()
-        .map_err(fail)?
-        .bytes()
-        .await
-        .map_err(fail)?;
-    verify_sha256(&deb, sha256)?;
+    let deb = download_verified(http, &url, sha256).await?;
     tokio::task::spawn_blocking(move || extract_busybox_from_deb(&deb))
         .await
         .map_err(|e| EgressNetError(format!("busybox unpack task failed: {e}")))?
@@ -306,8 +314,7 @@ fn assemble_image_tar(
 }
 
 pub async fn fetch_image_tar(http: &reqwest::Client) -> Result<Vec<u8>, EgressNetError> {
-    let sing_box = fetch_sing_box(http).await?;
-    let busybox = fetch_busybox(http).await?;
+    let (sing_box, busybox) = tokio::try_join!(fetch_sing_box(http), fetch_busybox(http))?;
     let init_script = crate::egress::init_script();
     tokio::task::spawn_blocking(move || assemble_image_tar(&sing_box, &busybox, &init_script))
         .await
@@ -381,8 +388,14 @@ mod tests {
     }
 
     #[test]
-    fn image_tag_names_the_pinned_version_and_revision() {
-        assert_eq!(image_tag(), "vesta-egress:1.14.2-1");
+    fn image_tag_names_the_pinned_version_and_a_content_digest() {
+        let tag = image_tag();
+        let digest = tag
+            .strip_prefix("vesta-egress:1.14.2-")
+            .expect("repo and sing-box pin");
+        assert_eq!(digest.len(), IMAGE_DIGEST_LEN, "{tag}");
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{tag}");
+        assert_eq!(image_tag(), tag, "the tag is stable across calls");
     }
 
     #[test]

@@ -2091,6 +2091,11 @@ async fn remove_sidecar(docker: &Docker, agents_dir: &std::path::Path, agent_nam
 /// missing or on another image, so `needs_rebuild` always rebuilds it.
 const SIDECAR_MISSING_NETWORK_MODE: &str = "container:<missing-egress-sidecar>";
 
+/// The `network_mode` of an agent that joins the sidecar `sidecar_id`.
+fn sidecar_network_mode(sidecar_id: &str) -> String {
+    format!("{CONTAINER_NETWORK_PREFIX}{sidecar_id}")
+}
+
 /// The `network_mode` `create_container` would give `agent_name` for `proxy_wanted`: its own
 /// network with none, its current sidecar's namespace (or the missing-sidecar sentinel) with one.
 /// The one owner of that decision, shared by `expected_network_mode` (reconcile, from the stored
@@ -2100,20 +2105,19 @@ async fn network_mode_for(docker: &Docker, agent_name: &str, proxy_wanted: bool)
         return agent_network_name(agent_name);
     }
     match current_sidecar_id(docker, agent_name).await {
-        Some(id) => format!("{CONTAINER_NETWORK_PREFIX}{id}"),
+        Some(id) => sidecar_network_mode(&id),
         None => SIDECAR_MISSING_NETWORK_MODE.to_string(),
     }
 }
 
 /// The `network_mode` `create_container` would give `agent_name` now: its own network without a
-/// proxy, its current sidecar's namespace with one. An unreadable proxy file counts as a proxy,
-/// so a doubt never moves an agent off its sidecar.
+/// proxy, its current sidecar's namespace with one.
 pub(crate) async fn expected_network_mode(
     docker: &Docker,
     agents_dir: &std::path::Path,
     agent_name: &str,
 ) -> String {
-    let proxy_wanted = !matches!(crate::egress::load_proxy(agents_dir, agent_name), Ok(None));
+    let proxy_wanted = crate::egress::proxy_configured(agents_dir, agent_name);
     network_mode_for(docker, agent_name, proxy_wanted).await
 }
 
@@ -2188,6 +2192,7 @@ pub(crate) async fn restart_into_sidecar(docker: &Docker, agent_name: &str, cnam
     }
 }
 
+#[derive(Debug)]
 pub enum EgressChange {
     Set(crate::egress::ProxyUrl),
     Clear,
@@ -2471,7 +2476,7 @@ pub async fn create_container(
         // No running agent container rides on this sidecar yet: it's being (re)created fresh.
         let sidecar_id =
             ensure_sidecar(docker, &env_config.agents_dir, agent_name, &proxy, None).await?;
-        (format!("{CONTAINER_NETWORK_PREFIX}{sidecar_id}"), None)
+        (sidecar_network_mode(&sidecar_id), None)
     } else {
         remove_sidecar(docker, &env_config.agents_dir, agent_name).await;
         (network_name, Some(vec![host_docker_internal_mapping()]))

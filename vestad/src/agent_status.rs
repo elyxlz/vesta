@@ -810,11 +810,7 @@ async fn repair_egress_drift(
     agents: &[ListEntry],
 ) {
     for entry in agents {
-        let proxied = matches!(
-            crate::egress::load_proxy(agents_dir, &entry.name),
-            Ok(Some(_))
-        );
-        if !proxied
+        if !crate::egress::proxy_configured(agents_dir, &entry.name)
             || cache.operation(&entry.name).is_some()
             || rebuilding.is_rebuilding(&entry.name)
         {

@@ -33,6 +33,16 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
     }
 }
 
+/// The status and body of a response, without treating a non-2xx as an error.
+fn status_and_body(response: Response<Body>) -> Result<(u16, String), String> {
+    let status = response.status().as_u16();
+    let body = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| format!("read body: {e}"))?;
+    Ok((status, body))
+}
+
 fn map_error(e: &ureq::Error) -> String {
     format!("request failed: {e}")
 }
@@ -640,21 +650,37 @@ impl Client {
         Ok(self.proxy_get(path, auth)?.0)
     }
 
+    /// PUT JSON to a path with a chosen credential, preserving the status and body.
+    pub fn proxy_put_json(
+        &self,
+        path: &str,
+        auth: ProxyAuth,
+        body: &serde_json::Value,
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.put(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        status_and_body(request.send_json(body).map_err(|e| map_error(&e))?)
+    }
+
+    /// DELETE a path with a chosen credential, preserving the status and body.
+    pub fn proxy_delete(&self, path: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
+        let mut request = self.agent.delete(&format!("{}{}", self.base_url, path));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        status_and_body(request.call().map_err(|e| map_error(&e))?)
+    }
+
     /// `PUT /agents/{name}/proxy` with the api key, returning `(status, body)` so a test can
     /// assert on a refusal.
     pub fn set_proxy(&self, name: &str, url: &str) -> Result<(u16, String), String> {
-        let response = self
-            .agent
-            .put(&format!("{}/agents/{name}/proxy", self.base_url))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(serde_json::json!({ "url": url }))
-            .map_err(|e| map_error(&e))?;
-        let status = response.status().as_u16();
-        let body = response
-            .into_body()
-            .read_to_string()
-            .map_err(|e| format!("read body: {e}"))?;
-        Ok((status, body))
+        self.proxy_put_json(
+            &format!("/agents/{name}/proxy"),
+            ProxyAuth::ApiKey,
+            &serde_json::json!({ "url": url }),
+        )
     }
 
     /// `GET /agents/{name}/proxy` with a chosen credential, returning `(status, body)`.
@@ -670,18 +696,7 @@ impl Client {
     /// `DELETE /agents/{name}/proxy` with the api key, returning `(status, body)` so a test can
     /// assert on a refusal (an unknown agent) instead of treating every non-2xx as an error.
     pub fn clear_proxy_status(&self, name: &str) -> Result<(u16, String), String> {
-        let response = self
-            .agent
-            .delete(&format!("{}/agents/{name}/proxy", self.base_url))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call()
-            .map_err(|e| map_error(&e))?;
-        let status = response.status().as_u16();
-        let body = response
-            .into_body()
-            .read_to_string()
-            .map_err(|e| format!("read body: {e}"))?;
-        Ok((status, body))
+        self.proxy_delete(&format!("/agents/{name}/proxy"), ProxyAuth::ApiKey)
     }
 
     /// Register a service via `POST /agents/{name}/services`, the agent-token tier the

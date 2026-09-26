@@ -156,6 +156,16 @@ impl ProxyUrl {
         &self.raw
     }
 
+    /// True when the host names this machine's loopback. Inside the sidecar that is the
+    /// sidecar's own loopback, so a proxy the host reaches there is never reachable by the agent.
+    pub fn is_loopback(&self) -> bool {
+        self.host.eq_ignore_ascii_case("localhost")
+            || self
+                .host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())
+    }
+
     /// The URL with its password replaced, for every surface a person or a log reads.
     pub fn masked(&self) -> String {
         let host = if self.host.contains(':') {
@@ -293,6 +303,12 @@ pub fn load_proxy(agents_dir: &Path, agent: &str) -> Result<Option<ProxyUrl>, Eg
     }
 }
 
+/// Whether `agent` routes through a proxy. An unreadable proxy file counts as one, so a doubt
+/// never moves an agent off its sidecar nor skips its sidecar repair.
+pub fn proxy_configured(agents_dir: &Path, agent: &str) -> bool {
+    !matches!(load_proxy(agents_dir, agent), Ok(None))
+}
+
 pub fn save_proxy(agents_dir: &Path, agent: &str, proxy: &ProxyUrl) -> Result<(), EgressError> {
     write_private(
         &agent_file(agents_dir, agent, PROXY_FILE_SUFFIX),
@@ -313,6 +329,7 @@ pub fn rename_proxy(agents_dir: &Path, old: &str, new: &str) -> Result<(), Egres
         .map_err(|e| EgressError(format!("failed to move {}: {e}", from.display())))
 }
 
+#[derive(Debug)]
 pub struct ConfigWrite {
     pub path: PathBuf,
     pub changed: bool,
@@ -408,6 +425,27 @@ mod tests {
             "socks5://user:%zz@gw.example.com:1080",
         ] {
             assert!(ProxyUrl::parse(raw).is_err(), "{raw} must be rejected");
+        }
+    }
+
+    #[test]
+    fn is_loopback_flags_only_hosts_the_sidecar_cannot_reach() {
+        for raw in [
+            "socks5://127.0.0.1:1080",
+            "socks5://127.1.2.3:1080",
+            "http://localhost:8080",
+            "http://LOCALHOST:8080",
+            "socks5://[::1]:1080",
+            "socks5://0.0.0.0:1080",
+        ] {
+            assert!(ProxyUrl::parse(raw).expect(raw).is_loopback(), "{raw}");
+        }
+        for raw in [
+            "socks5://192.168.1.10:1080",
+            "socks5://gw.example.com:1080",
+            "socks5://[2001:db8::1]:1080",
+        ] {
+            assert!(!ProxyUrl::parse(raw).expect(raw).is_loopback(), "{raw}");
         }
     }
 

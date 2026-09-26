@@ -261,7 +261,7 @@ fn set_masks_the_password_and_moves_the_agent_into_its_sidecar() {
         .wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running on its sidecar");
 
-    // Review Focus 5: the same URL again changes nothing, so the agent does not restart.
+    // The same URL again changes nothing, so the agent does not restart.
     let before = started_at(&agent_container_name(&agent.name));
     let (status, _) = client
         .set_proxy(&agent.name, &proxy.url)

@@ -4,7 +4,7 @@
 /// A proxy change can rebuild a multi-GB agent, which takes minutes.
 const REQUEST_TIMEOUT_SECS: u64 = 1800;
 
-#[derive(clap::Subcommand)]
+#[derive(clap::Subcommand, Debug)]
 pub enum ProxyAction {
     /// Route the agent's internet traffic through a proxy (http:// or socks5://)
     Set {

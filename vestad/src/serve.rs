@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services", "devices", "providers", "personalities",
+    "services", "devices", "providers", "personalities", "proxy",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -2523,6 +2523,13 @@ async fn set_proxy_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let proxy = crate::egress::ProxyUrl::parse(&body.url)
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    // The preflight runs from the host, where a loopback proxy answers; the sidecar would not.
+    if proxy.is_loopback() {
+        return Err(err_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a loopback proxy is unreachable from the agent's sidecar; use an address the Docker network can reach",
+        ));
+    }
     docker::guard_alive(
         docker::container_status(&state.docker, &docker::container_name(&name)).await,
         &name,
