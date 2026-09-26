@@ -38,47 +38,34 @@ import { PillKindIcon } from "./notification-row";
 const RESIZE_DELAY_S = 0.35;
 const PILL_MAX_WIDTH = 340;
 
-// Without the bell, only the history dialog mounts, opened from the agent menu.
-export function NotificationsPill({ bell }: { bell: boolean }) {
+export function NotificationsPill() {
   // Nullable on purpose: the version-gate screens render the navbar outside
   // the router and the provider, where the pill degrades to a static bell.
   const state = useContext(NotificationsPillContext);
   if (!state) {
-    if (!bell) return null;
     return (
       <div className="chrome-outline flex size-10 items-center justify-center rounded-full">
         <Bell className="size-4 shrink-0" aria-hidden />
       </div>
     );
   }
-  return <ConnectedNotificationsPill state={state} bell={bell} />;
+  return <ConnectedNotificationsPill state={state} />;
 }
 
 function ConnectedNotificationsPill({
   state,
-  bell,
 }: {
   state: NotificationsPillState;
-  bell: boolean;
 }) {
   // Narrow layouts have no room for the morph: the bell stays a plain button
   // and arrivals raise a dot on it instead of rotating through a pill.
   const isMobile = useIsMobile();
   const { isDesktopApp, isMacOS } = runtimeInfo;
-  const {
-    current,
-    feed,
-    loadOlder,
-    surface,
-    showSurface,
-    openAgent,
-    openEntry,
-  } = state;
+  const { current, feed, surface, showSurface, openAgent, openEntry } = state;
 
   // The awareness-feed split against the watermark the session holds (kept
   // through close, so a surface animating out shows exactly what it showed).
   const sections = feedSections(feed);
-  const view = feedView(feed);
 
   // The popover is a taster: the newest unseen rows (or, before the first-ever
   // catch-up, the newest rows), capped; "see all" is where the rest lives.
@@ -104,6 +91,61 @@ function ConnectedNotificationsPill({
     </motion.div>
   );
 
+  return (
+    <Popover
+      open={surface === "popover"}
+      onOpenChange={(open) => {
+        showSurface(open ? "popover" : "none");
+      }}
+    >
+      {/* The bell is the popover's own trigger, so Radix owns the toggle: a
+          click on it while open is the close half, never a reopen. */}
+      <PopoverTrigger asChild>
+        {isMobile ? (
+          <CompactBell unseen={state.unseen} />
+        ) : (
+          <MorphingPill
+            current={current}
+            unseen={state.unseen}
+            morph={state.morph}
+            onOpenAgent={openAgent}
+          />
+        )}
+      </PopoverTrigger>
+      {/* Above the navbar layer (z-[99999]), where the toast lives: an open
+          history must not have toasts floating over it. */}
+      {/* Under the bell's left edge everywhere, except the macOS desktop app,
+          whose traffic-light inset centers the bell on its own island. */}
+      <PopoverContent
+        align={isDesktopApp && isMacOS ? "center" : "start"}
+        className="z-[100000] w-72 p-2"
+      >
+        <div className="space-y-1">
+          <HistoryList
+            view={feedView(feed)}
+            liveIds={feed.liveIds}
+            entries={popoverEntries}
+            emptyLabel={
+              sections ? "you're all caught up" : "no notifications yet"
+            }
+            skeletonCount={POPOVER_ROWS}
+            footer={seeAll}
+            compact
+            onOpen={openEntry}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// The full history, opened by the popover's "see all" or the agent menu; it
+// mounts with every navbar, whether or not that navbar shows the bell.
+export function NotificationsHistoryDialog() {
+  const state = useContext(NotificationsPillContext);
+  if (!state) return null;
+  const { feed, loadOlder, surface, showSurface, openEntry } = state;
+
   const olderFooter = feed.older !== "exhausted" && feed.entries.length > 0 && (
     <Button
       variant="ghost"
@@ -116,74 +158,26 @@ function ConnectedNotificationsPill({
   );
 
   return (
-    <>
-      {bell && (
-        <Popover
-          open={surface === "popover"}
-          onOpenChange={(open) => {
-            showSurface(open ? "popover" : "none");
-          }}
-        >
-          {/* The bell is the popover's own trigger, so Radix owns the toggle: a
-            click on it while open is the close half, never a reopen. */}
-          <PopoverTrigger asChild>
-            {isMobile ? (
-              <CompactBell unseen={state.unseen} />
-            ) : (
-              <MorphingPill
-                current={current}
-                unseen={state.unseen}
-                morph={state.morph}
-                onOpenAgent={openAgent}
-              />
-            )}
-          </PopoverTrigger>
-          {/* Above the navbar layer (z-[99999]), where the toast lives: an open
-            history must not have toasts floating over it. */}
-          {/* Under the bell's left edge everywhere, except the macOS desktop app,
-            whose traffic-light inset centers the bell on its own island. */}
-          <PopoverContent
-            align={isDesktopApp && isMacOS ? "center" : "start"}
-            className="z-[100000] w-72 p-2"
-          >
-            <div className="space-y-1">
-              <HistoryList
-                view={view}
-                liveIds={feed.liveIds}
-                entries={popoverEntries}
-                emptyLabel={
-                  sections ? "you're all caught up" : "no notifications yet"
-                }
-                skeletonCount={POPOVER_ROWS}
-                footer={seeAll}
-                compact
-                onOpen={openEntry}
-              />
-            </div>
-          </PopoverContent>
-        </Popover>
-      )}
-      <Dialog
-        open={surface === "dialog"}
-        onOpenChange={(open) => {
-          showSurface(open ? "dialog" : "none");
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>notifications</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-1">
-            <DialogHistory
-              feed={feed}
-              sections={sections}
-              footer={olderFooter}
-              onOpen={openEntry}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+    <Dialog
+      open={surface === "dialog"}
+      onOpenChange={(open) => {
+        showSurface(open ? "dialog" : "none");
+      }}
+    >
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>notifications</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-1">
+          <DialogHistory
+            feed={feed}
+            sections={feedSections(feed)}
+            footer={olderFooter}
+            onOpen={openEntry}
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

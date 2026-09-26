@@ -8,8 +8,7 @@ import {
   DialogTitle,
 } from "@/components/Dialog";
 import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { useIsTouchNarrow } from "@/hooks/use-touch-narrow";
+import { useNavLayout } from "@/hooks/use-nav-layout";
 import { NotificationsPillContext } from "@/providers/NotificationsPillProvider/context";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
@@ -35,8 +34,7 @@ export function AgentMenu() {
 
   const [open, setOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
-  const isMobile = useIsMobile();
-  const touchNarrow = useIsTouchNarrow();
+  const navLayout = useNavLayout();
   const pill = useContext(NotificationsPillContext);
 
   const isRunning =
@@ -69,7 +67,7 @@ export function AgentMenu() {
     onDelete: () => openDialog("deleteAgent", true),
     // A narrow mouse window drops the navbar bell, so its history opens here.
     onNotifications:
-      pill && isMobile && !touchNarrow
+      pill && navLayout === "mouse-narrow"
         ? () => pill.showSurface("dialog")
         : undefined,
   };
@@ -82,7 +80,7 @@ export function AgentMenu() {
 
   return (
     <>
-      {touchNarrow ? (
+      {navLayout === "touch-narrow" ? (
         <MobileMenu
           state={state}
           open={open}

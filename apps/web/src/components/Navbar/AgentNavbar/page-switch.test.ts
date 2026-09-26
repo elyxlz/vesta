@@ -1,39 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { pageSwitchFor } from "./page-switch";
 
+const DASHBOARD = { onDashboard: true, onChat: false };
+const CHAT = { onDashboard: false, onChat: true };
+const SUBPAGE = { onDashboard: false, onChat: false };
+
 describe("pageSwitchFor", () => {
   it.each([
     [
       "a touch window leaves switching to the bottom bar",
-      { bottomNav: true, narrow: true, onDashboard: false, onChat: true },
+      "touch-narrow",
+      CHAT,
       null,
     ],
     [
       "a narrow mouse window on the dashboard offers chat",
-      { bottomNav: false, narrow: true, onDashboard: true, onChat: false },
+      "mouse-narrow",
+      DASHBOARD,
       "chat",
     ],
     [
       "a narrow mouse window on chat offers the dashboard",
-      { bottomNav: false, narrow: true, onDashboard: false, onChat: true },
+      "mouse-narrow",
+      CHAT,
       "dashboard",
     ],
-    [
-      "a wide window on chat offers the dashboard",
-      { bottomNav: false, narrow: false, onDashboard: false, onChat: true },
-      "dashboard",
-    ],
-    [
-      "a wide window on the dashboard offers nothing",
-      { bottomNav: false, narrow: false, onDashboard: true, onChat: false },
-      null,
-    ],
-    [
-      "a subpage offers nothing",
-      { bottomNav: false, narrow: true, onDashboard: false, onChat: false },
-      null,
-    ],
-  ] as const)("%s", (_, input, expected) => {
-    expect(pageSwitchFor(input)).toBe(expected);
+    ["a wide window on chat offers the dashboard", "wide", CHAT, "dashboard"],
+    ["a wide window on the dashboard offers nothing", "wide", DASHBOARD, null],
+    ["a subpage offers nothing", "mouse-narrow", SUBPAGE, null],
+  ] as const)("%s", (_, layout, page, expected) => {
+    expect(pageSwitchFor(layout, page)).toBe(expected);
   });
 });

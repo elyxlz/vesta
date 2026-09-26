@@ -3,7 +3,10 @@ import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLayout } from "@/stores/use-layout";
 import { WindowControls } from "@/components/WindowControls";
-import { NotificationsPill } from "./NotificationsPill";
+import {
+  NotificationsHistoryDialog,
+  NotificationsPill,
+} from "./NotificationsPill";
 import { ToastPill } from "./ToastPill";
 
 interface NavbarProps {
@@ -65,7 +68,8 @@ export function Navbar({
           style={{ paddingLeft: "var(--titlebar-inset-left, 0px)" }}
         >
           {leading}
-          <NotificationsPill bell={bell} />
+          {bell && <NotificationsPill />}
+          <NotificationsHistoryDialog />
         </div>
 
         <div

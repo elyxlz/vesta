@@ -15,7 +15,7 @@ import { MobileNavbar } from "@/components/MobileNavbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useIsTouchNarrow } from "@/hooks/use-touch-narrow";
+import { useNavLayout } from "@/hooks/use-nav-layout";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
@@ -43,7 +43,8 @@ export function AgentNavbar({
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
-  const bottomNav = useIsTouchNarrow();
+  const navLayout = useNavLayout();
+  const bottomNav = navLayout === "touch-narrow";
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const restartPending = useRestartPending((s) =>
     Boolean(name && s.pending[name]?.reasons.length),
@@ -72,9 +73,7 @@ export function AgentNavbar({
   // deep link has no in-app history (location.key === "default"), so fall back
   // to the dashboard, replacing the entry so browser back still exits the app.
   const showBack = !!logsMatch || !!settingsMatch;
-  const pageSwitch = pageSwitchFor({
-    bottomNav,
-    narrow: isMobile,
+  const pageSwitch = pageSwitchFor(navLayout, {
     onDashboard: !!agentDashboardMatch,
     onChat: !!chatMatch,
   });
@@ -96,7 +95,7 @@ export function AgentNavbar({
     <>
       <Navbar
         // The page switch takes the bell's room; the agent menu lists it instead.
-        bell={!isMobile || bottomNav}
+        bell={navLayout !== "mouse-narrow"}
         leading={
           <AgentNavbarLeading
             showBack={showBack}
@@ -129,6 +128,11 @@ export function AgentNavbar({
   );
 }
 
+const SWITCH_TARGETS = {
+  dashboard: { icon: <LayoutDashboard />, subpath: "" },
+  chat: { icon: <MessageSquare />, subpath: "/chat" },
+};
+
 function AgentNavbarLeading({
   showBack,
   pageSwitch,
@@ -145,7 +149,6 @@ function AgentNavbarLeading({
   if (showBack) {
     return <LeadingButton label="back" icon={<ArrowLeft />} onClick={goBack} />;
   }
-  const base = `/agent/${encodeURIComponent(name)}`;
   return (
     <>
       <LeadingButton
@@ -155,21 +158,14 @@ function AgentNavbarLeading({
           void navigate("/");
         }}
       />
-      {pageSwitch === "dashboard" && (
+      {pageSwitch && (
         <LeadingButton
-          label="dashboard"
-          icon={<LayoutDashboard />}
+          label={pageSwitch}
+          icon={SWITCH_TARGETS[pageSwitch].icon}
           onClick={() => {
-            void navigate(base);
-          }}
-        />
-      )}
-      {pageSwitch === "chat" && (
-        <LeadingButton
-          label="chat"
-          icon={<MessageSquare />}
-          onClick={() => {
-            void navigate(`${base}/chat`);
+            void navigate(
+              `/agent/${encodeURIComponent(name)}${SWITCH_TARGETS[pageSwitch].subpath}`,
+            );
           }}
         />
       )}
