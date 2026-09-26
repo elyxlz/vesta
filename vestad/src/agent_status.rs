@@ -13,7 +13,7 @@ use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
 use crate::settings::ServiceEntry;
-use crate::state::{err_response, ok_json, SharedState};
+use crate::state::{agent_write_guard, err_response, ok_json, SharedState};
 use crate::sync::{activity_state, notification_change, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
@@ -808,6 +808,7 @@ async fn repair_egress_drift(
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
     agents: &[ListEntry],
+    state: &SharedState,
 ) {
     for entry in agents {
         if !crate::egress::proxy_configured(agents_dir, &entry.name)
@@ -828,8 +829,15 @@ async fn repair_egress_drift(
         let docker = docker.clone();
         let agent_name = entry.name.clone();
         let cache = cache.clone();
+        let state = state.clone();
         tokio::spawn(async move {
             let _operation = operation;
+            // A user stop racing this repair must win: take the agent's write lock and
+            // re-decide under it, so a stop that lands first is never undone by a restart.
+            let _guard = agent_write_guard(&state, &agent_name).await;
+            if !docker::egress_repair_needed(&docker, &cname).await {
+                return;
+            }
             docker::restart_into_sidecar(&docker, &agent_name, &cname).await;
             // The restarted sidecar can carry a new address; drop the cached one so the next
             // resolve picks it up instead of dialing the dead one indefinitely.
@@ -861,7 +869,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
-            repair_egress_drift(&docker, &cache, &agents_dir, &rebuilding, &agents).await;
+            repair_egress_drift(&docker, &cache, &agents_dir, &rebuilding, &agents, &state).await;
 
             // Lifecycle notifications come from vestad's authoritative agent list, never the
             // agent EventBus's thinking/idle activity. Each observed transition is routed into

@@ -5150,6 +5150,65 @@ mod tests {
         );
     }
 
+    /// Regression for the fix that has `repair_egress_drift`'s spawned task re-check under the
+    /// agent's write lock: the recheck is only safe because a stopped agent reads as
+    /// not-needing-repair. This pins that not-running branch directly.
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn egress_repair_needed_never_restarts_a_stopped_agent() {
+        let docker = test_docker();
+        let agent = format!("egress-repair-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+        assert!(
+            start_container(&docker, &cname).await,
+            "agent start must succeed"
+        );
+
+        // The sidecar crashes and Docker's on-failure policy revives it with a fresh namespace:
+        // the drift `egress_repair_needed` exists to detect.
+        docker
+            .restart_container(&sidecar, None::<RestartContainerOptions>)
+            .await
+            .expect("restart sidecar");
+        assert!(
+            egress_repair_needed(&docker, &cname).await,
+            "a sidecar restarted after the agent must read as drifted"
+        );
+
+        // The user stops the agent before the repair's spawned task takes the write lock and
+        // re-checks; the not-running branch is what must turn that recheck into a no-op.
+        stop_container_with_timeout(&docker, &cname, 5)
+            .await
+            .expect("stop agent");
+        assert!(
+            !egress_repair_needed(&docker, &cname).await,
+            "a stopped agent must never be reported as needing the repair restart"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "requires Docker and internet (downloads sing-box)"]
     async fn create_container_without_a_proxy_removes_a_leftover_sidecar() {
