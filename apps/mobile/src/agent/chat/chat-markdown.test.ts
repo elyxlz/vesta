@@ -10,6 +10,7 @@ describe("chat markdown list layout", () => {
     (content) => {
       const { base } = chatMarkdownStyleSet(lightColors);
       expect(base[content]).toEqual({
+        flex: 0,
         flexGrow: 1,
         flexShrink: 1,
         flexBasis: "auto",
