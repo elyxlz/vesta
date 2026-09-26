@@ -41,7 +41,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services", "devices", "providers", "personalities",
+    "services", "devices", "providers", "personalities", "proxy",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 
@@ -176,13 +176,11 @@ fn ensure_not_rebuilding(
 /// Spawning runs the op to completion regardless of the client; the request only observes its result
 /// (so a still-connected app caller still gets a truthful response). JSON analogue of the SSE
 /// `spawn_pipeline_sse` used by backup/restore, which fixed this same drop-cancellation class.
-async fn spawn_detached<Fut>(
-    op: Fut,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>
+async fn spawn_detached<T, Fut>(op: Fut) -> Result<T, (StatusCode, Json<serde_json::Value>)>
 where
-    Fut: std::future::Future<
-            Output = Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)>,
-        > + Send
+    T: Send + 'static,
+    Fut: std::future::Future<Output = Result<T, (StatusCode, Json<serde_json::Value>)>>
+        + Send
         + 'static,
 {
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -837,7 +835,7 @@ async fn restart_agent_handler(
     // Detached from this request's connection: a self-restart's client is the agent inside the very
     // container this stops, so the loopback drops the instant rebuild_agent stops it. An inline await
     // would be cancelled before the recreate finishes, leaving the agent down (see spawn_detached).
-    spawn_detached(async move {
+    Box::pin(spawn_detached(async move {
         let _guard = agent_write_guard(&state, &name).await;
         // A vestad-performed restart (often the agent restarting itself, e.g. after the nightly
         // dream) is planned work: registering it keeps the stop/start cycle out of the lifecycle push.
@@ -858,18 +856,18 @@ async fn restart_agent_handler(
             let settings = state.settings.read().await;
             settings.agent_mounts(&name)
         };
-        docker::restart_agent(
+        Box::pin(docker::restart_agent(
             &state.docker,
             &name,
             &state.env_config,
             &user_mounts,
             reason,
             &state.rebuilding,
-        )
+        ))
         .await
         .map_err(map_docker_err)?;
         Ok(ok_json())
-    })
+    }))
     .await
 }
 
@@ -2501,6 +2499,110 @@ async fn set_mounts_handler(
     ))
 }
 
+#[derive(Deserialize)]
+struct SetProxyBody {
+    url: String,
+}
+
+async fn get_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let proxy = crate::egress::load_proxy(&state.env_config.agents_dir, &name)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    Ok(Json(
+        serde_json::json!({ "url": proxy.map(|p| p.masked()) }),
+    ))
+}
+
+async fn set_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetProxyBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let proxy = crate::egress::ProxyUrl::parse(&body.url)
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    // The preflight runs from the host, where a loopback proxy answers; the sidecar would not.
+    if proxy.is_loopback() {
+        return Err(err_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a loopback proxy is unreachable from the agent's sidecar; use an address the Docker network can reach",
+        ));
+    }
+    docker::guard_alive(
+        docker::container_status(&state.docker, &docker::container_name(&name)).await,
+        &name,
+    )
+    .map_err(map_docker_err)?;
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
+    if !std::path::Path::new(docker::TUN_DEVICE).exists() {
+        return Err(err_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!(
+                "this host has no {}, so it cannot run an egress proxy",
+                docker::TUN_DEVICE
+            ),
+        ));
+    }
+    docker::ensure_egress_image(&state.docker)
+        .await
+        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
+    crate::egress_net::preflight(&proxy)
+        .await
+        .map_err(|e| err_response(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()))?;
+    tracing::info!(agent = %name, proxy = %proxy.masked(), "setting egress proxy");
+    let masked = proxy.masked();
+    Box::pin(apply_proxy_change(state, name, docker::EgressChange::Set(proxy))).await?;
+    Ok(Json(serde_json::json!({ "url": masked })))
+}
+
+async fn clear_proxy_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::guard_alive(
+        docker::container_status(&state.docker, &docker::container_name(&name)).await,
+        &name,
+    )
+    .map_err(map_docker_err)?;
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
+    tracing::info!(agent = %name, "clearing egress proxy");
+    Box::pin(apply_proxy_change(state, name, docker::EgressChange::Clear)).await?;
+    Ok(ok_json())
+}
+
+/// Apply a proxy change as planned work, detached from the request like a restart, and drop the
+/// cached address: the agent's address moves between its own network and its sidecar's.
+async fn apply_proxy_change(
+    state: SharedState,
+    name: String,
+    change: docker::EgressChange,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    spawn_detached(async move {
+        let _guard = agent_write_guard(&state, &name).await;
+        let _operation = agent_status::PublishedOperation::new(
+            state.agent_status_cache.clone(),
+            &name,
+            docker::AgentOperation::Restarting,
+        );
+        let user_mounts = state.settings.read().await.agent_mounts(&name);
+        let applied = docker::apply_egress_change(
+            &state.docker,
+            &name,
+            &state.env_config,
+            &user_mounts,
+            &change,
+            &state.rebuilding,
+        )
+        .await;
+        state.agent_status_cache.clear_bridge_ip(&name);
+        applied.map_err(map_docker_err)?;
+        Ok(())
+    })
+    .await
+}
+
 /// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
 /// host filesystem (common mount roots + home media folders), so it is API-key only — never the
 /// agent token; an agent must not enumerate the host. The scan is blocking `std::fs` (and a hung
@@ -2627,9 +2729,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/start", post(start_all_handler))
         .route(
             "/agents/{name}",
-            get(agent_status_handler)
-                .delete(destroy_agent_handler)
-                .patch(rename_agent_handler),
+            get(agent_status_handler).delete(destroy_agent_handler),
         )
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
@@ -2682,6 +2782,7 @@ pub fn build_router(state: SharedState) -> Router {
             axum::routing::delete(delete_agent_backup_settings_handler),
         )
         .route("/agents/{name}/mounts", put(set_mounts_handler))
+        .route("/agents/{name}/proxy", get(get_proxy_handler))
         .route("/host/folders", get(host_folder_suggestions_handler))
         .route(
             "/mobile/devices",
@@ -2703,9 +2804,15 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Create runs an image build; the longrun deadline keeps it from 408ing (see the const).
+    // Create runs an image build and rename snapshots and recreates the container (plus its egress
+    // sidecar); the longrun deadline keeps either from 408ing mid-operation (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
+        .route("/agents/{name}", axum::routing::patch(rename_agent_handler))
+        .route(
+            "/agents/{name}/proxy",
+            put(set_proxy_handler).delete(clear_proxy_handler),
+        )
         .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),

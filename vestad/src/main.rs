@@ -16,6 +16,8 @@ mod backup;
 mod channel;
 mod device_registry;
 mod docker;
+mod egress;
+mod egress_net;
 mod jwt;
 mod lifecycle;
 mod maintenance;
@@ -24,6 +26,7 @@ mod mobile_app;
 mod mounts;
 mod operation;
 mod paths;
+mod proxy_cli;
 mod restic;
 mod self_log;
 mod serve;
@@ -106,6 +109,11 @@ enum Command {
     Tunnel {
         #[command(subcommand)]
         action: TunnelAction,
+    },
+    /// Route an agent's internet traffic through a proxy that vestad manages
+    Proxy {
+        #[command(subcommand)]
+        action: proxy_cli::ProxyAction,
     },
     /// Export an agent to a portable bundle file (credentials are stripped)
     Export {
@@ -1035,6 +1043,18 @@ fn main() {
                     }
                     eprintln!("✓ tunnel removed");
                 }
+            }
+        }
+
+        Command::Proxy { action } => {
+            let config = config_dir();
+            let port = read_port_file(&config)
+                .and_then(|port| port.checked_add(1))
+                .unwrap_or_else(|| die("vestad is not set up yet; run `vestad` first"));
+            let api_key = read_api_key(&config).unwrap_or_else(|| die("no api key found; run `vestad` first"));
+            match proxy_cli::run(&format!("http://127.0.0.1:{port}"), &api_key, &action) {
+                Ok(line) => println!("{line}"),
+                Err(message) => die(message),
             }
         }
 

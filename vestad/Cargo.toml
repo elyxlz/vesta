@@ -62,7 +62,7 @@ futures-core = "0.3"
 futures-util = "0.3"
 async-stream = "0.3"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls", "socks"] }
 dotenvy = "0.15"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 bollard = "0.21"
@@ -76,6 +76,9 @@ base64 = "0.23"
 hex = "0.4"
 qrcode = { version = "0.14", default-features = false }
 jiff = "0.2"
+# Decodes the .xz payload inside the busybox .deb the egress sidecar image embeds; the image has
+# no system xz, and this is pure Rust so it needs none at build time either.
+lzma-rs = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
