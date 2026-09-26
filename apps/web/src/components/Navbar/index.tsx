@@ -7,6 +7,7 @@ import { NotificationsPill } from "./NotificationsPill";
 import { ToastPill } from "./ToastPill";
 
 interface NavbarProps {
+  bell?: boolean;
   leading?: React.ReactNode;
   center?: React.ReactNode;
   trailing?: React.ReactNode;
@@ -15,16 +16,18 @@ interface NavbarProps {
 // Breathing room between the center content (the agent island) and the
 // widest a toast may grow toward it.
 const TOAST_CENTER_GAP = 12;
-// The least room between the leading buttons and the center content: a
-// narrow window moves the center right rather than over the buttons.
-const CENTER_LEADING_GAP = 8;
 // The floating toast has no measured budget; keep it phone-safe.
 const FLOATING_TOAST_MAX_WIDTH = 340;
 // An inline budget tighter than this reads as a sliver: the toast drops to
 // the floating under-island placement instead, where the full width fits.
 const MIN_INLINE_TOAST_WIDTH = 260;
 
-export function Navbar({ leading, center, trailing }: NavbarProps) {
+export function Navbar({
+  bell = true,
+  leading,
+  center,
+  trailing,
+}: NavbarProps) {
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
   const measureRef = useMeasuredSize("height", setNavbarHeight);
   const isMobile = useIsMobile();
@@ -33,8 +36,6 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
   // center to the trailing buttons, and the center content is centered on
   // that same point, so half the center's width intrudes into the slot.
   const [centerWidth, setCenterWidth] = useState(0);
-  const [leadingWidth, setLeadingWidth] = useState(0);
-  const leadingRef = useMeasuredSize("width", setLeadingWidth);
   const [toastSlotWidth, setToastSlotWidth] = useState(0);
   const centerRef = useMeasuredSize("width", setCenterWidth);
   const toastSlotRef = useMeasuredSize("width", setToastSlotWidth);
@@ -58,16 +59,13 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
           flow), so the center's width never shifts the halves and the left-gap
           pill stays centered on the true navbar center. */}
       <div data-drag-region className="relative flex items-center">
-        <div data-drag-region className="flex flex-1 min-w-0">
-          <div
-            ref={leadingRef}
-            data-drag-region
-            className="flex items-center gap-2 min-w-0"
-            style={{ paddingLeft: "var(--titlebar-inset-left, 0px)" }}
-          >
-            {leading}
-            <NotificationsPill />
-          </div>
+        <div
+          data-drag-region
+          className="flex flex-1 items-center gap-2 min-w-0"
+          style={{ paddingLeft: "var(--titlebar-inset-left, 0px)" }}
+        >
+          {leading}
+          <NotificationsPill bell={bell} />
         </div>
 
         <div
@@ -86,10 +84,7 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
 
         <div
           data-drag-region
-          className="absolute flex -translate-x-1/2 items-center"
-          style={{
-            left: `max(50%, ${String(leadingWidth + CENTER_LEADING_GAP + centerWidth / 2)}px)`,
-          }}
+          className="absolute left-1/2 flex -translate-x-1/2 items-center"
         >
           <div ref={centerRef} className="flex items-center">
             {center}

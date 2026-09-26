@@ -37,24 +37,29 @@ import { PillKindIcon } from "./notification-row";
 // a notification, the shell morphs to the slimmer pill height.
 const RESIZE_DELAY_S = 0.35;
 const PILL_MAX_WIDTH = 340;
-export function NotificationsPill() {
+
+// Without the bell, only the history dialog mounts, opened from the agent menu.
+export function NotificationsPill({ bell }: { bell: boolean }) {
   // Nullable on purpose: the version-gate screens render the navbar outside
   // the router and the provider, where the pill degrades to a static bell.
   const state = useContext(NotificationsPillContext);
   if (!state) {
+    if (!bell) return null;
     return (
       <div className="chrome-outline flex size-10 items-center justify-center rounded-full">
         <Bell className="size-4 shrink-0" aria-hidden />
       </div>
     );
   }
-  return <ConnectedNotificationsPill state={state} />;
+  return <ConnectedNotificationsPill state={state} bell={bell} />;
 }
 
 function ConnectedNotificationsPill({
   state,
+  bell,
 }: {
   state: NotificationsPillState;
+  bell: boolean;
 }) {
   // Narrow layouts have no room for the morph: the bell stays a plain button
   // and arrivals raise a dot on it instead of rotating through a pill.
@@ -112,50 +117,52 @@ function ConnectedNotificationsPill({
 
   return (
     <>
-      <Popover
-        open={surface === "popover"}
-        onOpenChange={(open) => {
-          showSurface(open ? "popover" : "none");
-        }}
-      >
-        {/* The bell is the popover's own trigger, so Radix owns the toggle: a
-            click on it while open is the close half, never a reopen. */}
-        <PopoverTrigger asChild>
-          {isMobile ? (
-            <CompactBell unseen={state.unseen} />
-          ) : (
-            <MorphingPill
-              current={current}
-              unseen={state.unseen}
-              morph={state.morph}
-              onOpenAgent={openAgent}
-            />
-          )}
-        </PopoverTrigger>
-        {/* Above the navbar layer (z-[99999]), where the toast lives: an open
-            history must not have toasts floating over it. */}
-        {/* Under the bell's left edge everywhere, except the macOS desktop app,
-            whose traffic-light inset centers the bell on its own island. */}
-        <PopoverContent
-          align={isDesktopApp && isMacOS ? "center" : "start"}
-          className="z-[100000] w-72 p-2"
+      {bell && (
+        <Popover
+          open={surface === "popover"}
+          onOpenChange={(open) => {
+            showSurface(open ? "popover" : "none");
+          }}
         >
-          <div className="space-y-1">
-            <HistoryList
-              view={view}
-              liveIds={feed.liveIds}
-              entries={popoverEntries}
-              emptyLabel={
-                sections ? "you're all caught up" : "no notifications yet"
-              }
-              skeletonCount={POPOVER_ROWS}
-              footer={seeAll}
-              compact
-              onOpen={openEntry}
-            />
-          </div>
-        </PopoverContent>
-      </Popover>
+          {/* The bell is the popover's own trigger, so Radix owns the toggle: a
+            click on it while open is the close half, never a reopen. */}
+          <PopoverTrigger asChild>
+            {isMobile ? (
+              <CompactBell unseen={state.unseen} />
+            ) : (
+              <MorphingPill
+                current={current}
+                unseen={state.unseen}
+                morph={state.morph}
+                onOpenAgent={openAgent}
+              />
+            )}
+          </PopoverTrigger>
+          {/* Above the navbar layer (z-[99999]), where the toast lives: an open
+            history must not have toasts floating over it. */}
+          {/* Under the bell's left edge everywhere, except the macOS desktop app,
+            whose traffic-light inset centers the bell on its own island. */}
+          <PopoverContent
+            align={isDesktopApp && isMacOS ? "center" : "start"}
+            className="z-[100000] w-72 p-2"
+          >
+            <div className="space-y-1">
+              <HistoryList
+                view={view}
+                liveIds={feed.liveIds}
+                entries={popoverEntries}
+                emptyLabel={
+                  sections ? "you're all caught up" : "no notifications yet"
+                }
+                skeletonCount={POPOVER_ROWS}
+                footer={seeAll}
+                compact
+                onOpen={openEntry}
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
       <Dialog
         open={surface === "dialog"}
         onOpenChange={(open) => {

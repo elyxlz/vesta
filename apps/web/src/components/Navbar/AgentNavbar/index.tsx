@@ -14,8 +14,7 @@ import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import { useMediaQuery } from "@/hooks/use-media-query";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobile, useIsTouchNarrow } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { useGateway } from "@/providers/GatewayProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
@@ -43,10 +42,7 @@ export function AgentNavbar({
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
-  // A mouse has no use for a thumb-reach tab bar: a narrow window on a mouse
-  // switches dashboard and chat from the top bar instead.
-  const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)");
-  const bottomNav = isMobile && !finePointer;
+  const bottomNav = useIsTouchNarrow();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const restartPending = useRestartPending((s) =>
     Boolean(name && s.pending[name]?.reasons.length),
@@ -98,6 +94,8 @@ export function AgentNavbar({
   return (
     <>
       <Navbar
+        // The page switch takes the bell's room; the agent menu lists it instead.
+        bell={!isMobile || bottomNav}
         leading={
           <AgentNavbarLeading
             showBack={showBack}
