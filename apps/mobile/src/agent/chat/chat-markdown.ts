@@ -8,6 +8,16 @@ const HEADING_LAYOUT = {
   flexDirection: "column" as const,
   flexWrap: "nowrap" as const,
 };
+// flex 0 cancels the library's default flex 1, which Yoga turns into a zero basis even
+// beside an auto flexBasis; a zero basis adds nothing to a shrink-to-fit bubble, so list
+// text squeezed to the widest sibling. minWidth 0 lets the text still shrink.
+const LIST_CONTENT_LAYOUT = {
+  flex: 0,
+  flexGrow: 1,
+  flexShrink: 1,
+  flexBasis: "auto" as const,
+  minWidth: 0,
+};
 // A cell keeps the library's flex 1, so every row splits its width into the
 // same columns, but a zero basis adds nothing to a shrink-to-fit bubble: the
 // minimum width is what gives a table-only bubble its width.
@@ -128,24 +138,8 @@ function buildMarkdownStyles(colors: AppColors) {
       textAlign: "right" as const,
       fontVariant: ["tabular-nums"] as const,
     },
-    // An auto basis, not the library's flex 1 (basis 0): a zero basis adds nothing to a
-    // shrink-to-fit bubble's width, so list text squeezed to the widest sibling or to zero.
-    // flex 0 overrides the library's default, since Yoga resolves any positive flex to a
-    // zero basis whatever flexBasis says. minWidth 0 lets the text still shrink.
-    bullet_list_content: {
-      flex: 0,
-      flexGrow: 1,
-      flexShrink: 1,
-      flexBasis: "auto" as const,
-      minWidth: 0,
-    },
-    ordered_list_content: {
-      flex: 0,
-      flexGrow: 1,
-      flexShrink: 1,
-      flexBasis: "auto" as const,
-      minWidth: 0,
-    },
+    bullet_list_content: LIST_CONTENT_LAYOUT,
+    ordered_list_content: LIST_CONTENT_LAYOUT,
     code_inline: {
       color: colors.text,
       fontFamily: fontNames.mono.native["400"],

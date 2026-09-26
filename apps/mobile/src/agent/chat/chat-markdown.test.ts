@@ -4,18 +4,12 @@ import { chatMarkdownStyleSet } from "./chat-markdown";
 
 vi.mock("react-native", () => ({ StyleSheet: { hairlineWidth: 1 } }));
 
-// react-native-markdown-display 7.0.2's default for both list content styles,
-// which it spreads our style over at render time.
-const LIBRARY_LIST_CONTENT = { flex: 1 };
-
 describe("chat markdown list layout", () => {
   it.each(["bullet_list_content", "ordered_list_content"] as const)(
     "sizes %s from its text so a bubble holding only a list item keeps the item's width",
     (content) => {
       const { base } = chatMarkdownStyleSet(lightColors);
-      // The library spreads our style over its own defaults, and Yoga resolves
-      // any positive flex to a zero basis whatever flexBasis says.
-      expect({ ...LIBRARY_LIST_CONTENT, ...base[content] }).toEqual({
+      expect(base[content]).toEqual({
         flex: 0,
         flexGrow: 1,
         flexShrink: 1,
