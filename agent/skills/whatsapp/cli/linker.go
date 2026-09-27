@@ -225,7 +225,6 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 	deadline := time.Now().Add(ManagedLinkTimeout)
 	for time.Now().Before(deadline) {
 		if wac.client.IsLoggedIn() {
-			wac.onLinked()
 			wac.logger.Infof("Managed WhatsApp linked (%s)", st.MSISDN)
 			return linkResult{MSISDN: st.MSISDN}, nil
 		}

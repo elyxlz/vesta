@@ -437,8 +437,8 @@ func (wac *WhatsAppClient) onConnected() {
 }
 
 // onLinked is onConnected plus starting the fragile post-link history-sync window.
-// Used only on a FRESH link (QR success, managed provision, phone-code PairSuccess),
-// never on a routine reconnect, so the window is not re-armed on every reconnect.
+// Called only from the PairSuccess event, never on a routine reconnect, so the window
+// is not re-armed on every reconnect.
 func (wac *WhatsAppClient) onLinked() {
 	wac.clearPhonePairingPending()
 	wac.onConnected()
@@ -723,7 +723,6 @@ func (wac *WhatsAppClient) consumeQRChannel(qrChan <-chan whatsmeow.QRChannelIte
 		} else if evt.Event == "success" {
 			wac.logger.Infof("Successfully authenticated!")
 			wac.clearQR()
-			wac.onLinked()
 			return true
 		}
 	}

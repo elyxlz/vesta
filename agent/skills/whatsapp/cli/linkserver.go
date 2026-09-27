@@ -63,11 +63,11 @@ func (wac *WhatsAppClient) linkHTTPHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (wac *WhatsAppClient) startLinkServer(port int) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		return fmt.Errorf("start link page on port %d: %w", port, err)
 	}
-	server := &http.Server{Addr: fmt.Sprintf("127.0.0.1:%d", port), Handler: http.HandlerFunc(wac.linkHTTPHandler)}
+	server := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", port), Handler: http.HandlerFunc(wac.linkHTTPHandler)}
 	wac.linkMu.Lock()
 	wac.linkServer = server
 	wac.linkPort = port

@@ -23,7 +23,11 @@ Always start with `whatsapp status`:
   and only their next inbound restores it, so an unasked reconnect can cost the channel to the one
   person who matters, at the moment you most need it.
 
-Never recover by manually re-pairing or restarting the daemon.
+Never re-pair on your own to recover: a lost link waits for the user's approval, as above.
+A restart keeps the link, so it is the fix for a daemon that stopped answering: when
+`whatsapp status` reports `linked:true` but another command fails with
+`whatsapp daemon is not answering`, run `whatsapp daemon restart` once. Do not restart for
+any other symptom.
 
 ## Holding an account offline
 
