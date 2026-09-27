@@ -239,6 +239,8 @@ Start the poll daemon with `email-client daemon start` (see SETUP.md); manage it
 
 The daemon runs one worker per **(account, folder)** being watched, each holding a persistent IMAP connection. Where the server advertises **IDLE** (Gmail, Microsoft, most others), the worker gets pushed on new mail in real time; otherwise it falls back to polling every `$EMAIL_CLIENT_POLL_INTERVAL` seconds (default 15). Either way it writes one JSON per new email into `~/agent/notifications/`. Each notification has source `email-client`, type `email`, `account` and `folder` fields, and `from`, `subject`, `date`, `uid`. The agent picks it up like any other notification source. If the daemon dies unexpectedly it writes a `daemon_died` notification with a `reason`; a deliberate `daemon stop`/`restart` never does.
 
+**Short MFA windows (Microsoft work/school tenants).** Some tenants expire a refresh token's MFA claim in a day or two (`AADSTS50078`). Set `"browser_session": "<name>"` in `accounts/<name>/config.json` to a `browser` session already signed in to that tenant: on that error the refresh re-runs the sign-in silently there (`prompt=none`, as a desktop mail client would), at most once per 6h, logs each attempt to `accounts/<name>/browser_reauth.jsonl`, and writes a `browser_reauth` notification. If the browser session itself needs interaction, the refresh fails as before.
+
 ### Choosing which folders notify
 
 By default the daemon watches only `INBOX` per account. To watch more folders (or fewer), set the per-account watch list; the daemon picks up changes within ~10s, no restart needed:
