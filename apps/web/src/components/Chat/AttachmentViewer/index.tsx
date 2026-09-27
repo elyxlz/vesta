@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import type { OpenViewerRequest } from "../ChatBubble/AttachmentContent";
 import { ProgressRing } from "../ProgressRing";
 import { useDownload, useDownloadsStore } from "@/stores/use-downloads";
+import { useLayout } from "@/stores/use-layout";
 import {
   panBy,
   resetZoom,
@@ -175,10 +176,12 @@ function ZoomableImage({
 export function AttachmentViewer({
   agent,
   request,
+  fullscreen,
   onClose,
 }: {
   agent: string;
   request: OpenViewerRequest | null;
+  fullscreen?: boolean;
   onClose: () => void;
 }) {
   const attachment = request?.attachment ?? null;
@@ -187,6 +190,7 @@ export function AttachmentViewer({
   );
   const download = useDownload(attachment?.id ?? "");
   const startDownload = useDownloadsStore((state) => state.start);
+  const navbarHeight = useLayout((state) => state.navbarHeight);
 
   return (
     <AnimatePresence>
@@ -221,10 +225,14 @@ export function AttachmentViewer({
                 aria-label="close viewer"
                 tabIndex={-1}
                 onClick={onClose}
-                className="absolute inset-0 cursor-default bg-background/95"
+                className="absolute inset-0 cursor-default bg-black/90"
               />
               <div className="pointer-events-none relative z-10 flex flex-1 flex-col">
-                <div className="pointer-events-auto flex items-center justify-end gap-1 p-2">
+                {/* The fullscreen chat sits under the absolute navbar, so the actions start below it. */}
+                <div
+                  className="pointer-events-auto flex items-center justify-end gap-2 px-4 pb-3"
+                  style={{ paddingTop: fullscreen ? navbarHeight + 12 : 12 }}
+                >
                   <Button
                     type="button"
                     size="icon"
@@ -234,7 +242,7 @@ export function AttachmentViewer({
                     onClick={() => {
                       startDownload(agent, attachment);
                     }}
-                    className="size-8 rounded-full"
+                    className="size-8 rounded-full bg-popover/90 shadow-sm hover:bg-popover"
                   >
                     {download?.phase === "fetching" ? (
                       <ProgressRing
@@ -250,7 +258,7 @@ export function AttachmentViewer({
                     variant="ghost"
                     aria-label="close"
                     onClick={onClose}
-                    className="size-8 rounded-full"
+                    className="size-8 rounded-full bg-popover/90 shadow-sm hover:bg-popover"
                   >
                     <X />
                   </Button>
