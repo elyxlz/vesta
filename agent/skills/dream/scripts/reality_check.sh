@@ -78,6 +78,16 @@ for log in "$HOME"/agent/logs/*.log; do
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
+    # A supervisor restart loop logs "died; restarting" with no error word, so the error count stays
+    # low while the component is dead. Count churn separately, aged by the same line dates.
+    churn=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+        BEGIN { recent = 1 }
+        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
+        recent && $0 !~ /\[AGENT\]/' \
+        | grep -icE '(died|crashed).*restart|restarting')
+    if [ "$churn" -gt 100 ]; then
+        bad "$(basename "$log"): $churn restart-loop lines in the last 2 days; something keeps dying and being respawned, read it"
+    fi
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
     else
