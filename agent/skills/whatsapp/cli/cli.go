@@ -565,6 +565,7 @@ func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
 		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
 		"pair_attempts_last_day":   len(attemptsWithin(st.PairAttempts, now, PairDayWindow)),
 		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
+		"store_answering":          wac.store.Answering(StoreProbeTimeout),
 	}
 	if wac.client.Store.ID != nil {
 		result["number"] = "+" + wac.client.Store.ID.User

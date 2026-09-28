@@ -125,3 +125,14 @@ func TestExitReasonRoundTrip(t *testing.T) {
 		t.Errorf("exit reason round trip lost data: %+v", st)
 	}
 }
+
+func TestSimpleStatusLinkedWithAStuckStoreNamesTheRestart(t *testing.T) {
+	live := map[string]any{"logged_in": true, "connected": true, "store_answering": false}
+	got := simpleStatus(live, t.TempDir())
+	if got["linked"] != true {
+		t.Errorf("linked = %v, want true: a stuck store keeps the link", got["linked"])
+	}
+	if got["next"] != "whatsapp daemon restart" {
+		t.Errorf("next = %v, want the restart", got["next"])
+	}
+}

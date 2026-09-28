@@ -16,6 +16,7 @@ Always start with `whatsapp status`:
 
 - `{"running":false,...}`: the daemon is down; start it with `whatsapp daemon start`, unless you are deliberately holding this account offline.
 - `{"linked":true,...}`: use the existing link, do not pair again.
+- `{"linked":true,...,"next":"whatsapp daemon restart"}`: the daemon's message store stopped answering, so inbound messages are lost until you restart it. A restart keeps the link; run it once.
 - `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
 - `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
 - linked earlier, now logged out or lost: get the user's explicit approval before reconnecting.
@@ -23,11 +24,7 @@ Always start with `whatsapp status`:
   and only their next inbound restores it, so an unasked reconnect can cost the channel to the one
   person who matters, at the moment you most need it.
 
-Never re-pair on your own to recover: a lost link waits for the user's approval, as above.
-A restart keeps the link, so it is the fix for a daemon that stopped answering: when
-`whatsapp status` reports `linked:true` but another command fails with
-`whatsapp daemon is not answering`, run `whatsapp daemon restart` once. Do not restart for
-any other symptom.
+Never recover by re-pairing on your own, and restart the daemon only when `status` names it in `next`.
 
 ## Holding an account offline
 

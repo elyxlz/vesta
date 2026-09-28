@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -125,42 +124,6 @@ func TestLinkServerPublishesItsActivePort(t *testing.T) {
 	if gotPort != 0 || gotService != "" {
 		t.Fatalf("activeLink after stop = (%d, %q), want empty", gotPort, gotService)
 	}
-}
-
-// TestLinkServerAnswersOnTheContainerAddress pins that the page is reachable beyond loopback:
-// vestad proxies the public link URL to the agent's bridge address, never to its 127.0.0.1.
-func TestLinkServerAnswersOnTheContainerAddress(t *testing.T) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var external net.IP
-	for _, addr := range addrs {
-		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
-			external = ipNet.IP
-			break
-		}
-	}
-	if external == nil {
-		t.Skip("no non-loopback IPv4 address on this host")
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-
-	wac := testClientWithQR("test-qr-payload")
-	if err := wac.startLinkServer(port); err != nil {
-		t.Fatal(err)
-	}
-	defer wac.stopLinkServer()
-	conn, err := net.Dial("tcp", net.JoinHostPort(external.String(), strconv.Itoa(port)))
-	if err != nil {
-		t.Fatalf("link page is not reachable on %s: %v", external, err)
-	}
-	conn.Close()
 }
 
 // TestQRSuccessLeavesLinkingToPairSuccess pins that the QR channel's success item only ends

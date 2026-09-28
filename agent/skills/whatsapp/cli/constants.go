@@ -75,6 +75,10 @@ const (
 	SocketTimeout     = 5 * time.Minute
 	SocketDialTimeout = 2 * time.Second
 
+	// StoreProbeTimeout bounds daemon-status's wait for the message store, so a stuck
+	// store reads as not answering instead of hanging the status call.
+	StoreProbeTimeout = 2 * time.Second
+
 	// The blocking pairing commands run the whole handshake in one socket call, so
 	// their socket deadline must exceed the WORST-CASE pairing window. LinkSocketTimeout
 	// clears LinkSessionTimeout (10m). ProvisionSocketTimeout must clear the full

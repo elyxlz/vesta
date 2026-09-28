@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -158,6 +159,14 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, err
 	}
 	return ms, nil
+}
+
+// Answering reports whether the store hands out its one connection within timeout. A
+// connection held and never released blocks every reader, live notifications included.
+func (ms *MessageStore) Answering(timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return ms.db.PingContext(ctx) == nil
 }
 
 func (ms *MessageStore) Close() error {
