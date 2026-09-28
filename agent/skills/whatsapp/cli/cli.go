@@ -491,7 +491,7 @@ func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port i
 	}
 	cleanup := func() {
 		if unregisterService != "" {
-			if err := unregisterVestadService(unregisterService, port); err != nil {
+			if err := unregisterVestadService(unregisterService); err != nil {
 				wac.logger.Warnf("Failed to unregister QR link service %s: %v", unregisterService, err)
 			}
 		}
@@ -508,7 +508,7 @@ func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port i
 		return nil, errPairingInProgress
 	}
 	// Keep pairMu held through route cleanup. Releasing it first lets the next
-	// pairing reuse the same port before this pairing's conditional delete runs.
+	// pairing register the same route before this pairing deletes it.
 	defer finishPairing(cleanup, release)
 	if err := wac.state.tryRecordPairAttempt(time.Now(), acknowledged); err != nil {
 		return nil, err

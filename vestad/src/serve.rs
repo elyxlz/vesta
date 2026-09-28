@@ -1846,56 +1846,21 @@ async fn register_service_handler(
     ))
 }
 
-/// Removes `service` from `agent`'s registrations. With `expected_port`, removes it only while it
-/// still points at that port, so a session tearing down its own route never deletes the route a
-/// newer session re-registered on another port. Idempotent: an absent entry is already removed.
-fn remove_service_registration(
-    registry: &mut HashMap<String, HashMap<String, ServiceEntry>>,
-    agent: &str,
-    service: &str,
-    expected_port: Option<u16>,
-) {
-    let Some(agent_services) = registry.get_mut(agent) else {
-        return;
-    };
-    let port_matches = agent_services
-        .get(service)
-        .is_some_and(|entry| expected_port.is_none_or(|port| entry.port == port));
-    if port_matches {
-        agent_services.remove(service);
-    }
-    if agent_services.is_empty() {
-        registry.remove(agent);
-    }
-}
-
-async fn apply_service_removal(
-    state: &AppState,
-    name: &str,
-    service_name: &str,
-    expected_port: Option<u16>,
-) {
-    let mut settings = state.settings.write().await;
-    remove_service_registration(&mut settings.services, name, service_name, expected_port);
-    save_settings(&settings);
-    state.agent_status_cache.update_services(&settings.services);
-    tracing::info!(agent = %name, service = %service_name, ?expected_port, "service unregistered");
-}
-
 async fn unregister_service_handler(
     State(state): State<SharedState>,
     Path((name, service_name)): Path<(String, String)>,
-) -> Json<serde_json::Value> {
-    apply_service_removal(&state, &name, &service_name, None).await;
-    ok_json()
-}
-
-async fn unregister_service_registration_handler(
-    State(state): State<SharedState>,
-    Path((name, service_name, port)): Path<(String, String, u16)>,
-) -> Json<serde_json::Value> {
-    apply_service_removal(&state, &name, &service_name, Some(port)).await;
-    ok_json()
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mut settings = state.settings.write().await;
+    if let Some(agent_services) = settings.services.get_mut(&name) {
+        agent_services.remove(&service_name);
+        if agent_services.is_empty() {
+            settings.services.remove(&name);
+        }
+    }
+    save_settings(&settings);
+    state.agent_status_cache.update_services(&settings.services);
+    tracing::info!(agent = %name, service = %service_name, "service unregistered");
+    Ok(ok_json())
 }
 
 async fn list_services_handler(
@@ -2889,10 +2854,6 @@ pub fn build_router(state: SharedState) -> Router {
             axum::routing::delete(unregister_service_handler),
         )
         .route(
-            "/agents/{name}/services/{service}/registrations/{port}",
-            axum::routing::delete(unregister_service_registration_handler),
-        )
-        .route(
             "/agents/{name}/services/{service}/invalidate",
             post(agent_status::invalidate_service_handler),
         )
@@ -3492,8 +3453,8 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, ephemeral_port_high, port_for_registration,
-        remove_service_registration, resolve_public, spawn_pipeline_sse, truncate_chars,
-        RegisterServiceBody, SERVICE_PORT_MAX, SERVICE_PORT_MIN,
+        resolve_public, spawn_pipeline_sse, truncate_chars, RegisterServiceBody, SERVICE_PORT_MAX,
+        SERVICE_PORT_MIN,
     };
 
     #[test]
@@ -3796,59 +3757,6 @@ mod tests {
         let port = port_for_registration(Some(low), &registry, "agent").expect("allocate");
         assert!(port > ephemeral_port_high(), "a sub-ephemeral cached port must relocate above the range");
         assert_ne!(port, low);
-    }
-
-    fn registry_with(
-        agent: &str,
-        service: &str,
-        port: u16,
-    ) -> HashMap<String, HashMap<String, ServiceEntry>> {
-        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
-        registry
-            .entry(agent.into())
-            .or_default()
-            .insert(service.into(), ServiceEntry { port, public: true });
-        registry
-    }
-
-    #[test]
-    fn removing_a_registration_at_its_port_drops_it() {
-        let mut registry = registry_with("agent", "wa-link", SERVICE_PORT_MAX);
-        remove_service_registration(&mut registry, "agent", "wa-link", Some(SERVICE_PORT_MAX));
-        assert!(
-            registry.is_empty(),
-            "the agent's last service is gone, so its entry is too"
-        );
-    }
-
-    #[test]
-    fn removing_a_registration_at_another_port_keeps_it() {
-        let mut registry = registry_with("agent", "wa-link", SERVICE_PORT_MAX);
-        remove_service_registration(
-            &mut registry,
-            "agent",
-            "wa-link",
-            Some(SERVICE_PORT_MAX - 1),
-        );
-        assert_eq!(
-            registry["agent"]["wa-link"].port, SERVICE_PORT_MAX,
-            "a newer session's route survives"
-        );
-    }
-
-    #[test]
-    fn removing_a_registration_without_a_port_drops_it() {
-        let mut registry = registry_with("agent", "wa-link", SERVICE_PORT_MAX);
-        remove_service_registration(&mut registry, "agent", "wa-link", None);
-        assert!(registry.is_empty());
-    }
-
-    #[test]
-    fn removing_an_absent_registration_is_a_no_op() {
-        let mut registry = registry_with("agent", "tasks", SERVICE_PORT_MAX);
-        remove_service_registration(&mut registry, "agent", "wa-link", Some(SERVICE_PORT_MAX));
-        remove_service_registration(&mut registry, "other", "wa-link", None);
-        assert_eq!(registry["agent"]["tasks"].port, SERVICE_PORT_MAX);
     }
 
     #[test]
