@@ -463,15 +463,79 @@ fn sanitize(s: &str) -> String {
     cleaned.trim_matches('-').to_string()
 }
 
+/// Upper bound on names tried before giving up: every animal three times over (bare, `-2`, `-3`).
+const SUBDOMAIN_PICK_MAX_ATTEMPTS: usize = 3 * ANIMALS.len();
+
+/// The gateway's generated subdomain at `offset`: the Linux user's animal first, then the next
+/// animals, then the same names numbered (`otter-2`) once the list is spent.
 fn generate_subdomain(offset: usize) -> String {
-    let animal = animal_for_user(&crate::paths::current_user(), offset);
-    let hostname = sanitize(&gethostname());
-    let short = if hostname.len() > 20 {
-        &hostname[..20]
-    } else {
-        &hostname
+    let animal = animal_for_user(&crate::paths::current_user(), offset % ANIMALS.len());
+    match offset / ANIMALS.len() {
+        0 => animal.to_string(),
+        round => format!("{animal}-{}", round + 1),
+    }
+}
+
+/// An explicit `VESTA_SUBDOMAIN` pin, when set.
+fn subdomain_pin() -> Option<String> {
+    std::env::var("VESTA_SUBDOMAIN")
+        .ok()
+        .map(|s| sanitize(&s))
+        .filter(|s| !s.is_empty())
+}
+
+/// The first generated name nobody holds. A failed check stops the pick: assuming a name is free
+/// would let `setup_tunnel` delete another gateway's tunnel.
+fn pick_free_subdomain(
+    mut is_taken: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<String, String> {
+    for offset in 0..SUBDOMAIN_PICK_MAX_ATTEMPTS {
+        let candidate = generate_subdomain(offset);
+        if !is_taken(&candidate)? {
+            return Ok(candidate);
+        }
+    }
+    Err("no free subdomain left in this zone".to_string())
+}
+
+/// Whether `subdomain` already has a DNS record in the zone or a live tunnel of our naming.
+fn subdomain_taken(env: &CloudflareCreds, domain: &str, subdomain: &str) -> Result<bool, String> {
+    let dns_url = format!(
+        "{CF_API_BASE}/zones/{}/dns_records?name={subdomain}.{domain}",
+        env.zone_id
+    );
+    let dns = cf_request("GET", &dns_url, &env.api_token, None)?;
+    if dns["result"]
+        .as_array()
+        .is_some_and(|records| !records.is_empty())
+    {
+        return Ok(true);
+    }
+    let tunnel_url = format!(
+        "{CF_API_BASE}/accounts/{}/cfd_tunnel?name=vesta-{subdomain}&is_deleted=false",
+        env.account_id
+    );
+    let tunnels = cf_request("GET", &tunnel_url, &env.api_token, None)?;
+    Ok(tunnels["result"]
+        .as_array()
+        .is_some_and(|list| !list.is_empty()))
+}
+
+/// Create this gateway's tunnel under `explicit` (which must be free) or the first free animal.
+fn create_unpinned_tunnel(
+    config_dir: &Path,
+    env: &CloudflareCreds,
+    explicit: Option<&str>,
+) -> Result<TunnelConfig, String> {
+    let domain = get_zone_domain(env)?;
+    let subdomain = match explicit {
+        Some(name) if subdomain_taken(env, &domain, name)? => {
+            return Err(format!("subdomain '{name}' is already in use in {domain}"));
+        }
+        Some(name) => name.to_string(),
+        None => pick_free_subdomain(|name| subdomain_taken(env, &domain, name))?,
     };
-    format!("{}-{}", animal, short.trim_end_matches('-'))
+    setup_tunnel(config_dir, &subdomain)
 }
 
 pub(crate) fn gethostname() -> String {
@@ -497,15 +561,6 @@ pub fn connect_interactive(config_dir: &Path) -> Result<TunnelConfig, String> {
     ensure_tunnel(config_dir)
 }
 
-/// The subdomain this box wants: `VESTA_SUBDOMAIN` when set, else <animal>-<hostname>.
-fn preferred_subdomain() -> String {
-    std::env::var("VESTA_SUBDOMAIN")
-        .ok()
-        .map(|s| sanitize(&s))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| generate_subdomain(0))
-}
-
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // Managed (vesta.run) VMs: the control plane creates the tunnel + DNS and
     // SEEDS tunnel.json into the config dir. vestad holds no Cloudflare account
@@ -518,28 +573,29 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
             .ok_or_else(|| "managed mode: no tunnel.json seeded by the control plane".to_string());
     }
 
-    // Self-hosted deployments pin an exact subdomain via VESTA_SUBDOMAIN only when
-    // set; otherwise keep the generated <animal>-<hostname>. Creation uses the
-    // BYOK creds in cloudflare.json (see cf_env / setup_cf_creds_interactive).
-    let preferred = preferred_subdomain();
+    ensure_tunnel_with(config_dir, subdomain_pin().as_deref())
+}
 
-    // Reuse existing tunnel if it matches our preferred subdomain
-    if let Some(tc) = get_tunnel_config(config_dir) {
-        let current = tc.hostname.split('.').next().unwrap_or("");
-        if current == preferred {
-            return Ok(tc);
+/// The boot converge. A saved tunnel is authoritative: only an explicit pin that differs from it
+/// recreates it. Without a saved tunnel, a pin is used as given and anything else takes a free name.
+fn ensure_tunnel_with(config_dir: &Path, pin: Option<&str>) -> Result<TunnelConfig, String> {
+    if let Some(saved) = get_tunnel_config(config_dir) {
+        let current = saved.hostname.split('.').next().unwrap_or("").to_string();
+        match pin {
+            None => return Ok(saved),
+            Some(pinned) if pinned == current => return Ok(saved),
+            Some(pinned) => {
+                tracing::info!(old = %current, new = %pinned, "pinned subdomain changed, recreating");
+                destroy_tunnel(config_dir).map_err(|e| {
+                    format!("could not destroy the old tunnel to recreate it (keeping the saved config): {e}")
+                })?;
+            }
         }
-        tracing::info!(old = %current, new = %preferred, "tunnel subdomain changed, recreating");
-        destroy_tunnel(config_dir).map_err(|e| {
-            format!("could not destroy the old tunnel to recreate it (keeping the saved config): {e}")
-        })?;
     }
-
-    // setup_tunnel calls delete_tunnel_if_exists, so stale tunnels with our
-    // preferred name are cleaned up automatically — no need to skip to a
-    // different animal.
-    tracing::info!(subdomain = %preferred, "creating tunnel");
-    setup_tunnel(config_dir, &preferred)
+    match pin {
+        Some(pinned) => setup_tunnel(config_dir, pinned),
+        None => create_unpinned_tunnel(config_dir, &cf_env(config_dir)?, None),
+    }
 }
 
 /// Supervisor establish: converge tunnel.json without ever rewriting an
@@ -1220,14 +1276,73 @@ mod tests {
     }
 
     #[test]
-    fn subdomain_format_is_animal_dash_hostname() {
-        let sub = generate_subdomain(0);
-        assert!(sub.contains('-'), "subdomain should contain a dash: {sub}");
-        let animal_part = sub.split('-').next().unwrap();
+    fn generated_subdomains_are_animals_then_numbered() {
+        let first = generate_subdomain(0);
         assert!(
-            ANIMALS.contains(&animal_part),
-            "first part should be an animal: {sub}"
+            ANIMALS.contains(&first.as_str()),
+            "no hostname suffix: {first}"
         );
+        let wrapped = generate_subdomain(ANIMALS.len());
+        assert_eq!(wrapped, format!("{first}-2"));
+        assert_eq!(generate_subdomain(2 * ANIMALS.len()), format!("{first}-3"));
+    }
+
+    #[test]
+    fn picker_skips_taken_names() {
+        let first = generate_subdomain(0);
+        let second = generate_subdomain(1);
+        let picked = pick_free_subdomain(|name| Ok(name == first)).expect("a free name");
+        assert_eq!(picked, second);
+    }
+
+    #[test]
+    fn picker_numbers_names_once_every_animal_is_taken() {
+        let picked = pick_free_subdomain(|name| Ok(!name.contains('-'))).expect("a free name");
+        assert_eq!(picked, format!("{}-2", generate_subdomain(0)));
+    }
+
+    #[test]
+    fn picker_stops_on_a_failed_check_instead_of_assuming_free() {
+        let err =
+            pick_free_subdomain(|_| Err("dns read denied".to_string())).expect_err("must fail");
+        assert!(err.contains("dns read denied"), "{err}");
+    }
+
+    #[test]
+    fn boot_keeps_a_saved_tunnel_without_a_pin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let saved = TunnelConfig {
+            tunnel_id: "id".to_string(),
+            tunnel_token: "token".to_string(),
+            hostname: "aria-lucio.example.com".to_string(),
+            dns_record_id: Some("rec".to_string()),
+        };
+        let path = tunnel_config_path(dir.path());
+        std::fs::write(&path, serde_json::to_string_pretty(&saved).expect("json")).expect("write");
+        let before = std::fs::read_to_string(&path).expect("read");
+
+        let kept = ensure_tunnel_with(dir.path(), None).expect("saved tunnel is used");
+
+        assert_eq!(kept.hostname, saved.hostname);
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), before);
+    }
+
+    #[test]
+    fn boot_keeps_a_saved_tunnel_that_matches_the_pin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let saved = TunnelConfig {
+            tunnel_id: "id".to_string(),
+            tunnel_token: "token".to_string(),
+            hostname: "demo.example.com".to_string(),
+            dns_record_id: None,
+        };
+        std::fs::write(
+            tunnel_config_path(dir.path()),
+            serde_json::to_string_pretty(&saved).expect("json"),
+        )
+        .expect("write");
+        let kept = ensure_tunnel_with(dir.path(), Some("demo")).expect("pin matches");
+        assert_eq!(kept.hostname, "demo.example.com");
     }
 
     #[test]
@@ -1373,11 +1488,10 @@ mod tests {
     #[test]
     fn ensure_tunnel_keeps_the_saved_config_when_reconcile_fails_without_creds() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // A saved config whose subdomain does NOT match preferred_subdomain(),
-        // and no cloudflare.json / CLOUDFLARE_* env: the reconcile attempt
-        // fails at cf_env before any curl, so it must never touch the saved
-        // tunnel.json.
-        let preferred = preferred_subdomain();
+        // A saved config whose subdomain does NOT match the pin, and no
+        // cloudflare.json / CLOUDFLARE_* env: the reconcile attempt fails at
+        // cf_env before any curl, so it must never touch the saved tunnel.json.
+        let preferred = generate_subdomain(0);
         let stale = TunnelConfig {
             tunnel_id: "stale-tunnel-id".to_string(),
             tunnel_token: "stale-token".to_string(),
@@ -1389,7 +1503,7 @@ mod tests {
             .expect("write tunnel.json");
         let original_contents = std::fs::read_to_string(&path).expect("read back");
 
-        let result = ensure_tunnel(dir.path());
+        let result = ensure_tunnel_with(dir.path(), Some(&format!("{preferred}-other")));
 
         assert!(
             result.is_err(),
