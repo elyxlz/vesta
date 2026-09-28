@@ -507,7 +507,7 @@ fn operation_conflict(phase: &operation::UpdatePhase) -> (StatusCode, Json<serde
 async fn restart_gateway_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !systemd::is_active() {
+    if !systemd::is_this_process() {
         return Err(err_response(
             StatusCode::PRECONDITION_FAILED,
             "vestad is not running under systemd — cannot self-restart",

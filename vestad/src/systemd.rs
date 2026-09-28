@@ -285,6 +285,17 @@ pub fn main_pid() -> Option<u32> {
     }
 }
 
+/// Whether this process is the `vestad` unit's main process. Server-side decisions (self-restart,
+/// the update's restart) ask this, not whether the unit is active: a second vestad under the same
+/// Linux user (a dev gateway) sees the real unit active and must never restart it.
+pub fn is_this_process() -> bool {
+    runs_as_service(main_pid(), std::process::id())
+}
+
+fn runs_as_service(main_pid: Option<u32>, own_pid: u32) -> bool {
+    main_pid == Some(own_pid)
+}
+
 fn run_systemctl(args: &[&str]) -> Result<(), String> {
     let mut full_args = vec!["--user"];
     full_args.extend_from_slice(args);
@@ -314,7 +325,7 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_log_line, journal_args, strip_ansi, SERVICE_NAME};
+    use super::{format_log_line, journal_args, runs_as_service, strip_ansi, SERVICE_NAME};
 
     #[test]
     fn journal_args_scope_the_vestad_unit_and_forward_follow() {
@@ -369,6 +380,23 @@ mod tests {
         assert_eq!(
             format_log_line("\x1b[1;35mvestad\x1b[0m started", false),
             "vestad started"
+        );
+    }
+
+    #[test]
+    fn only_the_units_main_process_runs_as_the_service() {
+        assert!(runs_as_service(Some(4242), 4242));
+        assert!(
+            !runs_as_service(Some(4242), 99),
+            "another vestad on the same unit is not the service"
+        );
+        assert!(
+            !runs_as_service(None, 4242),
+            "no active unit means no service"
+        );
+        assert!(
+            !runs_as_service(Some(0), 4242),
+            "systemd reports 0 for an inactive unit"
         );
     }
 }
