@@ -30,8 +30,13 @@ goto_url("https://www.amazon.co.uk/gp/cart/view.html")
 wait(5)
 t = js("document.body.innerText.replace(/\\s+/g,' ')")
 i = t.find("Subtotal")
-print(t[i : i + 160])  # e.g. "Subtotal (3 items): £42.00", plus any gift card line
+print(t[i : i + 160])  # e.g. "Subtotal (3 items): £42.00"
 ```
+
+The summary can show "Gift card: - £50.00" and a lower "Amount to pay" that are a credit card
+sign-up advert (the Amazon Barclaycard offer, "if approved"), not a balance the account holds. Read
+the text just before "Subtotal" for "if approved", and confirm any real balance at
+`https://www.amazon.co.uk/gc/balance` ("Your Gift Card Balance") before quoting a discounted total.
 
 "Your Amazon Basket is empty" in the text means the adds did not stick. Items listed under "Saved
 for later" are not in the basket and will not be bought at checkout.
