@@ -379,6 +379,73 @@ impl GatewayApi for HttpGatewayApi {
     }
 }
 
+const GATEWAY_PROBE_TIMEOUT_SECS: u64 = 3;
+const GATEWAY_READY_TIMEOUT_SECS: u64 = 60;
+const AGENT_READY_TIMEOUT_SECS: u64 = 300;
+const AGENT_READY_POLL_MILLIS: u64 = 2000;
+
+/// Whether this HOME's gateway answers its health port within `timeout_secs`.
+fn gateway_answers(config: &std::path::Path, timeout_secs: u64) -> Result<bool, String> {
+    let Some(url) = crate::local_health_url(config) else {
+        return Ok(false);
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("could not start the runtime: {e}"))?;
+    let client = reqwest::Client::new();
+    Ok(runtime.block_on(crate::wait_for_health(
+        &client,
+        &url,
+        std::time::Duration::from_secs(timeout_secs),
+    )))
+}
+
+/// Settle the tunnel and start the gateway service, unless a gateway already answers (then its
+/// tunnel is left as it is). Then create the agent and return the connect link.
+pub fn run(config_path: &std::path::Path) -> Result<String, String> {
+    let plan = read_plan(config_path)?;
+    let config = crate::config_dir();
+    if gateway_answers(&config, GATEWAY_PROBE_TIMEOUT_SECS)? {
+        if plan.cloudflare.is_some() || plan.subdomain.is_some() {
+            eprintln!("warning: the gateway already runs; its tunnel is left as it is");
+        }
+    } else {
+        match &plan.cloudflare {
+            Some(creds) => {
+                eprintln!("setting up the tunnel...");
+                let tunnel =
+                    crate::tunnel::provision_tunnel(&config, creds, plan.subdomain.as_deref())?;
+                eprintln!("tunnel ready at {}", tunnel.url());
+            }
+            None => crate::tunnel::decline_tunnel(&config)?,
+        }
+        eprintln!("starting the gateway service...");
+        crate::install_service()?;
+        crate::start_installed_service(&config)?;
+        if !gateway_answers(&config, GATEWAY_READY_TIMEOUT_SECS)? {
+            return Err(format!(
+                "the gateway did not answer within {GATEWAY_READY_TIMEOUT_SECS}s: see `vestad logs`"
+            ));
+        }
+    }
+    let port = crate::read_port_file(&config).ok_or("the gateway wrote no port file")?;
+    let api_key = crate::read_api_key(&config).ok_or("the gateway has no api key")?;
+    let http_port = port.checked_add(1).ok_or("invalid gateway port")?;
+    let api = HttpGatewayApi::new(format!("http://127.0.0.1:{http_port}"), api_key.clone())?;
+    ensure_absent(&api, &plan.agent_name)?;
+    let readiness = Readiness {
+        timeout: std::time::Duration::from_secs(AGENT_READY_TIMEOUT_SECS),
+        poll: std::time::Duration::from_millis(AGENT_READY_POLL_MILLIS),
+    };
+    provision_agent(&api, &plan, &readiness)?;
+    let base_url = crate::tunnel::get_tunnel_config(&config).map_or_else(
+        || format!("http://localhost:{http_port}"),
+        |tunnel| tunnel.url(),
+    );
+    Ok(crate::status::connect_link(&base_url, &api_key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
