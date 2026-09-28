@@ -743,9 +743,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, forc
         eprintln!("note: --port, --no-tunnel, and --force-update only apply with --standalone");
     }
 
-    let docker = docker::connect().unwrap_or_else(|e| die(&e));
-    docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
-    systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
+    install_service().unwrap_or_else(|e| die(e));
 
     // --expose-lan is a persisted binding preference (like the port file), not part
     // of the static unit. Write it before the daemon (re)starts so it reads the new
@@ -781,13 +779,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, forc
         tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
     }
 
-    let start_time = std::time::SystemTime::now();
-    systemd::start().unwrap_or_else(|e| die(&e));
-    systemd::wait_for_start().unwrap_or_else(|e| die(&e));
-    // The unit is not Type=notify, so being "active" only means the process
-    // launched, not that async startup (tunnel dial, etc.) finished and wrote a
-    // fresh status.json; wait for that so the banner below isn't stale/empty.
-    Status::wait_for_fresh(&config, start_time);
+    start_installed_service(&config).unwrap_or_else(|e| die(e));
 
     eprintln!();
     eprintln!(
@@ -796,6 +788,23 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, forc
     );
     status::print_status_banner(&config, read_api_key(&config).as_deref());
     eprintln!("scan the QR or open the link to create your first agent. manage with vestad status | logs | restart.");
+}
+
+/// Check Docker and install (or refresh) the systemd user unit. Asks nothing.
+fn install_service() -> Result<(), String> {
+    let docker = docker::connect().map_err(|e| e.to_string())?;
+    docker::ensure_docker_sync(&docker).map_err(|e| e.to_string())?;
+    systemd::ensure_service_installed()
+}
+
+/// Start the installed unit and wait for a fresh `status.json`. The unit is not Type=notify, so
+/// "active" only means the process launched; the fresh status means async startup finished.
+fn start_installed_service(config: &std::path::Path) -> Result<(), String> {
+    let start_time = std::time::SystemTime::now();
+    systemd::start()?;
+    systemd::wait_for_start()?;
+    Status::wait_for_fresh(config, start_time);
+    Ok(())
 }
 
 /// Log to stdout (journald under systemd, the terminal under `cargo run`) and to a
