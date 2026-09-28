@@ -156,6 +156,229 @@ pub fn read_plan(path: &std::path::Path) -> Result<Plan, String> {
     plan_from(&raw, mode, system_zone.as_deref())
 }
 
+pub trait GatewayApi {
+    /// The agent's status (`alive`, `setting_up`, ...), `None` when it does not exist.
+    fn agent_status(&self, name: &str) -> Result<Option<String>, String>;
+    fn create_agent(&self, name: &str) -> Result<(), String>;
+    fn put_provider(&self, name: &str, body: &serde_json::Value) -> Result<(), String>;
+    fn put_config(&self, name: &str, body: &serde_json::Value) -> Result<(), String>;
+    fn restart(&self, name: &str) -> Result<(), String>;
+    fn delete_agent(&self, name: &str) -> Result<(), String>;
+}
+
+pub struct Readiness {
+    pub timeout: std::time::Duration,
+    pub poll: std::time::Duration,
+}
+
+pub fn ensure_absent(api: &impl GatewayApi, name: &str) -> Result<(), String> {
+    match api.agent_status(name)? {
+        None => Ok(()),
+        Some(_) => Err(format!(
+            "an agent named '{name}' already exists on this gateway"
+        )),
+    }
+}
+
+/// Create the agent, then sign in, configure, restart, and wait. Everything after the create is
+/// all or nothing: a failure deletes the agent this call created.
+pub fn provision_agent(
+    api: &impl GatewayApi,
+    plan: &Plan,
+    readiness: &Readiness,
+) -> Result<(), String> {
+    let name = plan.agent_name.as_str();
+    eprintln!("creating agent '{name}' (the first agent on a machine pulls the image)...");
+    api.create_agent(name)?;
+    let Err(error) = finish_agent(api, plan, readiness) else {
+        return Ok(());
+    };
+    eprintln!("removing the agent '{name}' this run created...");
+    match api.delete_agent(name) {
+        Ok(()) => Err(error),
+        Err(delete_error) => Err(format!(
+            "{error}; the agent '{name}' could not be removed ({delete_error}): delete it before running provision again"
+        )),
+    }
+}
+
+fn finish_agent(api: &impl GatewayApi, plan: &Plan, readiness: &Readiness) -> Result<(), String> {
+    let name = plan.agent_name.as_str();
+    eprintln!("signing in...");
+    api.put_provider(name, &plan.provider_body)?;
+    eprintln!("applying configuration...");
+    api.put_config(name, &plan.config_body)?;
+    eprintln!("restarting the agent...");
+    api.restart(name)?;
+    wait_until_ready(api, name, readiness)
+}
+
+/// Poll until the agent runs. Only a rejected credential or a dead container ends the wait early:
+/// right after a restart the gateway can still report the agent missing, stopped, or with its
+/// pre-restart readiness, so every other status is waited out.
+fn wait_until_ready(
+    api: &impl GatewayApi,
+    name: &str,
+    readiness: &Readiness,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + readiness.timeout;
+    let mut last_seen = None;
+    loop {
+        match api.agent_status(name)?.as_deref() {
+            Some("alive" | "setting_up") => return Ok(()),
+            Some("not_authenticated") => return Err("the credential was rejected".to_string()),
+            Some("dead") => return Err("the agent did not start (dead)".to_string()),
+            Some(state) => last_seen = Some(state.to_string()),
+            None => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            let last =
+                last_seen.map_or_else(String::new, |state| format!(" (last status: {state})"));
+            return Err(format!(
+                "the agent did not become ready within {}s{last}",
+                readiness.timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(readiness.poll);
+    }
+}
+
+/// Create (the first agent on a machine pulls the image) and restart (a drifted container is
+/// rebuilt) can take minutes; this matches vestad's own deadline for them, so the client never
+/// gives up on a request the gateway still runs.
+const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
+const REQUEST_TIMEOUT_SECS: u64 = 120;
+
+/// `GatewayApi` over the gateway's loopback HTTP port, authenticated with the api key.
+pub struct HttpGatewayApi {
+    base_url: String,
+    api_key: String,
+    runtime: tokio::runtime::Runtime,
+    client: reqwest::Client,
+}
+
+impl HttpGatewayApi {
+    pub fn new(base_url: String, api_key: String) -> Result<Self, String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("could not start the runtime: {e}"))?;
+        let client = reqwest::Client::builder()
+            .build()
+            .map_err(|e| format!("could not build the http client: {e}"))?;
+        Ok(Self {
+            base_url,
+            api_key,
+            runtime,
+            client,
+        })
+    }
+
+    fn send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        timeout_secs: u64,
+    ) -> Result<(reqwest::StatusCode, serde_json::Value), String> {
+        self.runtime.block_on(async {
+            let mut request = self
+                .client
+                .request(method, format!("{}{path}", self.base_url))
+                .bearer_auth(&self.api_key)
+                .timeout(std::time::Duration::from_secs(timeout_secs));
+            if let Some(body) = body {
+                request = request.json(body);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("could not reach vestad: {e}"))?;
+            let status = response.status();
+            let json = response.json().await.unwrap_or(serde_json::Value::Null);
+            Ok((status, json))
+        })
+    }
+
+    /// Send and require a 2xx; vestad names every failure in the body's `error`.
+    fn expect_success(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        timeout_secs: u64,
+    ) -> Result<(), String> {
+        let (status, json) = self.send(method, path, body, timeout_secs)?;
+        if status.is_success() {
+            return Ok(());
+        }
+        Err(json["error"].as_str().map_or_else(
+            || format!("vestad answered {status} on {path}"),
+            str::to_string,
+        ))
+    }
+}
+
+impl GatewayApi for HttpGatewayApi {
+    fn agent_status(&self, name: &str) -> Result<Option<String>, String> {
+        let (status, json) = self.send(
+            reqwest::Method::GET,
+            &format!("/agents/{name}"),
+            None,
+            REQUEST_TIMEOUT_SECS,
+        )?;
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        match json["status"].as_str() {
+            Some("not_found") => Ok(None),
+            Some(state) => Ok(Some(state.to_string())),
+            None => Err(format!("vestad answered {status} for the agent status")),
+        }
+    }
+    fn create_agent(&self, name: &str) -> Result<(), String> {
+        let body = serde_json::json!({"name": name});
+        self.expect_success(
+            reqwest::Method::POST,
+            "/agents",
+            Some(&body),
+            LONGRUN_REQUEST_TIMEOUT_SECS,
+        )
+    }
+    fn put_provider(&self, name: &str, body: &serde_json::Value) -> Result<(), String> {
+        self.expect_success(
+            reqwest::Method::PUT,
+            &format!("/agents/{name}/provider"),
+            Some(body),
+            REQUEST_TIMEOUT_SECS,
+        )
+    }
+    fn put_config(&self, name: &str, body: &serde_json::Value) -> Result<(), String> {
+        self.expect_success(
+            reqwest::Method::PUT,
+            &format!("/agents/{name}/config"),
+            Some(body),
+            REQUEST_TIMEOUT_SECS,
+        )
+    }
+    fn restart(&self, name: &str) -> Result<(), String> {
+        self.expect_success(
+            reqwest::Method::POST,
+            &format!("/agents/{name}/restart"),
+            None,
+            LONGRUN_REQUEST_TIMEOUT_SECS,
+        )
+    }
+    fn delete_agent(&self, name: &str) -> Result<(), String> {
+        self.expect_success(
+            reqwest::Method::DELETE,
+            &format!("/agents/{name}"),
+            None,
+            REQUEST_TIMEOUT_SECS,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +526,188 @@ mod tests {
             assert!(!err.contains("SECRET"), "{err}");
             assert!(err.contains("invalid type"), "{err}");
         }
+    }
+
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    #[derive(Default)]
+    struct FakeApi {
+        calls: RefCell<Vec<String>>,
+        statuses: RefCell<VecDeque<Option<String>>>,
+        fail_on: Option<&'static str>,
+        fail_delete: bool,
+    }
+
+    impl FakeApi {
+        fn with_statuses(statuses: &[Option<&str>]) -> Self {
+            Self {
+                statuses: RefCell::new(statuses.iter().map(|s| s.map(str::to_string)).collect()),
+                ..Self::default()
+            }
+        }
+        fn record(&self, call: &str, name: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("{call} {name}"));
+            if self.fail_on == Some(call) {
+                return Err(format!("{call} refused"));
+            }
+            Ok(())
+        }
+    }
+
+    impl GatewayApi for FakeApi {
+        fn agent_status(&self, name: &str) -> Result<Option<String>, String> {
+            self.calls.borrow_mut().push(format!("status {name}"));
+            Ok(self.statuses.borrow_mut().pop_front().flatten())
+        }
+        fn create_agent(&self, name: &str) -> Result<(), String> {
+            self.record("create", name)
+        }
+        fn put_provider(&self, name: &str, _: &serde_json::Value) -> Result<(), String> {
+            self.record("provider", name)
+        }
+        fn put_config(&self, name: &str, _: &serde_json::Value) -> Result<(), String> {
+            self.record("config", name)
+        }
+        fn restart(&self, name: &str) -> Result<(), String> {
+            self.record("restart", name)
+        }
+        fn delete_agent(&self, name: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("delete {name}"));
+            if self.fail_delete {
+                Err("delete refused".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    const FAST: Readiness = Readiness {
+        timeout: std::time::Duration::from_millis(200),
+        poll: std::time::Duration::from_millis(1),
+    };
+
+    fn plan() -> Plan {
+        plan_from(&claude(""), PRIVATE, Some("UTC")).expect("valid")
+    }
+
+    fn calls(api: &FakeApi) -> Vec<String> {
+        api.calls.borrow().clone()
+    }
+
+    #[test]
+    fn a_new_agent_is_created_signed_in_configured_and_restarted_in_order() {
+        let api = FakeApi::with_statuses(&[Some("restarting"), Some("setting_up")]);
+        provision_agent(&api, &plan(), &FAST).expect("provisioned");
+        assert_eq!(
+            calls(&api),
+            [
+                "create aria-bot",
+                "provider aria-bot",
+                "config aria-bot",
+                "restart aria-bot",
+                "status aria-bot",
+                "status aria-bot"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_existing_agent_is_an_error_with_no_change() {
+        let api = FakeApi::with_statuses(&[Some("alive")]);
+        let err = ensure_absent(&api, "aria-bot").expect_err("exists");
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(calls(&api), ["status aria-bot"]);
+    }
+
+    #[test]
+    fn a_failed_sign_in_deletes_the_new_agent_and_keeps_the_original_error() {
+        let api = FakeApi {
+            fail_on: Some("provider"),
+            ..FakeApi::default()
+        };
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("sign-in fails");
+        assert!(err.contains("provider refused"), "{err}");
+        assert_eq!(
+            calls(&api),
+            ["create aria-bot", "provider aria-bot", "delete aria-bot"]
+        );
+    }
+
+    #[test]
+    fn a_rejected_credential_is_named_and_rolled_back() {
+        let api = FakeApi::with_statuses(&[Some("not_authenticated")]);
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("rejected");
+        assert!(err.contains("credential was rejected"), "{err}");
+        assert_eq!(
+            calls(&api).last().map(String::as_str),
+            Some("delete aria-bot")
+        );
+    }
+
+    #[test]
+    fn a_readiness_timeout_rolls_back() {
+        let api = FakeApi::default();
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("never ready");
+        assert!(err.contains("did not become ready"), "{err}");
+        assert_eq!(
+            calls(&api).last().map(String::as_str),
+            Some("delete aria-bot")
+        );
+    }
+
+    #[test]
+    fn a_stale_status_right_after_the_restart_is_waited_out() {
+        let api = FakeApi::with_statuses(&[Some("unprovisioned"), Some("stopped"), Some("alive")]);
+        provision_agent(&api, &plan(), &FAST).expect("provisioned");
+    }
+
+    #[test]
+    fn a_timeout_names_the_last_status_seen() {
+        let api = FakeApi::with_statuses(&[Some("unprovisioned")]);
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("never ready");
+        assert!(err.contains("last status: unprovisioned"), "{err}");
+    }
+
+    #[test]
+    fn a_dead_container_fails_at_once() {
+        let api = FakeApi::with_statuses(&[Some("dead")]);
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("dead");
+        assert!(err.contains("did not start (dead)"), "{err}");
+        assert_eq!(
+            calls(&api)
+                .iter()
+                .filter(|call| call.starts_with("status"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_failed_create_leaves_nothing_to_delete() {
+        let api = FakeApi {
+            fail_on: Some("create"),
+            ..FakeApi::default()
+        };
+        provision_agent(&api, &plan(), &FAST).expect_err("create fails");
+        assert_eq!(calls(&api), ["create aria-bot"]);
+    }
+
+    #[test]
+    fn a_failed_rollback_reports_both_errors() {
+        let api = FakeApi {
+            fail_on: Some("config"),
+            fail_delete: true,
+            ..FakeApi::default()
+        };
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("both fail");
+        assert!(
+            err.contains("config refused") && err.contains("delete refused"),
+            "{err}"
+        );
+        assert!(
+            err.contains("aria-bot"),
+            "the operator must learn which agent was left: {err}"
+        );
     }
 }
