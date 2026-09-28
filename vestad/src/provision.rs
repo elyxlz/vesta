@@ -205,12 +205,55 @@ pub fn provision_agent(
 fn finish_agent(api: &impl GatewayApi, plan: &Plan, readiness: &Readiness) -> Result<(), String> {
     let name = plan.agent_name.as_str();
     eprintln!("signing in...");
-    api.put_provider(name, &plan.provider_body)?;
+    api.put_provider(name, &plan.provider_body)
+        .map_err(|e| without_input_values(&e))?;
     eprintln!("applying configuration...");
-    api.put_config(name, &plan.config_body)?;
+    api.put_config(name, &plan.config_body)
+        .map_err(|e| without_input_values(&e))?;
     eprintln!("restarting the agent...");
     api.restart(name)?;
     wait_until_ready(api, name, readiness)
+}
+
+/// Where the agent's pydantic errors quote a rejected value: `errors()` repr (raw, or inside
+/// JSON text) and `str(ValidationError)`.
+const INPUT_VALUE_MARKERS: [&str; 3] = ["'input': ", "\"input\": ", "input_value="];
+
+/// A refused write's error with every rejected value the agent echoed replaced by `...`, since
+/// that value is what this run sent it (a key, a credentials file). Status and field names stay.
+fn without_input_values(message: &str) -> String {
+    let mut output = String::new();
+    let mut rest = message;
+    while let Some((start, marker)) = INPUT_VALUE_MARKERS
+        .iter()
+        .filter_map(|marker| rest.find(marker).map(|start| (start, *marker)))
+        .min()
+    {
+        let value_start = start + marker.len();
+        output.push_str(&rest[..value_start]);
+        output.push_str("...");
+        rest = &rest[value_start + literal_len(&rest[value_start..])..];
+    }
+    output.push_str(rest);
+    output
+}
+
+/// Byte length of the Python literal `value` starts with: up to the first `,` or closing bracket
+/// outside any string or nested bracket.
+fn literal_len(value: &str) -> usize {
+    let mut depth = 0usize;
+    let mut quote = None;
+    for (index, character) in value.char_indices() {
+        match (quote, character) {
+            (Some(open), _) if character == open => quote = None,
+            (None, '\'' | '"') => quote = Some(character),
+            (None, '{' | '[' | '(') => depth += 1,
+            (None, ',' | '}' | ']' | ')') if depth == 0 => return index,
+            (None, '}' | ']' | ')') => depth -= 1,
+            _ => {}
+        }
+    }
+    value.len()
 }
 
 /// Poll until the agent runs. Only a rejected credential or a dead container ends the wait early:
@@ -604,6 +647,7 @@ mod tests {
         statuses: RefCell<VecDeque<Option<String>>>,
         fail_on: Option<&'static str>,
         fail_delete: bool,
+        fail_message: Option<&'static str>,
     }
 
     impl FakeApi {
@@ -616,7 +660,9 @@ mod tests {
         fn record(&self, call: &str, name: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("{call} {name}"));
             if self.fail_on == Some(call) {
-                return Err(format!("{call} refused"));
+                return Err(self
+                    .fail_message
+                    .map_or_else(|| format!("{call} refused"), str::to_string));
             }
             Ok(())
         }
@@ -748,6 +794,30 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// vestad's 502 text around the agent's 400 body, which carries pydantic's `errors()` repr.
+    const PYDANTIC_ERRORS: &str = r#"agent /provider returned HTTP 400 Bad Request: {"error": "invalid provider: [{'type': 'missing', 'loc': ('claude', 'credentials'), 'msg': 'Field required', 'input': {'kind': 'claude', 'key': 'sk-SECRET', 'nested': [1, 2]}}, {'type': 'string_type', 'loc': ('kimi', 'key'), 'msg': 'Input should be a valid string', 'input': \"sk-'SECRET2\"}]"}"#;
+    /// `str(ValidationError)`, which a sign-in writer can raise inside `invalid credentials: {e}`.
+    const PYDANTIC_STR: &str = "agent /provider returned HTTP 400 Bad Request: invalid credentials: 1 validation error for OAuth\naccessToken\n  Field required [type=missing, input_value={'refreshToken': 'rt-SECRET'}, input_type=dict]";
+
+    #[test]
+    fn a_refused_write_never_prints_the_values_it_was_sent() {
+        for (call, upstream) in [
+            ("provider", PYDANTIC_ERRORS),
+            ("provider", PYDANTIC_STR),
+            ("config", PYDANTIC_ERRORS),
+        ] {
+            let api = FakeApi {
+                fail_on: Some(call),
+                fail_message: Some(upstream),
+                ..FakeApi::default()
+            };
+            let err = provision_agent(&api, &plan(), &FAST).expect_err("refused");
+            assert!(!err.contains("SECRET"), "{err}");
+            assert!(err.contains("HTTP 400 Bad Request"), "{err}");
+            assert!(err.contains("Field required"), "{err}");
+        }
     }
 
     #[test]
