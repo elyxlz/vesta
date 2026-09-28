@@ -447,9 +447,12 @@ def cmd_folders(args):
             print(f'({flags}) "{fi.delim}" {fi.name}')
 
 
-def _fetch_summaries(args, *, include_to: bool, criteria, charset: str = "US-ASCII") -> None:
+def _fetch_summaries(args, *, include_to: bool, criteria, charset: str = "US-ASCII", literal: bytes | None = None) -> None:
     with connect(getattr(args, "account", None), initial_folder=None) as mb:
         mb.folder.set(args.folder)
+        if literal is not None:
+            # imaplib appends a set literal after the command's last argument, here the criteria.
+            mb.client.literal = literal
         # imap_tools ``limit`` keeps the FIRST N; the original CLI keeps the
         # LAST N (most recent). Use ``reverse=True`` + ``limit`` to get the
         # last N, then re-reverse so output order matches the historical
@@ -476,28 +479,46 @@ def cmd_list(args):
     _fetch_summaries(args, include_to=True, criteria="ALL")
 
 
+# A trailing search value (quoted string or bare word) after ASCII search keys.
+_TRAILING_VALUE_RE = re.compile(r'^(?P<keys>[\x00-\x7f]*?)\s*(?:"(?P<quoted>(?:[^"\\]|\\.)*)"|(?P<atom>[^\s"()]+))\s*$', re.DOTALL)
+
+
+def _non_ascii_attempts(query: str) -> list[tuple[str, bytes]]:
+    """Criteria plus literal for a non-ASCII query: IMAP quoted strings are 7-bit, so a UTF-8
+    value only parses as a literal, and imaplib sends one literal, after the last argument."""
+    phrase = ("TEXT", query.encode())
+    m = _TRAILING_VALUE_RE.match(query)
+    if not m or not m["keys"].strip():
+        return [phrase]
+    value = m["atom"] if m["quoted"] is None else re.sub(r"\\(.)", r"\1", m["quoted"])
+    if value.isascii():
+        return [phrase]
+    return [(m["keys"].strip(), value.encode()), phrase]
+
+
 def cmd_search(args):
     # The server owns the SEARCH grammar, so ask it rather than guessing here: send the query as
     # given, and only if it is rejected as malformed treat it as a phrase. IMAP4.abort is a dropped
     # connection, not a bad query, so it must not trigger the retry. A NO reply (imap_tools raises
     # MailboxUidsError, which does NOT subclass IMAP4.error) is a refusal such as [BADCHARSET],
     # not malformed criteria, so it exits with the server's answer instead of retrying.
-    charset = "US-ASCII" if args.query.isascii() else "UTF-8"
-    try:
-        _fetch_summaries(args, include_to=False, criteria=args.query, charset=charset)
-        return
-    except imaplib.IMAP4.abort:
-        raise
-    except MailboxUidsError as exc:
-        sys.exit(f"search failed for {args.query!r}: {exc}")
-    except imaplib.IMAP4.error:
-        pass
-    try:
-        _fetch_summaries(args, include_to=False, criteria=AND(text=args.query), charset=charset)
-    except imaplib.IMAP4.abort:
-        raise
-    except (MailboxUidsError, imaplib.IMAP4.error) as exc:
-        sys.exit(f"search failed for {args.query!r}: {exc}")
+    if args.query.isascii():
+        charset = "US-ASCII"
+        attempts = [(args.query, None), (AND(text=args.query), None)]
+    else:
+        charset = "UTF-8"
+        attempts = _non_ascii_attempts(args.query)
+    for i, (criteria, literal) in enumerate(attempts):
+        try:
+            _fetch_summaries(args, include_to=False, criteria=criteria, charset=charset, literal=literal)
+            return
+        except imaplib.IMAP4.abort:
+            raise
+        except MailboxUidsError as exc:
+            sys.exit(f"search failed for {args.query!r}: {exc}")
+        except imaplib.IMAP4.error as exc:
+            if i == len(attempts) - 1:
+                sys.exit(f"search failed for {args.query!r}: {exc}")
 
 
 _HTML_BLOCK_TAGS = {
