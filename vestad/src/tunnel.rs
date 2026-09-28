@@ -33,10 +33,10 @@ impl TunnelConfig {
 /// Zone → DNS: Edit, Zone → Zone: Read). Managed (vesta.run) VMs never reach this
 /// path: the control plane creates the tunnel and seeds `tunnel.json` directly.
 #[derive(Serialize, Deserialize, Clone)]
-struct CloudflareCreds {
-    api_token: String,
-    account_id: String,
-    zone_id: String,
+pub(crate) struct CloudflareCreds {
+    pub(crate) api_token: String,
+    pub(crate) account_id: String,
+    pub(crate) zone_id: String,
 }
 
 fn cf_creds_path(config_dir: &Path) -> PathBuf {
@@ -71,7 +71,7 @@ pub fn decline_tunnel(config_dir: &Path) -> Result<(), String> {
 
 /// Clear the declined-tunnel preference: a successful `vestad connect` means
 /// the user wants a tunnel again.
-fn clear_declined_tunnel(config_dir: &Path) {
+pub(crate) fn clear_declined_tunnel(config_dir: &Path) {
     std::fs::remove_file(no_tunnel_marker_path(config_dir)).ok();
 }
 
@@ -90,7 +90,7 @@ fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
+pub(crate) fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
     write_secret_file(
         &cf_creds_path(config_dir),
         &serde_json::to_string_pretty(creds).expect("cloudflare creds serialize to json"),
@@ -849,6 +849,7 @@ fn sanitize(s: &str) -> String {
 
 /// Upper bound on names tried before giving up: every animal three times over (bare, `-2`, `-3`).
 const SUBDOMAIN_PICK_MAX_ATTEMPTS: usize = 3 * ANIMALS.len();
+const DNS_LABEL_MAX_LEN: usize = 63;
 
 /// The gateway's generated subdomain at `offset`: the Linux user's animal first, then the next
 /// animals, then the same names numbered (`otter-2`) once the list is spent.
@@ -866,6 +867,16 @@ fn subdomain_pin() -> Option<String> {
         .ok()
         .map(|s| sanitize(&s))
         .filter(|s| !s.is_empty())
+}
+
+pub(crate) fn is_valid_subdomain(subdomain: &str) -> bool {
+    !subdomain.is_empty()
+        && subdomain.len() <= DNS_LABEL_MAX_LEN
+        && !subdomain.starts_with('-')
+        && !subdomain.ends_with('-')
+        && subdomain
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// The first generated name nobody holds. A failed check stops the pick: assuming a name is free
@@ -912,14 +923,26 @@ fn create_unpinned_tunnel(
     explicit: Option<&str>,
 ) -> Result<TunnelConfig, String> {
     let domain = get_zone_domain(env)?;
-    let subdomain = match explicit {
-        Some(name) if subdomain_taken(env, &domain, name)? => {
-            return Err(format!("subdomain '{name}' is already in use in {domain}"));
-        }
-        Some(name) => name.to_string(),
-        None => pick_free_subdomain(|name| subdomain_taken(env, &domain, name))?,
-    };
+    let subdomain = choose_subdomain(explicit, &domain, |name| {
+        subdomain_taken(env, &domain, name)
+    })?;
     setup_tunnel(config_dir, &subdomain)
+}
+
+/// `explicit` when nobody holds it (a taken explicit name is an error, never a fallback), else
+/// the first free generated name.
+fn choose_subdomain(
+    explicit: Option<&str>,
+    domain: &str,
+    mut is_taken: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<String, String> {
+    match explicit {
+        Some(name) if is_taken(name)? => {
+            Err(format!("subdomain '{name}' is already in use in {domain}"))
+        }
+        Some(name) => Ok(name.to_string()),
+        None => pick_free_subdomain(is_taken),
+    }
 }
 
 pub(crate) fn gethostname() -> String {
@@ -980,6 +1003,28 @@ fn ensure_tunnel_with(config_dir: &Path, pin: Option<&str>) -> Result<TunnelConf
         Some(pinned) => setup_tunnel(config_dir, pinned),
         None => create_unpinned_tunnel(config_dir, &cf_env(config_dir)?, None),
     }
+}
+
+/// Provision's tunnel step: store the operator's credentials, keep a tunnel this gateway already
+/// has, or create one under `explicit` or the first free animal.
+pub(crate) fn provision_tunnel(
+    config_dir: &Path,
+    creds: &CloudflareCreds,
+    explicit: Option<&str>,
+) -> Result<TunnelConfig, String> {
+    save_cf_creds(config_dir, creds)?;
+    clear_declined_tunnel(config_dir);
+    ensure_cloudflared(config_dir)?;
+    if let Some(saved) = get_tunnel_config(config_dir) {
+        if explicit.is_some_and(|name| !saved.hostname.starts_with(&format!("{name}."))) {
+            eprintln!(
+                "warning: this gateway already has the tunnel {}; ignoring `subdomain`",
+                saved.hostname
+            );
+        }
+        return Ok(saved);
+    }
+    create_unpinned_tunnel(config_dir, creds, explicit)
 }
 
 /// Supervisor establish: converge tunnel.json without ever rewriting an
@@ -1606,6 +1651,46 @@ async fn repair_tunnel(config_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subdomains_must_be_dns_labels() {
+        for good in ["otter", "aria-lucio", "a1"] {
+            assert!(is_valid_subdomain(good), "{good}");
+        }
+        for bad in [
+            "",
+            "-otter",
+            "otter-",
+            "Otter",
+            "ot_ter",
+            "ot.ter",
+            &"a".repeat(64),
+        ] {
+            assert!(!is_valid_subdomain(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_taken_explicit_subdomain_is_an_error_never_a_fallback() {
+        let err = choose_subdomain(Some("otter"), "example.com", |_| Ok(true))
+            .expect_err("taken name refused");
+        assert!(
+            err.contains("'otter' is already in use in example.com"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_free_explicit_subdomain_is_used_as_given() {
+        let picked = choose_subdomain(Some("otter"), "example.com", |_| Ok(false)).expect("free");
+        assert_eq!(picked, "otter");
+    }
+
+    #[test]
+    fn no_explicit_subdomain_takes_the_first_free_animal() {
+        let picked = choose_subdomain(None, "example.com", |_| Ok(false)).expect("free");
+        assert_eq!(picked, generate_subdomain(0));
+    }
 
     #[test]
     fn animal_for_user_is_deterministic() {
