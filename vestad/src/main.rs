@@ -26,6 +26,7 @@ mod mobile_app;
 mod mounts;
 mod operation;
 mod paths;
+mod provision;
 mod proxy_cli;
 mod restic;
 mod self_log;
