@@ -91,15 +91,45 @@ fn provider_body(
     Ok(body)
 }
 
+/// Byte length of the quoted string `text` opens with (`'...'`, `"..."`, or the JSON-escaped
+/// `\"...\"`), through its closing quote; a backslash escapes the next character. `None` when it
+/// opens no string or never closes.
+fn quoted_len(text: &str) -> Option<usize> {
+    let (opener, closer) = if text.starts_with("\\\"") {
+        (2, "\\\"")
+    } else if text.starts_with('"') {
+        (1, "\"")
+    } else if text.starts_with('\'') {
+        (1, "'")
+    } else {
+        return None;
+    };
+    let mut index = opener;
+    while index < text.len() {
+        let rest = &text[index..];
+        if rest.starts_with(closer) {
+            return Some(index + closer.len());
+        }
+        let skip = if rest.starts_with('\\') { 2 } else { 1 };
+        index += rest.chars().take(skip).map(char::len_utf8).sum::<usize>();
+    }
+    None
+}
+
 /// serde names fields in backticks but quotes a mistyped string value (`invalid type: string
-/// "..."`), which may be a secret put in the wrong place: drop every quoted span.
+/// "..."`, escaped like a Rust debug string), which may be a secret put in the wrong place: drop
+/// every quoted span.
 fn without_quoted_values(message: &str) -> String {
-    message
-        .split('"')
-        .enumerate()
-        .map(|(index, part)| if index % 2 == 0 { part } else { "..." })
-        .collect::<Vec<_>>()
-        .join("\"")
+    let mut output = String::new();
+    let mut rest = message;
+    while let Some(start) = rest.find('"') {
+        output.push_str(&rest[..start]);
+        output.push_str("\"...\"");
+        let span = quoted_len(&rest[start..]).unwrap_or(rest.len() - start);
+        rest = &rest[start + span..];
+    }
+    output.push_str(rest);
+    output
 }
 
 pub fn plan_from(raw: &str, file_mode: u32, system_zone: Option<&str>) -> Result<Plan, String> {
@@ -242,16 +272,20 @@ fn without_input_values(message: &str) -> String {
 /// outside any string or nested bracket.
 fn literal_len(value: &str) -> usize {
     let mut depth = 0usize;
-    let mut quote = None;
-    for (index, character) in value.char_indices() {
-        match (quote, character) {
-            (Some(open), _) if character == open => quote = None,
-            (None, '\'' | '"') => quote = Some(character),
-            (None, '{' | '[' | '(') => depth += 1,
-            (None, ',' | '}' | ']' | ')') if depth == 0 => return index,
-            (None, '}' | ']' | ')') => depth -= 1,
+    let mut index = 0;
+    while let Some(character) = value[index..].chars().next() {
+        if let Some(span) = quoted_len(&value[index..]) {
+            index += span;
+            continue;
+        }
+        match character {
+            '\'' | '"' => return value.len(),
+            '{' | '[' | '(' => depth += 1,
+            ',' | '}' | ']' | ')' if depth == 0 => return index,
+            '}' | ']' | ')' => depth -= 1,
             _ => {}
         }
+        index += character.len_utf8();
     }
     value.len()
 }
@@ -629,6 +663,8 @@ mod tests {
         for raw in [
             r#"{"agent_name":"aria","provider":"sk-SECRET"}"#,
             r#"{"agent_name":"aria","provider":{"kind":"claude","credentials":"x"},"cloudflare":"cf-SECRET"}"#,
+            r#"{"agent_name":"aria","provider":"{\"claudeAiOauth\":{\"accessToken\":\"sk-SECRET\"}}"}"#,
+            r#"{"agent_name":"aria","provider":{"kind":"claude","credentials":"x"},"cloudflare":"{\"api_token\":\"cf-SECRET\",\"zone_id\":\"z\"}"}"#,
         ] {
             let err = plan_from(raw, PRIVATE, Some("UTC"))
                 .err()
@@ -801,12 +837,16 @@ mod tests {
     /// `str(ValidationError)`, which a sign-in writer can raise inside `invalid credentials: {e}`.
     const PYDANTIC_STR: &str = "agent /provider returned HTTP 400 Bad Request: invalid credentials: 1 validation error for OAuth\naccessToken\n  Field required [type=missing, input_value={'refreshToken': 'rt-SECRET'}, input_type=dict]";
 
+    /// A value holding both quote characters, which Python's repr escapes as `\'`.
+    const PYDANTIC_BOTH_QUOTES: &str = r#"agent /provider returned HTTP 400 Bad Request: invalid provider: [{'type': 'missing', 'msg': 'Field required', 'input': 'sk-\'SECRET"x', 'url': 'u'}]"#;
+
     #[test]
     fn a_refused_write_never_prints_the_values_it_was_sent() {
         for (call, upstream) in [
             ("provider", PYDANTIC_ERRORS),
             ("provider", PYDANTIC_STR),
             ("config", PYDANTIC_ERRORS),
+            ("provider", PYDANTIC_BOTH_QUOTES),
         ] {
             let api = FakeApi {
                 fail_on: Some(call),
