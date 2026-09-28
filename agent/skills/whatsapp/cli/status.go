@@ -10,6 +10,7 @@ import (
 //
 //	daemon down:{"running":false,"next":"start the daemon: whatsapp daemon start","reason":"..."}
 //	linked:    {"linked":true,"number":"+44...","connected":true}
+//	stuck:     {"linked":true,...,"next":"whatsapp daemon restart","reason":"..."}
 //	not linked:{"linked":false,"connected":false,"next":"run: whatsapp connect --source <vesta-cloud|doubletick|self-managed>","reason":"..."}
 func runStatus() {
 	dataDir := stateDataDir()
@@ -21,7 +22,7 @@ func runStatus() {
 		printJSON(daemonDownStatus(resolved))
 		return
 	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil)
+	output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", []string{"--probe-store"})
 	if connected && exitCode == 0 {
 		var live map[string]any
 		if err := json.Unmarshal(output, &live); err == nil {
@@ -59,6 +60,10 @@ func simpleStatus(live map[string]any, dataDir string) map[string]any {
 	result := map[string]any{"linked": true, "connected": connected}
 	if number, ok := live["number"].(string); ok && number != "" {
 		result["number"] = number
+	}
+	if answering, ok := live["store_answering"].(bool); ok && !answering {
+		result["reason"] = "the daemon's message store is not answering, so inbound messages are not delivered"
+		result["next"] = "whatsapp daemon restart"
 	}
 	return result
 }

@@ -75,6 +75,12 @@ const (
 	SocketTimeout     = 5 * time.Minute
 	SocketDialTimeout = 2 * time.Second
 
+	// SQLiteBusyTimeout is how long a query on the daemon's databases waits on a lock.
+	SQLiteBusyTimeout = 30 * time.Second
+	// StoreProbeTimeout bounds `status`'s wait for the message store. It outlasts the
+	// busy timeout, so only a connection held past any lock wait reads as stuck.
+	StoreProbeTimeout = SQLiteBusyTimeout + 5*time.Second
+
 	// The blocking pairing commands run the whole handshake in one socket call, so
 	// their socket deadline must exceed the WORST-CASE pairing window. LinkSocketTimeout
 	// clears LinkSessionTimeout (10m). ProvisionSocketTimeout must clear the full

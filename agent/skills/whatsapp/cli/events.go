@@ -31,8 +31,8 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 	case *events.HistorySync:
 		wac.handleHistorySync(v)
 	case *events.PairSuccess:
-		// A phone-code pairing finished (the user entered the code). QR pairing
-		// instead completes through consumeQRChannel, so this is the phone-code path.
+		// whatsmeow dispatches this once per fresh link, for a QR scan, a phone code, and a
+		// managed provision alike, after the paired device is saved.
 		wac.logger.Infof("Pairing succeeded")
 		wac.onLinked()
 	case *events.Connected:
@@ -643,6 +643,9 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 		}
 		// Key history the same way live messages are keyed: canonical phone JID, not the raw LID.
 		chatJID := wac.canonicalChatKey(jid)
+		// Resolved before Begin: the store holds one connection, and the transaction owns it
+		// until commit, so a store read inside it would wait forever.
+		name := wac.getChatName(jid)
 
 		err = func() error {
 			tx, err := wac.store.Begin()
@@ -650,8 +653,6 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 				return err
 			}
 			defer tx.Rollback()
-
-			name := wac.getChatName(jid)
 
 			// Store chat FIRST so the FTS AFTER INSERT trigger can look up chat name.
 			// Chats with no messages in this sync batch must still be recorded.

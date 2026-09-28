@@ -103,7 +103,7 @@ func registerVestadService(name string, requireBindable bool) (int, error) {
 	return payload.Port, nil
 }
 
-func unregisterVestadService(name string, expectedPort int) error {
+func unregisterVestadService(name string) error {
 	vestadPort := os.Getenv("VESTAD_PORT")
 	vestadHost := os.Getenv("BOX_HOST")
 	agentName := os.Getenv("AGENT_NAME")
@@ -115,14 +115,7 @@ func unregisterVestadService(name string, expectedPort int) error {
 		Timeout:   vestadRequestTimeout,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
-	endpoint := fmt.Sprintf(
-		"https://%s:%s/agents/%s/services/%s/registrations/%d",
-		vestadHost,
-		vestadPort,
-		agentName,
-		name,
-		expectedPort,
-	)
+	endpoint := fmt.Sprintf("https://%s:%s/agents/%s/services/%s", vestadHost, vestadPort, agentName, name)
 	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return err
@@ -313,7 +306,7 @@ func runLink() {
 	result, stopWaiting, connected := startSocketCommand(getSocketPath(), "link", linkArgs)
 	if !connected {
 		if registered {
-			_ = unregisterVestadService(linkServiceName(), port)
+			_ = unregisterVestadService(linkServiceName())
 		}
 		failJSON("whatsapp daemon is not answering; run `whatsapp status`")
 	}
@@ -321,7 +314,7 @@ func runLink() {
 	stopWaiting()
 	if !ready {
 		if registered && !terminal.connected && currentQRLink().port == 0 {
-			_ = unregisterVestadService(linkServiceName(), port)
+			_ = unregisterVestadService(linkServiceName())
 		}
 		emit(terminal.output, terminal.exitCode)
 		if terminal.exitCode == 0 {

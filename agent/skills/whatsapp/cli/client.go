@@ -127,7 +127,7 @@ func newWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	dbLog := logger.Sub("Database")
 	whatsappDBPath := filepath.Join(dataDir, "whatsapp.db")
 
-	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=30000", whatsappDBPath), dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=%d", whatsappDBPath, SQLiteBusyTimeout.Milliseconds()), dbLog)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to connect to whatsapp database: %v", err)
@@ -437,8 +437,8 @@ func (wac *WhatsAppClient) onConnected() {
 }
 
 // onLinked is onConnected plus starting the fragile post-link history-sync window.
-// Used only on a FRESH link (QR success, managed provision, phone-code PairSuccess),
-// never on a routine reconnect, so the window is not re-armed on every reconnect.
+// Called only from the PairSuccess event, never on a routine reconnect, so the window
+// is not re-armed on every reconnect.
 func (wac *WhatsAppClient) onLinked() {
 	wac.clearPhonePairingPending()
 	wac.onConnected()
@@ -723,7 +723,6 @@ func (wac *WhatsAppClient) consumeQRChannel(qrChan <-chan whatsmeow.QRChannelIte
 		} else if evt.Event == "success" {
 			wac.logger.Infof("Successfully authenticated!")
 			wac.clearQR()
-			wac.onLinked()
 			return true
 		}
 	}

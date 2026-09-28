@@ -491,7 +491,7 @@ func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port i
 	}
 	cleanup := func() {
 		if unregisterService != "" {
-			if err := unregisterVestadService(unregisterService, port); err != nil {
+			if err := unregisterVestadService(unregisterService); err != nil {
 				wac.logger.Warnf("Failed to unregister QR link service %s: %v", unregisterService, err)
 			}
 		}
@@ -508,7 +508,7 @@ func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port i
 		return nil, errPairingInProgress
 	}
 	// Keep pairMu held through route cleanup. Releasing it first lets the next
-	// pairing reuse the same port before this pairing's conditional delete runs.
+	// pairing register the same route before this pairing deletes it.
 	defer finishPairing(cleanup, release)
 	if err := wac.state.tryRecordPairAttempt(time.Now(), acknowledged); err != nil {
 		return nil, err
@@ -549,7 +549,9 @@ func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
-	if err := parseNoFlags("daemon-status", args); err != nil {
+	fs := flag.NewFlagSet("daemon-status", flag.ContinueOnError)
+	probeStore := fs.Bool("probe-store", false, "Also report whether the message store answers")
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	status := wac.GetAuthStatus()
@@ -565,6 +567,9 @@ func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
 		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
 		"pair_attempts_last_day":   len(attemptsWithin(st.PairAttempts, now, PairDayWindow)),
 		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
+	}
+	if *probeStore {
+		result["store_answering"] = wac.store.Answering(StoreProbeTimeout)
 	}
 	if wac.client.Store.ID != nil {
 		result["number"] = "+" + wac.client.Store.ID.User
