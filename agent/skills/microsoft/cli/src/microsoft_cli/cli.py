@@ -602,7 +602,7 @@ _COMPACT_FORMATTERS = {
 
 _SEARCH_GAP_NOTE = (
     "NOTE: search does not cover Junk Email or Deleted Items, so an empty result is not proof the message never arrived."
-    " Check those folders with `email list --folder junk` / `--folder deleted`."
+    " Search those folders directly with `--folder junk` / `--folder deleted`, or add --since/--until, which spans every folder."
 )
 
 

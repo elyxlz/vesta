@@ -60,6 +60,9 @@ def test_empty_mailbox_wide_search_warns_about_junk(capsys):
     _out, err = _run(capsys, [], command="search", limit=10, folder=None)
     assert "Junk Email" in err
     assert "Deleted Items" in err
+    assert "email list" not in err
+    assert "--folder deleted" in err
+    assert "--since/--until" in err
 
 
 def test_empty_search_scoped_to_a_folder_is_silent(capsys):
