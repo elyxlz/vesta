@@ -32,8 +32,7 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		wac.handleHistorySync(v)
 	case *events.PairSuccess:
 		// whatsmeow dispatches this once per fresh link, for a QR scan, a phone code, and a
-		// managed provision alike, after the paired device is saved. It is the one caller of
-		// onLinked.
+		// managed provision alike, after the paired device is saved.
 		wac.logger.Infof("Pairing succeeded")
 		wac.onLinked()
 	case *events.Connected:

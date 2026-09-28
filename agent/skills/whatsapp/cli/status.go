@@ -22,7 +22,7 @@ func runStatus() {
 		printJSON(daemonDownStatus(resolved))
 		return
 	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil)
+	output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", []string{"--probe-store"})
 	if connected && exitCode == 0 {
 		var live map[string]any
 		if err := json.Unmarshal(output, &live); err == nil {

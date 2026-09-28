@@ -67,7 +67,7 @@ func (wac *WhatsAppClient) startLinkServer(port int) error {
 	if err != nil {
 		return fmt.Errorf("start link page on port %d: %w", port, err)
 	}
-	server := &http.Server{Addr: fmt.Sprintf("0.0.0.0:%d", port), Handler: http.HandlerFunc(wac.linkHTTPHandler)}
+	server := &http.Server{Handler: http.HandlerFunc(wac.linkHTTPHandler)}
 	wac.linkMu.Lock()
 	wac.linkServer = server
 	wac.linkPort = port
