@@ -17,7 +17,6 @@ import Markdown, {
 } from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
-import * as WebBrowser from "expo-web-browser";
 import Svg, { Path } from "react-native-svg";
 import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, ChatMessage, InputMethod } from "@vesta/core";
@@ -52,6 +51,7 @@ import {
   isFinalMarkdownNode,
   resolveMarkdownLink,
 } from "@/agent/chat/chat-message-model";
+import { openWebLink } from "@/agent/chat/open-web-link";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
 
@@ -105,8 +105,8 @@ const MESSAGE_ACTIONS: Record<
 function openMarkdownLink(href: string): boolean {
   const { url, opener } = resolveMarkdownLink(href);
   const open =
-    opener === "in-app-browser"
-      ? WebBrowser.openBrowserAsync(url)
+    opener === "web"
+      ? openWebLink(url)
       : opener === "system"
         ? Linking.openURL(url)
         : Promise.reject(new Error("Unsupported link type"));
