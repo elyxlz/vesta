@@ -195,7 +195,9 @@ pub fn ensure_absent(api: &impl GatewayApi, name: &str) -> Result<(), String> {
     match api.agent_status(name)? {
         None => Ok(()),
         Some(_) => Err(format!(
-            "an agent named '{name}' already exists on this gateway"
+            "an agent named '{name}' already exists on this gateway (an interrupted provision can \
+             leave one): delete it from the app or with `DELETE /agents/{name}` on the gateway API, \
+             or choose another agent_name"
         )),
     }
 }
@@ -438,7 +440,10 @@ pub fn run(config_path: &std::path::Path) -> Result<String, String> {
                     crate::tunnel::provision_tunnel(&config, creds, plan.subdomain.as_deref())?;
                 eprintln!("tunnel ready at {}", tunnel.url());
             }
-            None => crate::tunnel::decline_tunnel(&config)?,
+            None if crate::tunnel::get_tunnel_config(&config).is_none() => {
+                crate::tunnel::decline_tunnel(&config)?;
+            }
+            None => {}
         }
         eprintln!("starting the gateway service...");
         crate::install_service()?;
@@ -709,6 +714,7 @@ mod tests {
         let api = FakeApi::with_statuses(&[Some("alive")]);
         let err = ensure_absent(&api, "aria-bot").expect_err("exists");
         assert!(err.contains("already exists"), "{err}");
+        assert!(err.contains("DELETE /agents/aria-bot"), "{err}");
         assert_eq!(calls(&api), ["status aria-bot"]);
     }
 

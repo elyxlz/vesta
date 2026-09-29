@@ -3,7 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use vesta_tests::{find_vestad, unique_agent, SERVER};
 
-use super::common::host_credentials_path;
+use super::common::{host_credentials_path, live_model};
 
 const LIVE_READY_TIMEOUT_SECS: u64 = 600;
 
@@ -20,6 +20,7 @@ fn provision_signs_in_a_real_agent() {
     let config = serde_json::json!({
         "agent_name": name,
         "provider": {"kind": "claude", "credentials": credentials},
+        "model": live_model(),
         "timezone": "UTC",
     });
     let mut file = std::fs::File::create(&path).expect("create");
