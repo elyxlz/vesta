@@ -33,10 +33,15 @@ fn provision_signs_in_a_real_agent() {
         .env("HOME", SERVER.home_path())
         .output()
         .expect("run provision");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 1, "stdout must be the link alone: {stdout}");
+    assert!(lines[0].contains("/app#k="), "{}", lines[0]);
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        !stdout.contains(&credentials) && !stderr.contains(&credentials),
+        "the credential leaked into the output"
     );
 
     let client = SERVER.client();

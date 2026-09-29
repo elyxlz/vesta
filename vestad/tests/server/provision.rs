@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 
-use vesta_tests::{find_vestad, is_up, unique_agent, FAKE_TOKEN, SERVER};
+use vesta_tests::{find_vestad, is_up, unique_agent, TestAgent, FAKE_TOKEN, SERVER};
 
 struct Outcome {
     success: bool,
@@ -37,33 +37,6 @@ fn config(name: &str, credentials: &str) -> serde_json::Value {
 }
 
 #[test]
-fn provision_brings_up_a_signed_in_agent_and_prints_only_the_link() {
-    let name = unique_agent("provision-ok");
-    let outcome = provision(&config(&name, FAKE_TOKEN), 0o600);
-    assert!(outcome.success, "stderr: {}", outcome.stderr);
-    let lines: Vec<&str> = outcome.stdout.lines().collect();
-    assert_eq!(
-        lines.len(),
-        1,
-        "stdout must be the link alone: {}",
-        outcome.stdout
-    );
-    assert!(
-        (lines[0].starts_with("http://") || lines[0].starts_with("https://"))
-            && lines[0].contains("/app#k="),
-        "{}",
-        lines[0]
-    );
-    assert!(
-        !outcome.stderr.contains(FAKE_TOKEN),
-        "a secret leaked to stderr"
-    );
-    let client = SERVER.client();
-    assert!(is_up(&client.agent_status(&name).expect("status").status));
-    client.destroy_agent(&name).expect("cleanup");
-}
-
-#[test]
 fn a_rejected_credential_leaves_no_agent_behind() {
     let name = unique_agent("provision-bad");
     let outcome = provision(&config(&name, r#"{"not":"oauth"}"#), 0o600);
@@ -81,18 +54,18 @@ fn a_rejected_credential_leaves_no_agent_behind() {
 
 #[test]
 fn an_existing_name_is_refused_and_left_alone() {
-    let name = unique_agent("provision-dup");
-    assert!(provision(&config(&name, FAKE_TOKEN), 0o600).success);
-    let second = provision(&config(&name, FAKE_TOKEN), 0o600);
-    assert!(!second.success);
-    assert!(
-        second.stderr.contains("already exists"),
-        "{}",
-        second.stderr
-    );
     let client = SERVER.client();
-    assert!(is_up(&client.agent_status(&name).expect("status").status));
-    client.destroy_agent(&name).expect("cleanup");
+    let existing = TestAgent::create(&client, &unique_agent("provision-dup")).expect("create");
+    let outcome = provision(&config(&existing.name, FAKE_TOKEN), 0o600);
+    assert!(!outcome.success);
+    assert!(
+        outcome.stderr.contains("already exists"),
+        "{}",
+        outcome.stderr
+    );
+    assert!(is_up(
+        &client.agent_status(&existing.name).expect("status").status
+    ));
 }
 
 #[test]
