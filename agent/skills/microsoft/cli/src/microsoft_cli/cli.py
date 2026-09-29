@@ -32,7 +32,7 @@ from .payloads import EventFields, EventPatch, MailDraft
 
 # Commands whose effect is to actually transmit mail. In draft-only mode these are
 # refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
-_TRANSMIT_COMMANDS = {"send", "reply", "forward"}
+_TRANSMIT_COMMANDS = {"send", "send-draft", "reply", "forward"}
 _PENDING_COMMANDS = {"send-delay", "pending", "undo"}
 _DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
 _PENDING_POLL_SECONDS = 1
@@ -56,6 +56,7 @@ _MUTATING_COMMANDS = frozenset(
         ("email", c)
         for c in (
             "send",
+            "send-draft",
             "reply",
             "forward",
             "draft",
@@ -271,6 +272,10 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_draft_source = p_draft.add_mutually_exclusive_group()
     p_draft_source.add_argument("--reply-to", dest="reply_to_id", default=None, help="Draft a threaded reply to this message id")
     p_draft_source.add_argument("--forward", dest="forward_id", default=None, help="Draft a forward of this message id")
+
+    p_send_draft = email_sub.add_parser("send-draft", help="Send an existing draft as it stands (after the user approves it).")
+    p_send_draft.add_argument("--account", required=True)
+    p_send_draft.add_argument("--id", "--email-id", required=True, dest="email_id", help="Draft id from draft / reply-draft")
 
     p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
@@ -712,6 +717,7 @@ def _email_routes():
             owa_rest_commands.send_email,
             lambda a: {"mail": MailDraft(to=a.to, subject=a.subject, body=a.body, cc=a.cc, bcc=a.bcc, attachments=a.attachments, html=a.html)},
         ),
+        "send-draft": (email.send_draft, owa_rest_commands.send_draft, lambda a: {"draft_id": a.email_id}),
         "draft": (
             email.create_email_draft,
             owa_rest_commands.create_email_draft,
