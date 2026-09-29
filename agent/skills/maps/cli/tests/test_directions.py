@@ -51,4 +51,34 @@ def test_parse_directions_driving_has_duration_distance_steps():
 def test_parse_directions_transit_has_duration():
     body = (FIXTURES / "dir_transit.txt").read_text(encoding="utf-8")
     leg = parse_directions(body, "transit")
-    assert leg.duration_text is not None
+    assert leg.duration_text == "47 min"
+    assert leg.distance_text == "5.9 miles"
+    assert [s.line for s in leg.steps if s.line] == ["N63", "N550"]
+
+
+def test_parse_directions_transit_reads_lines_stops_and_totals():
+    body = (FIXTURES / "dir_transit_tube.txt").read_text(encoding="utf-8")
+    leg = parse_directions(body, "transit")
+    assert (leg.duration_text, leg.distance_text) == ("35 min", "7.7 miles")
+    assert (leg.depart, leg.arrive, leg.fare) == ("3:12 PM", "3:47 PM", "£3.10")
+    rides = [s for s in leg.steps if s.line]
+    assert [s.line for s in rides] == ["Jubilee", "Central"]
+    jubilee = rides[0]
+    assert (jubilee.vehicle, jubilee.headsign) == ("Underground", "Stanmore")
+    assert (jubilee.from_stop, jubilee.to_stop, jubilee.num_stops) == ("Southwark", "Bond Street", 4)
+    assert (jubilee.depart, jubilee.arrive) == ("3:16 PM", "3:22 PM")
+    assert leg.steps[0].instruction == "Walk 4 min (0.1 mi) to Southwark"
+
+
+def test_parse_directions_driving_steps_are_plain_text():
+    body = (FIXTURES / "dir_driving.txt").read_text(encoding="utf-8")
+    leg = parse_directions(body, "driving")
+    assert (leg.duration_text, leg.distance_text) == ("36 min", "6.4 miles")
+    assert leg.steps[1].instruction == "Turn left onto Pancras Rd/A5202"
+    assert all("<" not in s.instruction and s.instruction for s in leg.steps)
+
+
+def test_parse_directions_falls_back_to_scrape_when_structure_drifts():
+    leg = parse_directions('[[null, [["x"]]], "12 min", "1.0 km", "Turn left"]', "walking")
+    assert (leg.duration_text, leg.distance_text) == ("12 min", "1.0 km")
+    assert [s.instruction for s in leg.steps] == ["Turn left"]
