@@ -46,6 +46,7 @@ from .config import (
     stored_config,
     update_config_store,
     validate_config_updates,
+    validation_problems,
 )
 from .events import EventBus, SnapshotConfig, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
@@ -236,7 +237,7 @@ async def _validate_and_store(config: VestaConfig, data: object, *, label: str) 
     try:
         updates = validate_config_updates(config, data)
     except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid {label}: {e.errors(include_url=False)}"}, status=400)
+        return web.json_response({"error": f"invalid {label}: {validation_problems(e)}"}, status=400)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     if not updates:
@@ -357,7 +358,7 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
     try:
         signin = _SIGN_IN_ADAPTER.validate_python(raw)
     except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
+        return web.json_response({"error": f"invalid provider: {validation_problems(e)}"}, status=400)
     try:
         if isinstance(signin, _ClaudeSignIn):
             state.provider_status = await asyncio.to_thread(
@@ -371,7 +372,9 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
             state.provider_status = await asyncio.to_thread(
                 set_openai, signin.credentials, signin.model, signin.max_context_tokens, config=config
             )
-    except (ValueError, TypeError, pyd.ValidationError) as e:
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid credentials: {validation_problems(e)}"}, status=400)
+    except (ValueError, TypeError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
         return web.json_response({"error": f"auth write failed: {e}"}, status=500)
@@ -389,7 +392,7 @@ async def _provider_patch_handler(request: web.Request) -> web.Response:
     try:
         prefs = _ProviderPrefs.model_validate(raw)
     except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid provider prefs: {e.errors(include_url=False)}"}, status=400)
+        return web.json_response({"error": f"invalid provider prefs: {validation_problems(e)}"}, status=400)
     patch = prefs.model_dump(exclude_unset=True)
     if not patch:
         return web.json_response({"error": "no provider fields provided"}, status=400)
