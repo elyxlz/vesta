@@ -226,6 +226,8 @@ pub fn provision_agent(
 
 fn finish_agent(api: &impl GatewayApi, plan: &Plan, readiness: &Readiness) -> Result<(), String> {
     let name = plan.agent_name.as_str();
+    // The create returns once the container is listed, before the agent's API serves a write.
+    wait_until_answering(api, name, readiness)?;
     eprintln!("signing in...");
     api.put_provider(name, &plan.provider_body)?;
     eprintln!("applying configuration...");
@@ -243,21 +245,49 @@ fn wait_until_ready(
     name: &str,
     readiness: &Readiness,
 ) -> Result<(), String> {
+    wait_for_status(api, name, readiness, "become ready", |state| match state {
+        "alive" | "setting_up" => Some(Ok(())),
+        "not_authenticated" => Some(Err("the credential was rejected".to_string())),
+        "dead" => Some(Err("the agent did not start (dead)".to_string())),
+        _ => None,
+    })
+}
+
+/// Poll until the new agent's API answers: every status past `starting` needs its live connection.
+fn wait_until_answering(
+    api: &impl GatewayApi,
+    name: &str,
+    readiness: &Readiness,
+) -> Result<(), String> {
+    wait_for_status(api, name, readiness, "answer", |state| match state {
+        "unprovisioned" | "not_authenticated" | "setting_up" | "alive" => Some(Ok(())),
+        "dead" => Some(Err("the agent did not start (dead)".to_string())),
+        _ => None,
+    })
+}
+
+/// Poll the agent's status until `settle` decides, or name the last status seen on timeout.
+fn wait_for_status(
+    api: &impl GatewayApi,
+    name: &str,
+    readiness: &Readiness,
+    goal: &str,
+    settle: impl Fn(&str) -> Option<Result<(), String>>,
+) -> Result<(), String> {
     let deadline = std::time::Instant::now() + readiness.timeout;
     let mut last_seen = None;
     loop {
-        match api.agent_status(name)?.as_deref() {
-            Some("alive" | "setting_up") => return Ok(()),
-            Some("not_authenticated") => return Err("the credential was rejected".to_string()),
-            Some("dead") => return Err("the agent did not start (dead)".to_string()),
-            Some(state) => last_seen = Some(state.to_string()),
-            None => {}
+        if let Some(state) = api.agent_status(name)? {
+            if let Some(outcome) = settle(&state) {
+                return outcome;
+            }
+            last_seen = Some(state);
         }
         if std::time::Instant::now() >= deadline {
             let last =
                 last_seen.map_or_else(String::new, |state| format!(" (last status: {state})"));
             return Err(format!(
-                "the agent did not become ready within {}s{last}",
+                "the agent did not {goal} within {}s{last}",
                 readiness.timeout.as_secs()
             ));
         }
@@ -694,18 +724,61 @@ mod tests {
 
     #[test]
     fn a_new_agent_is_created_signed_in_configured_and_restarted_in_order() {
-        let api = FakeApi::with_statuses(&[Some("restarting"), Some("setting_up")]);
+        let api = FakeApi::with_statuses(&[
+            Some("unprovisioned"),
+            Some("restarting"),
+            Some("setting_up"),
+        ]);
         provision_agent(&api, &plan(), &FAST).expect("provisioned");
         assert_eq!(
             calls(&api),
             [
                 "create aria-bot",
+                "status aria-bot",
                 "provider aria-bot",
                 "config aria-bot",
                 "restart aria-bot",
                 "status aria-bot",
                 "status aria-bot"
             ]
+        );
+    }
+
+    #[test]
+    fn sign_in_waits_until_the_new_agent_answers() {
+        let api = FakeApi::with_statuses(&[
+            None,
+            Some("starting"),
+            Some("unprovisioned"),
+            Some("restarting"),
+            Some("setting_up"),
+        ]);
+        provision_agent(&api, &plan(), &FAST).expect("provisioned");
+        assert_eq!(
+            calls(&api),
+            [
+                "create aria-bot",
+                "status aria-bot",
+                "status aria-bot",
+                "status aria-bot",
+                "provider aria-bot",
+                "config aria-bot",
+                "restart aria-bot",
+                "status aria-bot",
+                "status aria-bot"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_agent_that_never_answers_is_rolled_back_before_any_sign_in() {
+        let api = FakeApi::with_statuses(&[Some("starting")]);
+        let err = provision_agent(&api, &plan(), &FAST).expect_err("never answers");
+        assert!(err.contains("did not answer"), "{err}");
+        assert!(!calls(&api).iter().any(|call| call.starts_with("provider")));
+        assert_eq!(
+            calls(&api).last().map(String::as_str),
+            Some("delete aria-bot")
         );
     }
 
@@ -722,19 +795,24 @@ mod tests {
     fn a_failed_sign_in_deletes_the_new_agent_and_keeps_the_original_error() {
         let api = FakeApi {
             fail_on: Some("provider"),
-            ..FakeApi::default()
+            ..FakeApi::with_statuses(&[Some("unprovisioned")])
         };
         let err = provision_agent(&api, &plan(), &FAST).expect_err("sign-in fails");
         assert!(err.contains("provider refused"), "{err}");
         assert_eq!(
             calls(&api),
-            ["create aria-bot", "provider aria-bot", "delete aria-bot"]
+            [
+                "create aria-bot",
+                "status aria-bot",
+                "provider aria-bot",
+                "delete aria-bot"
+            ]
         );
     }
 
     #[test]
     fn a_rejected_credential_is_named_and_rolled_back() {
-        let api = FakeApi::with_statuses(&[Some("not_authenticated")]);
+        let api = FakeApi::with_statuses(&[Some("unprovisioned"), Some("not_authenticated")]);
         let err = provision_agent(&api, &plan(), &FAST).expect_err("rejected");
         assert!(err.contains("credential was rejected"), "{err}");
         assert_eq!(
@@ -745,7 +823,7 @@ mod tests {
 
     #[test]
     fn a_readiness_timeout_rolls_back() {
-        let api = FakeApi::default();
+        let api = FakeApi::with_statuses(&[Some("unprovisioned")]);
         let err = provision_agent(&api, &plan(), &FAST).expect_err("never ready");
         assert!(err.contains("did not become ready"), "{err}");
         assert_eq!(
@@ -756,25 +834,31 @@ mod tests {
 
     #[test]
     fn a_stale_status_right_after_the_restart_is_waited_out() {
-        let api = FakeApi::with_statuses(&[Some("unprovisioned"), Some("stopped"), Some("alive")]);
+        let api = FakeApi::with_statuses(&[
+            Some("unprovisioned"),
+            Some("unprovisioned"),
+            Some("stopped"),
+            Some("alive"),
+        ]);
         provision_agent(&api, &plan(), &FAST).expect("provisioned");
     }
 
     #[test]
     fn a_timeout_names_the_last_status_seen() {
-        let api = FakeApi::with_statuses(&[Some("unprovisioned")]);
+        let api = FakeApi::with_statuses(&[Some("unprovisioned"), Some("restarting")]);
         let err = provision_agent(&api, &plan(), &FAST).expect_err("never ready");
-        assert!(err.contains("last status: unprovisioned"), "{err}");
+        assert!(err.contains("last status: restarting"), "{err}");
     }
 
     #[test]
     fn a_dead_container_fails_at_once() {
-        let api = FakeApi::with_statuses(&[Some("dead")]);
+        let api = FakeApi::with_statuses(&[Some("unprovisioned"), Some("dead")]);
         let err = provision_agent(&api, &plan(), &FAST).expect_err("dead");
         assert!(err.contains("did not start (dead)"), "{err}");
         assert_eq!(
             calls(&api)
                 .iter()
+                .skip_while(|call| !call.starts_with("restart"))
                 .filter(|call| call.starts_with("status"))
                 .count(),
             1
@@ -796,7 +880,7 @@ mod tests {
         let api = FakeApi {
             fail_on: Some("config"),
             fail_delete: true,
-            ..FakeApi::default()
+            ..FakeApi::with_statuses(&[Some("unprovisioned")])
         };
         let err = provision_agent(&api, &plan(), &FAST).expect_err("both fail");
         assert!(
