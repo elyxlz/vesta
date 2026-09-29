@@ -32,7 +32,7 @@ impl TunnelConfig {
 /// their own, scoped to a domain they control (Account → Cloudflare Tunnel: Edit,
 /// Zone → DNS: Edit, Zone → Zone: Read). Managed (vesta.run) VMs never reach this
 /// path: the control plane creates the tunnel and seeds `tunnel.json` directly.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub(crate) struct CloudflareCreds {
     pub(crate) api_token: String,
     pub(crate) account_id: String,
@@ -228,14 +228,17 @@ fn cf_request(
     api_token: &str,
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // The token goes to curl on stdin (`-H @-`), never in argv, where any local user sees it.
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, url])
         .arg("--connect-timeout")
         .arg(CF_API_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
         .arg(CF_API_MAX_TIME_SECS.to_string())
-        .arg("-H")
-        .arg(format!("Authorization: Bearer {api_token}"))
+        .args(["-H", "@-"])
         .arg("-H")
         .arg("Content-Type: application/json");
 
@@ -243,7 +246,25 @@ fn cf_request(
         cmd.arg("-d").arg(b.to_string());
     }
 
-    let output = cmd.output().map_err(|e| format!("curl failed: {e}"))?;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("curl failed: {e}"))?;
+    let header_written = child
+        .stdin
+        .take()
+        .ok_or_else(|| "curl stdin is not piped".to_string())
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(format!("Authorization: Bearer {api_token}\n").as_bytes())
+                .map_err(|e| format!("could not pass the token to curl: {e}"))
+        });
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("curl failed: {e}"))?;
+    header_written?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -540,7 +561,7 @@ const ANIMALS: &[&str] = &[
     "dab",
     "dace",
     "damselfly",
-    "deer",
+    "puffin",
     "dikdik",
     "dipper",
     "dog",
@@ -579,7 +600,7 @@ const ANIMALS: &[&str] = &[
     "gibbon",
     "giraffe",
     "gnat",
-    "gnu",
+    "gharial",
     "goat",
     "goatfish",
     "goby",
@@ -602,7 +623,7 @@ const ANIMALS: &[&str] = &[
     "haddock",
     "hake",
     "halibut",
-    "hare",
+    "kinglet",
     "harrier",
     "hawfinch",
     "herring",
@@ -659,7 +680,7 @@ const ANIMALS: &[&str] = &[
     "millipede",
     "minnow",
     "mole",
-    "molly",
+    "loris",
     "monkey",
     "moorhen",
     "mosquito",
@@ -729,7 +750,7 @@ const ANIMALS: &[&str] = &[
     "redwing",
     "remora",
     "rhino",
-    "roach",
+    "ptarmigan",
     "rook",
     "sable",
     "sailfish",
@@ -760,7 +781,7 @@ const ANIMALS: &[&str] = &[
     "snapper",
     "snipe",
     "snook",
-    "sole",
+    "marlin",
     "spider",
     "spoonbill",
     "sprat",
@@ -1005,16 +1026,14 @@ fn ensure_tunnel_with(config_dir: &Path, pin: Option<&str>) -> Result<TunnelConf
     }
 }
 
-/// Provision's tunnel step: store the operator's credentials, keep a tunnel this gateway already
-/// has, or create one under `explicit` or the first free animal.
+/// Provision's tunnel step: keep a tunnel this gateway already has (and the credentials that made
+/// it), or store the operator's credentials and create one under `explicit` or the first free animal.
 pub(crate) fn provision_tunnel(
     config_dir: &Path,
     creds: &CloudflareCreds,
     explicit: Option<&str>,
 ) -> Result<TunnelConfig, String> {
-    save_cf_creds(config_dir, creds)?;
     clear_declined_tunnel(config_dir);
-    ensure_cloudflared(config_dir)?;
     if let Some(saved) = get_tunnel_config(config_dir) {
         if explicit.is_some_and(|name| !saved.hostname.starts_with(&format!("{name}."))) {
             eprintln!(
@@ -1022,8 +1041,16 @@ pub(crate) fn provision_tunnel(
                 saved.hostname
             );
         }
+        if cf_env(config_dir).ok().as_ref() != Some(creds) {
+            eprintln!(
+                "warning: this gateway keeps the Cloudflare credentials of its tunnel {}; ignoring `cloudflare`",
+                saved.hostname
+            );
+        }
         return Ok(saved);
     }
+    ensure_cloudflared(config_dir)?;
+    save_cf_creds(config_dir, creds)?;
     create_unpinned_tunnel(config_dir, creds, explicit)
 }
 
@@ -1046,80 +1073,129 @@ fn establish_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
     let env = cf_env(config_dir)?;
     let domain = get_zone_domain(&env)?;
-    let hostname = format!("{subdomain}.{domain}");
     let tunnel_name = format!("vesta-{subdomain}");
 
     tracing::info!(tunnel = %tunnel_name, "creating tunnel");
-
     delete_tunnel_if_exists(&env, &tunnel_name);
+    delete_dns_record_if_exists(&env, subdomain);
 
-    let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
+    let config = create_tunnel_records(
+        &mut |method, url, body| cf_request(method, url, &env.api_token, body),
+        &env,
+        subdomain,
+        &domain,
+        |config| {
+            write_secret_file(
+                &tunnel_config_path(config_dir),
+                &serde_json::to_string_pretty(config).expect("tunnel config serializes to json"),
+                "tunnel config",
+            )
+        },
+    )?;
+    tracing::info!(hostname = %config.hostname, "tunnel ready");
+    Ok(config)
+}
+
+/// One Cloudflare API call: method, url, optional JSON body.
+type CfCall<'a> =
+    dyn FnMut(&str, &str, Option<serde_json::Value>) -> Result<serde_json::Value, String> + 'a;
+
+/// Create the tunnel, fetch its token, point a DNS record at it, then `persist` the config. A
+/// failed step deletes what the earlier steps created, so a failed run leaves no tunnel or record
+/// behind to block a re-run under the same subdomain.
+fn create_tunnel_records(
+    cf: &mut CfCall<'_>,
+    env: &CloudflareCreds,
+    subdomain: &str,
+    domain: &str,
+    persist: impl FnOnce(&TunnelConfig) -> Result<(), String>,
+) -> Result<TunnelConfig, String> {
     let tunnel_secret = hex::encode(rand::random::<[u8; 32]>());
     let secret_b64 = {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(tunnel_secret.as_bytes())
     };
-
-    let resp = cf_request(
+    let resp = cf(
         "POST",
-        &create_url,
-        &env.api_token,
+        &format!("{CF_API_BASE}/accounts/{}/cfd_tunnel", env.account_id),
         Some(serde_json::json!({
-            "name": tunnel_name,
+            "name": format!("vesta-{subdomain}"),
             "tunnel_secret": secret_b64,
             "config_src": "local",
         })),
     )?;
-
     let tunnel_id = resp["result"]["id"]
         .as_str()
         .ok_or("missing tunnel id in response")?
         .to_string();
 
+    let routed = route_tunnel(cf, env, subdomain, domain, &tunnel_id, persist);
+    if routed.is_err() {
+        let tunnel_url = format!(
+            "{CF_API_BASE}/accounts/{}/cfd_tunnel/{tunnel_id}",
+            env.account_id
+        );
+        roll_back(cf, &tunnel_url, "tunnel");
+    }
+    routed
+}
+
+/// The steps after the tunnel exists; on a failed `persist` it deletes the DNS record it created.
+fn route_tunnel(
+    cf: &mut CfCall<'_>,
+    env: &CloudflareCreds,
+    subdomain: &str,
+    domain: &str,
+    tunnel_id: &str,
+    persist: impl FnOnce(&TunnelConfig) -> Result<(), String>,
+) -> Result<TunnelConfig, String> {
     let token_url = format!(
-        "{}/accounts/{}/cfd_tunnel/{}/token",
-        CF_API_BASE, env.account_id, tunnel_id
+        "{CF_API_BASE}/accounts/{}/cfd_tunnel/{tunnel_id}/token",
+        env.account_id
     );
-    let token_resp = cf_request("GET", &token_url, &env.api_token, None)?;
-    let tunnel_token = token_resp["result"]
+    let tunnel_token = cf("GET", &token_url, None)?["result"]
         .as_str()
         .ok_or("missing tunnel token in response")?
         .to_string();
 
+    let hostname = format!("{subdomain}.{domain}");
     tracing::info!(hostname = %hostname, tunnel_id = %tunnel_id, "creating DNS record");
-
-    delete_dns_record_if_exists(&env, subdomain);
-
-    let dns_url = format!("{}/zones/{}/dns_records", CF_API_BASE, env.zone_id);
-    let dns_resp = cf_request(
+    let dns_resp = cf(
         "POST",
-        &dns_url,
-        &env.api_token,
+        &format!("{CF_API_BASE}/zones/{}/dns_records", env.zone_id),
         Some(serde_json::json!({
             "type": "CNAME",
             "name": subdomain,
-            "content": format!("{}.cfargotunnel.com", tunnel_id),
+            "content": format!("{tunnel_id}.cfargotunnel.com"),
             "proxied": true,
         })),
     )?;
-
-    let dns_record_id = dns_resp["result"]["id"].as_str().map(std::string::ToString::to_string);
-
     let config = TunnelConfig {
-        tunnel_id,
+        tunnel_id: tunnel_id.to_string(),
         tunnel_token,
-        hostname: hostname.clone(),
-        dns_record_id,
+        hostname,
+        dns_record_id: dns_resp["result"]["id"].as_str().map(ToString::to_string),
     };
 
-    write_secret_file(
-        &tunnel_config_path(config_dir),
-        &serde_json::to_string_pretty(&config).expect("tunnel config serializes to json"),
-        "tunnel config",
-    )?;
-
-    tracing::info!(hostname = %hostname, "tunnel ready");
+    if let Err(error) = persist(&config) {
+        if let Some(record_id) = &config.dns_record_id {
+            let record_url = format!(
+                "{CF_API_BASE}/zones/{}/dns_records/{record_id}",
+                env.zone_id
+            );
+            roll_back(cf, &record_url, "DNS record");
+        }
+        return Err(error);
+    }
     Ok(config)
+}
+
+/// Best-effort delete of something this run created; a failed delete is logged, never raised,
+/// so the caller still reports the error that caused the rollback.
+fn roll_back(cf: &mut CfCall<'_>, url: &str, what: &str) {
+    if let Err(error) = cf("DELETE", url, None) {
+        tracing::warn!(url = %url, "could not delete the {what} this run created: {error}");
+    }
 }
 
 pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
@@ -1651,6 +1727,167 @@ async fn repair_tunnel(config_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provision_keeps_a_saved_tunnel_and_the_credentials_that_made_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let saved = TunnelConfig {
+            tunnel_id: "tunnel-1".to_string(),
+            tunnel_token: "tunnel-token".to_string(),
+            hostname: "otter.example.com".to_string(),
+            dns_record_id: None,
+        };
+        write_secret_file(
+            &tunnel_config_path(dir.path()),
+            &serde_json::to_string(&saved).expect("serialize"),
+            "tunnel config",
+        )
+        .expect("write tunnel.json");
+        save_cf_creds(dir.path(), &fake_env()).expect("write cloudflare.json");
+        let other = CloudflareCreds {
+            api_token: "other-token".to_string(),
+            ..fake_env()
+        };
+
+        let kept = provision_tunnel(dir.path(), &other, None).expect("keeps the saved tunnel");
+
+        assert_eq!(kept.hostname, "otter.example.com");
+        assert!(
+            cf_env(dir.path()).ok() == Some(fake_env()),
+            "cloudflare.json must be unchanged"
+        );
+    }
+
+    #[test]
+    fn a_cloudflare_request_sends_the_bearer_token() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}/zones", listener.local_addr().expect("addr"));
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut headers = Vec::new();
+            let mut line = String::new();
+            while reader.read_line(&mut line).expect("read") > 0 && line.trim() != "" {
+                headers.push(line.trim().to_string());
+                line.clear();
+            }
+            let body = r#"{"success":true,"result":[]}"#;
+            write!(
+                &stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("respond");
+            headers
+        });
+
+        let response = cf_request("GET", &url, "tok-1", None).expect("request succeeds");
+        let headers = server.join().expect("server thread");
+
+        assert_eq!(response["success"], true);
+        assert!(
+            headers.iter().any(|h| h == "Authorization: Bearer tok-1"),
+            "{headers:?}"
+        );
+    }
+
+    fn fake_env() -> CloudflareCreds {
+        CloudflareCreds {
+            api_token: "token".to_string(),
+            account_id: "account".to_string(),
+            zone_id: "zone".to_string(),
+        }
+    }
+
+    /// Which Cloudflare step a call is, by method and path.
+    fn cf_step(method: &str, url: &str) -> &'static str {
+        match method {
+            "DELETE" if url.contains("/dns_records/") => "delete record",
+            "DELETE" => "delete tunnel",
+            "GET" => "token",
+            _ if url.ends_with("/dns_records") => "dns",
+            _ => "create",
+        }
+    }
+
+    /// Run the create sequence against a fake Cloudflare that fails at `fail_at` (a step name or
+    /// `persist`); returns the outcome and every step called, in order.
+    fn create_with_failure(
+        fail_at: Option<&str>,
+    ) -> (Result<TunnelConfig, String>, Vec<&'static str>) {
+        let env = fake_env();
+        let mut steps = Vec::new();
+        let result = create_tunnel_records(
+            &mut |method, url, _body| {
+                let step = cf_step(method, url);
+                steps.push(step);
+                if fail_at == Some(step) {
+                    return Err(format!("{step} refused"));
+                }
+                Ok(match step {
+                    "create" => serde_json::json!({"result": {"id": "tunnel-1"}}),
+                    "token" => serde_json::json!({"result": "tunnel-token"}),
+                    "dns" => serde_json::json!({"result": {"id": "record-1"}}),
+                    _ => serde_json::json!({"result": null}),
+                })
+            },
+            &env,
+            "otter",
+            "example.com",
+            |_config| match fail_at {
+                Some("persist") => Err("persist refused".to_string()),
+                _ => Ok(()),
+            },
+        );
+        (result, steps)
+    }
+
+    #[test]
+    fn a_failed_tunnel_setup_deletes_what_it_created() {
+        for (fail_at, expected) in [
+            ("create", vec!["create"]),
+            ("token", vec!["create", "token", "delete tunnel"]),
+            ("dns", vec!["create", "token", "dns", "delete tunnel"]),
+            (
+                "persist",
+                vec!["create", "token", "dns", "delete record", "delete tunnel"],
+            ),
+        ] {
+            let (result, steps) = create_with_failure(Some(fail_at));
+            let error = result.err().unwrap_or_default();
+            assert_eq!(error, format!("{fail_at} refused"), "{fail_at}");
+            assert_eq!(steps, expected, "{fail_at}");
+        }
+    }
+
+    #[test]
+    fn a_successful_tunnel_setup_deletes_nothing() {
+        let (result, steps) = create_with_failure(None);
+        let config = result.expect("setup succeeds");
+        assert_eq!(config.hostname, "otter.example.com");
+        assert_eq!(config.dns_record_id.as_deref(), Some("record-1"));
+        assert_eq!(steps, ["create", "token", "dns"]);
+    }
+
+    #[test]
+    fn a_failed_rollback_still_reports_the_original_error() {
+        let env = fake_env();
+        let error = create_tunnel_records(
+            &mut |method, url, _body| match cf_step(method, url) {
+                "create" => Ok(serde_json::json!({"result": {"id": "tunnel-1"}})),
+                step => Err(format!("{step} refused")),
+            },
+            &env,
+            "otter",
+            "example.com",
+            |_config| Ok(()),
+        )
+        .err()
+        .unwrap_or_default();
+        assert_eq!(error, "token refused");
+    }
 
     #[test]
     fn subdomains_must_be_dns_labels() {
