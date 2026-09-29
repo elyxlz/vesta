@@ -10,6 +10,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/dev-instance.sh up --provider <provider.json> [--agent <name>]
        scripts/dev-instance.sh status | logs | down
+`up` creates a new instance; run `down` first to rebuild an existing one.
 <provider.json> holds the dev agent's own provider object, for example
 {"kind":"claude","credentials":"<its own .credentials.json>"}; never copy a live agent's file.
 EOF
@@ -79,23 +80,28 @@ cmd_up() {
   done
   [[ -n "$provider_file" && -f "$provider_file" ]] || usage
   [[ "$agent" =~ ^[a-z0-9-]+$ ]] || { echo "--agent must match [a-z0-9-]+" >&2; exit 2; }
+  if running; then
+    echo "the dev instance for ${branch} already runs: run \`$0 down\` first to rebuild it" >&2
+    exit 1
+  fi
   mkdir -p "$dev_home"
   echo "building vestad and the agent image for ${branch}..." >&2
   (cd "$repo_root/vestad" && PATH="$HOME/.cargo/bin:$PATH" cargo build -p vestad)
   docker build -q -t "$image" -f "$repo_root/vestad/Dockerfile" "$repo_root" >&2
-  if ! running; then
-    # Invoke `env` directly rather than through the `dev_env` function: a backgrounded call to
-    # a shell function runs in its own subshell, so `$!` would capture that subshell, not
-    # vestad, and killing it later would leave vestad orphaned. `env` execs `nohup`, which
-    # execs vestad, so this way `$!` is vestad's own pid.
-    env HOME="$dev_home" USER="$dev_user" VESTAD_AGENT_IMAGE="$image" \
-      nohup "$vestad_bin" serve --standalone --no-tunnel >"${dev_home}/serve.out" 2>&1 &
-    echo $! >"$pid_file"
-  fi
+  # Invoke `env` directly rather than through the `dev_env` function: a backgrounded call to
+  # a shell function runs in its own subshell, so `$!` would capture that subshell, not
+  # vestad, and killing it later would leave vestad orphaned. `env` execs `nohup`, which
+  # execs vestad, so this way `$!` is vestad's own pid.
+  env HOME="$dev_home" USER="$dev_user" VESTAD_AGENT_IMAGE="$image" \
+    nohup "$vestad_bin" serve --standalone --no-tunnel >"${dev_home}/serve.out" 2>&1 &
+  echo $! >"$pid_file"
   wait_for_gateway
-  local config="${dev_home}/provision.json"
+  # The config holds the provider credentials: remove it once provision has read it.
+  local config="${dev_home}/provision.json" status=0
   (umask 077 && printf '{"agent_name":"%s","provider":%s}' "$agent" "$(cat "$provider_file")" >"$config")
-  dev_env "$vestad_bin" provision "$config"
+  dev_env "$vestad_bin" provision "$config" || status=$?
+  rm -f "$config"
+  return "$status"
 }
 
 cmd_status() {
@@ -136,7 +142,7 @@ cmd_down() {
     # would also match another branch whose slug happens to be a prefix of this one.
     networks=$(printf '%s\n' "$containers" \
       | xargs docker inspect -f '{{range $net, $cfg := .NetworkSettings.Networks}}{{$net}}{{"\n"}}{{end}}' \
-      | sort -u)
+      | sort -u || true)
     printf '%s\n' "$containers" | xargs -r docker rm -f >/dev/null
   fi
   while IFS= read -r net; do
