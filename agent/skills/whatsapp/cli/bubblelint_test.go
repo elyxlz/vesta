@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 // TestBubbleLintPasses pins the sends that must reach the recipient untouched:
 // short bubbles that end at their one mark (or carry none at all), and the
@@ -107,5 +111,20 @@ func TestTextAfterFullStop(t *testing.T) {
 		if got := textAfterFullStop(c.msg); got != c.want {
 			t.Errorf("textAfterFullStop(%q) = %v, want %v", c.msg, got, c.want)
 		}
+	}
+}
+
+// TestBubbleLintURLCountsAsOneToken: a url is one token toward the character cap,
+// so a long link (login, verify, magic link) is one thought, not a wall.
+func TestBubbleLintURLCountsAsOneToken(t *testing.T) {
+	longURL := "https://example.com/verify/abc123?token=" + strings.Repeat("x", bubbleMaxChars)
+	for _, msg := range []string{longURL, "here's the link " + longURL} {
+		if reason := bubbleLintReason(msg); reason != "" {
+			t.Errorf("bubbleLintReason(%d-char url send) = %q, want pass", utf8.RuneCountInString(msg), reason)
+		}
+	}
+	prose := strings.Repeat("so this goes on and on ", 10) + longURL
+	if reason := bubbleLintReason(prose); reason == "" {
+		t.Errorf("bubbleLintReason(prose over the cap plus a url) passed, want a block reason")
 	}
 }
