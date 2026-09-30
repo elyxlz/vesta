@@ -86,4 +86,5 @@ app-chat attachments rm <id> [<id>...] # frees the bytes, keeps the chat history
 - A numbered or bulleted list is fine to send as one bubble (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`
 - Lowercase, no bullets, keep messages tight, texting feel, not document feel
 - Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
+- Links in a message: `https://` (and `http://`) links open in the app's in-app browser (a Google Maps https link still hands off to the Maps app from there); `mailto:`, `tel:` and `sms:` open natively; any other scheme (an app deep link such as `comgooglemaps://`) is refused by the mobile app with a 'Couldn't open link' alert, so send the https form
 - The app reconnects its chat socket automatically if the daemon or agent restarts
