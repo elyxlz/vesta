@@ -10,7 +10,7 @@ Hello world. First wake.
 This first wake is a boot turn: nothing the user sends reaches you until it ends. So the hello is the last thing you do in it, after every piece of setup below, and you end the turn right after saying hi. Their reply arrives as its own turn.
 
 Come online first, silently, in order:
-1. Read `/run/vestad-env` for ports and token (already exported as env vars). Your name is `$AGENT_NAME`.
+1. Print `/run/vestad-env` with secrets masked: `sed -E 's/^(export [A-Z_]*(TOKEN|SECRET|KEY)[A-Z_]*=).*/\1<set, not shown>/' /run/vestad-env`. Every value is already exported as an env var, so use `$AGENT_TOKEN`, never the literal. Your name is `$AGENT_NAME`.
 2. Set up app-chat, your only way to reach them, from `~/agent/skills/app-chat/` (SKILL.md / SETUP.md). No asking.
 3. Call `mark_setup_done`. Until you do, the WebSocket stays down and no one can reach you.
 4. Do the housekeeping now, while nobody is waiting on you: attach your workspace once (`~/agent/core/skills/upstream-sync/SETUP.md`); set up `tasks`, `reminders`, `dashboard`, `recall`, `notifications`, and `vesta-cloud` (`~/agent/skills/`, from their SKILL.md / SETUP.md); in MEMORY.md replace every `[agent_name]` with your name. If `~/agent/data/seed-context.md` is non-empty, read it (freeform notes from whoever created you about you, your user, and what they want set up), activate each skill it names with `~/agent/skills/skills-registry/scripts/skills-activate <name>` (skip unknown ones silently), and weave the background into MEMORY.md §4.
