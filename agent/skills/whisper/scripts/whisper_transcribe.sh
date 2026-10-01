@@ -101,6 +101,16 @@ run_whisper() {
 
 ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" -y 2>/dev/null
 
+# WHISPER_LANGUAGES (comma list, primary first): keep the detected language only if listed, else use the first.
+if [ "$LANGUAGE" = "auto" ] && [ -n "${WHISPER_LANGUAGES:-}" ]; then
+    DETECTED=$("$WHISPER_BIN" -m "$WHISPER_MODEL" -f "$TMP_WAV" -l auto -dl -t "$THREADS" 2>&1 \
+        | sed -nE 's/.*auto-detected language: ([a-z]+).*/\1/p' | head -1)
+    case ",${WHISPER_LANGUAGES// /}," in
+        *",$DETECTED,"*) LANGUAGE="$DETECTED" ;;
+        *) LANGUAGE="${WHISPER_LANGUAGES%%,*}"; LANGUAGE="${LANGUAGE// /}" ;;
+    esac
+fi
+
 ARGS=(-m "$WHISPER_MODEL" -f "$TMP_WAV" -l "$LANGUAGE" -t "$THREADS")
 if [ -n "$TRANSLATE" ]; then
     ARGS+=("$TRANSLATE")
