@@ -340,7 +340,18 @@ def _hit_spans(text: str) -> list[tuple[int, int]]:
 def find_matches(text: str) -> list[str]:
     """Every secret in one string as a masked context snippet. Pure and DB-free, so the DB scan and
     the tests share exactly one detection path."""
-    return [_mask_context(text[max(0, start - CONTEXT_CHARS) : end + CONTEXT_CHARS]) for start, end in _hit_spans(text)]
+    spans = _hit_spans(text)
+    snippets = []
+    for start, end in spans:
+        lo, hi = max(0, start - CONTEXT_CHARS), end + CONTEXT_CHARS
+        # A window edge that slices another hit drops its key name, so re-masking would miss it: widen.
+        for other_start, other_end in spans:
+            if other_start < lo < other_end:
+                lo = other_start
+            if other_start < hi < other_end:
+                hi = other_end
+        snippets.append(_mask_context(text[lo:hi]))
+    return snippets
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:

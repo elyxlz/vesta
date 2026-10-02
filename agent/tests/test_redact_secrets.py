@@ -1339,3 +1339,12 @@ def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monk
 
     assert _file_hits(out) == []
     assert "No secrets found." in out
+
+
+def test_snippet_never_leaks_a_neighbouring_secret_cut_by_the_window():
+    text = '{"accessToken":"' + "A1" * 40 + '","refreshToken":"' + "B2" * 40 + '","expiresAt":1}'
+    matches = redact.find_matches(text)
+    assert len(matches) == 2
+    for snippet in matches:
+        assert "A1A1" not in snippet
+        assert "B2B2" not in snippet
