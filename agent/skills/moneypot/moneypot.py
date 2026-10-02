@@ -424,7 +424,8 @@ def _proportional(net_in: dict[str, int], weights: dict[str, Decimal]) -> dict:
     }
 
 
-def contributions(data, pot_id, account, weights=None) -> dict:
+def contributions(data, pot_id, account, weights=None, since=None) -> dict:
+    """since: ISO date (YYYY-MM-DD); only entries dated on or after it count, for a split that starts mid-history."""
     pot = get_pot(data, pot_id)
     if account not in pot["members"]:
         raise MoneypotError(f"'{account}' is not a member of this pot")
@@ -433,7 +434,8 @@ def contributions(data, pot_id, account, weights=None) -> dict:
         raise MoneypotError("pot has no members besides the account")
     contributed = dict.fromkeys(others, 0)
     owed_back = dict.fromkeys(others, 0)
-    for e in pot["entries"]:
+    entries = [e for e in pot["entries"] if not since or e["ts"][:10] >= since]
+    for e in entries:
         if e["type"] == "transfer":
             if e["to"] == account and e["from"] in contributed:
                 contributed[e["from"]] += e["amount"]
@@ -452,6 +454,7 @@ def contributions(data, pot_id, account, weights=None) -> dict:
         "topup_to_match": {m: target - contributed[m] for m in others},
         "account_owes": {m: owed_back[m] for m in others if owed_back[m] != 0},
         "net_in": net_in,
+        "since": since,
     }
     w = parse_weights(pot, weights) if weights else parse_weights(pot, pot.get("weights"))
     if w:
@@ -621,13 +624,14 @@ def cmd_balance(args):
 
 def cmd_contributions(args):
     data = load()
-    c = contributions(data, args.id, args.account, _weights_map(args.weights) if args.weights else None)
+    c = contributions(data, args.id, args.account, _weights_map(args.weights) if args.weights else None, since=args.since)
     cur = c["currency"]
     if args.json:
         print(json.dumps(c, indent=2))
         return
     pot = data["pots"][args.id]
-    print(f"{pot['name']} [{cur}]  ·  contributions into '{c['account']}'")
+    since_note = f"  ·  since {c['since']}" if c.get("since") else ""
+    print(f"{pot['name']} [{cur}]  ·  contributions into '{c['account']}'{since_note}")
     print(f"  {_rule(44)}")
     for m, amt in c["contributed"].items():
         gap = c["topup_to_match"][m]
@@ -756,6 +760,7 @@ def _add_view_parsers(sub) -> None:
     con.add_argument("id")
     con.add_argument("--account", required=True, help="the pooled-account member, e.g. Joint")
     con.add_argument("--weights", default=None, help="one-off weights, overrides the pot's stored ones")
+    con.add_argument("--since", default=None, help="only count entries dated on or after YYYY-MM-DD")
     con.add_argument("--json", action="store_true")
     con.set_defaults(func=cmd_contributions)
 

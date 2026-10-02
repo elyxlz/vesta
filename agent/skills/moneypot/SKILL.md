@@ -73,7 +73,7 @@ A pooled account (a couple's joint card) is just a member: `--members "Alice,Bob
 
 ### Proportional split
 
-When members should fund the pot in proportion to income rather than equally, store weights once (any positive numbers, e.g. each salary): `moneypot pot weights pot "Alice:90000,Bob:60000"` (`--clear` reverts to equal). `contributions` then adds a section per member: net stake, fair share of the total by weight, over or under, and the top-up that brings everyone into proportion without anyone withdrawing. `--weights` gives one-off weights without storing them. Run the command rather than doing this arithmetic by hand.
+When members should fund the pot in proportion to income rather than equally, store weights once (any positive numbers, e.g. each base salary): `moneypot pot weights pot "Alice:90000,Bob:60000"` (`--clear` reverts to equal). `contributions` then adds a section: each member's net stake (paid in, minus withdrawals, plus out-of-pocket the account owes them), their fair share of the total by weight, over/under, and the top-up that brings everyone into proportion without anyone withdrawing. `--weights` gives one-off weights without storing them. `--since YYYY-MM-DD` counts only entries from that date on, for a split rule that starts mid-history (e.g. a new salary basis from a start date). Never do this arithmetic by hand; run the command and quote it.
 
 `contributions pot --account Joint` then reports who's paid in how much and the top-up the lower one needs to stay level, plus what the account still owes each person:
 
