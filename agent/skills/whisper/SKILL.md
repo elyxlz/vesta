@@ -55,3 +55,6 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
   first, e.g. `en,ar`): auto-detect still picks among them, but a clip detected as any
   other language is transcribed in the first listed one. `WHISPER_LANGUAGE` or
   `--language` still pin a single language
+- `WHISPER_SECONDARY_MIN_P` (e.g. `0.85`, unset by default): with `WHISPER_LANGUAGES`, a listed
+  language other than the first is used only when auto-detect reports at least this
+  probability; below it the first listed language is used
