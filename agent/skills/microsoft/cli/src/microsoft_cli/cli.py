@@ -602,19 +602,33 @@ _COMPACT_FORMATTERS = {
 
 _SEARCH_GAP_NOTE = (
     "NOTE: search does not cover Junk Email or Deleted Items, so an empty result is not proof the message never arrived."
-    " Search those folders directly with `--folder junk` / `--folder deleted`, or add --since/--until, which spans every folder."
+    " Search those folders directly with `--folder junk` / `--folder deleted`, or add --since/--until, which spans every folder"
+    " (but then the text is matched against subject, sender and the short preview only, not the full body)."
+)
+
+_DATED_QUERY_NOTE = (
+    "NOTE: with --since/--until, the search text is matched only against subject, sender and the ~255-character"
+    " preview, not the full body or attachments, so mail that mentions it further down is missed."
+    " For a full-text search drop --since/--until (then also try --folder deleted / --folder junk)."
 )
 
 
 def _warn_result_gaps(args, result) -> None:
-    """Print one stderr NOTE when a list result can hide mail: it fills --limit exactly,
-    or an unfoldered search came back empty (Graph $search skips Junk and Deleted)."""
+    """Print one stderr NOTE when a list result can hide mail: it fills --limit exactly, a dated
+    query matched only subject/sender/preview, or an undated unfoldered search came back empty
+    (Graph $search skips Junk and Deleted)."""
     if not isinstance(result, list):
         return
     attrs = vars(args)
     if "limit" in attrs and len(result) == attrs["limit"]:
         print(f"NOTE: exactly --limit ({attrs['limit']}) items returned; more may exist. Raise --limit to see them.", file=sys.stderr)
-    if result or attrs["group"] != "email":
+    if attrs["group"] != "email":
+        return
+    dated = attrs.get("since") or attrs.get("until")
+    text = attrs.get("query") if attrs["command"] == "search" else attrs.get("search")
+    if dated and text:
+        print(_DATED_QUERY_NOTE, file=sys.stderr)
+    if result or dated:
         return
     unfoldered_search = attrs["command"] == "search" and attrs["folder"] is None
     unfoldered_list_query = attrs["command"] == "list" and attrs["search"] is not None and attrs["folder"] == "inbox"
