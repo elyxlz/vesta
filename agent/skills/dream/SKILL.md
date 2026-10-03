@@ -150,6 +150,17 @@ Replace rather than append: it's a snapshot, not a log. The rolling fields refre
 
 ## Memory Curation
 
+**RUN `~/agent/skills/dream/scripts/memory-guard <candidate-file>` BEFORE EVERY WRITE TO MEMORY.md.**
+Write the proposed new file to a temp path, run the guard, and copy it into place only on exit 0.
+`memory_size.sh` REPORTS the size; this REFUSES a bad write. While the file is over cap a write may
+not add net characters, so an addition has to be paid for by a cut in the same write. It also
+refuses a changed `^## ` header count, because a slice end taken from a marker in a different
+section deletes everything in between, and exits 2 BLIND rather than clean when it cannot read a
+file. `--self-test` control-tests it in both directions: it must allow the good write as well as
+refuse the bad one. Built because "consolidate next time" is easy to issue sincerely and then
+violate: nothing in the loop could refuse the write, so the number stayed visible while the file
+grew anyway.
+
 MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate and cut to at most 85% of it: a trim that stops just under the cap is back at the ceiling after one ordinary day of additions. Don't let it overflow.
 
 **Review what curation removed.** After curating, diff MEMORY.md against the last dream checkpoint: `git log -n1 --format=%H --grep '^dream: nightly checkpoint'`, then `git diff <sha> -- agent/MEMORY.md`. Every removed line needs an answer: graduated into a skill file (say where in tonight's summary), expired, or wrongly dropped, so restore it. `### User State` and the Self `**State**:` line are rewritten nightly by design; skip them. No prior checkpoint, no review. Old versions stay recoverable via `git show <sha>:agent/MEMORY.md`.
