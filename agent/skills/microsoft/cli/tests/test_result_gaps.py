@@ -60,6 +60,9 @@ def test_empty_mailbox_wide_search_warns_about_junk(capsys):
     _out, err = _run(capsys, [], command="search", limit=10, folder=None)
     assert "Junk Email" in err
     assert "Deleted Items" in err
+    assert "email list" not in err
+    assert "--folder deleted" in err
+    assert "--since/--until" in err
 
 
 def test_empty_search_scoped_to_a_folder_is_silent(capsys):
@@ -103,6 +106,24 @@ def test_both_warnings_can_fire_independently(capsys):
     _out, err = _run(capsys, [{"id": i} for i in range(10)], command="search", limit=10, folder=None)
     assert "more may exist" in err
     assert "Junk Email" not in err
+
+
+def test_dated_query_warns_that_only_subject_sender_and_preview_match(capsys):
+    for command, text in (("search", {"query": "budget"}), ("list", {"search": "budget"})):
+        _out, err = _run(capsys, [{"id": "a"}], command=command, limit=10, folder=None, since="2026-03-01", **text)
+        assert "subject, sender" in err
+        assert "drop --since/--until" in err
+
+
+def test_empty_dated_search_does_not_suggest_adding_dates(capsys):
+    _out, err = _run(capsys, [], command="search", limit=10, folder=None, query="budget", since=None, until="2026-03-01")
+    assert "drop --since/--until" in err
+    assert "Junk Email" not in err
+
+
+def test_dated_list_without_a_query_is_silent(capsys):
+    _out, err = _run(capsys, [{"id": "a"}], command="list", limit=10, folder="inbox", since="2026-03-01")
+    assert err == ""
 
 
 # --- the scan cap ----------------------------------------------------------------------------
