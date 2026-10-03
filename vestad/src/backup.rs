@@ -35,9 +35,7 @@ pub fn agent_file_lock(name: &str) -> Result<nix::fcntl::Flock<File>, DockerErro
 /// fs (`docker export`), so size off that; later snapshots only write the diff,
 /// so the writable-layer size is an adequate floor.
 async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<(), DockerError> {
-    let repo_fs = crate::restic::repo_root();
-    std::fs::create_dir_all(&repo_fs)
-        .map_err(|e| DockerError::Failed(format!("failed to create backup dir: {e}")))?;
+    let repo_fs = crate::restic::ready_repo_root()?;
 
     let stat = nix::sys::statvfs::statvfs(repo_fs.as_path())
         .map_err(|e| DockerError::Failed(format!("failed to check disk space: {e}")))?;

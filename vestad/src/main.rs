@@ -301,8 +301,7 @@ fn report_import(outcome: &agent_bundle::ImportOutcome) {
 /// Run `docker <args>` with the parent's stdio inherited (for interactive TTY
 /// sessions), exiting with the child's code if it fails.
 fn docker_exec_inherit(args: &[&str]) {
-    let status = docker::cli_command()
-        .unwrap_or_else(|e| die(&e))
+    let status = std::process::Command::new("docker")
         .args(args)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
@@ -848,6 +847,7 @@ fn init_tracing() {
 
 fn main() {
     dotenvy::dotenv().ok();
+    docker::export_docker_host();
 
     init_tracing();
 

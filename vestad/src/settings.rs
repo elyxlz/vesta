@@ -191,8 +191,8 @@ fn settings_file() -> std::path::PathBuf {
 }
 
 /// The stored settings, or `None` when the file is missing or corrupt. No write-back, so hot paths
-/// (every docker CLI run, every restic repo lookup) can read it.
-fn read_settings() -> Option<Settings> {
+/// (every restic repo lookup) and the docker socket export at the top of `main` can read it.
+pub(crate) fn read_settings() -> Option<Settings> {
     let path = settings_file();
     let data = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str::<Settings>(&data)
@@ -206,10 +206,6 @@ pub(crate) fn load_settings() -> Settings {
     // Always write back: it persists fields added with defaults and leaves a file users can edit.
     save_settings(&settings);
     settings
-}
-
-pub(crate) fn docker_socket_setting() -> Option<String> {
-    read_settings().and_then(|settings| settings.docker_socket)
 }
 
 pub(crate) fn backup_repo_dir_setting() -> Option<std::path::PathBuf> {

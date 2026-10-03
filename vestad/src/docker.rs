@@ -468,36 +468,43 @@ pub struct ListEntry {
 
 // --- Docker connection ---
 
-/// The daemon socket vestad talks to: a `unix://` socket stored as `docker_socket` in
-/// settings.json, else the system socket. A non-unix value is refused rather than ignored, since
-/// ignoring it would silently split vestad across two daemons.
-pub(crate) fn socket_for(docker_socket: Option<&str>) -> Result<String, DockerError> {
-    match docker_socket.map(str::trim).filter(|socket| !socket.is_empty()) {
-        None => Ok(DEFAULT_DOCKER_SOCKET.to_string()),
-        Some(socket) if socket.starts_with("unix://") => Ok(socket.to_string()),
-        Some(socket) => Err(DockerError::Failed(format!(
-            "docker socket {socket} is not supported: vestad only connects to a local unix socket (unix:///path/to/docker.sock)"
-        ))),
-    }
+/// The socket a stored `docker_socket` names, trimmed, or the system socket when it names none.
+pub(crate) fn socket_or_default(docker_socket: Option<&str>) -> &str {
+    docker_socket
+        .map(str::trim)
+        .filter(|socket| !socket.is_empty())
+        .unwrap_or(DEFAULT_DOCKER_SOCKET)
 }
 
-pub(crate) fn configured_socket() -> Result<String, DockerError> {
-    socket_for(crate::settings::docker_socket_setting().as_deref())
+/// The daemon socket vestad talks to, refused unless it is a `unix://` socket: vestad only
+/// connects to a local daemon, and ignoring a remote one would split vestad across two daemons.
+pub(crate) fn socket_for(docker_socket: Option<&str>) -> Result<String, DockerError> {
+    let socket = socket_or_default(docker_socket);
+    if socket.starts_with("unix://") {
+        return Ok(socket.to_string());
+    }
+    Err(DockerError::Failed(format!(
+        "docker socket {socket} is not supported: vestad only connects to a local unix socket (unix:///path/to/docker.sock)"
+    )))
+}
+
+/// The filesystem path of a `unix://` socket.
+pub(crate) fn socket_file(socket: &str) -> &std::path::Path {
+    std::path::Path::new(socket.trim_start_matches("unix://"))
+}
+
+/// Export `docker_socket` from settings.json as this process's `DOCKER_HOST`, overriding any
+/// inherited `DOCKER_HOST` or docker context, so `connect` and every docker CLI child reach one
+/// daemon for the whole run. Call once at the top of `main`, before any thread exists.
+pub fn export_docker_host() {
+    let stored = crate::settings::read_settings().and_then(|settings| settings.docker_socket);
+    std::env::set_var("DOCKER_HOST", socket_or_default(stored.as_deref()));
 }
 
 pub fn connect() -> Result<Docker, DockerError> {
-    let socket = configured_socket()?;
+    let socket = socket_for(std::env::var("DOCKER_HOST").ok().as_deref())?;
     Docker::connect_with_socket(&socket, DOCKER_TIMEOUT_SECS, bollard::API_DEFAULT_VERSION)
         .map_err(|e| DockerError::Failed(format!("failed to connect to docker at {socket}: {e}")))
-}
-
-/// A `docker` CLI command pinned to the configured socket. Every docker CLI run goes through here,
-/// so an inherited `DOCKER_HOST` or docker context can never point the CLI at another daemon than
-/// the API client.
-pub fn cli_command() -> Result<std::process::Command, DockerError> {
-    let mut cmd = std::process::Command::new("docker");
-    cmd.env("DOCKER_HOST", configured_socket()?);
-    Ok(cmd)
 }
 
 pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
@@ -995,13 +1002,13 @@ fn is_dockerignored(rel_path: &str, ignore: &Dockerignore) -> bool {
 async fn verify_image_runnable(image: &str) -> Result<(), DockerError> {
     let image = image.to_string();
     let output = tokio::task::spawn_blocking(move || {
-        cli_command()?
+        std::process::Command::new("docker")
             .args(["run", "--rm", &image, "/bin/true"])
             .output()
-            .map_err(|e| DockerError::Failed(format!("image sanity check failed to run: {e}")))
     })
     .await
-    .map_err(|e| DockerError::Failed(format!("image sanity check task failed: {e}")))??;
+    .map_err(|e| DockerError::Failed(format!("image sanity check task failed: {e}")))?
+    .map_err(|e| DockerError::Failed(format!("image sanity check failed to run: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1975,7 +1982,7 @@ pub(crate) async fn ensure_egress_image(docker: &Docker) -> Result<String, Docke
 
 async fn import_image_tar(tar: Vec<u8>, tag: &str) -> Result<(), DockerError> {
     use tokio::io::AsyncWriteExt;
-    let mut child = tokio::process::Command::from(import_container_fs_tar_cmd(tag)?)
+    let mut child = tokio::process::Command::from(import_container_fs_tar_cmd(tag))
         .spawn()
         .map_err(|e| DockerError::Failed(format!("failed to spawn docker import: {e}")))?;
     let mut stdin = child
@@ -2449,7 +2456,7 @@ pub async fn snapshot_container(
         std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || {
             retry_import_pipeline("docker snapshot", || {
-                let mut export_child = cli_command()?
+                let mut export_child = std::process::Command::new("docker")
                     .args(["export", &cname])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
@@ -2470,7 +2477,7 @@ pub async fn snapshot_container(
                 import_args.push("-".to_string());
                 import_args.push(tag.clone());
 
-                let import_output = cli_command()?
+                let import_output = std::process::Command::new("docker")
                     .args(&import_args)
                     .stdin(export_stdout)
                     .output()
@@ -2511,7 +2518,7 @@ pub async fn export_container_to_file(
         tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
             let file = std::fs::File::create(&output_path)
                 .map_err(|e| DockerError::Failed(format!("failed to create export file: {e}")))?;
-            let out = cli_command()?
+            let out = std::process::Command::new("docker")
                 .args(["export", &cname])
                 .stdout(std::process::Stdio::from(file))
                 .stderr(std::process::Stdio::piped())
@@ -2545,13 +2552,13 @@ pub async fn export_container_to_file(
 
 /// The `docker import - <image_ref>` command a caller feeds a flat filesystem tar into.
 /// Stdin is piped so the reader owns the stream; `finish_import_output` reads the result.
-pub fn import_container_fs_tar_cmd(image_ref: &str) -> Result<std::process::Command, DockerError> {
-    let mut cmd = cli_command()?;
+pub fn import_container_fs_tar_cmd(image_ref: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("docker");
     cmd.args(["import", "-", image_ref])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    Ok(cmd)
+    cmd
 }
 
 /// Map a finished `import_container_fs_tar_cmd` run to a result, naming docker's stderr.
@@ -3764,20 +3771,6 @@ mod tests {
     }
 
     #[test]
-    fn cli_command_pins_docker_host_to_the_configured_socket() {
-        let cmd = cli_command().unwrap();
-        let docker_host = cmd
-            .get_envs()
-            .find(|(key, _)| *key == "DOCKER_HOST")
-            .and_then(|(_, value)| value)
-            .map(std::ffi::OsStr::to_string_lossy);
-        assert_eq!(
-            docker_host.as_deref(),
-            Some(configured_socket().unwrap().as_str())
-        );
-    }
-
-    #[test]
     fn agent_network_name_is_prefixed_scoped_by_user_and_stable() {
         let name = agent_network_name("ada");
         assert!(name.starts_with("vesta-agent-"));
@@ -4558,7 +4551,7 @@ mod tests {
 
     #[test]
     fn import_container_fs_tar_cmd_reads_the_tar_from_stdin() {
-        let cmd = import_container_fs_tar_cmd("vesta-restore:ada").unwrap();
+        let cmd = import_container_fs_tar_cmd("vesta-restore:ada");
         assert_eq!(cmd.get_program(), "docker");
         let args: Vec<_> = cmd.get_args().map(std::ffi::OsStr::to_string_lossy).collect();
         assert_eq!(args, ["import", "-", "vesta-restore:ada"]);
@@ -4974,8 +4967,7 @@ mod tests {
 
     /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
     fn docker_cleanup(args: &[&str]) {
-        cli_command()
-            .unwrap()
+        std::process::Command::new("docker")
             .args(args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -5046,8 +5038,7 @@ mod tests {
 
     impl Drop for TestSnapshotPrefix {
         fn drop(&mut self) {
-            let Ok(out) = cli_command()
-                .unwrap()
+            let Ok(out) = std::process::Command::new("docker")
                 .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
                 .output()
             else {
@@ -5117,16 +5108,14 @@ mod tests {
         header.set_cksum();
         builder.append_data(&mut header, "hello.txt", &b"hello"[..]).expect("append");
         builder.into_inner().expect("finish tar");
-        let status = cli_command()
-            .unwrap()
+        let status = std::process::Command::new("docker")
             .args(["import", &fs_tar.display().to_string(), &img.tag])
             .status()
             .expect("docker import runs");
         assert!(status.success());
 
         let saved = dir.path().join("image.tar");
-        let save_status = cli_command()
-            .unwrap()
+        let save_status = std::process::Command::new("docker")
             .args(["save", "-o", &saved.display().to_string(), &img.tag])
             .status()
             .expect("docker save runs");
@@ -5322,8 +5311,7 @@ mod tests {
         let network = agent_network_name(&agent);
         let v6_subnet = format!("fd00:e6e5:{:x}::/64", std::process::id() % 0xffff);
         let v4_subnet = format!("10.254.{}.0/24", std::process::id() % 250);
-        let created = cli_command()
-            .unwrap()
+        let created = std::process::Command::new("docker")
             .args([
                 "network", "create", "--ipv6", "--subnet", &v6_subnet, "--subnet", &v4_subnet,
                 &network,
@@ -5930,8 +5918,7 @@ mod tests {
             // that would matter is if the two containers shared a network, and they don't.
             // `docker exec -d` backgrounds the process inside the container and returns
             // immediately, so this doesn't block on the long-running server.
-            let status = cli_command()
-                .unwrap()
+            let status = std::process::Command::new("docker")
                 .args(["exec", "-d", &tc.name, "python3", "-m", "http.server"])
                 .arg(SHARED_PORT.to_string())
                 .status()
@@ -6924,8 +6911,7 @@ mod tests {
     /// Run `docker exec <cname> <args>` via the CLI (same idiom as `docker_cleanup`) and
     /// capture the outcome for assertions.
     fn docker_exec(cname: &str, args: &[&str]) -> ExecResult {
-        let output = cli_command()
-            .unwrap()
+        let output = std::process::Command::new("docker")
             .arg("exec")
             .arg(cname)
             .args(args)

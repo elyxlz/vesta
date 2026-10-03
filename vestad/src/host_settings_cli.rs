@@ -65,6 +65,8 @@ fn apply_with_service_stopped(
     if was_active {
         crate::systemd::start()?;
         crate::systemd::wait_for_start()?;
+    } else {
+        eprintln!("vestad is not running; it uses the new value when it starts (run `vestad`).");
     }
     Ok(())
 }
@@ -96,7 +98,8 @@ pub fn run_backup_dir(action: HostSettingAction) -> Result<String, String> {
 }
 
 pub fn run_docker_socket(action: HostSettingAction, agents_dir: &Path) -> Result<String, String> {
-    let current = crate::docker::configured_socket().map_err(|e| e.to_string())?;
+    let stored_now = crate::settings::read_settings().and_then(|settings| settings.docker_socket);
+    let current = crate::docker::socket_or_default(stored_now.as_deref()).to_string();
     let stored = match action {
         HostSettingAction::Show => return Ok(current),
         HostSettingAction::Reset => None,
@@ -105,6 +108,13 @@ pub fn run_docker_socket(action: HostSettingAction, agents_dir: &Path) -> Result
     let target = crate::docker::socket_for(stored.as_deref()).map_err(|e| e.to_string())?;
     let agent_count = crate::docker::env_file_names(agents_dir).len();
     if plan_docker_socket(&current, agent_count, &target)? {
+        let socket_path = crate::docker::socket_file(&target);
+        if !socket_path.exists() {
+            return Err(format!(
+                "no docker socket at {}; start that docker daemon first",
+                socket_path.display()
+            ));
+        }
         apply_with_service_stopped(|settings| settings.docker_socket = stored)?;
     }
     Ok(format!("vestad talks to docker at {target}"))

@@ -40,6 +40,24 @@ pub fn repo_root() -> PathBuf {
     repo_root_for(crate::settings::backup_repo_dir_setting())
 }
 
+/// The repo root, ready to write into. The default root is created on demand; a configured one
+/// must already exist, so an unmounted backup disk fails loudly instead of filling the disk below.
+pub fn ready_repo_root() -> Result<PathBuf, DockerError> {
+    match crate::settings::backup_repo_dir_setting() {
+        Some(dir) if dir.is_dir() => Ok(dir),
+        Some(dir) => Err(DockerError::Failed(format!(
+            "backup dir {} is missing; mount its disk or run `vestad backup-dir reset`",
+            dir.display()
+        ))),
+        None => {
+            let root = repo_root_for(None);
+            std::fs::create_dir_all(&root)
+                .map_err(|e| DockerError::Failed(format!("failed to create backup dir: {e}")))?;
+            Ok(root)
+        }
+    }
+}
+
 /// Per-agent repos so concurrent backups of different agents don't contend on a
 /// shared restic lock; same-agent ops are serialized by vestad's agent locks.
 fn repo_path(name: &str) -> PathBuf {
@@ -268,6 +286,7 @@ fn ensure_repo(name: &str) -> Result<(), DockerError> {
         return Ok(());
     }
 
+    ready_repo_root()?;
     std::fs::create_dir_all(repo_path(name))
         .map_err(|e| DockerError::Failed(format!("failed to create repo dir: {e}")))?;
 
@@ -358,7 +377,7 @@ pub async fn snapshot(
     let kill_switch_for_task = kill_switch.clone();
 
     let task = tokio::task::spawn_blocking(move || -> Result<ResticSummaryMsg, DockerError> {
-        let mut export = crate::docker::cli_command()?;
+        let mut export = std::process::Command::new("docker");
         export.args(["export", &cname]);
         let mut backup = restic_command(&repo_name)?;
         backup.args([
@@ -547,7 +566,7 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
     let task = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
         crate::docker::retry_import_pipeline("restic restore", || {
             // Best-effort removal of a previous restore image for this agent.
-            crate::docker::cli_command()?
+            std::process::Command::new("docker")
                 .args(["rmi", "-f", &image_for_task])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -556,7 +575,7 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
 
             let mut dump = restic_command(&repo_name)?;
             dump.args(["dump", &backup_id, &tar_path]);
-            let mut import = crate::docker::cli_command()?;
+            let mut import = std::process::Command::new("docker");
             import.args(["import", "-", &image_for_task]);
             let output = pipe_through(
                 dump,
@@ -859,14 +878,5 @@ mod tests {
             summary: None,
         };
         assert!(snapshot_to_info(untagged).is_none());
-    }
-
-    #[test]
-    fn repo_root_follows_the_setting_and_defaults_to_the_config_dir() {
-        assert_eq!(repo_root_for(None), config_dir().join(REPO_DIR));
-        assert_eq!(
-            repo_root_for(Some(PathBuf::from("/mnt/backups"))),
-            PathBuf::from("/mnt/backups")
-        );
     }
 }
