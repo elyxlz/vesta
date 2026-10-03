@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Report facts that vanished from MEMORY.md's User State in the nightly rewrite.
+
+WHY THIS EXISTS. The memory-curation review diffs MEMORY.md against the last dream checkpoint and
+answers for every removed line, but it explicitly SKIPS `### User State` and the Self `**State**:`
+line because those are rewritten nightly by design. **So the one section that holds live open
+threads is the one section nothing audits.**
+
+Measured case: a User State carried a sentence recording that a sent email had gone out empty. The
+next night's rewrite dropped it, the fact existed in no task metadata, and the whole question was
+re-investigated from scratch the following day. Prose deferrals vanish; this makes the vanishing
+visible.
+
+Run it AFTER rewriting User State, BEFORE writing the summary. For each vanished fact, either it
+graduated into a task or contact file (say where) or it is genuinely closed (say so). "I rewrote the
+snapshot" is not an answer: a snapshot may drop a stale fact, never a live one.
+
+Exit codes: 0 nothing vanished, 1 something vanished and needs judging, 2 the check could not run.
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import NoReturn
+
+HOME = Path.home()
+MEMORY = HOME / "agent" / "MEMORY.md"
+START = "### User State"
+# A fact survives if this share of its distinctive tokens still appears in the new block.
+SURVIVAL_RATIO = 0.8
+
+
+def fail(msg: str) -> NoReturn:
+    print(f"CHECK FAILED: {msg}")
+    sys.exit(2)
+
+
+def section(text: str) -> str:
+    i = text.find(START)
+    if i < 0:
+        return ""
+    # end at the next sibling '### ' heading, never at a '## ' from another section
+    j = text.find("\n### ", i + len(START))
+    return text[i:j] if j > 0 else text[i:]
+
+
+def facts(block: str) -> list[str]:
+    """Sentences carrying something checkable: an id, a number, or a shouted claim.
+
+    NORMALISE WHITESPACE BEFORE SPLITTING. MEMORY.md is hard-wrapped at about 100 characters, so
+    splitting on "\\n" cuts sentences mid-phrase. The first build of this script did exactly that
+    and FAILED its own control: the control sentence was cut in two and its one load-bearing word
+    ended up in a different fragment, so the detector could not see it disappear. A phrase search is
+    defeated by the text's SHAPE, not its content.
+    """
+    out = []
+    for raw in re.split(r"(?<=[.!?])\s+", " ".join(block.split())):
+        s = re.sub(r"\*+", "", " ".join(raw.split())).strip()
+        if len(s) < 25:
+            continue
+        if re.search(r"[0-9a-f]{8}|\b[A-Z]{3,}\b|\d", s):
+            out.append(s)
+    return out
+
+
+def git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(HOME), *args], capture_output=True, text=True, check=False)
+
+
+def main() -> None:
+    if not MEMORY.is_file():
+        fail(f"{MEMORY} not found")
+    rel = MEMORY.relative_to(HOME).as_posix()
+    head = git("log", "-n1", "--format=%H", "--", rel)
+    sha = head.stdout.strip()
+    if head.returncode != 0 or not sha:
+        fail(f"could not find the last commit touching {rel}")
+    old = git("show", f"{sha}:{rel}")
+    if old.returncode != 0:
+        fail(f"could not read {rel} at {sha[:8]}")
+
+    old_block, new_block = section(old.stdout), section(MEMORY.read_text())
+    if not old_block or not new_block:
+        fail(f"could not locate '{START}' in one of the two versions")
+
+    old_facts = facts(old_block)
+    new_text = " ".join(new_block.split()).lower()
+    vanished = []
+    for fact in old_facts:
+        tokens = [w.lower().strip("`'") for w in re.findall(r"[A-Za-z0-9`']{5,}", fact)]
+        tokens = [w for w in tokens if w]
+        if not tokens:
+            continue
+        kept = sum(1 for w in tokens if w in new_text)
+        missing_caps = [c for c in re.findall(r"\b[A-Z]{4,}\b", fact) if c.lower() not in new_text]
+        # Err toward showing: a missed vanished fact costs a re-investigation, a false flag costs a
+        # glance. A SHOUTED word going missing is the strongest single signal, because ALL CAPS is
+        # how the load-bearing claim is written in this file.
+        if kept / len(tokens) < SURVIVAL_RATIO or missing_caps:
+            vanished.append(fact)
+
+    print(f"compared against {sha[:8]}: {len(old_facts)} fact-bearing sentence(s) in the old User State, {len(vanished)} no longer represented")
+    if not vanished:
+        print("CLEAN: every fact-bearing sentence from the previous User State is still represented")
+        sys.exit(0)
+    print("\nJudge each: graduated to a task or contact file (name it), or genuinely closed (say so).\n")
+    for fact in vanished:
+        print(f"  VANISHED  {fact[:200]}")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
