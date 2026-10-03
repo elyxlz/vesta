@@ -1348,3 +1348,10 @@ def test_snippet_never_leaks_a_neighbouring_secret_cut_by_the_window():
     for snippet in matches:
         assert "A1A1" not in snippet
         assert "B2B2" not in snippet
+
+
+def test_redaction_masks_a_labelled_grouped_card_whole():
+    # Public test PAN: the label pattern stops at the first space, so a sequential card pass saw only the tail.
+    text = "card password=4111 1111 1111 1111 on file"
+    assert redact._redact_text(text) == "card [REDACTED] on file"
+    assert all("1111" not in snippet for snippet in redact.find_matches(text))
