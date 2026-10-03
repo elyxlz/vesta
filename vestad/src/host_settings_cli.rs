@@ -1,6 +1,6 @@
 //! `vestad backup-dir` and `vestad docker-socket`: the two host-layout settings in settings.json.
-//! A change stops the service, writes the setting, and starts the service again, so one daemon
-//! run never sees two values and never saves its old copy of the settings over the new one.
+//! A change writes the setting while no vestad runs, so one daemon run never sees two values and
+//! never saves its old copy of the settings over the new one.
 
 use std::path::{Path, PathBuf};
 
@@ -52,23 +52,35 @@ fn has_entries(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
 }
 
-fn apply_with_service_stopped(
+/// Apply the change while no vestad runs: a systemd service is stopped and started again, and
+/// the `vestad.pid` lock every running vestad holds proves no other one (a `--standalone` run)
+/// is up to save its old copy of the settings over the new value.
+fn apply_with_vestad_stopped(
     change: impl FnOnce(&mut crate::settings::Settings),
 ) -> Result<(), String> {
     let was_active = crate::systemd::is_active();
     if was_active {
         crate::systemd::stop()?;
     }
-    let mut settings = crate::settings::load_settings();
-    change(&mut settings);
-    crate::settings::save_settings(&settings);
+    let written = write_under_vestad_lock(change);
     if was_active {
         crate::systemd::start()?;
         crate::systemd::wait_for_start()?;
-    } else {
+    } else if written.is_ok() {
         eprintln!("vestad is not running; it uses the new value when it starts (run `vestad`).");
     }
-    Ok(())
+    written
+}
+
+fn write_under_vestad_lock(
+    change: impl FnOnce(&mut crate::settings::Settings),
+) -> Result<(), String> {
+    let _lock = crate::serve::acquire_pid_lock(&crate::paths::config_dir_or_relative()).map_err(|err| {
+        format!("{err}; stop the vestad running outside systemd (`vestad serve --standalone`), then run this again")
+    })?;
+    let mut settings = crate::settings::load_settings();
+    change(&mut settings);
+    crate::settings::write_settings(&settings)
 }
 
 pub fn run_backup_dir(action: HostSettingAction) -> Result<String, String> {
@@ -92,7 +104,7 @@ pub fn run_backup_dir(action: HostSettingAction) -> Result<String, String> {
     };
     let target = crate::restic::repo_root_for(stored.clone());
     if plan_backup_dir(&current, has_entries(&current), &target)? {
-        apply_with_service_stopped(|settings| settings.backup.repo_dir = stored)?;
+        apply_with_vestad_stopped(|settings| settings.backup.repo_dir = stored)?;
     }
     Ok(format!("backups go to {}", target.display()))
 }
@@ -115,7 +127,7 @@ pub fn run_docker_socket(action: HostSettingAction, agents_dir: &Path) -> Result
                 socket_path.display()
             ));
         }
-        apply_with_service_stopped(|settings| settings.docker_socket = stored)?;
+        apply_with_vestad_stopped(|settings| settings.docker_socket = stored)?;
     }
     Ok(format!("vestad talks to docker at {target}"))
 }
@@ -123,6 +135,13 @@ pub fn run_docker_socket(action: HostSettingAction, agents_dir: &Path) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_running_vestads_pid_lock_blocks_the_setter() {
+        let dir = tempfile::tempdir().unwrap();
+        let _running = crate::serve::acquire_pid_lock(dir.path()).unwrap();
+        assert!(crate::serve::acquire_pid_lock(dir.path()).is_err());
+    }
 
     #[test]
     fn backup_dir_moves_when_the_current_root_holds_no_repos() {

@@ -847,6 +847,8 @@ fn init_tracing() {
 
 fn main() {
     dotenvy::dotenv().ok();
+    let cli = Cli::parse();
+    settings::check_stored_settings().unwrap_or_else(|e| die(e));
     docker::export_docker_host();
 
     init_tracing();
@@ -854,8 +856,6 @@ fn main() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install crypto provider");
-
-    let cli = Cli::parse();
 
     match cli.command.unwrap_or(Command::Serve {
         port: None,
