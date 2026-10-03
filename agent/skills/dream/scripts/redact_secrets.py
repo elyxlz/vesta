@@ -8,8 +8,10 @@ Usage: redact_secrets.py            # scan every source present, printing each h
        redact_secrets.py --show REF # print one row's full text with every detected secret masked
        redact_secrets.py --scrub REF [REF ...]   # redact every secret in those rows
        redact_secrets.py --scrub-literal 'VALUE'   # redact one known value the scanner can't detect
+       redact_secrets.py --skip REF [REF ...]  # mark reviewed-benign row refs so the scan stops re-reporting them
 """
 
+import contextlib
 import dataclasses
 import json
 import re
@@ -43,6 +45,13 @@ REDACTED = "[REDACTED]"
 # The shortest value --scrub-literal accepts: the rewrite is DB-wide, so a tiny literal ("a", "key")
 # would splice the placeholder through unrelated text across the entire history.
 MIN_LITERAL_LEN = 6
+# Adjudicated false-positive refs: rows the agent reviewed and judged benign (Italian prose
+# containing "password", a header NAME, a base64 reasoning signature). One per line in
+# ~/.secrets/redact_skip_refs.txt (mode 600), exactly as the scan printed it. Row content is
+# immutable in these stores, so a skipped ref can never gain a real secret later; new FP text
+# lands in a new row and gets adjudicated on its own. Read at scan time, so appending a line
+# retro-covers the whole report on the next run without retyping anything.
+SKIP_LIST = Path("~/.secrets/redact_skip_refs.txt").expanduser()
 # The rows events_fts indexes, and the column each is indexed by (mirrors the triggers in
 # core/events.py): conversational events by $.text, non-core notifications by $.summary. The
 # schema has insert/delete triggers only, so an in-place UPDATE must resync the index itself:
@@ -695,6 +704,46 @@ def _parse_ref(token: str) -> tuple[str, str, int]:
     return (store_name, table, int(tail))
 
 
+def _skip_refs() -> set[str]:
+    """Adjudicated refs from the sidecar list; a missing list skips nothing."""
+    try:
+        lines = SKIP_LIST.read_text().splitlines()
+    except FileNotFoundError:
+        return set()
+    return {ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")}
+
+
+def _append_skip_refs(tokens: list[str]) -> int:
+    """Append refs to the sidecar list, deduped against what is already there. Returns how many
+    were actually added, so a re-run of the same adjudication is a visible no-op."""
+    fresh = [t for t in dict.fromkeys(tokens) if t not in _skip_refs()]
+    if fresh:
+        SKIP_LIST.parent.mkdir(parents=True, exist_ok=True)
+        with SKIP_LIST.open("a") as fh:
+            fh.writelines(f"{token}\n" for token in fresh)
+        with contextlib.suppress(OSError):
+            SKIP_LIST.chmod(0o600)
+    return len(fresh)
+
+
+def _run_skip(tokens: list[str]) -> int:
+    """Mark refs as reviewed-benign. Only mutable-content refs are refused (via _parse_ref): a DB
+    row is immutable, so hiding its hit forever is safe, while a file: or transcript: ref names
+    content that can change under the same name and must keep being reported."""
+    if not tokens:
+        print("usage: redact_secrets.sh --skip <ref> <ref> ...   (a numeric event id or store:table:rowid)", file=sys.stderr)
+        return 1
+    for token in tokens:
+        try:
+            _parse_ref(token)
+        except ValueError as exc:
+            print(f"bad reference {exc}", file=sys.stderr)
+            return 1
+    added = _append_skip_refs(tokens)
+    print(f"Added {added} ref(s) to the FP skip list ({SKIP_LIST}).")
+    return 0
+
+
 def _scrub_store(conn: sqlite3.Connection, store: Store, refs: list[tuple[str, int]]) -> tuple[int, int]:
     """Scrub the given rows of one store and verify the outcome, returning (rows changed, exit
     code). JSON-event stores go through the id-keyed JSON path with their FTS resync; everything
@@ -1009,13 +1058,17 @@ def _run_scan() -> int:
             line += f", {len(report.hits)} hit(s)"
         print(line)
     partial = [report for report in reports if not report.status.startswith(("scanned", "absent"))]
-    hits = [hit for report in reports for hit in report.hits]
+    skipped = _skip_refs()
+    every = [hit for report in reports for hit in report.hits]
+    hits = [hit for hit in every if hit[0] not in skipped]
+    if len(every) > len(hits):
+        print(f"({len(every) - len(hits)} adjudicated false-positive hit(s) suppressed; see --skip)")
     if not hits:
         print("No secrets found." if not partial else "No secrets found in what was scanned; the coverage above shows what was not.")
         return 0
     refs = {token for token, _ in hits}
     print(f"Found {len(refs)} record(s) with potential secrets (value masked below).")
-    print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <ref> <ref> ...")
+    print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <ref> <ref> ...; a benign row is retired with --skip.")
     if any(token.startswith(READ_ONLY_REF_PREFIXES) for token in refs):
         print(
             "NOTE: file: and transcript: refs are read-only, --scrub refuses them. Judge a file hit from its snippet and remove a\n"
@@ -1036,6 +1089,8 @@ def main() -> int:
         return _run_scrub(args[1:])
     if args[:1] == ["--scrub-literal"]:
         return _run_scrub_literal(args[1:])
+    if args[:1] == ["--skip"]:
+        return _run_skip(args[1:])
     return _run_scan()
 
 
