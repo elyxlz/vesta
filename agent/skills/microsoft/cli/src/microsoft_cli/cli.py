@@ -460,6 +460,12 @@ def _add_calendar_update_parser(cal_sub) -> None:
         "--reminder-off", dest="reminder_on", action="store_false", default=None, help="Turn the event reminder off."
     )
     p_update_event.add_argument("--reminder-minutes", type=int, default=None, help="Minutes before start to fire the reminder.")
+    p_update_event.add_argument(
+        "--add-attendee", dest="add_attendees", action="append", default=None, metavar="EMAIL", help="Invite an attendee (repeatable)."
+    )
+    p_update_event.add_argument(
+        "--remove-attendee", dest="remove_attendees", action="append", default=None, metavar="EMAIL", help="Remove an attendee (repeatable)."
+    )
 
 
 def _add_teams_parsers(group):
@@ -981,6 +987,8 @@ def _calendar_routes():
                     timezone=a.timezone,
                     reminder_on=a.reminder_on,
                     reminder_minutes=a.reminder_minutes,
+                    add_attendees=a.add_attendees,
+                    remove_attendees=a.remove_attendees,
                 ),
             },
         ),
