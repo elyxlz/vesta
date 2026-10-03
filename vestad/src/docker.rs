@@ -468,24 +468,41 @@ pub struct ListEntry {
 
 // --- Docker connection ---
 
-/// The daemon socket vestad's API client talks to: `DOCKER_HOST` when it names a unix socket, else
-/// the default socket. The `docker` CLI that vestad shells out to (export, import, commit plumbing)
-/// already honours `DOCKER_HOST`, so reading it here keeps the API client and the CLI on the same
-/// daemon. That is what lets a second vestad (another host user) drive a separate dockerd, e.g. one
-/// whose data-root sits on another disk. A non-unix `DOCKER_HOST` is refused rather than ignored:
-/// ignoring it would silently split vestad across two daemons.
-fn docker_socket(docker_host: Option<&str>) -> Result<String, DockerError> {
-    match docker_host.map(str::trim).filter(|host| !host.is_empty()) {
-        None => Ok(DEFAULT_DOCKER_SOCKET.to_string()),
-        Some(host) if host.starts_with("unix://") => Ok(host.to_string()),
-        Some(host) => Err(DockerError::Failed(format!(
-            "DOCKER_HOST={host} is not supported: vestad only connects to a local unix socket (unix:///path/to/docker.sock)"
-        ))),
+/// The socket a stored `docker_socket` names, trimmed, or the system socket when it names none.
+pub(crate) fn socket_or_default(docker_socket: Option<&str>) -> &str {
+    docker_socket
+        .map(str::trim)
+        .filter(|socket| !socket.is_empty())
+        .unwrap_or(DEFAULT_DOCKER_SOCKET)
+}
+
+/// The daemon socket vestad talks to, refused unless it is a `unix://` socket: vestad only
+/// connects to a local daemon, and ignoring a remote one would split vestad across two daemons.
+pub(crate) fn socket_for(docker_socket: Option<&str>) -> Result<String, DockerError> {
+    let socket = socket_or_default(docker_socket);
+    if socket.starts_with("unix://") {
+        return Ok(socket.to_string());
     }
+    Err(DockerError::Failed(format!(
+        "docker socket {socket} is not supported: vestad only connects to a local unix socket (unix:///path/to/docker.sock)"
+    )))
+}
+
+/// The filesystem path of a `unix://` socket.
+pub(crate) fn socket_file(socket: &str) -> &std::path::Path {
+    std::path::Path::new(socket.trim_start_matches("unix://"))
+}
+
+/// Export `docker_socket` from settings.json as this process's `DOCKER_HOST`, overriding any
+/// inherited `DOCKER_HOST` or docker context, so `connect` and every docker CLI child reach one
+/// daemon for the whole run. Call once at the top of `main`, before any thread exists.
+pub fn export_docker_host() {
+    let stored = crate::settings::read_settings().and_then(|settings| settings.docker_socket);
+    std::env::set_var("DOCKER_HOST", socket_or_default(stored.as_deref()));
 }
 
 pub fn connect() -> Result<Docker, DockerError> {
-    let socket = docker_socket(std::env::var("DOCKER_HOST").ok().as_deref())?;
+    let socket = socket_for(std::env::var("DOCKER_HOST").ok().as_deref())?;
     Docker::connect_with_socket(&socket, DOCKER_TIMEOUT_SECS, bollard::API_DEFAULT_VERSION)
         .map_err(|e| DockerError::Failed(format!("failed to connect to docker at {socket}: {e}")))
 }
@@ -3731,24 +3748,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn docker_socket_defaults_when_docker_host_unset_or_blank() {
-        assert_eq!(docker_socket(None).unwrap(), DEFAULT_DOCKER_SOCKET);
-        assert_eq!(docker_socket(Some("")).unwrap(), DEFAULT_DOCKER_SOCKET);
-        assert_eq!(docker_socket(Some("   ")).unwrap(), DEFAULT_DOCKER_SOCKET);
+    fn socket_defaults_when_unset_or_blank() {
+        assert_eq!(socket_for(None).unwrap(), DEFAULT_DOCKER_SOCKET);
+        assert_eq!(socket_for(Some("")).unwrap(), DEFAULT_DOCKER_SOCKET);
+        assert_eq!(socket_for(Some("   ")).unwrap(), DEFAULT_DOCKER_SOCKET);
     }
 
     #[test]
-    fn docker_socket_follows_a_unix_docker_host() {
+    fn socket_follows_a_unix_setting() {
         assert_eq!(
-            docker_socket(Some("unix:///run/docker-second.sock")).unwrap(),
+            socket_for(Some("unix:///run/docker-second.sock")).unwrap(),
             "unix:///run/docker-second.sock"
         );
     }
 
     #[test]
-    fn docker_socket_refuses_a_non_unix_docker_host() {
-        let err = docker_socket(Some("tcp://10.0.0.5:2376")).unwrap_err();
-        assert!(err.to_string().contains("DOCKER_HOST=tcp://10.0.0.5:2376"));
+    fn socket_refuses_a_non_unix_setting() {
+        let err = socket_for(Some("tcp://10.0.0.5:2376")).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("docker socket tcp://10.0.0.5:2376 is not supported"));
     }
 
     #[test]

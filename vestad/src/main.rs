@@ -18,6 +18,7 @@ mod device_registry;
 mod docker;
 mod egress;
 mod egress_net;
+mod host_settings_cli;
 mod jwt;
 mod lifecycle;
 mod maintenance;
@@ -121,6 +122,16 @@ enum Command {
     Provision {
         /// Path to the provision config (JSON, mode 600)
         config: std::path::PathBuf,
+    },
+    /// Show or change the directory that holds the restic backups (default: restic-repo in the config dir)
+    BackupDir {
+        #[command(subcommand)]
+        action: host_settings_cli::HostSettingAction,
+    },
+    /// Show or change the docker daemon socket vestad uses (default: `unix:///var/run/docker.sock`)
+    DockerSocket {
+        #[command(subcommand)]
+        action: host_settings_cli::HostSettingAction,
     },
     /// Export an agent to a portable bundle file (credentials are stripped)
     Export {
@@ -853,8 +864,9 @@ fn init_tracing(console: BoxMakeWriter) {
 
 fn main() {
     dotenvy::dotenv().ok();
-
     let cli = Cli::parse();
+    settings::check_stored_settings().unwrap_or_else(|e| die(e));
+    docker::export_docker_host();
 
     // `provision` owns stdout for its one result line (the connect link), so its logs go to stderr.
     let console: BoxMakeWriter = if matches!(cli.command, Some(Command::Provision { .. })) {
@@ -1085,6 +1097,18 @@ fn main() {
             Ok(link) => println!("{link}"),
             Err(message) => die(message),
         },
+
+        Command::BackupDir { action } => match host_settings_cli::run_backup_dir(action) {
+            Ok(line) => println!("{line}"),
+            Err(message) => die(message),
+        },
+
+        Command::DockerSocket { action } => {
+            match host_settings_cli::run_docker_socket(action, &config_dir().join("agents")) {
+                Ok(line) => println!("{line}"),
+                Err(message) => die(message),
+            }
+        }
 
         Command::Update => {
             let outcome = update::update_from_cli(channel::Channel::effective())

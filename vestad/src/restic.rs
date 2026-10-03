@@ -30,10 +30,38 @@ fn config_dir() -> PathBuf {
     crate::paths::config_dir_or_relative()
 }
 
+/// The directory that holds the per-agent repos: `backup.repo_dir` from settings.json when set,
+/// else `restic-repo` in the config dir.
+pub fn repo_root_for(repo_dir: Option<PathBuf>) -> PathBuf {
+    repo_dir.unwrap_or_else(|| config_dir().join(REPO_DIR))
+}
+
+pub fn repo_root() -> PathBuf {
+    repo_root_for(crate::settings::backup_repo_dir_setting())
+}
+
+/// The repo root, ready to write into. The default root is created on demand; a configured one
+/// must already exist, so an unmounted backup disk fails loudly instead of filling the disk below.
+pub fn ready_repo_root() -> Result<PathBuf, DockerError> {
+    match crate::settings::backup_repo_dir_setting() {
+        Some(dir) if dir.is_dir() => Ok(dir),
+        Some(dir) => Err(DockerError::Failed(format!(
+            "backup dir {} is missing; mount its disk or run `vestad backup-dir reset`",
+            dir.display()
+        ))),
+        None => {
+            let root = repo_root_for(None);
+            std::fs::create_dir_all(&root)
+                .map_err(|e| DockerError::Failed(format!("failed to create backup dir: {e}")))?;
+            Ok(root)
+        }
+    }
+}
+
 /// Per-agent repos so concurrent backups of different agents don't contend on a
 /// shared restic lock; same-agent ops are serialized by vestad's agent locks.
 fn repo_path(name: &str) -> PathBuf {
-    config_dir().join(REPO_DIR).join(name)
+    repo_root().join(name)
 }
 
 /// A local restic repo always has a `config` file; used to tell a first, full
@@ -258,6 +286,7 @@ fn ensure_repo(name: &str) -> Result<(), DockerError> {
         return Ok(());
     }
 
+    ready_repo_root()?;
     std::fs::create_dir_all(repo_path(name))
         .map_err(|e| DockerError::Failed(format!("failed to create repo dir: {e}")))?;
 
