@@ -123,9 +123,7 @@ func main() {
 		}
 	}
 
-// Path-valued flags are resolved against the caller's working directory here,
-	// before the command reaches the daemon: the daemon's cwd is not the caller's
-	// (often "/"), so a relative --download-path silently landed in the wrong place.
+	// Resolve path flags against the caller's cwd; the daemon's cwd differs.
 	absolutizePathFlags(os.Args[1:])
 
 	switch command {
