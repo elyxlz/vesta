@@ -1311,7 +1311,11 @@ def test_scan_skips_a_file_over_the_size_cap_and_counts_it(tmp_path, event_bus, 
     assert _file_hits(out) == []
     coverage = next(line for line in out.splitlines() if line.startswith(f"  files ({tmp_path})"))
     assert "scanned 0 file(s), 1 skipped" in coverage
-    assert "No secrets found." in out
+    # A file the walk could not read is a coverage shortfall in its own right, so the run must not
+    # sign off with the unqualified line. The skipped file here is precisely the one holding the
+    # secret, which is the whole reason "scanned, 1 skipped" cannot be allowed to read as complete.
+    assert "No secrets found in what was scanned" in out
+    assert "No secrets found." not in out
 
 
 def test_scan_leaves_the_database_stores_to_their_row_refs(tmp_path, event_bus, db_conn, monkeypatch, capsys):
