@@ -13,6 +13,7 @@ from googleapiclient.errors import HttpError
 from . import api, calendar, notifications
 from .context import GoogleContext
 from .gmail import _get_header
+from .redaction import mask_identifiers
 
 # Zero-width / bidi formatting characters that marketing emails use to pad previews.
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]")
@@ -201,7 +202,7 @@ def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: b
                 interrupt=False,
                 sender=sender,
                 subject=subject,
-                preview=clean_preview(snippet)[:200],
+                preview=mask_identifiers(clean_preview(snippet))[:200],
                 category=_gmail_category(label_ids),
                 missed=catching_up or None,
             )
