@@ -123,6 +123,9 @@ func main() {
 		}
 	}
 
+	// Resolve path flags against the caller's cwd; the daemon's cwd differs.
+	absolutizePathFlags(os.Args[1:])
+
 	switch command {
 	case "serve":
 		runServe()
@@ -180,4 +183,38 @@ func runProfile() {
 	}
 	os.Args = append([]string{os.Args[0], "--" + flag, os.Args[2]}, os.Args[3:]...)
 	runOneShot(command)
+}
+
+// pathFlags names every flag whose value is a filesystem path.
+var pathFlags = map[string]bool{"download-path": true, "file-path": true, "file": true}
+
+// absolutizePathFlags rewrites relative values of pathFlags, in both the
+// "--flag value" and "--flag=value" forms, into absolute paths against the
+// current working directory. Empty values and "-" (stdin) are left alone.
+func absolutizePathFlags(args []string) {
+	abs := func(v string) string {
+		if v == "" || v == "-" || filepath.IsAbs(v) {
+			return v
+		}
+		if a, err := filepath.Abs(v); err == nil {
+			return a
+		}
+		return v
+	}
+	for i := 0; i < len(args); i++ {
+		name := strings.TrimLeft(args[i], "-")
+		if name == args[i] {
+			continue
+		}
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			if pathFlags[name[:eq]] {
+				args[i] = args[i][:len(args[i])-len(name)+eq+1] + abs(name[eq+1:])
+			}
+			continue
+		}
+		if pathFlags[name] && i+1 < len(args) {
+			args[i+1] = abs(args[i+1])
+			i++
+		}
+	}
 }
