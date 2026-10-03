@@ -868,8 +868,6 @@ fn main() {
     settings::check_stored_settings().unwrap_or_else(|e| die(e));
     docker::export_docker_host();
 
-    let cli = Cli::parse();
-
     // `provision` owns stdout for its one result line (the connect link), so its logs go to stderr.
     let console: BoxMakeWriter = if matches!(cli.command, Some(Command::Provision { .. })) {
         BoxMakeWriter::new(std::io::stderr)
