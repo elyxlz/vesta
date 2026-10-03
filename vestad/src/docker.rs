@@ -286,7 +286,7 @@ const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 // Override bollard's 120s default to absorb slow image builds under CI contention.
 const DOCKER_TIMEOUT_SECS: u64 = 600;
-const DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
+const DEFAULT_DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -468,13 +468,26 @@ pub struct ListEntry {
 
 // --- Docker connection ---
 
+/// The daemon socket vestad's API client talks to: `DOCKER_HOST` when it names a unix socket, else
+/// the default socket. The `docker` CLI that vestad shells out to (export, import, commit plumbing)
+/// already honours `DOCKER_HOST`, so reading it here keeps the API client and the CLI on the same
+/// daemon. That is what lets a second vestad (another host user) drive a separate dockerd, e.g. one
+/// whose data-root sits on another disk. A non-unix `DOCKER_HOST` is refused rather than ignored:
+/// ignoring it would silently split vestad across two daemons.
+fn docker_socket(docker_host: Option<&str>) -> Result<String, DockerError> {
+    match docker_host.map(str::trim).filter(|host| !host.is_empty()) {
+        None => Ok(DEFAULT_DOCKER_SOCKET.to_string()),
+        Some(host) if host.starts_with("unix://") => Ok(host.to_string()),
+        Some(host) => Err(DockerError::Failed(format!(
+            "DOCKER_HOST={host} is not supported: vestad only connects to a local unix socket (unix:///path/to/docker.sock)"
+        ))),
+    }
+}
+
 pub fn connect() -> Result<Docker, DockerError> {
-    Docker::connect_with_socket(
-        DOCKER_SOCKET,
-        DOCKER_TIMEOUT_SECS,
-        bollard::API_DEFAULT_VERSION,
-    )
-    .map_err(|e| DockerError::Failed(format!("failed to connect to docker: {e}")))
+    let socket = docker_socket(std::env::var("DOCKER_HOST").ok().as_deref())?;
+    Docker::connect_with_socket(&socket, DOCKER_TIMEOUT_SECS, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| DockerError::Failed(format!("failed to connect to docker at {socket}: {e}")))
 }
 
 pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
@@ -3716,6 +3729,27 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docker_socket_defaults_when_docker_host_unset_or_blank() {
+        assert_eq!(docker_socket(None).unwrap(), DEFAULT_DOCKER_SOCKET);
+        assert_eq!(docker_socket(Some("")).unwrap(), DEFAULT_DOCKER_SOCKET);
+        assert_eq!(docker_socket(Some("   ")).unwrap(), DEFAULT_DOCKER_SOCKET);
+    }
+
+    #[test]
+    fn docker_socket_follows_a_unix_docker_host() {
+        assert_eq!(
+            docker_socket(Some("unix:///run/docker-second.sock")).unwrap(),
+            "unix:///run/docker-second.sock"
+        );
+    }
+
+    #[test]
+    fn docker_socket_refuses_a_non_unix_docker_host() {
+        let err = docker_socket(Some("tcp://10.0.0.5:2376")).unwrap_err();
+        assert!(err.to_string().contains("DOCKER_HOST=tcp://10.0.0.5:2376"));
+    }
 
     #[test]
     fn agent_network_name_is_prefixed_scoped_by_user_and_stable() {
