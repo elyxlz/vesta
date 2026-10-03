@@ -51,3 +51,10 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 - Language is auto-detected per file. Set `WHISPER_LANGUAGE` to a whisper.cpp
   language code (`en`, `es`, `fr`, ...) to pin one for every run, the same
   variable the whatsapp CLI reads; `--language` overrides it for a single run
+- For a user who speaks several languages, set `WHISPER_LANGUAGES` (comma list, primary
+  first, e.g. `en,ar`): auto-detect still picks among them, but a clip detected as any
+  other language is transcribed in the first listed one. `WHISPER_LANGUAGE` or
+  `--language` still pin a single language
+- `WHISPER_SECONDARY_MIN_P` (e.g. `0.85`, unset by default): with `WHISPER_LANGUAGES`, a listed
+  language other than the first is used only when auto-detect reports at least this
+  probability; below it the first listed language is used

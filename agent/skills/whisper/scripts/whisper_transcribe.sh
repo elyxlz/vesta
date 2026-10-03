@@ -101,6 +101,24 @@ run_whisper() {
 
 ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" -y 2>/dev/null
 
+# WHISPER_LANGUAGES (comma list, primary first): keep the detected language only if listed, else use the first.
+if [ "$LANGUAGE" = "auto" ] && [ -n "${WHISPER_LANGUAGES:-}" ]; then
+    DETECT_LINE=$("$WHISPER_BIN" -m "$WHISPER_MODEL" -f "$TMP_WAV" -l auto -dl -t "$THREADS" 2>&1 \
+        | grep -m1 'auto-detected language' || true)
+    DETECTED=$(sed -nE 's/.*auto-detected language: ([a-z]+).*/\1/p' <<<"$DETECT_LINE")
+    DETECTED_P=$(sed -nE 's/.*\(p = ([0-9.]+)\).*/\1/p' <<<"$DETECT_LINE")
+    PRIMARY="${WHISPER_LANGUAGES%%,*}"; PRIMARY="${PRIMARY// /}"
+    case ",${WHISPER_LANGUAGES// /}," in
+        *",$DETECTED,"*) LANGUAGE="$DETECTED" ;;
+        *) LANGUAGE="$PRIMARY" ;;
+    esac
+    # WHISPER_SECONDARY_MIN_P: a non-primary listed language needs at least this detection probability.
+    if [ -n "${WHISPER_SECONDARY_MIN_P:-}" ] && [ "$LANGUAGE" != "$PRIMARY" ] && [ -n "$DETECTED_P" ] \
+        && awk -v p="$DETECTED_P" -v m="$WHISPER_SECONDARY_MIN_P" 'BEGIN{exit !(p < m)}'; then
+        LANGUAGE="$PRIMARY"
+    fi
+fi
+
 ARGS=(-m "$WHISPER_MODEL" -f "$TMP_WAV" -l "$LANGUAGE" -t "$THREADS")
 if [ -n "$TRANSLATE" ]; then
     ARGS+=("$TRANSLATE")
