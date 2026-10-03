@@ -291,20 +291,29 @@ def redact_cards(text: str) -> str:
     return CARD_CANDIDATE.sub(lambda m: REDACTED if _is_card(m.group(0)) else m.group(0), text)
 
 
-def _redact_text(text: str) -> str:
-    """Both redaction passes over one string, matched on the ORIGINAL text and replaced as one merged
-    span each: run in sequence, the first pass eats a value's head and leaves its tail for a second
-    pass that no longer recognises it (a labelled, space-grouped card kept three of four groups)."""
+def _redact_once(text: str) -> str:
+    """One sweep: both passes match on the ORIGINAL text and each merged span is replaced once, so a
+    label pattern that stops at a space cannot leave a card's remaining groups for a card pass that
+    no longer recognises them."""
     spans = [m.span() for m in REGEX.finditer(text) if REDACTED not in m.group(0)]
     spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0))]
-    merged: list[list[int]] = []
+    pieces, pos = [], 0
     for start, end in sorted(spans):
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
-    for start, end in reversed(merged):
-        text = text[:start] + REDACTED + text[end:]
+        if start < pos:
+            pos = max(pos, end)
+            continue
+        pieces += [text[pos:start], REDACTED]
+        pos = end
+    return "".join(pieces) + text[pos:]
+
+
+def _redact_text(text: str) -> str:
+    """Sweep until nothing changes: a hit ending in a digit can glue onto a following card and hide
+    it from the card pass until the hit itself is masked."""
+    for _ in range(8):  # bounded: each sweep only adds placeholders, but never trust that with a loop
+        if (redacted := _redact_once(text)) == text:
+            break
+        text = redacted
     return text
 
 

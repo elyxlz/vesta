@@ -1355,3 +1355,10 @@ def test_redaction_masks_a_labelled_grouped_card_whole():
     text = "card password=4111 1111 1111 1111 on file"
     assert redact._redact_text(text) == "card [REDACTED] on file"
     assert all("1111" not in snippet for snippet in redact.find_matches(text))
+
+
+def test_redaction_masks_a_card_glued_to_a_hit_ending_in_a_digit():
+    # The hit's trailing digit joins the card into one candidate that fails the issuer check.
+    text = "Bearer abcdefghijklmnop1 4111 1111 1111 1111"
+    assert "1111" not in redact._redact_text(text)
+    assert all("1111" not in snippet for snippet in redact.find_matches(text))
