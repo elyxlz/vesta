@@ -30,10 +30,24 @@ fn config_dir() -> PathBuf {
     crate::paths::config_dir_or_relative()
 }
 
+/// Where the per-agent repos live: `VESTAD_BACKUP_DIR` when it names an absolute path, so
+/// backups can sit on a different disk from the agents, else `restic-repo` under the config dir.
+/// A relative value is ignored with a warning rather than resolved against an unknown cwd.
+fn repo_root(backup_dir: Option<&str>) -> PathBuf {
+    match backup_dir.map(str::trim).filter(|dir| !dir.is_empty()) {
+        Some(dir) if std::path::Path::new(dir).is_absolute() => PathBuf::from(dir),
+        Some(dir) => {
+            tracing::warn!(backup_dir = %dir, "VESTAD_BACKUP_DIR is not an absolute path, using the default");
+            config_dir().join(REPO_DIR)
+        }
+        None => config_dir().join(REPO_DIR),
+    }
+}
+
 /// Per-agent repos so concurrent backups of different agents don't contend on a
 /// shared restic lock; same-agent ops are serialized by vestad's agent locks.
 fn repo_path(name: &str) -> PathBuf {
-    config_dir().join(REPO_DIR).join(name)
+    repo_root(std::env::var("VESTAD_BACKUP_DIR").ok().as_deref()).join(name)
 }
 
 /// A local restic repo always has a `config` file; used to tell a first, full
@@ -849,5 +863,23 @@ mod tests {
             summary: None,
         };
         assert!(snapshot_to_info(untagged).is_none());
+    }
+
+    #[test]
+    fn repo_root_defaults_when_backup_dir_unset_or_blank() {
+        let default = config_dir().join(REPO_DIR);
+        assert_eq!(repo_root(None), default);
+        assert_eq!(repo_root(Some("")), default);
+        assert_eq!(repo_root(Some("   ")), default);
+    }
+
+    #[test]
+    fn repo_root_follows_an_absolute_backup_dir() {
+        assert_eq!(repo_root(Some("/mnt/backups/vestad")), PathBuf::from("/mnt/backups/vestad"));
+    }
+
+    #[test]
+    fn repo_root_ignores_a_relative_backup_dir() {
+        assert_eq!(repo_root(Some("backups/vestad")), config_dir().join(REPO_DIR));
     }
 }
