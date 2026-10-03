@@ -15,16 +15,19 @@ import (
 // Field conventions: booleans are named so `true` is the interesting case so `,omitempty`
 // drops the common-case `false` entirely, keeping notifications terse in the agent's context.
 type messageNotif struct {
-	Source         string `json:"source"`
-	Type           string `json:"type"`
-	Instance       string `json:"instance,omitempty"`
-	ContactName    string `json:"contact_name,omitempty"`
-	Message        string `json:"message"`
-	Sender         string `json:"sender,omitempty"`
-	ChatName       string `json:"chat_name,omitempty"`
-	Username       string `json:"username,omitempty"`
-	MediaType      string `json:"media_type,omitempty"`
-	ReplyToID      int64  `json:"reply_to_id,omitempty"`
+	Source      string `json:"source"`
+	Type        string `json:"type"`
+	Instance    string `json:"instance,omitempty"`
+	ContactName string `json:"contact_name,omitempty"`
+	Message     string `json:"message"`
+	Sender      string `json:"sender,omitempty"`
+	ChatName    string `json:"chat_name,omitempty"`
+	Username    string `json:"username,omitempty"`
+	MediaType   string `json:"media_type,omitempty"`
+	ReplyToID   int64  `json:"reply_to_id,omitempty"`
+	// The text of the message being replied to. An id alone is a pointer the agent has to
+	// resolve against the store; a one-word reply carries no other clue to what it answers.
+	ReplyToText    string `json:"reply_to_text,omitempty"`
 	Timestamp      string `json:"timestamp"`
 	MessageID      int64  `json:"message_id,omitempty"`
 	ChatID         int64  `json:"chat_id,omitempty"`
@@ -185,7 +188,7 @@ func WriteNotification(
 	notifDir string, messageID, chatID int64, chatName, contactName, username, instance string,
 	contactSaved, isDirectChat bool,
 	sender, content, mediaType string,
-	replyToID int64,
+	replyToID int64, replyToText string,
 ) error {
 	if notifDir == "" {
 		return nil
@@ -204,6 +207,7 @@ func WriteNotification(
 		Username:       username,
 		MediaType:      mediaType,
 		ReplyToID:      replyToID,
+		ReplyToText:    replyToText,
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
 		ChatID:         chatID,
