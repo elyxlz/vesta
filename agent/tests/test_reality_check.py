@@ -133,6 +133,51 @@ def test_an_untagged_daemon_log_still_storms(tmp_path):
     assert "RED whatsapp.log" in run.stdout
 
 
+def test_an_undated_log_counts_only_what_is_new_since_the_previous_run(tmp_path):
+    """An undated log cannot be aged by its own lines, so its whole tail reads as today's: a storm
+    that ended weeks ago would RED every night forever, and a permanent RED trains the reader to
+    wave the probe off. Once a baseline exists the count is the gap between runs, which the dream's
+    nightly cadence does bound."""
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "undated.log").write_text("ERROR boom\n" * 300)
+
+    first = _run(home)
+    second = _run(home)
+
+    assert first.returncode == 1, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "OK  undated.log: 0 new error lines since the last run" in second.stdout
+
+
+def test_errors_added_to_an_undated_log_since_the_last_run_still_storm(tmp_path):
+    # The baseline must not become an amnesty: what was written since the previous run is the storm.
+    home = _healthy_home(tmp_path)
+    log = home / "agent" / "logs" / "undated.log"
+    log.write_text("INFO fine\n" * 10)
+
+    _run(home)
+    log.write_text("INFO fine\n" * 10 + "ERROR boom\n" * 300)
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED undated.log: 300 new error lines since the last run" in run.stdout
+
+
+def test_a_truncated_undated_log_resets_its_baseline(tmp_path):
+    # A daemon log is truncated at its size cap, so a file smaller than its baseline is routine.
+    # Counting the fresh tail against the old high-water mark would read the rotation as a storm.
+    home = _healthy_home(tmp_path)
+    log = home / "agent" / "logs" / "undated.log"
+    log.write_text("ERROR boom\n" * 300)
+
+    _run(home)
+    log.write_text("INFO fine\n")
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  undated.log: log rotated or truncated since the last run" in run.stdout
+
+
 def test_quiet_recent_log_stays_green(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "logs" / "calm.log").write_text("INFO fine\n" * 300)
