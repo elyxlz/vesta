@@ -65,7 +65,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 async def _validate(provider_name: str, api_key: str) -> tuple[bool, str | None]:
-    p = providers.get_stt(provider_name) if provider_name == "deepgram" else providers.get_tts(provider_name)
+    p = providers.get_stt(provider_name) or providers.get_tts(provider_name)
     if p is None:
         return False, f"unknown provider: {provider_name}"
     return await p.validate(api_key)
