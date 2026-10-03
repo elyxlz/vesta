@@ -55,6 +55,10 @@ pub(crate) struct Settings {
     /// connected clients always fans regardless. Set via PUT /gateway/settings.
     #[serde(default)]
     pub(crate) push_notifications: HashMap<String, bool>,
+    /// The docker daemon socket (`unix://...`) that vestad and every docker CLI it runs talk to;
+    /// unset is the system socket. Set via `vestad docker-socket`.
+    #[serde(default)]
+    pub(crate) docker_socket: Option<String>,
 }
 
 // Manual `Default` (not derived) so a fresh install with no settings.json gets
@@ -70,6 +74,7 @@ impl Default for Settings {
             auto_update: true,
             expose_lan: false,
             push_notifications: HashMap::new(),
+            docker_socket: None,
         }
     }
 }
@@ -117,6 +122,10 @@ pub(crate) struct BackupGlobalSettings {
     pub(crate) retention: crate::types::RetentionPolicy,
     #[serde(default)]
     pub(crate) agents: HashMap<String, AgentBackupOverride>,
+    /// Absolute directory that holds the per-agent restic repos, so backups can sit on another
+    /// disk; unset is `restic-repo` in the config dir. Set via `vestad backup-dir`.
+    #[serde(default)]
+    pub(crate) repo_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for BackupGlobalSettings {
@@ -126,6 +135,7 @@ impl Default for BackupGlobalSettings {
             every_n_days: DEFAULT_EVERY_N_DAYS,
             retention: default_retention(),
             agents: HashMap::new(),
+            repo_dir: None,
         }
     }
 }
@@ -180,29 +190,30 @@ fn settings_file() -> std::path::PathBuf {
     crate::paths::config_dir_or_relative().join("settings.json")
 }
 
-pub(crate) fn load_settings() -> Settings {
+/// The stored settings, or `None` when the file is missing or corrupt. No write-back, so hot paths
+/// (every docker CLI run, every restic repo lookup) can read it.
+fn read_settings() -> Option<Settings> {
     let path = settings_file();
+    let data = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<Settings>(&data)
+        .map_err(|err| tracing::warn!(path = %path.display(), error = %err, "corrupt settings.json, using defaults"))
+        .ok()
+}
 
-    if let Ok(data) = std::fs::read_to_string(&path) {
-        match serde_json::from_str::<Settings>(&data) {
-            Ok(mut settings) => {
-                converge_frozen_backup_defaults(&mut settings.backup);
-                // Re-write to persist any new fields added with defaults
-                save_settings(&settings);
-                return settings;
-            }
-            Err(err) => {
-                tracing::warn!(path = %path.display(), error = %err, "corrupt settings.json, using defaults");
-            }
-        }
-    }
-
-    let settings = Settings::default();
-
-    // Always write settings to disk so users can edit the file
+pub(crate) fn load_settings() -> Settings {
+    let mut settings = read_settings().unwrap_or_default();
+    converge_frozen_backup_defaults(&mut settings.backup);
+    // Always write back: it persists fields added with defaults and leaves a file users can edit.
     save_settings(&settings);
-
     settings
+}
+
+pub(crate) fn docker_socket_setting() -> Option<String> {
+    read_settings().and_then(|settings| settings.docker_socket)
+}
+
+pub(crate) fn backup_repo_dir_setting() -> Option<std::path::PathBuf> {
+    read_settings().and_then(|settings| settings.backup.repo_dir)
 }
 
 pub(crate) fn save_settings(settings: &Settings) {

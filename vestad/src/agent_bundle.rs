@@ -559,14 +559,14 @@ async fn load_bundle_image(input: &Path, agent_name: &str) -> Result<String, Doc
     let image_for_task = image_ref.clone();
 
     tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
-        std::process::Command::new("docker")
+        crate::docker::cli_command()?
             .args(["rmi", "-f", &image_for_task])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .ok();
 
-        let mut child = crate::docker::import_container_fs_tar_cmd(&image_for_task)
+        let mut child = crate::docker::import_container_fs_tar_cmd(&image_for_task)?
             .spawn()
             .map_err(|err| docker_failed("failed to start docker import", err))?;
         let mut stdin = child
@@ -1022,7 +1022,8 @@ mod tests {
 
     /// Best-effort `docker <args>`, quiet: safe to call from a `Drop` inside the tokio runtime.
     fn docker_cleanup(args: &[&str]) {
-        std::process::Command::new("docker")
+        crate::docker::cli_command()
+            .unwrap()
             .args(args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1103,7 +1104,8 @@ mod tests {
         .expect("write config");
 
         let cp = |src: &Path, dst: &str| {
-            let status = std::process::Command::new("docker")
+            let status = crate::docker::cli_command()
+                .unwrap()
                 .args(["cp", &src.display().to_string(), &format!("{cname}:{dst}")])
                 .status()
                 .expect("docker cp runs");
@@ -1122,7 +1124,8 @@ mod tests {
 
     /// Whether `path` is a file inside the running container `cname`.
     fn container_has_file(cname: &str, path: &str) -> bool {
-        std::process::Command::new("docker")
+        crate::docker::cli_command()
+            .unwrap()
             .args(["exec", cname, "test", "-f", path])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1217,7 +1220,8 @@ mod tests {
         // that: export it and import it back as an image a verify container can run.
         let fs_tar = env.dir.path().join("scrubbed.tar");
         crate::docker::export_container_to_file(&scrub_cname, &fs_tar).await.expect("export scrub container");
-        let import_status = std::process::Command::new("docker")
+        let import_status = crate::docker::cli_command()
+            .unwrap()
             .args(["import", &fs_tar.display().to_string(), &probe_image])
             .stdout(std::process::Stdio::null())
             .status()
@@ -1234,7 +1238,11 @@ mod tests {
 
     impl Drop for TestNetwork {
         fn drop(&mut self) {
-            std::process::Command::new("docker").args(["network", "rm", &self.name]).status().ok();
+            crate::docker::cli_command()
+                .unwrap()
+                .args(["network", "rm", &self.name])
+                .status()
+                .ok();
         }
     }
 
@@ -1439,7 +1447,8 @@ mod tests {
 
         // A legacy export: a gzipped `docker save` tar with no manifest.
         let tar_path = env.dir.path().join("legacy-image.tar");
-        let save_status = std::process::Command::new("docker")
+        let save_status = crate::docker::cli_command()
+            .unwrap()
             .args(["save", "-o", &tar_path.display().to_string(), &image])
             .status()
             .expect("docker save runs");

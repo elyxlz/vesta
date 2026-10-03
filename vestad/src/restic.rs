@@ -30,10 +30,20 @@ fn config_dir() -> PathBuf {
     crate::paths::config_dir_or_relative()
 }
 
+/// The directory that holds the per-agent repos: `backup.repo_dir` from settings.json when set,
+/// else `restic-repo` in the config dir.
+pub fn repo_root_for(repo_dir: Option<PathBuf>) -> PathBuf {
+    repo_dir.unwrap_or_else(|| config_dir().join(REPO_DIR))
+}
+
+pub fn repo_root() -> PathBuf {
+    repo_root_for(crate::settings::backup_repo_dir_setting())
+}
+
 /// Per-agent repos so concurrent backups of different agents don't contend on a
 /// shared restic lock; same-agent ops are serialized by vestad's agent locks.
 fn repo_path(name: &str) -> PathBuf {
-    config_dir().join(REPO_DIR).join(name)
+    repo_root().join(name)
 }
 
 /// A local restic repo always has a `config` file; used to tell a first, full
@@ -348,7 +358,7 @@ pub async fn snapshot(
     let kill_switch_for_task = kill_switch.clone();
 
     let task = tokio::task::spawn_blocking(move || -> Result<ResticSummaryMsg, DockerError> {
-        let mut export = std::process::Command::new("docker");
+        let mut export = crate::docker::cli_command()?;
         export.args(["export", &cname]);
         let mut backup = restic_command(&repo_name)?;
         backup.args([
@@ -537,7 +547,7 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
     let task = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
         crate::docker::retry_import_pipeline("restic restore", || {
             // Best-effort removal of a previous restore image for this agent.
-            std::process::Command::new("docker")
+            crate::docker::cli_command()?
                 .args(["rmi", "-f", &image_for_task])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -546,7 +556,7 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
 
             let mut dump = restic_command(&repo_name)?;
             dump.args(["dump", &backup_id, &tar_path]);
-            let mut import = std::process::Command::new("docker");
+            let mut import = crate::docker::cli_command()?;
             import.args(["import", "-", &image_for_task]);
             let output = pipe_through(
                 dump,
@@ -849,5 +859,14 @@ mod tests {
             summary: None,
         };
         assert!(snapshot_to_info(untagged).is_none());
+    }
+
+    #[test]
+    fn repo_root_follows_the_setting_and_defaults_to_the_config_dir() {
+        assert_eq!(repo_root_for(None), config_dir().join(REPO_DIR));
+        assert_eq!(
+            repo_root_for(Some(PathBuf::from("/mnt/backups"))),
+            PathBuf::from("/mnt/backups")
+        );
     }
 }

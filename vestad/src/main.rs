@@ -18,6 +18,7 @@ mod device_registry;
 mod docker;
 mod egress;
 mod egress_net;
+mod host_settings_cli;
 mod jwt;
 mod lifecycle;
 mod maintenance;
@@ -114,6 +115,16 @@ enum Command {
     Proxy {
         #[command(subcommand)]
         action: proxy_cli::ProxyAction,
+    },
+    /// Show or change the directory that holds the restic backups (default: restic-repo in the config dir)
+    BackupDir {
+        #[command(subcommand)]
+        action: host_settings_cli::HostSettingAction,
+    },
+    /// Show or change the docker daemon socket vestad uses (default: `unix:///var/run/docker.sock`)
+    DockerSocket {
+        #[command(subcommand)]
+        action: host_settings_cli::HostSettingAction,
     },
     /// Export an agent to a portable bundle file (credentials are stripped)
     Export {
@@ -290,7 +301,8 @@ fn report_import(outcome: &agent_bundle::ImportOutcome) {
 /// Run `docker <args>` with the parent's stdio inherited (for interactive TTY
 /// sessions), exiting with the child's code if it fails.
 fn docker_exec_inherit(args: &[&str]) {
-    let status = std::process::Command::new("docker")
+    let status = docker::cli_command()
+        .unwrap_or_else(|e| die(&e))
         .args(args)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
@@ -1053,6 +1065,18 @@ fn main() {
                 .unwrap_or_else(|| die("vestad is not set up yet; run `vestad` first"));
             let api_key = read_api_key(&config).unwrap_or_else(|| die("no api key found; run `vestad` first"));
             match proxy_cli::run(&format!("http://127.0.0.1:{port}"), &api_key, &action) {
+                Ok(line) => println!("{line}"),
+                Err(message) => die(message),
+            }
+        }
+
+        Command::BackupDir { action } => match host_settings_cli::run_backup_dir(action) {
+            Ok(line) => println!("{line}"),
+            Err(message) => die(message),
+        },
+
+        Command::DockerSocket { action } => {
+            match host_settings_cli::run_docker_socket(action, &config_dir().join("agents")) {
                 Ok(line) => println!("{line}"),
                 Err(message) => die(message),
             }
