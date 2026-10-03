@@ -309,12 +309,17 @@ pub struct HttpGatewayApi {
     client: reqwest::Client,
 }
 
+/// The one runtime shape provision's blocking calls into the async http client run on.
+fn current_thread_runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("could not start the runtime: {e}"))
+}
+
 impl HttpGatewayApi {
     pub fn new(base_url: String, api_key: String) -> Result<Self, String> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("could not start the runtime: {e}"))?;
+        let runtime = current_thread_runtime()?;
         let client = reqwest::Client::builder()
             .build()
             .map_err(|e| format!("could not build the http client: {e}"))?;
@@ -441,10 +446,7 @@ fn gateway_answers(config: &std::path::Path, timeout_secs: u64) -> Result<bool, 
     let Some(url) = crate::local_health_url(config) else {
         return Ok(false);
     };
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("could not start the runtime: {e}"))?;
+    let runtime = current_thread_runtime()?;
     let client = reqwest::Client::new();
     Ok(runtime.block_on(crate::wait_for_health(
         &client,

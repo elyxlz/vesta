@@ -231,20 +231,24 @@ fn cf_request(
     use std::io::Write;
     use std::process::Stdio;
 
-    // The token goes to curl on stdin (`-H @-`), never in argv, where any local user sees it.
+    // The token and the body (a tunnel create carries the tunnel secret) reach curl as a config on
+    // stdin (`-K -`), never in argv, where any local user sees them.
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, url])
         .arg("--connect-timeout")
         .arg(CF_API_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
         .arg(CF_API_MAX_TIME_SECS.to_string())
-        .args(["-H", "@-"])
-        .arg("-H")
-        .arg("Content-Type: application/json");
+        .args(["-H", "Content-Type: application/json", "-K", "-"]);
 
-    if let Some(b) = body {
-        cmd.arg("-d").arg(b.to_string());
-    }
+    let header = curl_config_quoted(&format!("Authorization: Bearer {api_token}"));
+    let curl_config = match body {
+        Some(b) => format!(
+            "header = \"{header}\"\ndata = \"{}\"\n",
+            curl_config_quoted(&b.to_string())
+        ),
+        None => format!("header = \"{header}\"\n"),
+    };
 
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -252,24 +256,24 @@ fn cf_request(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("curl failed: {e}"))?;
-    let header_written = child
+    let config_written = child
         .stdin
         .take()
         .ok_or_else(|| "curl stdin is not piped".to_string())
         .and_then(|mut stdin| {
             stdin
-                .write_all(format!("Authorization: Bearer {api_token}\n").as_bytes())
-                .map_err(|e| format!("could not pass the token to curl: {e}"))
+                .write_all(curl_config.as_bytes())
+                .map_err(|e| format!("could not pass the request to curl: {e}"))
         });
     let output = child
         .wait_with_output()
         .map_err(|e| format!("curl failed: {e}"))?;
-    header_written?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("cloudflare API request failed: {stderr}"));
     }
+    config_written?;
 
     let resp: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("failed to parse cloudflare response: {e}"))?;
@@ -280,6 +284,11 @@ fn cf_request(
     }
 
     Ok(resp)
+}
+
+/// `text` escaped for a double-quoted value in a curl config file.
+fn curl_config_quoted(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn get_zone_domain(env: &CloudflareCreds) -> Result<String, String> {
@@ -315,10 +324,7 @@ fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
     }
 }
 
-fn delete_dns_record_if_exists(env: &CloudflareCreds, subdomain: &str) {
-    let Ok(domain) = get_zone_domain(env) else {
-        return;
-    };
+fn delete_dns_record_if_exists(env: &CloudflareCreds, domain: &str, subdomain: &str) {
     let fqdn = format!("{subdomain}.{domain}");
     let list_url = format!(
         "{}/zones/{}/dns_records?type=CNAME&name={}",
@@ -947,7 +953,7 @@ fn create_unpinned_tunnel(
     let subdomain = choose_subdomain(explicit, &domain, |name| {
         subdomain_taken(env, &domain, name)
     })?;
-    setup_tunnel(config_dir, &subdomain)
+    create_named_tunnel(config_dir, env, &domain, &subdomain)
 }
 
 /// `explicit` when nobody holds it (a taken explicit name is an error, never a fallback), else
@@ -1073,17 +1079,26 @@ fn establish_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
     let env = cf_env(config_dir)?;
     let domain = get_zone_domain(&env)?;
+    create_named_tunnel(config_dir, &env, &domain, subdomain)
+}
+
+fn create_named_tunnel(
+    config_dir: &Path,
+    env: &CloudflareCreds,
+    domain: &str,
+    subdomain: &str,
+) -> Result<TunnelConfig, String> {
     let tunnel_name = format!("vesta-{subdomain}");
 
     tracing::info!(tunnel = %tunnel_name, "creating tunnel");
-    delete_tunnel_if_exists(&env, &tunnel_name);
-    delete_dns_record_if_exists(&env, subdomain);
+    delete_tunnel_if_exists(env, &tunnel_name);
+    delete_dns_record_if_exists(env, domain, subdomain);
 
     let config = create_tunnel_records(
         &mut |method, url, body| cf_request(method, url, &env.api_token, body),
-        &env,
+        env,
         subdomain,
-        &domain,
+        domain,
         |config| {
             write_secret_file(
                 &tunnel_config_path(config_dir),
@@ -1759,8 +1774,8 @@ mod tests {
     }
 
     #[test]
-    fn a_cloudflare_request_sends_the_bearer_token() {
-        use std::io::{BufRead, BufReader, Write};
+    fn a_cloudflare_request_sends_the_bearer_token_and_body() {
+        use std::io::{BufRead, BufReader, Read, Write};
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let url = format!("http://{}/zones", listener.local_addr().expect("addr"));
@@ -1773,6 +1788,12 @@ mod tests {
                 headers.push(line.trim().to_string());
                 line.clear();
             }
+            let length = headers
+                .iter()
+                .find_map(|h| h.strip_prefix("Content-Length: "))
+                .map_or(0, |n| n.parse::<usize>().expect("content length"));
+            let mut request_body = vec![0; length];
+            reader.read_exact(&mut request_body).expect("read body");
             let body = r#"{"success":true,"result":[]}"#;
             write!(
                 &stream,
@@ -1780,17 +1801,22 @@ mod tests {
                 body.len()
             )
             .expect("respond");
-            headers
+            (headers, request_body)
         });
 
-        let response = cf_request("GET", &url, "tok-1", None).expect("request succeeds");
-        let headers = server.join().expect("server thread");
+        let sent = serde_json::json!({"name": "vesta-otter", "secret": "a\"b\\c"});
+        let response =
+            cf_request("POST", &url, "tok-1", Some(sent.clone())).expect("request succeeds");
+        let (headers, request_body) = server.join().expect("server thread");
 
         assert_eq!(response["success"], true);
         assert!(
             headers.iter().any(|h| h == "Authorization: Bearer tok-1"),
             "{headers:?}"
         );
+        let received: serde_json::Value =
+            serde_json::from_slice(&request_body).expect("the body is the json sent");
+        assert_eq!(received, sent);
     }
 
     fn fake_env() -> CloudflareCreds {
