@@ -20,7 +20,7 @@ Endpoints
   POST   /pots/{id}/transfers                 {from, to, amount, desc?, currency?, rate?, fetch?}
   DELETE /pots/{id}/entries/{eid}             delete entry
   GET    /pots/{id}/balance                   balances + settle-up
-  GET    /pots/{id}/contributions?account=X   joint-account view
+  GET    /pots/{id}/contributions?account=X[&since=YYYY-MM-DD]   joint-account view
 """
 
 from __future__ import annotations
@@ -64,7 +64,8 @@ def _view_contributions(pot_id, q):
     account = (q.get("account") or [None])[0]
     if not account:
         raise mp.MoneypotError("?account= is required")
-    return mp.contributions(mp.load(), pot_id, account)
+    since = (q.get("since") or [None])[0]
+    return mp.contributions(mp.load(), pot_id, account, since=since)
 
 
 # The per-pot GET routes, as (pattern, view). fullmatch means a longer path can never be swallowed
