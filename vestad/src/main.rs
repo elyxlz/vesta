@@ -26,6 +26,7 @@ mod mobile_app;
 mod mounts;
 mod operation;
 mod paths;
+mod provision;
 mod proxy_cli;
 mod restic;
 mod self_log;
@@ -48,6 +49,7 @@ mod vendored_bin;
 mod vesta_cloud;
 
 use status::{paint, AgentEntry, Status, TunnelStatus};
+use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
 #[derive(Parser)]
 #[command(name = "vestad", version, about = "Vesta API server daemon")]
@@ -114,6 +116,11 @@ enum Command {
     Proxy {
         #[command(subcommand)]
         action: proxy_cli::ProxyAction,
+    },
+    /// Set up this Linux user's gateway and one signed-in agent from a config file, then print its connect link
+    Provision {
+        /// Path to the provision config (JSON, mode 600)
+        config: std::path::PathBuf,
     },
     /// Export an agent to a portable bundle file (credentials are stripped)
     Export {
@@ -743,9 +750,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, forc
         eprintln!("note: --port, --no-tunnel, and --force-update only apply with --standalone");
     }
 
-    let docker = docker::connect().unwrap_or_else(|e| die(&e));
-    docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
-    systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
+    install_service().unwrap_or_else(|e| die(e));
 
     // --expose-lan is a persisted binding preference (like the port file), not part
     // of the static unit. Write it before the daemon (re)starts so it reads the new
@@ -781,13 +786,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, forc
         tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
     }
 
-    let start_time = std::time::SystemTime::now();
-    systemd::start().unwrap_or_else(|e| die(&e));
-    systemd::wait_for_start().unwrap_or_else(|e| die(&e));
-    // The unit is not Type=notify, so being "active" only means the process
-    // launched, not that async startup (tunnel dial, etc.) finished and wrote a
-    // fresh status.json; wait for that so the banner below isn't stale/empty.
-    Status::wait_for_fresh(&config, start_time);
+    start_installed_service(&config).unwrap_or_else(|e| die(e));
 
     eprintln!();
     eprintln!(
@@ -798,15 +797,32 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, forc
     eprintln!("scan the QR or open the link to create your first agent. manage with vestad status | logs | restart.");
 }
 
-/// Log to stdout (journald under systemd, the terminal under `cargo run`) and to a
+/// Check Docker and install (or refresh) the systemd user unit. Asks nothing.
+fn install_service() -> Result<(), String> {
+    let docker = docker::connect().map_err(|e| e.to_string())?;
+    docker::ensure_docker_sync(&docker).map_err(|e| e.to_string())?;
+    systemd::ensure_service_installed()
+}
+
+/// Start the installed unit and wait for a fresh `status.json`. The unit is not Type=notify, so
+/// "active" only means the process launched; the fresh status means async startup finished.
+fn start_installed_service(config: &std::path::Path) -> Result<(), String> {
+    let start_time = std::time::SystemTime::now();
+    systemd::start()?;
+    systemd::wait_for_start()?;
+    Status::wait_for_fresh(config, start_time);
+    Ok(())
+}
+
+/// Log to `console` (journald under systemd, the terminal under `cargo run`) and to a
 /// rolling file under the config dir; the file is what the gateway logs viewer tails,
 /// so the viewer works regardless of how vestad is run. A failed appender (no HOME,
-/// unwritable dir) degrades to stdout-only rather than crashing the daemon.
+/// unwritable dir) degrades to console-only rather than crashing the daemon.
 ///
 /// ANSI is disabled on both sinks: the two fmt layers share one span-field cache in
 /// the span extensions, so a colored stdout layer would bleed escape codes into the
 /// plain file; the gateway logs viewer adds its own per-level color in the browser.
-fn init_tracing() {
+fn init_tracing(console: BoxMakeWriter) {
     use tracing_subscriber::prelude::*;
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -828,7 +844,8 @@ fn init_tracing() {
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
-                .with_ansi(false),
+                .with_ansi(false)
+                .with_writer(console),
         )
         .with(file_layer)
         .init();
@@ -837,13 +854,19 @@ fn init_tracing() {
 fn main() {
     dotenvy::dotenv().ok();
 
-    init_tracing();
+    let cli = Cli::parse();
+
+    // `provision` owns stdout for its one result line (the connect link), so its logs go to stderr.
+    let console: BoxMakeWriter = if matches!(cli.command, Some(Command::Provision { .. })) {
+        BoxMakeWriter::new(std::io::stderr)
+    } else {
+        BoxMakeWriter::new(std::io::stdout)
+    };
+    init_tracing(console);
 
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install crypto provider");
-
-    let cli = Cli::parse();
 
     match cli.command.unwrap_or(Command::Serve {
         port: None,
@@ -1058,6 +1081,11 @@ fn main() {
             }
         }
 
+        Command::Provision { config } => match provision::run(&config) {
+            Ok(link) => println!("{link}"),
+            Err(message) => die(message),
+        },
+
         Command::Update => {
             let outcome = update::update_from_cli(channel::Channel::effective())
                 .unwrap_or_else(|e| die(e.to_string()));
@@ -1144,6 +1172,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provision_takes_a_config_path() {
+        let cli = Cli::parse_from(["vestad", "provision", "/tmp/aria.json"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Provision { config }) if config == std::path::Path::new("/tmp/aria.json")
+        ));
+    }
 
     #[test]
     fn serve_force_update_flag_parses() {
