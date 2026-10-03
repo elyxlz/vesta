@@ -56,6 +56,7 @@ Send every message body through `--message -` and a quoted heredoc, as above. Th
 - You receive the notification and reply with `app-chat send`: the reply is persisted to the store, then fanned to any connected `/ws` chat sockets so the app sees it live
 - Durability is the store, not the socket: a reply succeeds even with no client connected, and a client refetches history by id on reconnect to pick up anything it missed
 - History and search read the same store: `app-chat history` and `app-chat history --search`
+- `history` prints one line holding a JSON array, oldest row first. Line tools (`tail`, `head`, `cut`) see the whole array as a single line, so `tail -n` returns every row and `cut -c` shows the oldest one; parse it as JSON (`python3 -c 'import json,sys; print(json.load(sys.stdin)[-1])'`) before reading the newest message
 
 ## Attachments
 
