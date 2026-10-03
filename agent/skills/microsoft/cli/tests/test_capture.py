@@ -101,6 +101,24 @@ def test_refresh_and_save_persists(monkeypatch, tmp_path):
     assert owa_rest.load_token("a@x.com", cfg) == "fresh"
 
 
+def test_refresh_and_save_skips_expired_token(monkeypatch, tmp_path):
+    """A headless re-harvest can return an already-expired token (Teams v2 stops minting fresh ones
+    once the SSO cookie lapses). It must not be persisted or reported as saved, or a dead credential
+    hides behind a "Refreshed" log."""
+    cfg = Config(data_dir=tmp_path)
+    past = time.time() - 100
+    future = time.time() + 7200
+    monkeypatch.setattr(
+        capture,
+        "refresh",
+        lambda acct: {"mail": {"token": "fresh", "expires_at": future}, "teams": {"token": "stale", "expires_at": past}},
+    )
+    saved = capture.refresh_and_save(cfg, "a@x.com")
+    assert saved == ["mail/calendar"]  # Teams skipped: already expired
+    assert owa_rest.load_token("a@x.com", cfg) == "fresh"
+    assert teams.browser_token_expiry("a@x.com", cfg) is None  # expired Teams token not persisted
+
+
 # ---------------------------------------------------------------------------
 # auth setup state machine
 # ---------------------------------------------------------------------------
