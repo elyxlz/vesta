@@ -1,4 +1,5 @@
 import base64
+import difflib
 import pathlib as pl
 import re
 from datetime import datetime
@@ -485,3 +486,87 @@ def update_email(
 
     result = api.retry(lambda: service.users().messages().modify(userId="me", id=message_id, body=body).execute())
     return {"status": "updated", "id": result["id"] if "id" in result else "", "labelIds": result["labelIds"] if "labelIds" in result else []}
+
+
+# -- diffing two sends from the same sender ----------------------------------
+
+_TRACKER_ANGLE_URL = re.compile(r"<https?://[^>]*>")
+_ANY_URL = re.compile(r"https?://\S+")
+
+
+def _normalize_body_lines(text: str) -> list[str]:
+    """Body text as comparable lines, with per-send noise removed.
+
+    Tracker URLs carry a fresh token on every send, so left in they differ on
+    every line that holds one and bury the real wording change.
+    """
+    lines = []
+    for raw in text.split("\n"):
+        line = _TRACKER_ANGLE_URL.sub("", raw)
+        line = _ANY_URL.sub("<link>", line)
+        line = line.rstrip()
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _fetch_body_lines(service, message_id: str) -> list[str]:
+    msg = api.retry(lambda: service.users().messages().get(userId="me", id=message_id, format="full").execute())
+    payload = msg["payload"] if "payload" in msg else {}
+    return _normalize_body_lines(_get_body_text(payload))
+
+
+def diff_emails(config: Config, *, sender: str, subject: str | None = None, limit: int = 8) -> dict[str, Any]:
+    """Diff the two newest mails matching a sender, and optionally a subject.
+
+    Every outcome is named in ``verdict``: an unchanged body reports
+    ``NO_TEXTUAL_CHANGE`` rather than an empty ``diff``, because an empty diff
+    and a failed fetch are otherwise indistinguishable.
+    """
+    query = f"from:{sender}"
+    if subject:
+        query += f' subject:"{subject}"'
+
+    matches = search_emails(config, query=query, limit=max(limit, 2))
+    if not matches:
+        return {
+            "verdict": "NO_MATCH",
+            "query": query,
+            "note": "No mail matched. That is a statement about the query first: try a shorter sender substring.",
+        }
+    if len(matches) == 1:
+        return {
+            "verdict": "ONLY_ONE_MATCH",
+            "query": query,
+            "newer": matches[0],
+            "note": "Only one mail matches, so there is nothing to diff. That is an answer, not a failure.",
+        }
+
+    newer, older = matches[0], matches[1]
+    service = api.gmail_service(config)
+    diff = list(
+        difflib.unified_diff(
+            _fetch_body_lines(service, older["id"]),
+            _fetch_body_lines(service, newer["id"]),
+            fromfile="older",
+            tofile="newer",
+            lineterm="",
+            n=1,
+        )
+    )
+    result: dict[str, Any] = {
+        "query": query,
+        "newer": {"id": newer["id"], "date": newer["date"], "subject": newer["subject"]},
+        "older": {"id": older["id"], "date": older["date"], "subject": older["subject"]},
+    }
+    changed = [line for line in diff if line[:1] in "+-" and line[:3] not in ("+++", "---")]
+    if not changed:
+        result["verdict"] = "NO_TEXTUAL_CHANGE"
+        result["changed_line_count"] = 0
+        result["note"] = "The two bodies match once links and blank lines are stripped."
+        return result
+    result["verdict"] = "CHANGED"
+    result["changed_line_count"] = len(changed)
+    result["diff"] = diff
+    result["note"] = "Read the changed lines before relying on any earlier summary of this thread."
+    return result
