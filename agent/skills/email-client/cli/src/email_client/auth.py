@@ -66,7 +66,7 @@ def auth_device_flow(provider: str, profile: dict, user: str) -> dict:
         sys.exit(f"device flow init failed: {flow}")
     print(f"\nVisit:  {flow['verification_uri']}")
     print(f"Code:   {flow['user_code']}\n")
-    print("Polling for completion (sign in, approve, then come back here)...")
+    print("Polling for completion (sign in, approve, then come back here)...", flush=True)
     res = app.acquire_token_by_device_flow(flow)
     if "access_token" not in res:
         sys.exit(f"auth failed: {res}")
@@ -144,7 +144,7 @@ def auth_loopback_oauth(provider: str, profile: dict, user: str) -> dict:
 
     print("\nOpen this URL in a browser on any device that can reach this host:\n")
     print(f"  {auth_url}\n")
-    print(f"Listening on {redirect_uri} for the redirect (Ctrl-C to cancel)...")
+    print(f"Listening on {redirect_uri} for the redirect (Ctrl-C to cancel)...", flush=True)
 
     try:
         # Spin until the handler captures something or the user
