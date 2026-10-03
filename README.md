@@ -80,6 +80,17 @@ vestad stop      # stop the service
 
 Use `vestad serve --standalone` to run in the foreground without systemd (for CI/development). Use `--no-tunnel` to disable the Cloudflare tunnel.
 
+#### Optional: host layout
+
+Two settings choose where vestad keeps its heavy data. Set them before the first `vestad` run:
+
+```bash
+vestad docker-socket set unix:///run/docker-second.sock   # a separate Docker daemon, e.g. one on another disk
+vestad backup-dir set /mnt/disk2/vesta-backups            # keep backups on another disk (the directory must exist)
+```
+
+Both are stored in `settings.json` in the config dir. `show` prints the value in effect and `reset` goes back to the default. Later changes restart the service. `docker-socket` refuses while agents exist, and `backup-dir` refuses while backups remain at the old location and prints the command that moves them.
+
 ### 2. Client
 
 Copy the connect link from the server output, then reach your agent one of three ways:
