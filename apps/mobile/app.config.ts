@@ -36,7 +36,7 @@ const config: ExpoConfig = {
   name: isDevelopment ? "Vesta Dev" : "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
-  version: "0.3.13",
+  version: "0.3.14",
   scheme: isDevelopment ? "vesta-dev" : "vesta",
   orientation: "portrait",
   icon: appIcon,
