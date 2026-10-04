@@ -317,7 +317,7 @@ export const APP_SETTINGS: Record<string, Scenario> = {
     state: SIGNED_OUT,
     drive: async (page) => {
       await toLinkForm(page);
-      await page.getByRole("button", { name: "get the Vesta app" }).click();
+      await page.getByRole("button", { name: /Linux/ }).click();
     },
   },
   "connect-connecting": {

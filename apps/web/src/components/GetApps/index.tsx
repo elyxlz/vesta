@@ -1,126 +1,103 @@
-import { useState } from "react";
-import { Download, ExternalLink, Monitor, Smartphone } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import type { ComponentType } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { MenuSection } from "@/components/ui/menu-section";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/Dialog";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/DropdownMenu";
 import { runtimeInfo } from "@/lib/native";
+import type { Platform } from "@/lib/platform";
 import { cn } from "@/lib/utils";
-import {
-  ANDROID_DOWNLOAD,
-  computerDownloads,
-  otherVersionsUrl,
-  type AppDownload,
-} from "./app-downloads";
+import { appTiles, type AppTile } from "./app-downloads";
+import { AndroidLogo, AppleLogo, LinuxLogo, WindowsLogo } from "./logos";
 
 // Browser only: inside the desktop app the user already has it, and it updates itself.
 const { isDesktopApp, platform } = runtimeInfo;
 
+const LOGOS: Record<Platform, ComponentType<{ className?: string }>> = {
+  macos: AppleLogo,
+  windows: WindowsLogo,
+  linux: LinuxLogo,
+  android: AndroidLogo,
+  ios: AppleLogo,
+};
+
+const TILE_CLASS =
+  "flex w-full flex-col items-center gap-1.5 rounded-2xl border border-border bg-popover px-0.5 py-3 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+
 export function GetAppsCard() {
   if (isDesktopApp) return null;
   return (
-    <Card size="sm" className="md:col-span-2">
+    <Card size="sm">
       <CardContent>
-        <AppDownloads sectionsClassName="md:grid-cols-2" />
+        <MenuSection title="get the Vesta app">
+          <AppTiles className="mt-2" />
+        </MenuSection>
       </CardContent>
     </Card>
   );
 }
 
-export function GetAppsLink() {
-  const [open, setOpen] = useState(false);
+export function GetAppsRow() {
   if (isDesktopApp) return null;
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="mx-auto px-3 py-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
-      >
-        get the Vesta app
-      </button>
-      <Dialog open={open} onOpenChange={setOpen} drawerOnMobile>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>get the Vesta app</DialogTitle>
-            <DialogDescription>
-              keep Vesta with you on your computer and your phone
-            </DialogDescription>
-          </DialogHeader>
-          <AppDownloads />
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
-function AppDownloads({ sectionsClassName }: { sectionsClassName?: string }) {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className={cn("grid gap-4", sectionsClassName)}>
-        <MenuSection title="computer">
-          <div className="mt-1 flex flex-col gap-2">
-            {computerDownloads(__APP_VERSION__).map((download) => (
-              <DownloadRow
-                key={download.url}
-                icon={Monitor}
-                download={download}
-              />
-            ))}
-          </div>
-        </MenuSection>
-        <MenuSection title="phone">
-          <div className="mt-1 flex flex-col gap-2">
-            <DownloadRow icon={Smartphone} download={ANDROID_DOWNLOAD} />
-            <Button variant="outline" disabled className="w-full justify-start">
-              <Smartphone data-icon="inline-start" />
-              iPhone
-              <span className="ml-auto text-muted-foreground">coming soon</span>
-            </Button>
-          </div>
-        </MenuSection>
-      </div>
-      <a
-        href={otherVersionsUrl(__APP_VERSION__)}
-        target="_blank"
-        rel="noreferrer"
-        className="mx-auto flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:underline"
-      >
-        other versions
-        <ExternalLink className="size-3" />
-      </a>
+    <div className="mx-auto flex w-full max-w-[26rem] flex-col items-center gap-2">
+      <p className="text-xs text-muted-foreground">get the Vesta app</p>
+      <AppTiles />
     </div>
   );
 }
 
-function DownloadRow({
-  icon: Icon,
-  download,
-}: {
-  icon: LucideIcon;
-  download: AppDownload;
-}) {
-  // The visitor's own device stands out, so most people never read the rest of the list.
-  const ownDevice = download.platform === platform;
+function AppTiles({ className }: { className?: string }) {
   return (
-    <Button
-      asChild
-      variant={ownDevice ? "default" : "outline"}
-      className="w-full justify-start"
-    >
-      <a href={download.url}>
-        <Icon data-icon="inline-start" />
-        {download.name}
-        {download.hint && <span className="opacity-60">{download.hint}</span>}
-        <Download data-icon="inline-end" className="ml-auto" />
+    <div className={cn("grid w-full grid-cols-5 gap-2", className)}>
+      {appTiles(__APP_VERSION__).map((tile) => (
+        <Tile key={tile.platform} tile={tile} />
+      ))}
+    </div>
+  );
+}
+
+function Tile({ tile }: { tile: AppTile }) {
+  const Logo = LOGOS[tile.platform];
+  // The visitor's own device stands out, so most people never read the rest of the row.
+  const ownDevice = tile.platform === platform;
+  const face = (
+    <>
+      <Logo className="size-6" />
+      <span className="leading-none">{tile.name}</span>
+      <span className="h-3 text-[0.625rem] leading-none whitespace-nowrap text-muted-foreground">
+        {tile.hint}
+      </span>
+    </>
+  );
+  const className = cn(
+    TILE_CLASS,
+    ownDevice && "border-primary bg-primary/15",
+    tile.choices.length > 0 ? "hover:bg-muted" : "opacity-50",
+  );
+  const [only, ...rest] = tile.choices;
+
+  if (only === undefined) return <div className={className}>{face}</div>;
+  if (rest.length === 0) {
+    return (
+      <a href={only.url} className={className}>
+        {face}
       </a>
-    </Button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className={className}>{face}</DropdownMenuTrigger>
+      <DropdownMenuContent>
+        {tile.choices.map((choice) => (
+          <DropdownMenuItem key={choice.url} asChild>
+            <a href={choice.url}>{choice.label}</a>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

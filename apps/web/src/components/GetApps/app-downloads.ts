@@ -6,14 +6,21 @@ import type { Platform } from "@/lib/platform";
 // keeps one name on every release, so it comes from the latest one.
 const RELEASES_URL = "https://github.com/elyxlz/vesta/releases";
 
-export interface AppDownload {
-  platform: Platform;
-  name: string;
-  hint: string | null;
+export interface AppChoice {
+  label: string;
   url: string;
 }
 
-export function computerDownloads(version: string): AppDownload[] {
+// One tile per platform. No choices means the app is not out yet; more than one means the tile
+// asks which (Linux ships one package per distribution family).
+export interface AppTile {
+  platform: Platform;
+  name: string;
+  hint: string | null;
+  choices: AppChoice[];
+}
+
+export function appTiles(version: string): AppTile[] {
   const file = (name: string) =>
     `${RELEASES_URL}/download/v${version}/Vesta_${version}_${name}`;
   return [
@@ -21,31 +28,34 @@ export function computerDownloads(version: string): AppDownload[] {
       platform: "macos",
       name: "Mac",
       hint: "M1 or newer",
-      url: file("arm64.dmg"),
+      choices: [{ label: "Mac", url: file("arm64.dmg") }],
     },
-    { platform: "windows", name: "Windows", hint: null, url: file("x64.exe") },
+    {
+      platform: "windows",
+      name: "Windows",
+      hint: null,
+      choices: [{ label: "Windows", url: file("x64.exe") }],
+    },
     {
       platform: "linux",
       name: "Linux",
-      hint: "Ubuntu, Debian",
-      url: file("amd64.deb"),
+      hint: null,
+      choices: [
+        { label: "Ubuntu, Debian", url: file("amd64.deb") },
+        { label: "Fedora", url: file("x86_64.rpm") },
+      ],
     },
     {
-      platform: "linux",
-      name: "Linux",
-      hint: "Fedora",
-      url: file("x86_64.rpm"),
+      platform: "android",
+      name: "Android",
+      hint: null,
+      choices: [
+        {
+          label: "Android",
+          url: `${RELEASES_URL}/latest/download/vesta-android.apk`,
+        },
+      ],
     },
+    { platform: "ios", name: "iPhone", hint: "coming soon", choices: [] },
   ];
-}
-
-export const ANDROID_DOWNLOAD: AppDownload = {
-  platform: "android",
-  name: "Android",
-  hint: null,
-  url: `${RELEASES_URL}/latest/download/vesta-android.apk`,
-};
-
-export function otherVersionsUrl(version: string): string {
-  return `${RELEASES_URL}/tag/v${version}`;
 }

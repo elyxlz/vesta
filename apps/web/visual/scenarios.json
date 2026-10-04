@@ -1079,8 +1079,8 @@
     },
     {
       "id": "connect-get-apps",
-      "title": "Connect, get the Vesta app",
-      "description": "The browser-only dialog with the desktop and mobile app downloads.",
+      "title": "Connect, Linux app choices",
+      "description": "The browser-only app tiles with the Linux tile open on its distribution choices.",
       "group": "Connect",
       "platforms": ["web", "web-narrow"]
     },
