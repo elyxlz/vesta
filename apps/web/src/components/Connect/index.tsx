@@ -18,6 +18,7 @@ import { parseConnectLink } from "@/lib/connection";
 import { readRecentGateways } from "@/lib/recent-gateways";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { useDialogs } from "@/stores/use-dialogs";
+import { GetAppsLink } from "@/components/GetApps";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
 // window.location.origin already points at the right vestad instance.
@@ -101,6 +102,7 @@ function HostedSignInCard({
           )}
         </motion.div>
       </div>
+      <GetAppsLink />
     </div>
   );
 }
@@ -372,6 +374,7 @@ export function Connect() {
             </AnimatePresence>
           </motion.form>
         </div>
+        <GetAppsLink />
       </div>
     </div>
   );

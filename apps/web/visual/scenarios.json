@@ -1078,6 +1078,13 @@
       "group": "Connect"
     },
     {
+      "id": "connect-get-apps",
+      "title": "Connect, get the apps",
+      "description": "The browser-only dialog with the desktop and mobile app downloads.",
+      "group": "Connect",
+      "platforms": ["web", "web-narrow"]
+    },
+    {
       "id": "connect-connecting",
       "title": "Connect, connecting",
       "description": "The connect page while the health check runs.",
