@@ -2,6 +2,7 @@
 
 import argparse
 import imaplib
+import types
 
 import pytest
 from email_client import imap
@@ -27,6 +28,8 @@ class _Box:
         self.charsets = []
         self.folder = _Folder(self)
         self.folder_set = None
+        self.client = types.SimpleNamespace(literal=None)
+        self.literals = []
 
     def __enter__(self):
         return self
@@ -37,6 +40,8 @@ class _Box:
     def fetch(self, criteria, charset="US-ASCII", **kw):
         self.sent.append(criteria)
         self.charsets.append(charset)
+        self.literals.append(self.client.literal)
+        self.client.literal = None
         if self._abort_on_first and len(self.sent) == 1:
             raise imaplib.IMAP4.abort("connection dropped")
         if self._no_reply is not None:
@@ -104,12 +109,42 @@ def test_a_query_the_server_rejects_twice_exits_with_a_message(monkeypatch):
     assert "hopeless" in str(excinfo.value)
 
 
-def test_non_ascii_queries_request_utf8(monkeypatch):
-    """imap_tools encodes criteria with the given charset, so US-ASCII raises UnicodeEncodeError
-    before the query reaches the server."""
-    box = _Box(valid={AND(text="café")})
-    _run(monkeypatch, box, "café")
-    assert box.charsets == ["UTF-8", "UTF-8"]
+def test_a_non_ascii_phrase_is_sent_as_a_utf8_text_literal(monkeypatch):
+    """IMAP quoted strings are 7-bit; Gmail answers BAD to UTF-8 inside one, so the value goes as a literal."""
+    box = _Box(valid={"TEXT"})
+    _run(monkeypatch, box, "مركز")
+    assert box.sent == ["TEXT"]
+    assert box.literals == ["مركز".encode()]
+    assert box.charsets == ["UTF-8"]
+
+
+@pytest.mark.parametrize(
+    ("query", "keys", "value"),
+    [
+        ('X-GM-RAW "طبيب"', "X-GM-RAW", "طبيب"),
+        ('SUBJECT "café"', "SUBJECT", "café"),
+        ("SUBJECT café", "SUBJECT", "café"),
+        ('SINCE 1-Jan-2026 SUBJECT "a \\"b\\" é"', "SINCE 1-Jan-2026 SUBJECT", 'a "b" é'),
+    ],
+)
+def test_a_trailing_non_ascii_value_becomes_the_literal(monkeypatch, query, keys, value):
+    box = _Box(valid={keys})
+    _run(monkeypatch, box, query)
+    assert box.sent == [keys]
+    assert box.literals == [value.encode()]
+
+
+def test_a_rejected_non_ascii_query_retries_as_a_text_literal(monkeypatch):
+    box = _Box(valid={"TEXT"})
+    _run(monkeypatch, box, "job café")
+    assert box.sent == ["job", "TEXT"]
+    assert box.literals == [b"caf\xc3\xa9", "job café".encode()]
+
+
+def test_ascii_queries_send_no_literal(monkeypatch):
+    box = _Box(valid={"UNSEEN"})
+    _run(monkeypatch, box, "UNSEEN")
+    assert box.literals == [None]
 
 
 def test_ascii_queries_keep_the_default_charset(monkeypatch):

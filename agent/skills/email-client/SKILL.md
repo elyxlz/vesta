@@ -64,7 +64,9 @@ email-client search --account personal --folder INBOX --query 'SUBJECT "invoice"
 email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 ```
 
-`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too.
+`list` and `search` read ONE folder, `--folder` (default `INBOX`). On Gmail, archived and older mail is not in INBOX: before reporting that a message does not exist, search `[Gmail]/All Mail` (the name is localized, so take it from `list-folders`), and run a control query you know returns rows.
+
+`list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too. A non-ASCII value (Arabic, accented, CJK) is sent as a UTF-8 literal, so `--query 'مركز'` and `--query 'X-GM-RAW "مركز"'` work; put the non-ASCII value last in a raw query.
 
 `get` returns the message with a readable body. `body_format` says where that body came from: `text` for the message's own plain-text part, `html-to-text` when it had none and the HTML was flattened (link targets kept in parentheses). The body is capped at `--body-chars` (default 4000); when the cap cuts it, the result carries `body_truncated: true` and `body_chars_total`, so a value you cannot find is distinguishable from one that is simply past the cut. Re-run with a larger `--body-chars` to read the rest.
 
