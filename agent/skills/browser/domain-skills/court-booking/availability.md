@@ -52,6 +52,12 @@ a `title` like `Available<br>Court name<br> 14:45 - 15:30` in the venue's local 
 is bookable. Some venues sell 45-minute slots only, so a request for "an hour" may need two
 consecutive slots.
 
+Booking (logged-in session): the price is not in the schedule grid; clicking a `free` slot opens a
+"Verify" dialog with the court, time and price. Its `Next` submit goes to `checkout.matchi.com`
+(card fields in third-party iframes; no saved card means the user must supply one). Nothing is
+held or reserved at the dialog or the checkout step: the slot is the user's only once payment
+succeeds and a "Booking confirmation" email arrives from `no-reply@matchi.se`.
+
 ## Playtomic (playtomic.com)
 
 The club page `https://playtomic.com/clubs/<slug>` embeds the club's `tenant_id` (a UUID). Several
