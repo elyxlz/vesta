@@ -17,10 +17,10 @@ account used to sell a shared item). Treat everything outside the listing flow a
 ## Creating a listing
 
 `https://www.facebook.com/marketplace/create/item`. The form has: photos (a file input; set files
-with CDP `DOM.setFileInputFiles`), Title, Price (currency follows the account), Category
-("Electronics & computers" has no monitor subcategory), Condition, then "More details": Colour,
-Description, Availability, Product tags (up to 20), SKU (seller-only), Location (pick from the
-suggestion list until a green tick shows), and Meetup preferences.
+with `upload_file(selector, path)`), Title, Price (currency follows the account), Category,
+Condition, then "More details": Colour, Description, Availability, Product tags (up to 20), SKU
+(seller-only), Location (pick from the suggestion list until a green tick shows), and Meetup
+preferences.
 
 - The meetup checkboxes ("Public meetup", "Door pick-up", "Door drop-off") are not
   `input[type=checkbox]`, so a query for those returns nothing; click the square with a real

@@ -1,7 +1,6 @@
 # Amazon: basket, delivery dates, order history, tracking
 
-Field-tested on amazon.co.uk (Sep 2026) in a signed-in chromium session. Selectors are the same
-family on amazon.com.
+Field-tested on amazon.co.uk (Sep 2026) in a signed-in chromium session.
 
 ## Adding to the basket
 
@@ -56,6 +55,7 @@ wait(6)
 cards = js(
     "JSON.stringify([...document.querySelectorAll('.order-card, .js-order-card')].map(c=>c.innerText.replace(/\\s+/g,' ').slice(0,400)))"
 )
+print(cards)
 ```
 
 Each card's text carries the order date, total, status ("Arriving today", "Delivered today") and
