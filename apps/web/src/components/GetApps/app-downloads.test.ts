@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   ANDROID_DOWNLOAD,
-  allDownloadsUrl,
-  desktopDownloads,
+  otherVersionsUrl,
+  computerDownloads,
 } from "./app-downloads";
 
 describe("app downloads", () => {
   it("names every desktop file of the given release", () => {
-    expect(desktopDownloads("0.3.15").map((download) => download.url)).toEqual([
-      "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_arm64.dmg",
-      "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_x64.exe",
-      "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_amd64.deb",
-      "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_x86_64.rpm",
-    ]);
+    expect(computerDownloads("0.3.15").map((download) => download.url)).toEqual(
+      [
+        "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_arm64.dmg",
+        "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_x64.exe",
+        "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_amd64.deb",
+        "https://github.com/elyxlz/vesta/releases/download/v0.3.15/Vesta_0.3.15_x86_64.rpm",
+      ],
+    );
   });
 
   it("takes the android apk from the latest release", () => {
@@ -21,8 +23,8 @@ describe("app downloads", () => {
     );
   });
 
-  it("links the release page for every other file", () => {
-    expect(allDownloadsUrl("0.3.15")).toBe(
+  it("links the release page for other versions", () => {
+    expect(otherVersionsUrl("0.3.15")).toBe(
       "https://github.com/elyxlz/vesta/releases/tag/v0.3.15",
     );
   });
