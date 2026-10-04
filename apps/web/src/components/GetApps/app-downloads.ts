@@ -6,7 +6,7 @@ import type { Platform } from "@/lib/platform";
 // keeps one name on every release, so it comes from the latest one.
 const RELEASES_URL = "https://github.com/elyxlz/vesta/releases";
 
-export interface AppChoice {
+interface AppChoice {
   label: string;
   url: string;
 }
