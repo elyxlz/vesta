@@ -25,7 +25,7 @@ const LOGOS: Record<Platform, ComponentType<{ className?: string }>> = {
 };
 
 const TILE_CLASS =
-  "flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-squircle-sm [corner-shape:squircle] bg-foreground/5 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+  "flex size-15 shrink-0 flex-col items-center justify-center gap-1.5 rounded-squircle-sm [corner-shape:squircle] bg-foreground/5 text-[0.6875rem] font-normal transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
 
 export function GetAppsCard() {
   if (isDesktopApp) return null;
@@ -43,16 +43,16 @@ export function GetAppsCard() {
 export function GetAppsRow() {
   if (isDesktopApp) return null;
   return (
-    <div className="mx-auto flex w-full max-w-[27rem] flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-2">
       <p className="text-xs text-muted-foreground">get the Vesta app</p>
-      <AppTiles />
+      <AppTiles className="justify-center" />
     </div>
   );
 }
 
 function AppTiles({ className }: { className?: string }) {
   return (
-    <div className={cn("grid w-full grid-cols-5 gap-3", className)}>
+    <div className={cn("flex flex-wrap gap-2", className)}>
       {appTiles(__APP_VERSION__).map((tile) => (
         <Tile key={tile.platform} tile={tile} />
       ))}
@@ -66,7 +66,7 @@ function Tile({ tile }: { tile: AppTile }) {
   const ownDevice = tile.platform === platform;
   const face = (
     <>
-      <Logo className="size-7" />
+      <Logo className="size-5" />
       <span className="flex flex-col items-center gap-1 leading-none">
         {tile.name}
         {tile.choices.length === 0 && (
