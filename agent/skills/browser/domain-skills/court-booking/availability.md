@@ -21,8 +21,9 @@ Club page: `https://padelmates.se/club/<club_id>` (a JS app; curl gets an empty 
 the 32-hex string in that URL.
 
 ```bash
-S=$(TZ=Europe/Stockholm date -d "2026-10-01 00:00" +%s)000
-E=$(TZ=Europe/Stockholm date -d "2026-10-02 00:00" +%s)000
+D=<YYYY-MM-DD>; Z=<club timezone, e.g. Europe/Stockholm>
+S=$(TZ=$Z date -d "$D" +%s)000
+E=$(TZ=$Z date -d "$D + 1 day" +%s)000
 curl -s -A "Mozilla/5.0" -H "Origin: https://padelmates.se" \
   "https://fastapi-production-fargate.padelmates.io/player/player_booking/all_courts_slot_prices_v3?club_id=<club_id>&start_datetime=$S&end_datetime=$E&lang=en"
 ```
@@ -44,7 +45,7 @@ script, and the sport picker's `<option value="5">` is Padel (read the options f
 
 ```bash
 curl -s -A "Mozilla/5.0" \
-  "https://www.matchi.se/book/schedule?wl=&facilityId=<n>&date=2026-10-01&sport=5&week=&year="
+  "https://www.matchi.se/book/schedule?wl=&facilityId=<n>&date=<YYYY-MM-DD>&sport=5&week=&year="
 ```
 
 This returns an HTML grid. Each `td.slot` has class `free`, `red` (booked) or `not-available`, and
@@ -67,7 +68,7 @@ tenant ids can appear in the page (nearby clubs); the club's own is the first, a
 
 ```bash
 curl -s -A "Mozilla/5.0" \
-  "https://playtomic.com/api/clubs/availability?tenant_id=<tenant_id>&date=2026-10-01&sport_id=PADEL"
+  "https://playtomic.com/api/clubs/availability?tenant_id=<tenant_id>&date=<YYYY-MM-DD>&sport_id=PADEL"
 ```
 
 The response is a list, one entry per court: `resource_id`, `start_date`, and `slots[]` of
