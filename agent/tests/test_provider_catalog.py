@@ -80,6 +80,12 @@ def test_zai_requires_a_key():
         ZaiConfig.model_validate({"model": "glm-4.7"})
 
 
+def test_zai_accepts_glm_5_3_flash():
+    provider = ZaiConfig.model_validate({"model": "glm-5.3-flash", "key": "key"})
+    assert provider.model == "glm-5.3-flash"
+    assert _catalog()["providers"]["zai"]["model_names"]["glm-5.3-flash"] == "GLM 5.3 Flash"
+
+
 def test_kimi_requires_a_key():
     with pytest.raises(pyd.ValidationError):
         KimiConfig.model_validate({"model": "kimi-for-coding"})
