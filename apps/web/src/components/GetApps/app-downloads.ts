@@ -12,7 +12,7 @@ interface AppChoice {
 }
 
 // One tile per platform. No choices means the app is not out yet; more than one means the tile
-// asks which (Linux ships one package per distribution family).
+// asks which (Linux ships one package per distribution family). The hint is the tile's hover text.
 export interface AppTile {
   platform: Platform;
   name: string;
@@ -56,6 +56,6 @@ export function appTiles(version: string): AppTile[] {
         },
       ],
     },
-    { platform: "ios", name: "iPhone", hint: "coming soon", choices: [] },
+    { platform: "ios", name: "iPhone", hint: null, choices: [] },
   ];
 }

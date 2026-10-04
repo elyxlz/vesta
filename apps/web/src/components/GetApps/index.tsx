@@ -25,7 +25,7 @@ const LOGOS: Record<Platform, ComponentType<{ className?: string }>> = {
 };
 
 const TILE_CLASS =
-  "flex w-full flex-col items-center gap-1.5 rounded-2xl border border-border bg-popover px-0.5 py-3 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+  "flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-squircle-sm [corner-shape:squircle] bg-foreground/5 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
 
 export function GetAppsCard() {
   if (isDesktopApp) return null;
@@ -43,7 +43,7 @@ export function GetAppsCard() {
 export function GetAppsRow() {
   if (isDesktopApp) return null;
   return (
-    <div className="mx-auto flex w-full max-w-[26rem] flex-col items-center gap-2">
+    <div className="mx-auto flex w-full max-w-[27rem] flex-col items-center gap-2">
       <p className="text-xs text-muted-foreground">get the Vesta app</p>
       <AppTiles />
     </div>
@@ -52,7 +52,7 @@ export function GetAppsRow() {
 
 function AppTiles({ className }: { className?: string }) {
   return (
-    <div className={cn("grid w-full grid-cols-5 gap-2", className)}>
+    <div className={cn("grid w-full grid-cols-5 gap-3", className)}>
       {appTiles(__APP_VERSION__).map((tile) => (
         <Tile key={tile.platform} tile={tile} />
       ))}
@@ -66,24 +66,28 @@ function Tile({ tile }: { tile: AppTile }) {
   const ownDevice = tile.platform === platform;
   const face = (
     <>
-      <Logo className="size-6" />
-      <span className="leading-none">{tile.name}</span>
-      <span className="h-3 text-[0.625rem] leading-none whitespace-nowrap text-muted-foreground">
-        {tile.hint}
+      <Logo className="size-7" />
+      <span className="flex flex-col items-center gap-1 leading-none">
+        {tile.name}
+        {tile.choices.length === 0 && (
+          <span className="text-[0.625rem] whitespace-nowrap text-muted-foreground">
+            soon
+          </span>
+        )}
       </span>
     </>
   );
   const className = cn(
     TILE_CLASS,
-    ownDevice && "border-primary bg-primary/15",
-    tile.choices.length > 0 ? "hover:bg-muted" : "opacity-50",
+    ownDevice && "ring-1 ring-primary",
+    tile.choices.length > 0 ? "hover:bg-foreground/10" : "opacity-50",
   );
   const [only, ...rest] = tile.choices;
 
   if (only === undefined) return <div className={className}>{face}</div>;
   if (rest.length === 0) {
     return (
-      <a href={only.url} className={className}>
+      <a href={only.url} title={tile.hint ?? undefined} className={className}>
         {face}
       </a>
     );
