@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,17 @@ func TestWriterLoggerTeesToWriter(t *testing.T) {
 	}
 	if strings.Contains(out, "below the WARN threshold") {
 		t.Errorf("debug line must be filtered out at WARN level: %q", out)
+	}
+}
+
+// TestWriterLoggerLinesCarryDate keeps each line dated, so a log scanner that
+// windows by day can tell a fresh error from one left over from weeks ago.
+func TestWriterLoggerLinesCarryDate(t *testing.T) {
+	var buf strings.Builder
+	logger := newWriterLogger(&buf, "WhatsApp", "WARN")
+	logger.Errorf("socket closed")
+	if !regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[WhatsApp ERROR\] socket closed\n$`).MatchString(buf.String()) {
+		t.Errorf("log line must start with a full date: %q", buf.String())
 	}
 }
 
