@@ -54,6 +54,22 @@ def search(db_path: pathlib.Path, query: str, *, limit: int) -> list[dict[str, s
     return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in rows]
 
 
+def literal_query(query: str) -> str:
+    """The query with every non-operator token double-quoted, so punctuation inside a term
+    (print-to-pdf, user@host, v0.3.15) is matched literally instead of parsed as FTS5 syntax
+    (a hyphen reads as a column filter). A trailing * stays outside the quotes as a prefix match."""
+    tokens: list[str] = []
+    for token in query.split():
+        if token.upper() in {"AND", "OR", "NOT"}:
+            tokens.append(token)
+            continue
+        prefix = token.endswith("*")
+        bare = token.rstrip("*").strip('"').replace('"', '""')
+        if bare:
+            tokens.append(f'"{bare}"' + ("*" if prefix else ""))
+    return " ".join(tokens)
+
+
 def query_terms(query: str) -> list[str]:
     """The bare search terms of an FTS5 query: its alphanumeric runs, lowercased, with operators
     dropped. Used only to locate a match for windowing, so approximate parsing is fine."""
@@ -121,9 +137,13 @@ def main() -> int:
 
     try:
         results = search(DB_PATH, args.query, limit=args.limit)
-    except sqlite3.OperationalError as e:
-        print(f"Search error: {e}", file=sys.stderr)
-        return 1
+    except sqlite3.OperationalError:
+        # Not valid FTS5 syntax (e.g. a hyphenated term): retry with the terms matched literally.
+        try:
+            results = search(DB_PATH, literal_query(args.query), limit=args.limit)
+        except sqlite3.OperationalError as e:
+            print(f"Search error: {e}", file=sys.stderr)
+            return 1
     if args.snippet is not None:
         for r in results:
             r["content"] = window(r["content"], args.query, args.snippet)
