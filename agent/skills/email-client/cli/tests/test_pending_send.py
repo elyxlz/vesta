@@ -398,3 +398,22 @@ def test_a_delayed_send_is_refused_when_no_daemon_can_dispatch_it(tmp_path, monk
         smtp_send.send(smtp_send.SendRequest(to="bob@example.com", subject="Hello", body="Body", account="personal"))
 
     assert pending_send.list_pending(tmp_path) == []
+
+
+def test_body_file_loads_the_body_and_conflicts_with_body(tmp_path, monkeypatch):
+    body_file = tmp_path / "body.txt"
+    body_file.write_text("Linea uno\nLinea due", encoding="utf-8")
+
+    parser = smtp_send._build_parser()
+    args = parser.parse_args(["--body-file", str(body_file), "--subject", "Hello"])
+    assert smtp_send._resolve_body(args) == "Linea uno\nLinea due"
+
+    stdin_args = parser.parse_args(["--body-file", "-", "--subject", "Hello"])
+    stdin_copy = body_file.open(encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", stdin_copy)
+    assert smtp_send._resolve_body(stdin_args) == "Linea uno\nLinea due"
+    stdin_copy.close()
+
+    both = parser.parse_args(["--body", "Body", "--body-file", str(body_file), "--subject", "Hello"])
+    with pytest.raises(SystemExit, match="mutually exclusive"):
+        smtp_send._resolve_body(both)
