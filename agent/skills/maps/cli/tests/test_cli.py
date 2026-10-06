@@ -73,6 +73,7 @@ def test_network_error_is_json_error(monkeypatch, capsys):
 
 import os
 import stat
+from datetime import UTC
 
 _SHIM_SIGNED_OUT = """#!/usr/bin/env python3
 import json, sys
@@ -141,3 +142,13 @@ def test_add_remove_require_sign_in_with_cached_place(tmp_path, monkeypatch):
         )
         assert proc.returncode != 0
         assert json.loads(proc.stderr)["error"] == "sign_in_required"
+
+
+def test_next_epoch_is_local_wall_clock_encoded_as_utc():
+    from datetime import datetime
+
+    from gmaps_cli.cli import _next_epoch
+
+    epoch = _next_epoch("21:15", "Europe/London")
+    stamped = datetime.fromtimestamp(epoch, UTC)
+    assert (stamped.hour, stamped.minute) == (21, 15)
