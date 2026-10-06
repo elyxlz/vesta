@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Show task ids that have more than one pending reminder pointing at them, EXCLUDING judged pairs.
+
+Why this exists. A dream's own sweep compared every reminder against the task it names and fixed
+the drift it found; hours later, in the SAME session, it armed a fresh reminder for a task that
+already had one, without checking, producing two reminders for one obligation days apart, one of
+them carrying a premise that had since gone false. A sweep is not a habit if it only runs after
+something has already gone wrong, so this is the check to run AFTER creating any reminder, not only
+inside the dream.
+
+Its first real run flagged four pairs and every one was legitimate: a near checkpoint plus a far one
+on the same task, and reminders that merely cross-reference another task in their prose. A check that
+cries wolf four times out of four is one you learn to skip, so it baselines: judged pairs go in
+~/agent/data/reminder-task-dupes-judged.txt and only NEW pairs are shown.
+
+Exit codes: 0 nothing new (or nothing at all), 1 a NEW unjudged pair, 2 the check could not run.
+It always prints how many reminders it scanned, because "no output" and "the instrument is broken"
+must never look the same. Judge a pair with --accept once you have read both.
+"""
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import NoReturn
+
+JUDGED = Path("~/agent/data/reminder-task-dupes-judged.txt").expanduser()
+TASK_RE = re.compile(r"task[s]?\s+`?([0-9a-f]{8})`?", re.IGNORECASE)
+
+
+def fail(msg: str) -> NoReturn:
+    print(f"CHECK FAILED: {msg}")
+    sys.exit(2)
+
+
+def pending_reminders() -> list[dict]:
+    """Every pending reminder, as dicts.
+
+    Read them through `reminders list --json`, never the text table: the table pages at 50 rows, and
+    this is an absence question, so a silent truncation would read as "no duplicates". JSON also
+    carries the id in its own field, which is the second half of the same lesson: the first build
+    regexed [0-9a-f]{8} over the table's lines and pulled an id out of a reminder's MESSAGE body,
+    because the corpus always contains commentary about the thing it is made of.
+    """
+    cmd = ["reminders", "list", "--json"]
+    p = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if p.returncode != 0:
+        fail(f"{' '.join(cmd)} exited {p.returncode}: {p.stderr.strip()[:200]}")
+    try:
+        rows = json.loads(p.stdout)
+    except json.JSONDecodeError as exc:
+        fail(f"could not parse 'reminders list --json' output: {exc}")
+    if not isinstance(rows, list):
+        fail("'reminders list --json' did not return a list; the format may have changed")
+    return [r for r in rows if isinstance(r, dict) and r.get("status") == "pending"]
+
+
+def judged_keys() -> set[str]:
+    return set(JUDGED.read_text().split()) if JUDGED.is_file() else set()
+
+
+def pair_key(task_id: str, reminders: list[tuple[str, str, str]]) -> str:
+    return task_id + ":" + ",".join(sorted(rid for rid, _, _ in reminders))
+
+
+def main() -> None:
+    rows = pending_reminders()
+    by_task: dict[str, list[tuple[str, str, str]]] = {}
+    for r in rows:
+        rid = str(r.get("id") or "")
+        message = str(r.get("message") or "")
+        when = str(r.get("next_run") or "")[:16]
+        preview = " ".join(message.split())[:90]
+        for task_id in {m.lower() for m in TASK_RE.findall(message)}:
+            by_task.setdefault(task_id, []).append((rid, when, preview))
+
+    pairs = {t: rs for t, rs in by_task.items() if len(rs) > 1}
+    judged = judged_keys()
+    new = {t: rs for t, rs in pairs.items() if pair_key(t, rs) not in judged}
+    print(
+        f"scanned {len(rows)} pending reminder(s), {len(by_task)} name a task, "
+        f"{len(pairs)} task(s) have 2+ reminders, {len(pairs) - len(new)} already judged"
+    )
+
+    if "--accept" in sys.argv:
+        JUDGED.parent.mkdir(parents=True, exist_ok=True)
+        with JUDGED.open("a") as fh:
+            for task_id, rs in sorted(new.items()):
+                fh.write(pair_key(task_id, rs) + "\n")
+        print(f"accepted {len(new)} pair(s) as judged")
+        sys.exit(0)
+
+    if not new:
+        print("NOTHING NEW: every task with multiple reminders has already been judged")
+        sys.exit(0)
+    for task_id, rs in sorted(new.items()):
+        print(f"\nNEW PAIR  task {task_id} has {len(rs)} reminders:")
+        for rid, when, preview in sorted(rs, key=lambda x: x[1]):
+            print(f"    {rid}  fires {when or '-'}  |  {preview}")
+        print("    -> read BOTH. A near plus a far checkpoint on one task is fine. A genuine")
+        print("       duplicate is two reminders for the SAME purpose: keep the one matching the")
+        print("       task's current state, log why in the other's metadata, then delete it.")
+    print("\nRun with --accept once judged.")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
