@@ -57,6 +57,30 @@ Calendar audit: every dated appointment, however informally arranged (mentioned 
 
 **Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class, not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
+### 1c. Run the instruments through one runner
+
+**`~/agent/skills/dream/scripts/dreamrun`** runs every instrument in this directory that is
+installed, captures each exit code with `subprocess.run` before any shell exists to launder it, and
+**prints the verdict table FIRST**. `--quiet` for the table alone, `--only <label>` for one. Exit 1
+if anything FAILED, 2 if anything went BLIND with none failing. Instruments that are not installed
+are skipped and named, never counted as blind.
+
+**Why a runner rather than reading each tool in turn.** A blind audit of six consecutive nights on
+one agent graded 33 claimed fixes and found the single most-recurring failure, on four separate
+nights, was **reading the wrong line of your own instrument**: every instance a pipe through
+`head`/`tail`/`grep`, or a `2>/dev/null`, that discarded the line where the tool admitted it had
+failed. One night `$?` held the exit code of `tail`. Another, a scanner's `TRUNCATED after 120s` was
+cut off three times in one hour and the result reported clean. One of those summaries wrote "fixed
+the instance, not the class", and the class recurred three more times, because each fix was a rule
+telling a future reader to be careful and the moment of failure is exactly when that does not happen.
+
+So this removes the occasion instead of restating the rule, and it was validated within a minute of
+being written: the same instruments had just been run through `| tail -8` and two of them recorded as
+exit 0. Both were exit 1.
+
+**Read the per-instrument notes anyway. The table gives you the verdict, not the judgement**, and at
+least one instrument counts reminders where the thing that matters is messages.
+
 ### 2. Review the conversation
 
 Review the conversation with fresh eyes. Note:

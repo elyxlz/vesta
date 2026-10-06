@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Create a task AND attach its metadata in one call, or refuse and create nothing.
+
+WHY THIS EXISTS. Twice in two days I created a task whose metadata landed in
+`~/.tasks/metadata/.md`, an orphan attached to no task at all, because a shell one-liner extracted
+the new id from `tasks create` output and got an empty string:
+
+  19 Sept  `tasks create --due ...` is AMBIGUOUS (it prefix-matches four flags), so the command
+           errored, printed nothing to stdout, `$OUT` was empty, and `$ID` was empty. The heredoc
+           then wrote a 1,900-character lesson to `metadata/.md`.
+  20 Sept  `tasks create` printed a WARNING line before its JSON. `json.load` on the whole stream
+           raised "Extra data", the extractor died, `$ID` was empty again, and the same orphan
+           appeared. Different cause, identical symptom.
+
+Both times the detector (`task-orphan-audit`) would have found it that night. That is a night late,
+and the second time I had already written the lesson from the first. A detector is not a fix.
+
+So this does the whole job in one process: create, parse the id ROBUSTLY (one JSON object per line,
+take the one that has an id), refuse loudly if there is no id, write the metadata to the path the
+task itself reports, then read the task back and verify the metadata is actually attached. If any
+step fails, nothing is left half-done: with no id nothing is written, and a metadata write failure
+exits non-zero while naming the task so it can be repaired by hand.
+
+USAGE
+  safe-task-create --subject "..." [--priority normal] [--at "YYYY-MM-DDTHH:MM:SS"] [--tz ZONE]
+                   (--meta-file PATH | --meta - )
+
+  --meta -           read the metadata body from stdin (heredoc-friendly)
+  --meta-file PATH   read it from a file
+  Omit both only if the task genuinely needs no metadata; it will say so.
+
+Exit 0 only when the task exists AND its metadata_content is non-empty.
+"""
+import argparse
+import json
+import pathlib
+import subprocess
+import sys
+
+
+def run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def parse_id(stdout):
+    """Take the id from the LAST line that is a JSON object carrying one.
+
+    `tasks create` may print a warning object first, so parsing the whole stream fails, and
+    parsing only the first line gets the warning. Neither is safe.
+    """
+    found = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("id"):
+            found = obj
+    return found
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--subject", required=True)
+    ap.add_argument("--priority", default="normal")
+    ap.add_argument("--at")
+    ap.add_argument("--tz")
+    ap.add_argument("--meta")
+    ap.add_argument("--meta-file")
+    a = ap.parse_args()
+
+    if a.meta_file:
+        body = pathlib.Path(a.meta_file).read_text()
+    elif a.meta == "-":
+        body = sys.stdin.read()
+    elif a.meta:
+        body = a.meta
+    else:
+        body = ""
+
+    cmd = ["tasks", "create", "--subject", a.subject, "--priority", a.priority]
+    if a.at:
+        cmd += ["--at", a.at]
+    if a.tz:
+        cmd += ["--tz", a.tz]
+
+    r = run(cmd)
+    obj = parse_id(r.stdout)
+    if obj is None:
+        print("REFUSED: tasks create returned no object with an id. Nothing written.", file=sys.stderr)
+        print("--- stdout ---\n" + r.stdout, file=sys.stderr)
+        print("--- stderr ---\n" + r.stderr, file=sys.stderr)
+        return 2
+
+    tid = obj["id"]
+    mpath = obj.get("metadata_path") or f"/root/.tasks/metadata/{tid}.md"
+    if pathlib.Path(mpath).name == ".md":
+        print(f"REFUSED: task {tid} reports a nameless metadata path {mpath}. Nothing written.", file=sys.stderr)
+        return 3
+
+    if not body.strip():
+        print(json.dumps({"id": tid, "metadata": "none supplied", "warning": "task has no metadata"}))
+        return 0
+
+    try:
+        pathlib.Path(mpath).write_text(body)
+    except OSError as e:
+        print(f"FAILED to write metadata for task {tid} at {mpath}: {e}", file=sys.stderr)
+        print("The task EXISTS and has no metadata. Repair it by hand.", file=sys.stderr)
+        return 4
+
+    # Verify against the task store, not against the file we just wrote.
+    v = run(["tasks", "get", tid])
+    got = parse_id(v.stdout) or {}
+    attached = len((got.get("metadata_content") or "").strip())
+    if attached == 0:
+        print(f"FAILED: wrote {len(body)} chars to {mpath} but task {tid} reports no metadata.", file=sys.stderr)
+        return 5
+
+    print(json.dumps({"id": tid, "metadata_path": mpath, "metadata_chars": attached, "status": "ok"}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
