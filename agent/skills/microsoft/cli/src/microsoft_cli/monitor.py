@@ -567,6 +567,15 @@ def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config) -> None:
     notified_path = ctx.monitor_base_dir / "auth_needed.json"
     notified = _read_auth_needed(notified_path)
     changed = False
+    # Re-arm health-based, independent of due_accounts: a manual browser re-auth (the prescribed
+    # recovery for locked tenants) leaves fresh tokens, so the account is no longer "due" and the
+    # loop below never clears its flag. Without this, the flag set on the first lapse persists and
+    # silences the next genuine lapse. Clear any flagged account whose tokens are all healthy again.
+    for account in list(notified):
+        expiries = [e for e in (owa_rest.browser_token_expiry(account, config), teams.browser_token_expiry(account, config)) if e is not None]
+        if expiries and all(e > time.time() for e in expiries):
+            notified.discard(account)
+            changed = True
     for account in capture.due_accounts(config, time.time()):
         try:
             saved = capture.refresh_and_save(config, account)

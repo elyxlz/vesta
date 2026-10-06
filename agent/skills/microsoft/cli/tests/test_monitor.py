@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 import types
 from datetime import UTC, datetime, timedelta
 
@@ -553,3 +554,39 @@ def test_auth_needed_rearms_after_a_successful_refresh(tmp_path, monkeypatch):
         monitor.run(ctx)
 
     assert [call["account"] for call in calls] == [account, account]  # re-armed by the recovery
+
+
+def test_auth_needed_rearms_after_out_of_band_reauth(tmp_path, monkeypatch):
+    """#2508: a manual browser re-auth (the prescribed recovery for locked tenants) leaves fresh
+    tokens, so the account is no longer due. Re-arm gated on due_accounts therefore never clears the
+    flag, silencing the next genuine lapse. Re-arm must be health-based. Without the fix the second
+    lapse is silent."""
+    from microsoft_cli import capture
+
+    account = "reauth@x.com"
+    state = {"expired": True, "due": True}
+
+    def refresh(_config, _account):
+        if state["expired"]:
+            raise capture.CaptureError("SSO session ended")
+        return ["mail/calendar"]
+
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    monkeypatch.setattr(monitor.auth, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.teams, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.owa_rest, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(monitor.capture, "due_accounts", lambda *a, **k: [account] if state["due"] else [])
+    monkeypatch.setattr(monitor.capture, "refresh_and_save", refresh)
+    monkeypatch.setattr(monitor.owa_rest, "browser_token_expiry", lambda *a, **k: time.time() + (-100 if state["expired"] else 7200))
+    monkeypatch.setattr(monitor.teams, "browser_token_expiry", lambda *a, **k: time.time() + (-100 if state["expired"] else 7200))
+
+    now = datetime.now(UTC)
+    # lapse (due, notify) -> manual re-auth (healthy, NOT due) -> lapse again (must notify)
+    for expired, due in ((True, True), (False, False), (True, True)):
+        state["expired"], state["due"] = expired, due
+        ctx = _run_ctx(tmp_path, cycles=1)
+        ctx.monitor_state_file.write_text(now.isoformat())
+        monitor.run(ctx)
+
+    assert [call["account"] for call in calls] == [account, account]  # second lapse still notifies
