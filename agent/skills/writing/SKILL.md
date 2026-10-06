@@ -83,6 +83,7 @@ The default voice is the user's own. Mine exemplars from the genre being written
 - `python3 ~/agent/skills/writing/gptzero.py <file.md>`: AI-likelihood JSON, per sentence and overall. Academic tier.
 - `python3 ~/agent/skills/writing/papers.py search|get|refs|cited-by|similar|pdf`: OpenAlex search and PDF fetch for corpora and citation checks. Academic tier.
 - `python3 ~/agent/skills/writing/dictionary.py syn|alt|ban-replace`: word-level swaps that leave sentence structure alone. Any tier.
+- `python3 ~/agent/skills/writing/letter_pdf.py letter.md out.pdf --max-pages 1 [--signoff-lines 2] [--date D]`: renders a finished letter to an A4 PDF, tightening the layout to fit the page budget, and exits 1 with no PDF when it cannot fit, so an over-budget file is never sent.
 
 ## Notes
 
