@@ -64,6 +64,10 @@ Thresholds: every rubric criterion at the target tier (default the 70 percent ba
 
 **Anonymisation for the voice review.** Strip from the draft and every corpus text: names, candidate numbers, any tic that marks a text as the user's, and **all citation dates**, replacing `(Smith, 2024)` with `(Smith, YEAR)` in text and reference list both, so recency cannot be the tell. Strip URLs and DOIs that reveal years. Export PDFs to plain text to drop metadata.
 
+## User edits
+
+When the user edits a delivered draft ("say X instead of this sentence"), apply the change yourself without respawning the writer, and touch only the span they flagged. Before re-delivering, diff the previous text against the new one: every sentence outside the flagged span must survive verbatim. Rewriting the neighbouring sentence is the usual way an unflagged line silently disappears.
+
 ## The brief
 
 `brief.md` is the writer's entire world. Its sections, in order: Task, Audience, Goal, Length and format, Hard facts, Voice exemplars, Background material, Tone notes. Hard facts holds every name, date, number, link, and quote the piece may state; the writer is forbidden to state anything absent from the brief and returns `MISSING:` lines when a needed fact is not there. Answer a `MISSING:` line by adding the fact and respawning, never by letting a guess stand.
