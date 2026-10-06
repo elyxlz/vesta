@@ -429,3 +429,26 @@ def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "no dreamer summaries yet" in run.stdout
+
+
+def test_a_silent_restart_loop_goes_red(tmp_path):
+    # A worker that dies and is respawned every tick logs no "error" word, so only a churn count sees it.
+    home = _healthy_home(tmp_path)
+    lines = f"[{_day(0)} 10:00:00] [acct:INBOX] worker died; restarting\n" * 300
+    (home / "agent" / "logs" / "looping.log").write_text(lines)
+
+    run = _run(home)
+
+    assert run.returncode == 1
+    assert "RED looping.log" in run.stdout
+    assert "restart-loop" in run.stdout
+
+
+def test_an_old_restart_loop_ages_out(tmp_path):
+    home = _healthy_home(tmp_path)
+    lines = f"[{_day(3)} 10:00:00] worker died; restarting\n" * 300 + f"[{_day(0)} 10:00:00] connected\n"
+    (home / "agent" / "logs" / "healed.log").write_text(lines)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
