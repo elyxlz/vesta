@@ -8,6 +8,7 @@ microsoft calendar calendars --account user@example.com                # list ca
 microsoft calendar get --account user@example.com --id <event_id>
 microsoft calendar create --account user@example.com --subject "Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
 microsoft calendar update --account user@example.com --id <event_id> --start "2025-11-15T11:00:00" --timezone "Europe/London"
+microsoft calendar update --account user@example.com --id <event_id> --add-attendee guest@example.com --remove-attendee old@example.com   # repeatable; merged into the current list
 microsoft calendar respond --account user@example.com --id <event_id> --response accept
 microsoft calendar delete --account user@example.com --id <event_id>
 ```
