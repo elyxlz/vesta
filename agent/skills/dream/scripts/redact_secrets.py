@@ -291,9 +291,30 @@ def redact_cards(text: str) -> str:
     return CARD_CANDIDATE.sub(lambda m: REDACTED if _is_card(m.group(0)) else m.group(0), text)
 
 
+def _redact_once(text: str) -> str:
+    """One sweep: both passes match on the ORIGINAL text and each merged span is replaced once, so a
+    label pattern that stops at a space cannot leave a card's remaining groups for a card pass that
+    no longer recognises them."""
+    spans = [m.span() for m in REGEX.finditer(text) if REDACTED not in m.group(0)]
+    spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0))]
+    pieces, pos = [], 0
+    for start, end in sorted(spans):
+        if start < pos:
+            pos = max(pos, end)
+            continue
+        pieces += [text[pos:start], REDACTED]
+        pos = end
+    return "".join(pieces) + text[pos:]
+
+
 def _redact_text(text: str) -> str:
-    """Both redaction passes over one string: pattern hits, then payment cards."""
-    return redact_cards(REGEX.sub(mask, text))
+    """Sweep until nothing changes: a hit ending in a digit can glue onto a following card and hide
+    it from the card pass until the hit itself is masked."""
+    for _ in range(8):  # bounded: each sweep only adds placeholders, but never trust that with a loop
+        if (redacted := _redact_once(text)) == text:
+            break
+        text = redacted
+    return text
 
 
 type JsonValue = str | int | float | bool | list["JsonValue"] | dict[str, "JsonValue"] | None
@@ -340,7 +361,18 @@ def _hit_spans(text: str) -> list[tuple[int, int]]:
 def find_matches(text: str) -> list[str]:
     """Every secret in one string as a masked context snippet. Pure and DB-free, so the DB scan and
     the tests share exactly one detection path."""
-    return [_mask_context(text[max(0, start - CONTEXT_CHARS) : end + CONTEXT_CHARS]) for start, end in _hit_spans(text)]
+    spans = _hit_spans(text)
+    snippets = []
+    for start, end in spans:
+        lo, hi = max(0, start - CONTEXT_CHARS), end + CONTEXT_CHARS
+        # A window edge that slices another hit drops its key name, so re-masking would miss it: widen.
+        for other_start, other_end in spans:
+            if other_start < lo < other_end:
+                lo = other_start
+            if other_start < hi < other_end:
+                hi = other_end
+        snippets.append(_mask_context(text[lo:hi]))
+    return snippets
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
