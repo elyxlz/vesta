@@ -63,3 +63,24 @@ def test_flight_to_dict_reports_price_with_the_requested_currency():
 
 def test_flight_to_dict_defaults_to_the_default_currency():
     assert cli_mod._flight_to_dict(_flight())["currency"] == cli_mod.DEFAULT_CURRENCY
+
+
+def test_empty_search_reports_drift_when_the_canary_is_also_empty(monkeypatch):
+    monkeypatch.setattr(fli.search, "SearchFlights", lambda: types.SimpleNamespace(search=lambda filters, currency: []))
+    monkeypatch.setattr(cli_mod, "_canary_is_alive", lambda: False)
+    out = cli_mod._search_flights(cli_mod.FlightSearchQuery(origin="LTN", destination="FCO", date=str(DEPARTURE_DAY)))
+    assert "canary is also empty" in out[0]["error"]
+    assert "NOT a statement that the route has no flights" in out[0]["error"]
+
+
+def test_empty_search_stays_empty_when_the_canary_is_alive(monkeypatch):
+    monkeypatch.setattr(fli.search, "SearchFlights", lambda: types.SimpleNamespace(search=lambda filters, currency: []))
+    monkeypatch.setattr(cli_mod, "_canary_is_alive", lambda: True)
+    out = cli_mod._search_flights(cli_mod.FlightSearchQuery(origin="LTN", destination="FCO", date=str(DEPARTURE_DAY)))
+    assert out == []
+
+
+def test_the_canary_probe_does_not_run_its_own_canary(monkeypatch):
+    monkeypatch.setattr(fli.search, "SearchFlights", lambda: types.SimpleNamespace(search=lambda filters, currency: []))
+    monkeypatch.setattr(cli_mod, "_canary_is_alive", lambda: pytest.fail("the probe recursed into a canary"))
+    assert cli_mod._search_flights(cli_mod.FlightSearchQuery(origin="JFK", destination="LAX", date=str(DEPARTURE_DAY)), _canary=False) == []
