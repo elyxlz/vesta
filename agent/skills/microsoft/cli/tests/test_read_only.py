@@ -21,6 +21,7 @@ from microsoft_cli import cli
 # parser unclassified, or leaving `_MUTATING_COMMANDS` must fail a test here.
 _WRITES = [
     ("email", "send"),
+    ("email", "send-draft"),
     ("email", "reply"),
     ("email", "forward"),
     ("email", "draft"),
@@ -120,4 +121,4 @@ def test_read_only_unset_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_draft_only_is_untouched_by_this_change() -> None:
-    assert sorted(cli._TRANSMIT_COMMANDS) == ["forward", "reply", "send"]
+    assert sorted(cli._TRANSMIT_COMMANDS) == ["forward", "reply", "send", "send-draft"]
