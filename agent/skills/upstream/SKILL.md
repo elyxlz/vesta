@@ -134,6 +134,12 @@ are what separate the two.
   read, as do addresses, handles, and a paraphrase that identifies someone by circumstance.
   A refusal means rewrite the sentence around the pattern, never route the same text through
   another flag.
+- **Prove the mechanism is wired, not just that the logic works.** Exercising a script
+  directly proves the logic; it does not prove anything will ever call it. A guard hook that
+  nothing on master registers, a scanner needing a base ref the CI job never fetches, a command
+  never linked onto PATH, and a reader whose writer half exists on one box all pass their own
+  test and ship inert. Name the caller on `upstream/master` (the registration, the workflow
+  step, the install line) and confirm it reaches your code, or the PR adds a file nobody runs.
 - **Evidence names what is in the diff.** Every test the PR body mentions exists in the
   diff by name, and the body pastes the run's count. A claim the diff does not contain is
   read as the behavior being untested, and it costs the PR its credibility.
