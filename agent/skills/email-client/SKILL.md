@@ -66,6 +66,8 @@ email-client search --account personal --folder INBOX --query 'SINCE 1-Jan-2026'
 
 `list` and `search` return JSON arrays of `{uid, from, to, subject, date}`. `search --query` takes a raw IMAP SEARCH expression; a query the server rejects as malformed is retried as a plain-text phrase search, so `--query 'job alert'` works too.
 
+Near-duplicate emails can be distinct documents, not re-sends. Messages sharing a subject or reference (e.g. tuition instalments labelled _1/_2/_3) are often different attachments or amounts. Check the filenames and figures before treating them as duplicates and binning one.
+
 `get` returns the message with a readable body. `body_format` says where that body came from: `text` for the message's own plain-text part, `html-to-text` when it had none and the HTML was flattened (link targets kept in parentheses). The body is capped at `--body-chars` (default 4000); when the cap cuts it, the result carries `body_truncated: true` and `body_chars_total`, so a value you cannot find is distinguishable from one that is simply past the cut. Re-run with a larger `--body-chars` to read the rest.
 
 ## Attachments
