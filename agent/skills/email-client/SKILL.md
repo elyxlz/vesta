@@ -120,7 +120,7 @@ email-client folder subscribe --name Newsletters --unsubscribe
 ## Send
 
 ```bash
-email-client-send --account personal --to "recipient@example.com" --subject "Hi" --body "first line\\nsecond line"
+email-client-send --account personal --to "recipient@example.com" --subject "Hi" --body $'first line\nsecond line'
 email-client-send --account personal --to recipient@example.com --cc cc1@example.com --cc cc2@example.com --subject "Hi" --body "team note"
 email-client-send --account personal --to recipient@example.com --bcc bcc@example.com --subject "Quiet ping" --body "fyi"
 email-client-send --account personal --to recipient@example.com --subject "Hi" --body "plain fallback" --body-html "<p>rich <b>HTML</b></p>"
@@ -128,7 +128,7 @@ email-client-send --account personal --to recipient@example.com --subject "Slide
 email-client-send --account personal --to recipient@example.com --subject "Pics" --body "two of them" --attach first.png --attach second.jpg
 ```
 
-Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HTML (combine with `--body` for multipart/alternative, or pass it alone for a synthesized plain-text fallback). Attachments are capped at 25 MB total; the send aborts with a clear error past that, since most providers reject larger.
+`--body` is sent verbatim: a typed `\n` stays a backslash and an n, so pass real newlines (`$'...'` quoting or a variable). Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HTML (combine with `--body` for multipart/alternative, or pass it alone for a synthesized plain-text fallback). Attachments are capped at 25 MB total; the send aborts with a clear error past that, since most providers reject larger.
 
 After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
 
