@@ -1036,6 +1036,10 @@ def main() -> int:
         return _run_scrub(args[1:])
     if args[:1] == ["--scrub-literal"]:
         return _run_scrub_literal(args[1:])
+    if args:
+        # An unknown flag (e.g. --help) must not fall through to a full scan.
+        print("usage: redact_secrets.sh [--show REF | --scrub REF ... | --scrub-literal VALUE]", file=sys.stderr)
+        return 0 if args[0] in ("-h", "--help") else 2
     return _run_scan()
 
 
