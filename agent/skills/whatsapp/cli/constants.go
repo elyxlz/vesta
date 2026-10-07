@@ -13,6 +13,13 @@ const (
 	ConnectRetryAttempts = 10
 	ConnectRetryDelay    = 1 * time.Second
 
+	// Recovery retries the reconnect with a doubling, capped delay until the
+	// summed delays exceed ReconnectBudget, then exits; a restarted process
+	// would meet the same outage, so exiting sooner only lengthens downtime.
+	ReconnectBackoffStart = 5 * time.Second
+	ReconnectBackoffMax   = 60 * time.Second
+	ReconnectBudget       = 10 * time.Minute
+
 	// ReExecSettleDelay holds the daemon after it drops the old socket, before a
 	// preserve-reconnect re-exec, so WhatsApp registers the old server-side session's
 	// teardown first. Re-execing straight into a still-live session is what makes the

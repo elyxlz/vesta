@@ -513,33 +513,46 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 	return fmt.Errorf("WhatsApp is not connected. Ensure WhatsApp is authenticated and connected")
 }
 
+// Test seams for recoverOrRestart's reconnect, backoff sleep, and process exit.
+var (
+	reconnectAttempt = (*WhatsAppClient).EnsureConnected
+	reconnectSleep   = time.Sleep
+	exitProcess      = os.Exit
+)
+
 // recoverOrRestart handles connection-fatal events whatsmeow does not auto-recover
 // from (StreamReplaced, StreamError, high-count KeepAliveTimeout, send deadlock). It
 // force-drops the socket first, so a deadlocked-but-"connected" client actually
-// reconnects instead of short-circuiting on IsConnected, then tries one reconnect; on
-// failure it writes the daemon_died marker and exits for the supervisor. No-op while
-// parked (would steal the session back) or pairing (which owns the connection). Runs
-// in its own goroutine so it does not block the event dispatcher.
+// reconnects instead of short-circuiting on IsConnected, then retries the reconnect
+// with capped backoff for ReconnectBudget; on exhaustion it writes the daemon_died
+// marker and exits for the supervisor. No-op while parked (would steal the session
+// back) or pairing (which owns the connection). Runs in its own goroutine so it does
+// not block the event dispatcher.
 func (wac *WhatsAppClient) recoverOrRestart(reason string) {
-	if wac.connModeIs(connParked) || wac.connModeIs(connPairing) {
-		wac.logger.Infof("Skipping recovery (%s): connection is parked or pairing", reason)
-		return
-	}
-	if wac.client.Store.ID == nil {
-		// No linked session to recover (fresh box, mid-pairing, or logged out).
-		// Recovery exists to reconnect a LINKED session; exiting here would abort an
-		// in-flight pairing (e.g. the phone-code enter-the-code window, where the
-		// client is connected but Store.ID is still nil) for nothing.
-		wac.logger.Infof("Skipping recovery (%s): no linked device", reason)
+	if wac.recoveryBlocked(reason) {
 		return
 	}
 	wac.logger.Warnf("Connection-fatal event (%s); forcing a reconnect", reason)
 	// Drop the (possibly wedged) socket so EnsureConnected does real work instead
 	// of returning early on a stale IsConnected.
 	wac.client.Disconnect()
-	if err := wac.EnsureConnected(); err == nil {
-		wac.logger.Infof("Reconnected after %s", reason)
-		return
+	delay, slept := ReconnectBackoffStart, time.Duration(0)
+	for {
+		err := reconnectAttempt(wac)
+		if err == nil {
+			wac.logger.Infof("Reconnected after %s", reason)
+			return
+		}
+		if slept >= ReconnectBudget {
+			break
+		}
+		wac.logger.Warnf("Reconnect after %s failed: %v; retrying in %s", reason, err, delay)
+		reconnectSleep(delay)
+		slept += delay
+		delay = min(delay*2, ReconnectBackoffMax)
+		if wac.recoveryBlocked(reason) {
+			return
+		}
 	}
 	wac.connRecoverOnce.Do(func() {
 		wac.logger.Errorf("Reconnect failed after %s; writing death marker and exiting for restart", reason)
@@ -548,8 +561,26 @@ func (wac *WhatsAppClient) recoverOrRestart(reason string) {
 		}
 		// Best-effort exit. The unix socket is removed by startSocketServer on
 		// the next daemon boot, so skipping the deferred socket cleanup is safe.
-		os.Exit(1)
+		exitProcess(1)
 	})
+}
+
+// recoveryBlocked reports (and logs) whether recovery must stand down: parked,
+// pairing, or no linked device.
+func (wac *WhatsAppClient) recoveryBlocked(reason string) bool {
+	if wac.connModeIs(connParked) || wac.connModeIs(connPairing) {
+		wac.logger.Infof("Skipping recovery (%s): connection is parked or pairing", reason)
+		return true
+	}
+	if wac.client.Store.ID == nil {
+		// No linked session to recover (fresh box, mid-pairing, or logged out).
+		// Recovery exists to reconnect a LINKED session; exiting here would abort an
+		// in-flight pairing (e.g. the phone-code enter-the-code window, where the
+		// client is connected but Store.ID is still nil) for nothing.
+		wac.logger.Infof("Skipping recovery (%s): no linked device", reason)
+		return true
+	}
+	return false
 }
 
 func (wac *WhatsAppClient) EnsureOnline() error {
