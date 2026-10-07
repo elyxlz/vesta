@@ -18,7 +18,7 @@ microsoft email search --account user@example.com --query "invoice" --since 2021
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
 
-`reply` answers the message's sender, so when the latest message in the thread is the account's own, that sender is the account itself and the reply goes nowhere else. In that case use `--reply-all`, which addresses the original recipients, or `send --to <addr>` with the `RE:` subject; the `recipients` field of the queued send shows where it will go.
+`reply` answers the message's sender; when that message is the account's own (the latest in the thread was sent by the account), it answers that message's To recipients instead, as Outlook does, and `--reply-all` adds its Cc. The `recipients` field of the queued send shows where it will go.
 
 ## Delayed send and undo
 
