@@ -74,6 +74,26 @@ def test_reply_draft_keeps_the_line_breaks_of_a_plain_text_quote(monkeypatch):
     )
 
 
+def test_reply_draft_to_the_accounts_own_message_answers_its_recipients(monkeypatch):
+    calls: list[dict] = []
+    _patch_graph(monkeypatch, calls, {"contentType": "HTML", "content": QUOTED})
+    prefilled = email.graph.request
+
+    def fake_request(conn, method, path, account_id=None, **kwargs):
+        if method == "GET" and path == "/me/messages/my-sent-1":
+            return {"from": {"emailAddress": {"address": "me@example.com"}}, "toRecipients": [{"emailAddress": {"address": "bob@x.com"}}]}
+        return prefilled(conn, method, path, account_id, **kwargs)
+
+    monkeypatch.setattr(email.graph, "request", fake_request)
+    email.reply_draft(Config(), None, account_email="me@example.com", email_id="my-sent-1", body="hi")
+    to_patch = next(c for c in calls if c["method"] == "PATCH" and "toRecipients" in c["json"])
+    assert to_patch == {
+        "method": "PATCH",
+        "path": "/me/messages/reply-draft",
+        "json": {"toRecipients": [{"emailAddress": {"address": "bob@x.com"}}]},
+    }
+
+
 def test_reply_all_uses_create_reply_all(patched):
     result = email.reply_draft(Config(), None, account_email="me@example.com", email_id="orig-1", body="hi", reply_all=True)
     assert result["id"] == "replyall-draft"

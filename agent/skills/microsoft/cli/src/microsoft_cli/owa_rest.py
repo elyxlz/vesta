@@ -401,6 +401,16 @@ def send_draft(client: httpx.Client, account_email: str, config, *, item_id: str
     _post(client, token, f"/me/messages/{item_id}/send")
 
 
+def _own_message_to(client: httpx.Client, token: str, account_email: str, item_id: str) -> list[str]:
+    """createreply addresses the source's sender, which on the account's own message is the account
+    itself; Outlook answers that message's To recipients instead. Returns them, or [] otherwise."""
+    source = _get(client, token, f"/me/messages/{item_id}", {"$select": "from,toRecipients"})
+    sender = ((source.get("from") or {}).get("emailAddress") or {}).get("address") or ""
+    if sender.casefold() != account_email.casefold():
+        return []
+    return [r["emailAddress"]["address"] for r in source.get("toRecipients") or []]
+
+
 def create_draft(client: httpx.Client, account_email: str, config, *, mail: MailDraft) -> dict:
     token = load_token(account_email, config)
 
@@ -412,8 +422,10 @@ def create_draft(client: httpx.Client, account_email: str, config, *, mail: Mail
         patch: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}}
         if mail.subject:
             patch["subject"] = mail.subject
-        if mail.to:
-            patch["toRecipients"] = [_recipient(a) for a in mail.to]
+        own_reply = mail.reply_to_id and not mail.reply_all and not mail.to
+        to = _own_message_to(client, token, account_email, source_id) if own_reply else mail.to
+        if to:
+            patch["toRecipients"] = [_recipient(a) for a in to]
         if mail.cc:
             patch["ccRecipients"] = [_recipient(a) for a in mail.cc]
         if mail.bcc:
@@ -440,11 +452,15 @@ def reply_message(
     html: bool = False,
 ) -> dict:
     token = load_token(account_email, config)
-    if attachments:
+    own_to = [] if reply_all else _own_message_to(client, token, account_email, item_id)
+    if attachments or own_to:
         create_endpoint = "createreplyall" if reply_all else "createreply"
         draft = _post(client, token, f"/me/messages/{item_id}/{create_endpoint}")
         draft_id = draft.get("id")
-        _patch(client, token, f"/me/messages/{draft_id}", {"body": {"contentType": "HTML" if html else "Text", "content": body}})
+        patch: dict[str, Any] = {"body": {"contentType": "HTML" if html else "Text", "content": body}}
+        if own_to:
+            patch["toRecipients"] = [_recipient(a) for a in own_to]
+        _patch(client, token, f"/me/messages/{draft_id}", patch)
         _attach_files(client, token, draft_id, attachments)
         _post(client, token, f"/me/messages/{draft_id}/send")
         return {"status": "sent"}
