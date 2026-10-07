@@ -97,6 +97,11 @@ def _add_email_commands(group):
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--label", default=None)
 
+    p_diff = email_sub.add_parser("diff", help="Diff the two newest mails from a sender to catch changed wording in a resend")
+    p_diff.add_argument("--from", required=True, dest="sender")
+    p_diff.add_argument("--subject", default=None)
+    p_diff.add_argument("--limit", type=int, default=8)
+
     p_update = email_sub.add_parser("update")
     p_update.add_argument("--id", required=True, dest="message_id")
     p_update.add_argument("--add-labels", nargs="+", default=None)
@@ -238,6 +243,7 @@ def _dispatch_email(args, config):
         ),
         "attachment": lambda: gmail.get_attachment(config, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path),
         "search": lambda: gmail.search_emails(config, query=args.query, limit=args.limit, label=args.label),
+        "diff": lambda: gmail.diff_emails(config, sender=args.sender, subject=args.subject, limit=args.limit),
         "update": lambda: gmail.update_email(config, message_id=args.message_id, add_labels=args.add_labels, remove_labels=args.remove_labels),
     }
     return handlers[args.command]()
