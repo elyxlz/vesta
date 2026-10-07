@@ -2,10 +2,11 @@
 
 from .base import SttProvider, TtsProvider
 from .deepgram import DeepgramStt
-from .elevenlabs import ElevenLabsTts
+from .elevenlabs import ElevenLabsScribe, ElevenLabsTts
 
 _STT: dict[str, SttProvider] = {
     "deepgram": DeepgramStt(),
+    "elevenlabs": ElevenLabsScribe(),
 }
 
 _TTS: dict[str, TtsProvider] = {
