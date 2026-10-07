@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 import types
 from datetime import UTC, datetime, timedelta
 
@@ -553,3 +554,26 @@ def test_auth_needed_rearms_after_a_successful_refresh(tmp_path, monkeypatch):
         monitor.run(ctx)
 
     assert [call["account"] for call in calls] == [account, account]  # re-armed by the recovery
+
+
+def test_auth_needed_when_refresh_leaves_token_expired(tmp_path, monkeypatch):
+    """A refresh that returns without error but leaves a captured token expired (the headless SPA
+    would not mint a fresh Teams token) is a dead credential, so it must notify auth_needed rather
+    than log a silent success every cycle."""
+    account = "stale@x.com"
+
+    def refresh_ok(_config, _account):
+        return ["mail/calendar"]  # mail refreshed; Teams stays expired on disk
+
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _gone_captured_account(monkeypatch, account, refresh_ok)
+    monkeypatch.setattr(monitor.owa_rest, "browser_token_expiry", lambda *a, **k: time.time() + 7200)
+    monkeypatch.setattr(monitor.teams, "browser_token_expiry", lambda *a, **k: time.time() - 100)
+
+    now = datetime.now(UTC)
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.monitor_state_file.write_text(now.isoformat())
+    monitor.run(ctx)
+
+    assert [call["account"] for call in calls] == [account]  # notified: Teams token dead
