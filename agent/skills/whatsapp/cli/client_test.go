@@ -1,8 +1,12 @@
 package main
 
 import (
+	"errors"
+	"os"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -104,5 +108,91 @@ func TestDeliberateConnectClearsPark(t *testing.T) {
 	}
 	if wac.state.snapshot().ConnParked {
 		t.Fatal("a deliberate connect must clear the persisted park")
+	}
+}
+
+// stubRecovery replaces recoverOrRestart's reconnect, sleep, and exit seams, failing
+// the first failures attempts. It returns pointers to the attempt count, the sleeps
+// taken, and the exit calls.
+func stubRecovery(t *testing.T, failures int) (*int, *[]time.Duration, *int) {
+	t.Helper()
+	attempts, exits := 0, 0
+	var sleeps []time.Duration
+	origAttempt, origSleep, origExit := reconnectAttempt, reconnectSleep, exitProcess
+	t.Cleanup(func() { reconnectAttempt, reconnectSleep, exitProcess = origAttempt, origSleep, origExit })
+	reconnectAttempt = func(*WhatsAppClient) error {
+		attempts++
+		if attempts <= failures {
+			return errors.New("dial tcp: lookup web.whatsapp.com: server misbehaving")
+		}
+		return nil
+	}
+	reconnectSleep = func(d time.Duration) { sleeps = append(sleeps, d) }
+	exitProcess = func(int) { exits++ }
+	return &attempts, &sleeps, &exits
+}
+
+// TestRecoverOrRestartRetriesBeforeExiting: a transient outage (e.g. DNS down for
+// minutes) must be ridden out with backoff, not turned into a dead daemon.
+func TestRecoverOrRestartRetriesBeforeExiting(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	wac.notificationsDir = t.TempDir()
+	attempts, sleeps, exits := stubRecovery(t, 2)
+
+	wac.recoverOrRestart("test")
+
+	if *attempts != 3 || *exits != 0 {
+		t.Fatalf("want success on attempt 3 with no exit, got attempts=%d exits=%d", *attempts, *exits)
+	}
+	if want := []time.Duration{5 * time.Second, 10 * time.Second}; !slices.Equal(*sleeps, want) {
+		t.Fatalf("backoff sleeps = %v, want %v", *sleeps, want)
+	}
+	if entries, _ := os.ReadDir(wac.notificationsDir); len(entries) != 0 {
+		t.Fatalf("a recovered reconnect must not write a death marker, found %d files", len(entries))
+	}
+}
+
+// TestRecoverOrRestartExitsAfterBudget: once the backoff budget is spent, recovery
+// takes the existing exit path (death marker, then exit) exactly once.
+func TestRecoverOrRestartExitsAfterBudget(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	wac.notificationsDir = t.TempDir()
+	attempts, sleeps, exits := stubRecovery(t, 1<<30)
+
+	wac.recoverOrRestart("test")
+
+	var total time.Duration
+	for _, d := range *sleeps {
+		if d > ReconnectBackoffMax {
+			t.Fatalf("sleep %s exceeds the %s cap", d, ReconnectBackoffMax)
+		}
+		total += d
+	}
+	if total < ReconnectBudget || total > ReconnectBudget+ReconnectBackoffMax {
+		t.Fatalf("total backoff %s, want about the %s budget", total, ReconnectBudget)
+	}
+	if *exits != 1 || *attempts != len(*sleeps)+1 {
+		t.Fatalf("want one exit after %d sleeps, got exits=%d attempts=%d", len(*sleeps), *exits, *attempts)
+	}
+	if entries, _ := os.ReadDir(wac.notificationsDir); len(entries) != 1 {
+		t.Fatalf("exhausted recovery must write one death marker, found %d files", len(entries))
+	}
+}
+
+// TestRecoverOrRestartStopsWhenParkedMidRetry: the park guard is re-checked between
+// attempts, so a takeover during backoff ends recovery without an exit.
+func TestRecoverOrRestartStopsWhenParkedMidRetry(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	attempts, _, exits := stubRecovery(t, 1<<30)
+	reconnectAttempt = func(w *WhatsAppClient) error {
+		*attempts++
+		w.setConnMode(connParked)
+		return errors.New("connection refused")
+	}
+
+	wac.recoverOrRestart("test")
+
+	if *attempts != 1 || *exits != 0 {
+		t.Fatalf("parked mid-retry must stop recovery, got attempts=%d exits=%d", *attempts, *exits)
 	}
 }
