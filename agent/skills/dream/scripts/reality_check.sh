@@ -69,10 +69,21 @@ fi
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
+# whatsmeow logs benign self-healing websocket reconnects (EOF frame reads, 503 stream
+# errors, DNS/TLS/handshake retries, keepalive timeouts) at ERROR level, yet sends and
+# receives keep working through them, so they are churn, not a fault. For whatsapp.log only,
+# drop the reconnect-cycle lines before the storm count, so a genuine whatsapp error (logout,
+# auth failure, a decrypt storm, a ban) still trips the probe while the churn does not. Scoped
+# to whatsapp.log because "reconnect"/"timeout" are real signals in other daemons' logs.
+wa_benign='failed to get reader|failed to read frame header|failed to close WebSocket|Error reading from websocket|503 stream error|reconnect|handshake request|failed to dial|WebSocket dial|keepalive.?timeout|keep-alive timeout'
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+    stream=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g")
+    if [ "$(basename "$log")" = "whatsapp.log" ]; then
+        stream=$(printf '%s\n' "$stream" | grep -vE "$wa_benign")
+    fi
+    errors=$(printf '%s\n' "$stream" | awk -v today="$today" -v yesterday="$yesterday" '
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
