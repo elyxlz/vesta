@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""How many times in a row did I write to her with no reply in between?
+
+Built 2026-09-16. MEMORY has said for weeks: "if I have sent three in a row with no reply, stop."
+Nothing measured it, so it could only ever be re-issued more sincerely. On 14 Sept the turn-based
+metric was DEFERRED on the grounds that there was no failure to fix. On 15 Sept the longest
+unanswered run was SIX, double the rule.
+
+WHY A TURN AND NOT A BUBBLE. The existing delivery-budget counts SENDS, and on 15 Sept it read 107
+out and called the day OK, which is right on its own axis and blind on this one. Short bubbles are
+correct style here, so counting them punishes good behaviour. What the rule is actually about is how
+many separate times I spoke into silence.
+
+A TURN is a contiguous burst of my messages with no message of hers between them and no gap longer
+than --gap seconds. Any message from her resets the run to zero.
+
+Exit 1 when the longest run exceeds --limit (default 3). Exit 2 BLIND when the store is unreadable
+or the built-in positive control fails, because a broken query and a quiet day look identical.
+"""
+import argparse, datetime, sqlite3, sys
+
+DEFAULT_DB = "/root/.whatsapp/messages.db"
+
+
+def runs(rows, gap):
+    """rows: [(timestamp, is_from_me)] ascending. Returns (longest_run, ending_ts, n_turns)."""
+    best, best_at, run, n_turns, last_mine = 0, None, 0, 0, None
+    for ts, mine in rows:
+        t = ts if isinstance(ts, datetime.datetime) else datetime.datetime.fromisoformat(str(ts))
+        if not mine:
+            run, last_mine = 0, None
+            continue
+        if last_mine is None or (t - last_mine).total_seconds() > gap:
+            run += 1
+            n_turns += 1
+            if run > best:
+                best, best_at = run, t
+        last_mine = t
+    return best, best_at, n_turns
+
+
+def control():
+    """Positive control. A known sequence with a known answer, so a silent algorithm break is loud."""
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    m = lambda s, mine: (base + datetime.timedelta(seconds=s), mine)
+    # three separated bursts of mine, then her, then two more bursts
+    seq = [m(0, 1), m(10, 1),            # burst 1 (10s apart, same turn)
+           m(200, 1),                    # burst 2
+           m(400, 1),                    # burst 3
+           m(500, 0),                    # her: resets
+           m(600, 1), m(800, 1)]         # bursts 1 and 2 after the reset
+    best, _, turns = runs(seq, 90)
+    return best == 3 and turns == 5
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--date", help="YYYY-MM-DD, default yesterday")
+    ap.add_argument("--gap", type=int, default=90, help="seconds; a longer pause starts a new turn")
+    ap.add_argument("--limit", type=int, default=3, help="longest acceptable unanswered run")
+    ap.add_argument("--db", default=DEFAULT_DB, help="whatsapp message store")
+    a = ap.parse_args()
+
+    if not control():
+        print("BLIND: the positive control failed, so this run proves nothing about the thread.")
+        return 2
+
+    day = a.date or (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    try:
+        con = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True)
+        rows = con.execute(
+            "select timestamp, is_from_me from messages where date(timestamp)=? order by timestamp",
+            (day,)).fetchall()
+    except Exception as exc:
+        print(f"BLIND: cannot read the whatsapp store at {a.db}: {exc}")
+        return 2
+
+    if not rows:
+        print(f"BLIND: no messages at all on {day}. A dead store and a silent day look identical,")
+        print("so this is not being reported as a clean day. Check the daemon before believing it.")
+        return 2
+
+    out = sum(1 for _, m in rows if m)
+    inn = len(rows) - out
+    best, at, turns = runs(rows, a.gap)
+
+    print(f"turn burst, {day} (gap {a.gap}s, limit {a.limit})")
+    print(f"  bubbles out {out}, in {inn}")
+    print(f"  my distinct turns {turns}")
+    print(f"  LONGEST UNANSWERED RUN {best}" + (f", ending {at:%H:%M} UTC" if at else ""))
+    if best > a.limit:
+        print()
+        print(f"  FAIL: {best} turns in a row with no reply, against a limit of {a.limit}.")
+        print("  Bubble count is not the question and neither is whether each one was justified.")
+        print("  News arriving is not a licence: the rule is about how many times I spoke into")
+        print("  silence. Next time, hold the non-urgent ones until she answers.")
+        return 1
+    print("\n  OK")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
