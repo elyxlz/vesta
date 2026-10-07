@@ -53,6 +53,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   onReadAloud,
   onRetry,
   onOpenAttachment,
+  onMenuOpenChange,
 }: {
   rows: ChatRow[];
   agentName: string;
@@ -78,6 +79,7 @@ export const ChatTranscript = memo(function ChatTranscript({
     attachments?: ChatAttachment[],
   ) => void;
   onOpenAttachment: (request: OpenViewerRequest) => void;
+  onMenuOpenChange: (open: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
@@ -116,12 +118,14 @@ export const ChatTranscript = memo(function ChatTranscript({
           onReadAloud={onReadAloud}
           onRetry={onRetry}
           onOpenAttachment={onOpenAttachment}
+          onMenuOpenChange={onMenuOpenChange}
         />
       ),
     [
       agentName,
       canSpeak,
       onEditAndResend,
+      onMenuOpenChange,
       onOpenAttachment,
       onReadAloud,
       onReply,
