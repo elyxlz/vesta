@@ -69,6 +69,8 @@ bollard = "0.21"
 globset = "0.4"
 tar = "0.4"
 flate2 = "1"
+# Parallel gzip for export bundles; the pure-Rust backend avoids the default zlib-ng C build.
+gzp = { version = "2", default-features = false, features = ["deflate_rust"] }
 tokio-util = { version = "0.7", features = ["io"] }
 rust-embed = { version = "8", features = ["compression", "include-exclude", "debug-embed"] }
 mime_guess = "2"
