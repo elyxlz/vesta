@@ -115,12 +115,31 @@ def _parse_match(spec: str) -> dict[str, object]:
     return _predicate(field, op, value, opsym.startswith("!"))
 
 
-def _specificity(rule: dict[str, object]) -> int:
-    """How narrowly a rule matches = its condition count (source, type, and each match predicate). Used
-    only to place a new rule; the engine itself is purely first-match-wins, never specificity-ranked."""
-    count = sum(1 for field in ("source", "type") if rule.get(field) is not None)
+def _norm(value: object) -> str | None:
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def _predicate_key(pred: dict[str, object]) -> tuple[str, str, str, bool]:
+    return (str(pred["field"]).lower(), str(pred.get("op", "contains")), str(pred["value"]).lower(), bool(pred.get("negate")))
+
+
+def _predicate_keys(rule: dict[str, object]) -> set[tuple[str, str, str, bool]]:
     match = rule.get("match")
-    return count + (len(match) if isinstance(match, list) else 0)
+    return {_predicate_key(pred) for pred in match} if isinstance(match, list) else set()
+
+
+def _can_shadow(earlier: dict[str, object], new_rule: dict[str, object]) -> bool:
+    """Whether `earlier`, sitting above `new_rule`, can match a notification `new_rule` targets: each of its
+    source/type is unset, unset on the new rule, or equal, and each of its predicates is also on the new rule."""
+    for field in ("source", "type"):
+        mine, theirs = _norm(earlier.get(field)), _norm(new_rule.get(field))
+        if mine is not None and theirs is not None and mine != theirs:
+            return False
+    return _predicate_keys(earlier) <= _predicate_keys(new_rule)
+
+
+def _same_scope(a: dict[str, object], b: dict[str, object]) -> bool:
+    return all(_norm(a.get(f)) == _norm(b.get(f)) for f in ("source", "type")) and _predicate_keys(a) == _predicate_keys(b)
 
 
 def _index_of(rules: list[dict[str, object]], rule_id: str) -> int:
@@ -131,16 +150,14 @@ def _index_of(rules: list[dict[str, object]], rule_id: str) -> int:
 
 
 def _placement_index(rules: list[dict[str, object]], new_rule: dict[str, object], before: str | None, after: str | None) -> int:
-    """Where to insert a new rule. Explicit --before/--after win; otherwise auto-place by specificity:
-    above the first existing rule that is strictly broader (fewer conditions), so a narrow exception
-    lands ahead of the broad rule it refines instead of being shadowed by it. Touches no other rule."""
+    """Where to insert a new rule. Explicit --before/--after win; otherwise auto-place above the first
+    existing rule that could shadow it (first match wins) and is not the same scope, else append."""
     if before is not None:
         return _index_of(rules, before)
     if after is not None:
         return _index_of(rules, after) + 1
-    spec = _specificity(new_rule)
     for index, rule in enumerate(rules):
-        if _specificity(rule) < spec:
+        if _can_shadow(rule, new_rule) and not _same_scope(rule, new_rule):
             return index
     return len(rules)
 
@@ -211,6 +228,13 @@ def cmd_add(args: argparse.Namespace) -> int:
     where = "" if index == len(rules) - 1 else f" at position {index + 1} of {len(rules)}"
     expiry = f" (expires in {args.for_duration}, then auto-removed)" if args.for_duration is not None else ""
     print(f"Added rule {rule['id']}: {_describe_scope(rule)} -> {args.action}{expiry}{where}. Now {len(rules)} rule(s); applies next tick.")
+    for position, earlier in enumerate(rules[:index], start=1):
+        if _can_shadow(earlier, rule):
+            print(
+                f"WARNING: rule {earlier['id']} at position {position} ({_describe_scope(earlier)} -> {earlier.get('action')}) "
+                f"can match first and shadow the new rule; `move {rule['id']} --before {earlier['id']}` if that is wrong.",
+                file=sys.stderr,
+            )
     return 0
 
 

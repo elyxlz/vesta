@@ -50,9 +50,10 @@ notification's other fields. Every field/condition you set must hold (AND); what
 - **First match wins**: rules evaluate top to bottom and stop at the first match, so order is the only
   precedence; a later, more-specific rule never overrides an earlier, broader one. To OR across fields,
   write separate rules (one rule's conditions are all ANDed).
-- **Placement is handled for you.** `add` auto-places a new rule above any broader one (fewer conditions),
-  so a narrow exception isn't shadowed. Override with `--before`/`--after <id>` on add, or `move <id>`
-  (`--before`/`--after`/`--top`/`--bottom`) later. `list` shows priority order.
+- **Placement is handled for you.** `add` inserts a new rule above the first rule that could shadow it (no
+  conflicting source/type, every match condition also on the new rule) and warns if one is still above it.
+  Override with `--before`/`--after <id>` on add, or `move <id>` (`--before`/`--after`/`--top`/`--bottom`)
+  later. `list` shows priority order.
 - A rule with no fields is a catch-all; only useful as the last rule.
 - With **no matching rule, the notification's own default decides**: each skill ships one (whatsapp/chat
   interrupt, email/finance snooze), and your rules override those. Internal notifications (`source=core`:
