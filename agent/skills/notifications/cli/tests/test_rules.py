@@ -103,6 +103,45 @@ def test_add_auto_places_specific_rule_above_broader(monkeypatch):
     assert [r["action"] for r in store] == ["interrupt", "snooze"]
 
 
+def test_add_places_equal_count_rule_above_catch_all_that_shadows_it(monkeypatch, capsys):
+    store = _store(monkeypatch)
+    cli.cmd_add(_args(action="snooze", source="other"))
+    cli.cmd_add(_args(action="snooze", source="microsoft", type="email"))  # catch-all for email
+    cli.cmd_add(_args(action="interrupt", source="microsoft", match=["sender_address~=@example\\.com$"]))
+    assert [(r["source"], r["action"]) for r in store] == [("other", "snooze"), ("microsoft", "interrupt"), ("microsoft", "snooze")]
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_add_keeps_narrower_existing_rule_above(monkeypatch):
+    store = _store(monkeypatch)
+    cli.cmd_add(_args(action="interrupt", source="whatsapp", sender="wife"))
+    cli.cmd_add(_args(action="snooze", source="whatsapp"))
+    assert [r["action"] for r in store] == ["interrupt", "snooze"]
+
+
+def test_add_places_sourceless_sender_rule_above_source_catch_all(monkeypatch):
+    store = _store(monkeypatch)
+    cli.cmd_add(_args(action="snooze", source="microsoft", type="email"))
+    cli.cmd_add(_args(action="interrupt", sender="boss"))
+    assert [r["action"] for r in store] == ["interrupt", "snooze"]
+
+
+def test_add_does_not_jump_rule_on_another_source(monkeypatch):
+    store = _store(monkeypatch)
+    cli.cmd_add(_args(action="snooze", source="twitter"))
+    cli.cmd_add(_args(action="interrupt", source="whatsapp", sender="wife"))
+    assert [r["source"] for r in store] == ["twitter", "whatsapp"]
+
+
+def test_add_warns_when_explicit_placement_leaves_rule_shadowed(monkeypatch, capsys):
+    store = _store(monkeypatch)
+    cli.cmd_add(_args(action="snooze", source="microsoft"))
+    capsys.readouterr()
+    assert cli.cmd_add(_args(action="interrupt", source="microsoft", sender="boss", after=store[0]["id"])) == 0
+    assert [r["action"] for r in store] == ["snooze", "interrupt"]
+    assert "WARNING" in capsys.readouterr().err
+
+
 def test_move_to_top(monkeypatch):
     store = _store(monkeypatch)
     cli.cmd_add(_args(action="snooze", source="a"))
