@@ -27,12 +27,13 @@ cookies authenticate it.
 
 ```python
 import json
+
 goto_url("https://<host>/learn/api/public/v1/users/me/courses?expand=course&limit=100")
 wait_for_load()
 data = json.loads(js("document.body.innerText"))
 for m in data["results"]:
     c = m["course"]
-    print(c["id"], c["courseId"], c["name"])   # id looks like _123456_1
+    print(c["id"], c["courseId"], c["name"])  # id looks like _123456_1
 ```
 
 Useful endpoints (all GET, JSON, paged with `limit` + `paging.nextPage`):
@@ -82,9 +83,14 @@ discussion often 404s; the REST path works.
 
 ```python
 import json
+
+
 def get(path):
-    goto_url(f"https://<host>{path}"); wait_for_load()
+    goto_url(f"https://<host>{path}")
+    wait_for_load()
     return json.loads(js("document.body.innerText"))
+
+
 link = get(f"/learn/api/public/v1/courses/{cid}/contents/{item_id}")["contentHandler"]
 # courselink -> {"targetId": ...}; read the target, whose handler is the forumlink
 target = get(f"/learn/api/public/v1/courses/{cid}/contents/{link['targetId']}")["contentHandler"]
