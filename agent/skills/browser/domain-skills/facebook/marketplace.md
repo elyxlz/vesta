@@ -34,5 +34,8 @@ preferences.
 
 `https://www.facebook.com/marketplace/you/selling` shows each listing card with status ("Active",
 "This listing is being reviewed" right after publishing), "N clicks on listing", and actions. A
-card with no message indicator is not proof there are no buyer messages; say so rather than
-reporting "no buyers".
+card never shows buyer messages: in field use a listing sat with no message indicator for days
+while buyers were messaging and one unit sold. So this page can watch clicks and status only.
+Buyer messages reach the account holder through their own Facebook notifications, never this
+card, so do not build a buyer-message watcher on it, and report its output as "N clicks",
+never as "no messages" or "no buyers".
