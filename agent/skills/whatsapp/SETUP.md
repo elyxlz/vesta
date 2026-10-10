@@ -119,6 +119,9 @@ voice note whose transcription fails arrives as a notification naming what is mi
 Set `WHISPER_LANGUAGE` to a language code (default: auto-detect) when the user's voice
 notes are one known language, since auto-detection can misread short clips; the daemon
 passes it to `transcribe --language`.
+When the user speaks more than one language, set `WHISPER_LANGUAGES` instead (e.g. `en,ar`,
+primary first): detection still chooses among them, and a clip detected as any other
+language is transcribed in the first one (local whisper path only).
 
 ## Contact cards
 
