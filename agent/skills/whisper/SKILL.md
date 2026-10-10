@@ -58,3 +58,6 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 - `WHISPER_SECONDARY_MIN_P` (e.g. `0.85`, unset by default): with `WHISPER_LANGUAGES`, a listed
   language other than the first is used only when auto-detect reports at least this
   probability; below it the first listed language is used
+- `WHISPER_PROMPT` (unset by default): a vocabulary hint passed as whisper's `--prompt` (trade
+  terms, brand and place names). Applied only when decoding in `WHISPER_PROMPT_LANG` (default
+  `en`), since a prompt in one language can pull other-language audio toward translation

@@ -123,6 +123,12 @@ ARGS=(-m "$WHISPER_MODEL" -f "$TMP_WAV" -l "$LANGUAGE" -t "$THREADS")
 if [ -n "$TRANSLATE" ]; then
     ARGS+=("$TRANSLATE")
 fi
+# WHISPER_PROMPT: optional vocabulary hint (trade terms, names) that biases decoding.
+# Applied only when decoding in WHISPER_PROMPT_LANG (default en): a prompt in one
+# language can pull audio in another toward translation.
+if [ -n "${WHISPER_PROMPT:-}" ] && [ "$LANGUAGE" = "${WHISPER_PROMPT_LANG:-en}" ]; then
+    ARGS+=(--prompt "$WHISPER_PROMPT")
+fi
 
 if [ -n "$OUTPUT_FORMAT" ]; then
     case "$OUTPUT_FORMAT" in
