@@ -86,7 +86,7 @@ function Tile({ tile }: { tile: AppTile }) {
     );
   }
   return (
-    <DropdownMenu>
+    <DropdownMenu scrim={false}>
       <DropdownMenuTrigger className={className}>{face}</DropdownMenuTrigger>
       <DropdownMenuContent align="center" size="sm">
         {tile.choices.map((choice) => (
