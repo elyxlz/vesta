@@ -97,8 +97,17 @@ done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
-# refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+# refusal leaves, so count those lines rather than the daemon's rate-limit warnings. A turn that a
+# new message preempted (right after "Preempt sent", the message is redelivered) or that hit a
+# compaction boundary logs the same zero line, so a zero line within three lines of either marker
+# is not a refusal.
+refused=$(cat "$HOME"/agent/logs/vesta.log* 2>/dev/null | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" '
+    BEGIN { since = 99 }
+    /\[AGENT\]/ { next }
+    /Preempt sent|Compaction boundary reached/ { since = 0; next }
+    { since++ }
+    index($0, today) == 1 && /\[USAGE\] in=0 out=0 cache_read=0 / && !(since <= 3 && since > 0) { n++ }
+    END { print n + 0 }')
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
     bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else

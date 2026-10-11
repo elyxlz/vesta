@@ -249,6 +249,22 @@ def test_turns_that_ran_and_yesterdays_refusals_are_not_refused_turns(tmp_path):
     assert "OK  the provider refused 0 turns today" in run.stdout
 
 
+def test_preempted_and_compacted_turns_are_not_refused_turns(tmp_path):
+    # A turn cut short by a new message, or by a compaction boundary, logs the same zero usage line
+    # as a refusal, but nothing was dropped: the message is redelivered and the session resumes.
+    home = _healthy_home(tmp_path)
+    day = _day(0)
+    preempt = f"{GREEN}{day} 03:00:00 [DEBUG] [SYSTEM] [RUNTIME] Preempt sent (priority=now){RESET}\n"
+    compact = f"{GREEN}{day} 03:00:00 [SYSTEM] [CLIENT] Compaction boundary reached{RESET}\n"
+    lines = (preempt + _usage_line(day, cache_read=0)) * 3 + (compact + _usage_line(day, cache_read=0)) * 2
+    (home / "agent" / "logs" / "vesta.log").write_text(_usage_line(day, cache_read=0) + lines)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  the provider refused 1 turns today" in run.stdout
+
+
 def test_this_agent_filling_the_disk_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     _fake_disk_usage(home, 95)
