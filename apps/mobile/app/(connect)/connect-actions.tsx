@@ -1,66 +1,24 @@
-import { useState } from "react";
 import { StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { cloudSignInEnabled } from "@/api/auth";
 import { AuthSheet } from "@/components/auth-sheet";
-import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { useSession } from "@/session/SessionProvider";
 
 export default function ConnectActionsScreen() {
   const router = useRouter();
-  const { recentGateways, signIn } = useSession();
-  const { showError } = useToast();
-  const [busy, setBusy] = useState(false);
+  const { recentGateways } = useSession();
   const hasRecentGateways = Boolean(recentGateways?.length);
-
-  const signInWithAccount = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const connected = await signIn();
-      if (!connected) setBusy(false);
-    } catch (cause) {
-      showError(cause, "Connection failed");
-      setBusy(false);
-    }
-  };
 
   return (
     <AuthSheet gap={16}>
-      {cloudSignInEnabled ? (
-        <>
-          <Button
-            accessibilityLabel="Connect with Vesta Cloud"
-            icon="person-circle-outline"
-            iconSize={20}
-            loading={busy}
-            loadingLabel="Connecting…"
-            onPress={() => void signInWithAccount()}
-          >
-            Connect with Vesta Cloud
-          </Button>
-          <Button
-            size="large"
-            variant="secondary"
-            accessibilityLabel="Connect to self-hosted Vesta"
-            icon="server-outline"
-            labelStyle={styles.actionLabel}
-            onPress={() => router.push("/connect-link")}
-          >
-            Connect to self-hosted Vesta
-          </Button>
-        </>
-      ) : (
-        <Button
-          accessibilityLabel="Connect to self-hosted Vesta"
-          icon="server-outline"
-          iconSize={20}
-          onPress={() => router.push("/connect-link")}
-        >
-          Connect to self-hosted Vesta
-        </Button>
-      )}
+      <Button
+        accessibilityLabel="Connect to self-hosted Vesta"
+        icon="server-outline"
+        iconSize={20}
+        onPress={() => router.push("/connect-link")}
+      >
+        Connect to self-hosted Vesta
+      </Button>
       {hasRecentGateways ? (
         <Button
           size="compact"

@@ -23,7 +23,6 @@ const showsDashboard = visualSwitch("visualDashboard") !== null;
 const hasVoiceService = visualSwitch("visualServices") === "voice";
 const startsOffline = visualSwitch("visualReachable") === "offline";
 const hasGatewayUpdate = visualSwitch("visualGatewayUpdate") === "available";
-const managed = visualSwitch("visualManaged") === "true";
 const devicesVariant = visualSwitch("visualDevices");
 
 // visualAgent puts aria, the first carousel page, into one status (or one
@@ -127,7 +126,7 @@ const fixture: RosterValue = {
   reachable: !startsOffline,
   gatewayVersion: "0.2.0",
   gatewayChannel: visualSwitch("visualChannel") === "beta" ? "beta" : "stable",
-  managed,
+  managed: false,
   updateAvailable: hasGatewayUpdate,
   latestVersion: hasGatewayUpdate ? "0.2.1" : null,
   devices: fixtureDevices,

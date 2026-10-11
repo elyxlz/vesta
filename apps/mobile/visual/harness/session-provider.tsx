@@ -469,7 +469,6 @@ function FixtureProvider({ children }: { children: ReactNode }) {
       connectRecentGateway: async () => undefined,
       forgetRecentGateway: async () => undefined,
       clearRecentGateways: async () => undefined,
-      signIn: async () => true,
       disconnect: async () => undefined,
     };
   }, []);

@@ -305,13 +305,6 @@
       "screenshot": "connect-actions.png"
     },
     {
-      "id": "cloud-sign-in-error",
-      "title": "Cloud sign-in failed",
-      "description": "Recoverable account authentication failure on the connection sheet.",
-      "group": "Onboarding errors",
-      "screenshot": "cloud-sign-in-error.png"
-    },
-    {
       "id": "connect-link",
       "title": "Connect your gateway",
       "description": "Focused self-hosted gateway form with the software keyboard visible.",
@@ -1090,12 +1083,6 @@
       "group": "Connect"
     },
     {
-      "id": "cloud-sign-in-connecting",
-      "title": "Cloud sign-in, connecting",
-      "description": "The hosted sign-in button while it connects.",
-      "group": "Connect"
-    },
-    {
       "id": "connect-link-filled",
       "title": "Connect link, filled",
       "description": "A pasted link, masked, with clear and reveal controls.",
@@ -1202,12 +1189,6 @@
       "id": "settings-tunnel-unavailable",
       "title": "Settings, no tunnel",
       "description": "The gateway section reporting no public tunnel.",
-      "group": "App settings"
-    },
-    {
-      "id": "settings-account-managed",
-      "title": "Settings, managed account",
-      "description": "The account section of a managed gateway.",
       "group": "App settings"
     },
     {

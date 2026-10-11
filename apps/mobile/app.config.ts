@@ -52,9 +52,7 @@ const config: ExpoConfig = {
     bundleIdentifier,
     buildNumber: "1",
     supportsTablet: false,
-    ...(localIosNoPush
-      ? { appleTeamId: "H78XNVF428" }
-      : { associatedDomains: ["applinks:vesta.run"] }),
+    ...(localIosNoPush ? { appleTeamId: "H78XNVF428" } : {}),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription:
@@ -86,20 +84,6 @@ const config: ExpoConfig = {
       // while the app is backgrounded or the screen is locked.
       "android.permission.FOREGROUND_SERVICE",
       "android.permission.FOREGROUND_SERVICE_MICROPHONE",
-    ],
-    intentFilters: [
-      {
-        action: "VIEW",
-        autoVerify: true,
-        data: [
-          {
-            scheme: "https",
-            host: "vesta.run",
-            pathPrefix: "/mobile/",
-          },
-        ],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
     ],
   },
   plugins: [
@@ -179,10 +163,6 @@ const config: ExpoConfig = {
   extra: {
     apiCompat: "0.2",
     appVariant,
-    // Vesta Cloud is not open to the public yet: production builds offer
-    // self-hosted connection only, so App Review never meets a sign-in it
-    // cannot complete. Flip to true when cloud sign-up opens.
-    cloudSignInEnabled: isDevelopment,
     pushNotificationsEnabled: !localIosNoPush,
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
