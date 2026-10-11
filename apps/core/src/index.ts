@@ -146,7 +146,6 @@ export {
   createSession,
   isTokenExpiringSoon,
   mintConnection,
-  normalizeGatewayUrl,
   refreshConnection,
   runReauthCheck,
 } from "./session/session";

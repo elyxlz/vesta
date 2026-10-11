@@ -145,7 +145,7 @@ async function fetchWithinBudget(
   }
 }
 
-export function normalizeGatewayUrl(url: string): string {
+function normalizeGatewayUrl(url: string): string {
   let normalized = url.trim();
   while (normalized.endsWith("/")) normalized = normalized.slice(0, -1);
   return normalized;
