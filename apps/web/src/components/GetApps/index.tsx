@@ -67,14 +67,7 @@ function Tile({ tile }: { tile: AppTile }) {
   const face = (
     <>
       <Logo className="size-5" />
-      <span className="flex flex-col items-center gap-1 leading-none">
-        {tile.name}
-        {tile.choices.length === 0 && (
-          <span className="text-[0.625rem] whitespace-nowrap text-muted-foreground">
-            soon
-          </span>
-        )}
-      </span>
+      <span className="leading-none">{tile.name}</span>
     </>
   );
   const className = cn(
