@@ -58,15 +58,6 @@ tags:
       SCREENSHOT: connect-actions.png
 
 - tapOn:
-    text: "Connect with Vesta Cloud"
-    waitToSettleTimeoutMs: 1
-- takeScreenshot: cloud-sign-in-error
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: cloud-sign-in-error.png
-
-- tapOn:
     text: "Connect to self-hosted Vesta"
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:

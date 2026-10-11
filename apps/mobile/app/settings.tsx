@@ -70,11 +70,7 @@ const channelOptions: readonly OptionPickerOption<ReleaseChannel>[] = [
 ];
 type ActivePicker = "channel" | null;
 type ActiveConfirm =
-  | "restart"
-  | "disconnect"
-  | "location-settings"
-  | "location-always"
-  | null;
+  "restart" | "disconnect" | "location-settings" | "location-always" | null;
 type GatewayQueryData = {
   info: GatewayEndpointInfo;
   settings: GatewaySettings;
@@ -495,22 +491,6 @@ export default function SettingsScreen() {
           </FormSection>
         ) : null}
 
-        {roster.managed ? (
-          <FormSection
-            title="Account"
-            actions={
-              <Button
-                variant="card"
-                onPress={() =>
-                  void Linking.openURL("https://vesta.run/account")
-                }
-              >
-                Manage account and billing
-              </Button>
-            }
-          />
-        ) : null}
-
         <FormSection title="Appearance">
           <View style={styles.appearanceRow}>
             <SegmentedControl
@@ -529,10 +509,7 @@ export default function SettingsScreen() {
               <Button variant="card" onPress={() => router.push("/debug")}>
                 Diagnostics
               </Button>
-              <Button
-                variant="card"
-                onPress={() => router.push("/whats-new")}
-              >
+              <Button variant="card" onPress={() => router.push("/whats-new")}>
                 What’s new
               </Button>
             </>
