@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CONTENT_SECURITY_POLICY,
+  contextMenuItems,
   downloadDefaultPath,
   microphoneAccessPlan,
   rendererPermissionDecision,
@@ -100,5 +101,49 @@ describe("withContentSecurityPolicy", () => {
     expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self';");
     expect(CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
     expect(CONTENT_SECURITY_POLICY).not.toContain("unsafe-eval");
+  });
+});
+
+describe("contextMenuItems", () => {
+  const flags = {
+    canCut: false,
+    canCopy: true,
+    canPaste: true,
+    canSelectAll: true,
+  };
+
+  it("offers copy on selected text", () => {
+    expect(
+      contextMenuItems({
+        isEditable: false,
+        selectionText: "hello",
+        editFlags: flags,
+      }),
+    ).toEqual([{ role: "copy", enabled: true }]);
+  });
+
+  it("offers the full edit set in a text field", () => {
+    expect(
+      contextMenuItems({
+        isEditable: true,
+        selectionText: "",
+        editFlags: flags,
+      }),
+    ).toEqual([
+      { role: "cut", enabled: false },
+      { role: "copy", enabled: true },
+      { role: "paste", enabled: true },
+      { role: "selectAll", enabled: true },
+    ]);
+  });
+
+  it("offers nothing on plain page chrome", () => {
+    expect(
+      contextMenuItems({
+        isEditable: false,
+        selectionText: "  ",
+        editFlags: flags,
+      }),
+    ).toEqual([]);
   });
 });

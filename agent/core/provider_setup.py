@@ -13,6 +13,7 @@ import pydantic as pyd
 from aiohttp import web
 
 from . import claude_models
+from .config import validation_problems
 
 _SESSION_TTL_SECONDS = 600
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
@@ -301,7 +302,7 @@ async def openai_oauth_start(request: web.Request) -> web.Response:
     try:
         init = _DeviceInit.model_validate_json(response_text)
     except pyd.ValidationError as exc:
-        return _error(502, f"invalid device login response: {exc}")
+        return _error(502, f"invalid device login response: {validation_problems(exc)}")
 
     session_id = secrets.token_hex(16)
     state.openai_sessions[session_id] = _OpenAIAuthSession(init.device_auth_id, init.user_code, time.monotonic())
@@ -329,7 +330,7 @@ async def _poll_openai_device(session: _OpenAIAuthSession) -> _DevicePoll:
     try:
         return _DevicePoll.model_validate_json(response_text)
     except pyd.ValidationError as exc:
-        raise _SetupError(502, f"invalid device login response: {exc}") from exc
+        raise _SetupError(502, f"invalid device login response: {validation_problems(exc)}") from exc
 
 
 async def _exchange_openai_tokens(poll: _DevicePoll) -> _TokenResponse:
@@ -354,7 +355,7 @@ async def _exchange_openai_tokens(poll: _DevicePoll) -> _TokenResponse:
     try:
         tokens = _TokenResponse.model_validate_json(response_text)
     except pyd.ValidationError as exc:
-        raise _SetupError(502, f"invalid token response: {exc}") from exc
+        raise _SetupError(502, f"invalid token response: {validation_problems(exc)}") from exc
     if not tokens.access_token.strip() or not tokens.refresh_token.strip() or tokens.expires_in == 0:
         raise _SetupError(502, "OpenAI returned incomplete credentials")
     return tokens

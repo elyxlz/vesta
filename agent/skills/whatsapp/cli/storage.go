@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -23,7 +24,7 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=30000")
+	db, err := sql.Open("sqlite3", fmt.Sprintf("%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=%d", dbPath, SQLiteBusyTimeout.Milliseconds()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
@@ -158,6 +159,14 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, err
 	}
 	return ms, nil
+}
+
+// Answering reports whether the store hands out its one connection within timeout. A
+// connection held and never released blocks every reader, live notifications included.
+func (ms *MessageStore) Answering(timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return ms.db.PingContext(ctx) == nil
 }
 
 func (ms *MessageStore) Close() error {

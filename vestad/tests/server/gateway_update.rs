@@ -223,12 +223,12 @@ fn make_executable(path: &Path) {
         .expect("make the file executable");
 }
 
-/// A `systemctl` that reports the vestad unit active and records every call. `is_active` deciding
-/// true is what makes the daemon walk the `Restarting` phase and leave the ledger a real systemd
-/// restart would leave.
+/// A `systemctl` that reports the vestad unit active, with the calling vestad as its main process,
+/// and records every call. The daemon walks the `Restarting` phase, and leaves the ledger a real
+/// systemd restart would leave, only when it is the unit's main process; `$PPID` is that vestad.
 fn write_systemctl_stub(path: &Path, log: &Path) {
     let script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\ncase \"$*\" in *MainPID*) echo \"$PPID\" ;; esac\nexit 0\n",
         log.display()
     );
     let mut file = std::fs::File::create(path).expect("create the systemctl stub");

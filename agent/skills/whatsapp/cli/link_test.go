@@ -208,3 +208,29 @@ func TestPhonePairingStatusExpiresTheRecoveryPosture(t *testing.T) {
 		t.Fatal("expired phone pairing stayed pending")
 	}
 }
+
+// TestUnregisterVestadServiceDeletesTheServiceRoute pins the teardown request to the route
+// vestad serves, DELETE /agents/{name}/services/{service} with the agent token.
+func TestUnregisterVestadServiceDeletesTheServiceRoute(t *testing.T) {
+	var method, path, token string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path, token = r.Method, r.URL.Path, r.Header.Get("X-Agent-Token")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	host, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BOX_HOST", host)
+	t.Setenv("VESTAD_PORT", port)
+	t.Setenv("AGENT_NAME", "nimer")
+	t.Setenv("AGENT_TOKEN", "agent-token")
+
+	if err := unregisterVestadService("wa-link"); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/agents/nimer/services/wa-link" || token != "agent-token" {
+		t.Fatalf("teardown sent %s %s with token %q", method, path, token)
+	}
+}

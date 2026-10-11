@@ -3,10 +3,14 @@ import { useMeasuredSize } from "@/hooks/use-measured-size";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLayout } from "@/stores/use-layout";
 import { WindowControls } from "@/components/WindowControls";
-import { NotificationsPill } from "./NotificationsPill";
+import {
+  NotificationsHistoryDialog,
+  NotificationsPill,
+} from "./NotificationsPill";
 import { ToastPill } from "./ToastPill";
 
 interface NavbarProps {
+  bell?: boolean;
   leading?: React.ReactNode;
   center?: React.ReactNode;
   trailing?: React.ReactNode;
@@ -21,7 +25,12 @@ const FLOATING_TOAST_MAX_WIDTH = 340;
 // the floating under-island placement instead, where the full width fits.
 const MIN_INLINE_TOAST_WIDTH = 260;
 
-export function Navbar({ leading, center, trailing }: NavbarProps) {
+export function Navbar({
+  bell = true,
+  leading,
+  center,
+  trailing,
+}: NavbarProps) {
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
   const measureRef = useMeasuredSize("height", setNavbarHeight);
   const isMobile = useIsMobile();
@@ -59,7 +68,8 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
           style={{ paddingLeft: "var(--titlebar-inset-left, 0px)" }}
         >
           {leading}
-          <NotificationsPill />
+          {bell && <NotificationsPill />}
+          <NotificationsHistoryDialog />
         </div>
 
         <div

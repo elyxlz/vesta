@@ -186,7 +186,6 @@ export function FloatingComposer({
           inConversation
             ? "rounded-squircle-sm [corner-shape:squircle]"
             : "rounded-3xl",
-          "has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/30",
           // Red snaps on with the recording and fades out slowly after it: the transition
           // class rides only the resting state, so the exit eases while the entry is instant.
           recordingMode === "dictation"

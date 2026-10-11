@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { autoUpdater as squirrelMac } from "electron";
 import {
   downloadAppUpdate,
   getAppUpdate,
@@ -64,8 +65,24 @@ const updaterMock = vi.hoisted(() => {
 
 vi.mock("electron-updater", () => ({ autoUpdater: updaterMock.autoUpdater }));
 
+// Electron's native autoUpdater, which on macOS is Squirrel.Mac.
+vi.mock("electron", async () => ({
+  autoUpdater: new (await import("node:events")).EventEmitter(),
+}));
+
+const realPlatform = process.platform;
+function onPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, "platform", { value: platform });
+}
+
 beforeEach(() => {
   updaterMock.reset();
+  squirrelMac.removeAllListeners();
+  onPlatform("win32");
+});
+
+afterEach(() => {
+  onPlatform(realPlatform);
 });
 
 describe("manual app-update check", () => {
@@ -102,6 +119,14 @@ describe("manual app-update check", () => {
     expect(updaterMock.autoUpdater.autoDownload).toBe(false);
     expect(updaterMock.autoUpdater.autoInstallOnAppQuit).toBe(false);
   });
+
+  // On macOS the flag only hands the download to Squirrel.Mac to stage; the install waits for the click.
+  it("lets Squirrel.Mac stage the download on macOS", async () => {
+    onPlatform("darwin");
+    updaterMock.setCheckResult(null);
+    await getAppUpdate();
+    expect(updaterMock.autoUpdater.autoInstallOnAppQuit).toBe(true);
+  });
 });
 
 describe("manual app-update download and install", () => {
@@ -115,6 +140,31 @@ describe("manual app-update download and install", () => {
     updaterMock.handlers["download-progress"]?.({ percent: 42 });
     expect(updaterMock.autoUpdater.downloaded).toBe(1);
     expect(seen).toEqual([42]);
+  });
+
+  it("on macOS stays downloading until Squirrel.Mac has staged the update", async () => {
+    onPlatform("darwin");
+    let settled = false;
+    const download = downloadAppUpdate(() => undefined).then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(updaterMock.autoUpdater.downloaded).toBe(1);
+    });
+    expect(settled).toBe(false);
+    squirrelMac.emit("update-downloaded");
+    await download;
+    expect(settled).toBe(true);
+  });
+
+  it("on macOS fails the download when Squirrel.Mac cannot stage it", async () => {
+    onPlatform("darwin");
+    const download = downloadAppUpdate(() => undefined);
+    await vi.waitFor(() => {
+      expect(updaterMock.autoUpdater.downloaded).toBe(1);
+    });
+    squirrelMac.emit("error", new Error("code signature mismatch"));
+    await expect(download).rejects.toThrow("code signature mismatch");
   });
 
   it("hands the install to electron-updater", () => {

@@ -1,5 +1,6 @@
 import {
   BrowserWindow,
+  Menu,
   app,
   net,
   protocol,
@@ -10,6 +11,7 @@ import {
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CHANNEL } from "./channels";
+import { trackWindowState, type WindowState } from "./window-state";
 
 const APP_SCHEME = "vesta";
 const APP_ORIGIN = `${APP_SCHEME}://bundle`;
@@ -191,15 +193,40 @@ function routeDownloadsToDisk(): void {
   });
 }
 
-export function createMainWindow(): BrowserWindow {
+type EditRole = "cut" | "copy" | "paste" | "selectAll";
+
+/** The native edit items a right click offers: the full set in a text field, copy on a selection, else none. */
+export function contextMenuItems(params: {
+  isEditable: boolean;
+  selectionText: string;
+  editFlags: {
+    canCut: boolean;
+    canCopy: boolean;
+    canPaste: boolean;
+    canSelectAll: boolean;
+  };
+}): { role: EditRole; enabled: boolean }[] {
+  const { canCut, canCopy, canPaste, canSelectAll } = params.editFlags;
+  if (params.isEditable)
+    return [
+      { role: "cut", enabled: canCut },
+      { role: "copy", enabled: canCopy },
+      { role: "paste", enabled: canPaste },
+      { role: "selectAll", enabled: canSelectAll },
+    ];
+  if (params.selectionText.trim() !== "")
+    return [{ role: "copy", enabled: true }];
+  return [];
+}
+
+export function createMainWindow(saved: WindowState | null): BrowserWindow {
   handleAppProtocol();
   allowRendererPermissions();
   routeDownloadsToDisk();
 
   const window = new BrowserWindow({
     title: "Vesta",
-    width: WINDOW_WIDTH,
-    height: WINDOW_HEIGHT,
+    ...(saved?.bounds ?? { width: WINDOW_WIDTH, height: WINDOW_HEIGHT }),
     minWidth: WINDOW_MIN_SIZE,
     minHeight: WINDOW_MIN_SIZE,
     show: true,
@@ -243,6 +270,11 @@ export function createMainWindow(): BrowserWindow {
     if (!allowed) event.preventDefault();
   });
 
+  window.webContents.on("context-menu", (_event, params) => {
+    const items = contextMenuItems(params);
+    if (items.length > 0) Menu.buildFromTemplate(items).popup({ window });
+  });
+
   const sendFocus = (focused: boolean) => () => {
     window.webContents.send(CHANNEL.windowFocus, focused);
   };
@@ -254,6 +286,9 @@ export function createMainWindow(): BrowserWindow {
   };
   window.on("maximize", sendMax(true));
   window.on("unmaximize", sendMax(false));
+
+  if (saved?.maximized) window.maximize();
+  trackWindowState(window);
 
   void window.loadURL(DEV_SERVER_URL ?? `${APP_ORIGIN}/`);
   return window;

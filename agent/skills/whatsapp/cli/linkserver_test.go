@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.mau.fi/whatsmeow"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func TestStartLinkServerReportsOccupiedPort(t *testing.T) {
@@ -120,5 +123,24 @@ func TestLinkServerPublishesItsActivePort(t *testing.T) {
 	gotPort, gotService = wac.activeLink()
 	if gotPort != 0 || gotService != "" {
 		t.Fatalf("activeLink after stop = (%d, %q), want empty", gotPort, gotService)
+	}
+}
+
+// TestQRSuccessLeavesLinkingToPairSuccess pins that the QR channel's success item only ends
+// the QR loop: whatsmeow raises that item from the same PairSuccess event the event handler
+// already links on, so linking here too would run every post-link step twice.
+func TestQRSuccessLeavesLinkingToPairSuccess(t *testing.T) {
+	wac := testClientWithQR("test-qr-payload")
+	wac.state = newStateStore(t.TempDir())
+	wac.logger = waLog.Noop
+	qrChan := make(chan whatsmeow.QRChannelItem, 1)
+	qrChan <- whatsmeow.QRChannelSuccess
+	close(qrChan)
+
+	if !wac.consumeQRChannel(qrChan) {
+		t.Fatal("consumeQRChannel must report a scanned code as success")
+	}
+	if linkedAt := wac.state.snapshot().LinkedAt; !linkedAt.IsZero() {
+		t.Fatalf("QR success must not arm the post-link window itself, LinkedAt = %s", linkedAt)
 	}
 }

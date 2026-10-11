@@ -55,6 +55,10 @@ pub(crate) struct Settings {
     /// connected clients always fans regardless. Set via PUT /gateway/settings.
     #[serde(default)]
     pub(crate) push_notifications: HashMap<String, bool>,
+    /// The docker daemon socket (`unix://...`) that vestad and every docker CLI it runs talk to;
+    /// unset is the system socket. Set via `vestad docker-socket`.
+    #[serde(default)]
+    pub(crate) docker_socket: Option<String>,
 }
 
 // Manual `Default` (not derived) so a fresh install with no settings.json gets
@@ -70,6 +74,7 @@ impl Default for Settings {
             auto_update: true,
             expose_lan: false,
             push_notifications: HashMap::new(),
+            docker_socket: None,
         }
     }
 }
@@ -117,6 +122,10 @@ pub(crate) struct BackupGlobalSettings {
     pub(crate) retention: crate::types::RetentionPolicy,
     #[serde(default)]
     pub(crate) agents: HashMap<String, AgentBackupOverride>,
+    /// Absolute directory that holds the per-agent restic repos, so backups can sit on another
+    /// disk; unset is `restic-repo` in the config dir. Set via `vestad backup-dir`.
+    #[serde(default)]
+    pub(crate) repo_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for BackupGlobalSettings {
@@ -126,6 +135,7 @@ impl Default for BackupGlobalSettings {
             every_n_days: DEFAULT_EVERY_N_DAYS,
             retention: default_retention(),
             agents: HashMap::new(),
+            repo_dir: None,
         }
     }
 }
@@ -180,57 +190,79 @@ fn settings_file() -> std::path::PathBuf {
     crate::paths::config_dir_or_relative().join("settings.json")
 }
 
-pub(crate) fn load_settings() -> Settings {
-    let path = settings_file();
+/// What settings.json at `path` holds: `Ok(None)` when there is no file, `Err` naming the parse
+/// failure when the file does not parse.
+fn stored_settings_at(path: &std::path::Path) -> Result<Option<Settings>, String> {
+    let Ok(data) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    serde_json::from_str(&data).map(Some).map_err(|err| {
+        format!(
+            "{} does not parse ({err}); fix the JSON, or move the file away to start from defaults",
+            path.display()
+        )
+    })
+}
 
-    if let Ok(data) = std::fs::read_to_string(&path) {
-        match serde_json::from_str::<Settings>(&data) {
-            Ok(mut settings) => {
-                converge_frozen_backup_defaults(&mut settings.backup);
-                // Re-write to persist any new fields added with defaults
-                save_settings(&settings);
-                return settings;
-            }
-            Err(err) => {
-                tracing::warn!(path = %path.display(), error = %err, "corrupt settings.json, using defaults");
-            }
+/// Refuse a settings.json that does not parse. `main` runs this before anything else, so vestad
+/// never runs on defaults that would point it at the wrong docker daemon or backup disk.
+pub(crate) fn check_stored_settings() -> Result<(), String> {
+    stored_settings_at(&settings_file()).map(|_| ())
+}
+
+/// The stored settings, with no write-back, so hot paths (every restic repo lookup) and the
+/// docker socket export at the top of `main` can read them.
+pub(crate) fn read_settings() -> Option<Settings> {
+    stored_settings_at(&settings_file()).ok().flatten()
+}
+
+fn load_settings_at(path: &std::path::Path) -> Settings {
+    match stored_settings_at(path) {
+        Ok(stored) => {
+            let mut settings = stored.unwrap_or_default();
+            converge_frozen_backup_defaults(&mut settings.backup);
+            // Write back: it persists fields added with defaults and leaves a file users can edit.
+            save_json_atomic(path, &settings, None);
+            settings
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "using default settings; settings.json is left as it is");
+            Settings::default()
         }
     }
+}
 
-    let settings = Settings::default();
+pub(crate) fn load_settings() -> Settings {
+    load_settings_at(&settings_file())
+}
 
-    // Always write settings to disk so users can edit the file
-    save_settings(&settings);
-
-    settings
+pub(crate) fn backup_repo_dir_setting() -> Option<std::path::PathBuf> {
+    read_settings().and_then(|settings| settings.backup.repo_dir)
 }
 
 pub(crate) fn save_settings(settings: &Settings) {
     save_json_atomic(&settings_file(), settings, None);
 }
 
+/// `save_settings` for a caller that must report a failed write instead of logging it.
+pub(crate) fn write_settings(settings: &Settings) -> Result<(), String> {
+    write_json_atomic(&settings_file(), settings, None)
+}
+
 /// Atomic pretty-JSON persistence shared by vestad's stores: write `<path>.tmp`, apply
 /// `unix_mode` when given (before the rename, so the final file never exists with looser
-/// permissions), then rename over `path`. Failures are logged, never fatal.
-pub(crate) fn save_json_atomic<T: serde::Serialize>(path: &std::path::Path, value: &T, unix_mode: Option<u32>) {
+/// permissions), then rename over `path`.
+pub(crate) fn write_json_atomic<T: serde::Serialize>(
+    path: &std::path::Path,
+    value: &T,
+    unix_mode: Option<u32>,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            tracing::warn!(path = %path.display(), error = %err, "failed to create dir");
-            return;
-        }
+        std::fs::create_dir_all(parent).map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    let data = match serde_json::to_string_pretty(value) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::warn!(path = %path.display(), error = %err, "failed to serialize");
-            return;
-        }
-    };
+    let data = serde_json::to_string_pretty(value).map_err(|err| format!("failed to serialize {}: {err}", path.display()))?;
     let tmp = path.with_extension("json.tmp");
-    if let Err(err) = std::fs::write(&tmp, &data) {
-        tracing::warn!(path = %tmp.display(), error = %err, "failed to write tmp file");
-        return;
-    }
+    std::fs::write(&tmp, &data).map_err(|err| format!("failed to write {}: {err}", tmp.display()))?;
     #[cfg(unix)]
     if let Some(mode) = unix_mode {
         use std::os::unix::fs::PermissionsExt;
@@ -238,8 +270,13 @@ pub(crate) fn save_json_atomic<T: serde::Serialize>(path: &std::path::Path, valu
     }
     #[cfg(not(unix))]
     let _ = unix_mode;
-    if let Err(err) = std::fs::rename(&tmp, path) {
-        tracing::warn!(path = %path.display(), error = %err, "failed to replace file");
+    std::fs::rename(&tmp, path).map_err(|err| format!("failed to replace {}: {err}", path.display()))
+}
+
+/// `write_json_atomic` for the stores where a failed write is logged, never fatal.
+pub(crate) fn save_json_atomic<T: serde::Serialize>(path: &std::path::Path, value: &T, unix_mode: Option<u32>) {
+    if let Err(err) = write_json_atomic(path, value, unix_mode) {
+        tracing::warn!(error = %err, "failed to save");
     }
 }
 
@@ -264,6 +301,38 @@ pub(crate) fn set_expose_lan(expose: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_corrupt_settings_file_is_refused_and_left_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{ \"docker_socket\": ").unwrap();
+
+        let Err(err) = stored_settings_at(&path) else {
+            panic!("a corrupt settings.json parsed");
+        };
+        assert!(err.contains("does not parse"));
+        assert!(load_settings_at(&path).docker_socket.is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ \"docker_socket\": ");
+    }
+
+    #[test]
+    fn a_missing_settings_file_reads_as_none_and_loads_as_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert!(stored_settings_at(&path).unwrap().is_none());
+        assert!(load_settings_at(&path).auto_update);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn write_json_atomic_reports_a_failed_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-dir");
+        std::fs::write(&blocker, "").unwrap();
+        let err = write_json_atomic(&blocker.join("settings.json"), &Settings::default(), None).unwrap_err();
+        assert!(err.contains("failed to create"));
+    }
 
     // --- auto_update defaults on (a fresh install and a settings.json predating the
     // field must both end up with auto-update enabled, not the bool's `false`) ---

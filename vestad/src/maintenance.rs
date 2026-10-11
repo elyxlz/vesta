@@ -1,6 +1,7 @@
-//! The maintenance cycle: when the pass fires, which agents it snapshots, and the snapshot itself
-//! applied to one agent. The routine pass and the update's pre-update pass both drive
-//! `snapshot_agent` from here, so neither owns the other's module.
+//! The maintenance cycle: when the pass fires, which agents it snapshots, the snapshot itself
+//! applied to one agent, and the compaction a routine snapshot can call for. The routine pass and
+//! the update's pre-update pass both drive `snapshot_agent` from here, so neither owns the other's
+//! module.
 
 use crate::settings::BackupGlobalSettings;
 use crate::state::{agent_write_guard, AppState};
@@ -20,6 +21,10 @@ pub const PASS_DEDUP_SECS: u64 = 20 * 3600;
 /// previous pass's own snapshot as fresh by seconds and capture every other night. A
 /// snapshot counts as fresh only if it is meaningfully younger than the cadence.
 const SNAPSHOT_FRESHNESS_SLACK_SECS: u64 = 2 * 3600;
+/// Dead bytes (image files the agent has since deleted or rewritten) an agent must carry before a
+/// routine pass compacts it. Both floors must hold, so a small agent never pays the restart.
+const COMPACT_MIN_DEAD_BYTES: u64 = 5_000_000_000;
+const COMPACT_MIN_DEAD_PERCENT_OF_LIVE: u64 = 25;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PassKind {
@@ -90,25 +95,85 @@ pub fn agent_needs_snapshot(
     }
 }
 
-/// Snapshot one agent if the pass selects it, then apply retention. The error is reported as well as
-/// logged, because the pre-update pass turns it into the warning the user sees on the update screen;
-/// an agent the pass skips (backups off, too young, snapshot still fresh) is a plain Ok.
+/// The bytes a compaction would reclaim (every layer minus the streamed live files), when worth a
+/// restart. A zero live size is an unmeasured snapshot, never an empty agent.
+pub fn compaction_worth(root_fs_bytes: u64, live_bytes: u64) -> Option<u64> {
+    let dead = root_fs_bytes.saturating_sub(live_bytes);
+    let worth = live_bytes > 0
+        && dead > COMPACT_MIN_DEAD_BYTES
+        && dead.saturating_mul(100) > live_bytes.saturating_mul(COMPACT_MIN_DEAD_PERCENT_OF_LIVE);
+    worth.then_some(dead)
+}
+
+/// Compact one idle agent whose image carries enough dead weight, right after its routine snapshot:
+/// the live-size measure and the rollback point. A busy agent waits for a later night.
+pub(crate) async fn compact_if_bloated(state: &AppState, name: &str, snapshot: &BackupInfo) {
+    let _guard = agent_write_guard(state, name).await;
+    let idle = state
+        .agent_status_cache
+        .subscribe_activity()
+        .borrow()
+        .get(name)
+        .is_none_or(|activity| activity == "idle");
+    if !idle {
+        tracing::info!(agent = %name, "maintenance: agent busy, compaction deferred");
+        return;
+    }
+    let cname = crate::docker::container_name(name);
+    let Some(target) = crate::docker::compaction_target(&state.docker, &cname).await else {
+        return;
+    };
+    let Some(dead_bytes) = compaction_worth(target.root_fs_bytes, snapshot.size) else {
+        return;
+    };
+    // Planned work stays out of the lifecycle push; a stopped agent never starts, so it stays stopped.
+    let _operation = target.running.then(|| {
+        crate::agent_status::PublishedOperation::new(
+            state.agent_status_cache.clone(),
+            name,
+            crate::docker::AgentOperation::Restarting,
+        )
+    });
+    tracing::info!(agent = %name, dead_bytes, live_bytes = snapshot.size, "maintenance: compacting");
+    let user_mounts = state.settings.read().await.agent_mounts(name);
+    match crate::docker::compact_agent(
+        &state.docker,
+        name,
+        &state.env_config,
+        &user_mounts,
+        snapshot.size,
+        target,
+        &state.rebuilding,
+    )
+    .await
+    {
+        Ok(()) => tracing::info!(agent = %name, dead_bytes, "maintenance: compacted"),
+        Err(error) => tracing::error!(agent = %name, %error, "maintenance: compaction failed"),
+    }
+    // A recreated container can come up on a new address.
+    state.agent_status_cache.clear_bridge_ip(name);
+}
+
+/// Snapshot one agent if the pass selects it, then apply retention, returning the snapshot taken. The
+/// error is reported as well as logged, because the pre-update pass turns it into the warning the user
+/// sees on the update screen; an agent the pass skips (backups off, too young, snapshot still fresh) is
+/// a plain `Ok(None)`.
 pub(crate) async fn snapshot_agent(
     state: &AppState,
     name: &str,
     kind: &PassKind,
     backup_settings: &BackupGlobalSettings,
     now_epoch: u64,
-) -> Result<(), crate::docker::DockerError> {
+) -> Result<Option<BackupInfo>, crate::docker::DockerError> {
     let (agent_enabled, retention) = backup_settings.effective_for(name);
     if !agent_enabled {
         tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
-        return Ok(());
+        return Ok(None);
     }
     if let Some(age) = crate::backup::container_age_secs(&state.docker, name).await {
         if age < crate::backup::MIN_AGE_FOR_BACKUP_SECS {
             tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -120,6 +185,7 @@ pub(crate) async fn snapshot_agent(
             return Err(e);
         }
     };
+    let mut taken = None;
     if agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
         let _file_lock = match crate::backup::agent_file_lock(name) {
             Ok(lock) => lock,
@@ -152,6 +218,7 @@ pub(crate) async fn snapshot_agent(
                         }
                     }
                 }
+                taken = Some(info.clone());
                 backups.insert(0, info);
             }
             Err(e) => {
@@ -165,7 +232,7 @@ pub(crate) async fn snapshot_agent(
     // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
     // next pass instead of waiting days for the next snapshot to trigger it.
     crate::backup::cleanup_backups(name, &backups, &retention).await;
-    Ok(())
+    Ok(taken)
 }
 
 #[cfg(test)]
@@ -265,5 +332,48 @@ mod tests {
         assert!(should_fire(true, false, true), "idle poll inside the window fires");
         assert!(!should_fire(true, false, false), "busy agents defer the pass");
         assert!(should_fire(true, true, false), "the last in-window poll fires regardless");
+    }
+
+    const GB: u64 = 1_000_000_000;
+
+    #[test]
+    fn compaction_reclaims_a_heavily_bloated_agent() {
+        // okami: 202 GB on disk, 54 GB live.
+        assert_eq!(compaction_worth(202 * GB, 54 * GB), Some(148 * GB));
+    }
+
+    #[test]
+    fn compaction_skips_an_agent_with_little_dead_weight() {
+        // aria: 9.7 GB on disk, 9.43 GB live.
+        assert_eq!(compaction_worth(9_700_000_000, 9_430_000_000), None);
+    }
+
+    #[test]
+    fn compaction_needs_both_the_absolute_and_the_relative_floor() {
+        assert_eq!(
+            compaction_worth(10 * GB, 5 * GB),
+            None,
+            "5 GB dead is not above the floor"
+        );
+        assert_eq!(
+            compaction_worth(106 * GB, 100 * GB),
+            None,
+            "6 GB dead is only 6% of live"
+        );
+        assert_eq!(
+            compaction_worth(26 * GB, 20 * GB),
+            Some(6 * GB),
+            "6 GB dead is 30% of live"
+        );
+    }
+
+    #[test]
+    fn compaction_never_trusts_an_unmeasured_snapshot() {
+        assert_eq!(compaction_worth(200 * GB, 0), None);
+    }
+
+    #[test]
+    fn compaction_reads_live_above_root_fs_as_nothing_dead() {
+        assert_eq!(compaction_worth(10 * GB, 11 * GB), None);
     }
 }

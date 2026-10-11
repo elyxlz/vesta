@@ -263,7 +263,12 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         )}
       >
         <DropOverlay active={dragActive} agentName={name} />
-        <AttachmentViewer agent={name} request={viewer} onClose={closeViewer} />
+        <AttachmentViewer
+          agent={name}
+          request={viewer}
+          fullscreen={fullscreen}
+          onClose={closeViewer}
+        />
         <ChatHeaderActions
           fullscreen={fullscreen}
           receded={inConversation}

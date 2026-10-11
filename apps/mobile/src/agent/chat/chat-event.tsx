@@ -17,7 +17,6 @@ import Markdown, {
 } from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
-import * as WebBrowser from "expo-web-browser";
 import Svg, { Path } from "react-native-svg";
 import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, ChatMessage, InputMethod } from "@vesta/core";
@@ -47,11 +46,13 @@ import {
 } from "@/agent/chat/attachment-content";
 import { CodeBlock } from "@/agent/chat/code-block";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
+import { SwipeToReply } from "@/agent/chat/swipe-to-reply";
 import {
   chatDateLabel,
   isFinalMarkdownNode,
   resolveMarkdownLink,
 } from "@/agent/chat/chat-message-model";
+import { openWebLink } from "@/agent/chat/open-web-link";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
 
@@ -105,8 +106,8 @@ const MESSAGE_ACTIONS: Record<
 function openMarkdownLink(href: string): boolean {
   const { url, opener } = resolveMarkdownLink(href);
   const open =
-    opener === "in-app-browser"
-      ? WebBrowser.openBrowserAsync(url)
+    opener === "web"
+      ? openWebLink(url)
       : opener === "system"
         ? Linking.openURL(url)
         : Promise.reject(new Error("Unsupported link type"));
@@ -358,6 +359,9 @@ export const ChatEvent = memo(function ChatEvent({
     },
     [messageText, onEditAndResend, onReadAloud, onReply, user],
   );
+  const replyFromSwipe = useCallback(() => {
+    onReply(messageText, user);
+  }, [messageText, onReply, user]);
   if (event.type === "error" || event.type === "rate_limited") {
     const text =
       event.type === "rate_limited"
@@ -453,7 +457,8 @@ export const ChatEvent = memo(function ChatEvent({
   );
   const failed = sendState === "failed" || sendState === "retry";
   return (
-    <View
+    <SwipeToReply
+      onReply={replyFromSwipe}
       style={[
         styles.messageRow,
         startsNewBubbleGroup ? styles.newBubbleGroup : null,
@@ -493,7 +498,7 @@ export const ChatEvent = memo(function ChatEvent({
       >
         {bubble}
       </MessageContextMenu>
-    </View>
+    </SwipeToReply>
   );
 });
 
