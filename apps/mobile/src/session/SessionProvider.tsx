@@ -9,11 +9,7 @@ import {
 } from "react";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  connectWithKey,
-  resumeGatewaySession,
-  signInWithVestaAccount,
-} from "@/api/auth";
+import { connectWithKey, resumeGatewaySession } from "@/api/auth";
 import { createApiClient, type ApiClient } from "@/api/client";
 import { parseConnectLink } from "@/api/connection-link";
 import type { ConnectionConfig } from "@vesta/core";
@@ -45,7 +41,6 @@ interface SessionValue {
   connectLink: (link: string) => Promise<void>;
   connectRecentGateway: (id: string) => Promise<void>;
   forgetRecentGateway: (id: string) => Promise<void>;
-  signIn: () => Promise<boolean>;
   disconnect: () => Promise<void>;
 }
 
@@ -211,15 +206,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setRecentGateways(await forgetStoredRecentGateway(id));
   }, []);
 
-  const signIn = useCallback(async (): Promise<boolean> => {
-    const connection = await signInWithVestaAccount();
-    if (!connection) return false;
-    await commitConnection(connection, {
-      touchRecent: true,
-    });
-    return true;
-  }, [commitConnection]);
-
   const value = useMemo<SessionValue>(
     () => ({
       status,
@@ -230,7 +216,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
-      signIn,
       disconnect,
     }),
     [
@@ -241,7 +226,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
-      signIn,
       disconnect,
     ],
   );

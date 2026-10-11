@@ -55,15 +55,6 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: connect-actions-no-recent.png
-- tapOn:
-    text: 'Connect with Vesta Cloud'
-- waitForAnimationToEnd:
-    timeout: 3000
-- takeScreenshot: cloud-sign-in-connecting
-- runScript:
-    file: capture-screenshot.js
-    env:
-      SCREENSHOT: cloud-sign-in-connecting.png
 - stopApp
 - openLink:
     link: "vesta-dev://connect-link?visualPrivacy=unlocked"
