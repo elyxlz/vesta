@@ -84,6 +84,10 @@ pub static CONTAINER_UPDATE: LifecycleReason = LifecycleReason::borrowed(
     "update: container configuration changed",
     "Your runtime restarted to apply updated container configuration.",
 );
+pub static DISK_COMPACTION: LifecycleReason = LifecycleReason::borrowed(
+    "maintenance: disk compaction",
+    "Your runtime restarted so the system could reclaim disk space held by files you deleted or replaced.",
+);
 pub static DESIRED_STOP: LifecycleReason = LifecycleReason::shutdown_only("system: desired state is stopped");
 
 // Transitions only a client can name: the restart is a separate request from the provider write

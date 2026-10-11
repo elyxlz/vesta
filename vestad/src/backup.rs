@@ -5,8 +5,8 @@ use bollard::Docker;
 use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status,
     create_container, ensure_container_removed, env_file_names, guard_alive, handoff_boot_reason,
-    handoff_shutdown_reason, read_env_value, start_container, stop_container_with_timeout,
-    validate_name, AgentEnvConfig, ContainerStatus, DockerError,
+    handoff_shutdown_reason, prepare_egress, read_env_value, start_container,
+    stop_container_with_timeout, validate_name, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -35,9 +35,7 @@ pub fn agent_file_lock(name: &str) -> Result<nix::fcntl::Flock<File>, DockerErro
 /// fs (`docker export`), so size off that; later snapshots only write the diff,
 /// so the writable-layer size is an adequate floor.
 async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<(), DockerError> {
-    let repo_fs = crate::paths::config_dir_or_relative();
-    std::fs::create_dir_all(&repo_fs)
-        .map_err(|e| DockerError::Failed(format!("failed to create backup dir: {e}")))?;
+    let repo_fs = crate::restic::ready_repo_root()?;
 
     let stat = nix::sys::statvfs::statvfs(repo_fs.as_path())
         .map_err(|e| DockerError::Failed(format!("failed to check disk space: {e}")))?;
@@ -210,6 +208,11 @@ pub async fn restore_backup(
     if let Some(refusal) = newer_state_refusal(backup_id, info.vestad_version.as_deref(), env!("CARGO_PKG_VERSION")) {
         return Err(refusal);
     }
+
+    // Install the egress image, if this agent is proxied, before anything below removes the
+    // container: an offline host that cannot download it keeps the agent running untouched
+    // instead of stranding it with none (mirrors `rebuild_agent`'s own pre-check).
+    prepare_egress(docker, &env_config.agents_dir, name).await?;
 
     let status = container_status(docker, &cname).await;
     let container_present = status != ContainerStatus::NotFound;

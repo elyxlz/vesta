@@ -32,11 +32,11 @@ impl TunnelConfig {
 /// their own, scoped to a domain they control (Account → Cloudflare Tunnel: Edit,
 /// Zone → DNS: Edit, Zone → Zone: Read). Managed (vesta.run) VMs never reach this
 /// path: the control plane creates the tunnel and seeds `tunnel.json` directly.
-#[derive(Serialize, Deserialize, Clone)]
-struct CloudflareCreds {
-    api_token: String,
-    account_id: String,
-    zone_id: String,
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub(crate) struct CloudflareCreds {
+    pub(crate) api_token: String,
+    pub(crate) account_id: String,
+    pub(crate) zone_id: String,
 }
 
 fn cf_creds_path(config_dir: &Path) -> PathBuf {
@@ -71,7 +71,7 @@ pub fn decline_tunnel(config_dir: &Path) -> Result<(), String> {
 
 /// Clear the declined-tunnel preference: a successful `vestad connect` means
 /// the user wants a tunnel again.
-fn clear_declined_tunnel(config_dir: &Path) {
+pub(crate) fn clear_declined_tunnel(config_dir: &Path) {
     std::fs::remove_file(no_tunnel_marker_path(config_dir)).ok();
 }
 
@@ -90,7 +90,7 @@ fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
+pub(crate) fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
     write_secret_file(
         &cf_creds_path(config_dir),
         &serde_json::to_string_pretty(creds).expect("cloudflare creds serialize to json"),
@@ -228,27 +228,52 @@ fn cf_request(
     api_token: &str,
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // The token and the body (a tunnel create carries the tunnel secret) reach curl as a config on
+    // stdin (`-K -`), never in argv, where any local user sees them.
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, url])
         .arg("--connect-timeout")
         .arg(CF_API_CONNECT_TIMEOUT_SECS.to_string())
         .arg("--max-time")
         .arg(CF_API_MAX_TIME_SECS.to_string())
-        .arg("-H")
-        .arg(format!("Authorization: Bearer {api_token}"))
-        .arg("-H")
-        .arg("Content-Type: application/json");
+        .args(["-H", "Content-Type: application/json", "-K", "-"]);
 
-    if let Some(b) = body {
-        cmd.arg("-d").arg(b.to_string());
-    }
+    let header = curl_config_quoted(&format!("Authorization: Bearer {api_token}"));
+    let curl_config = match body {
+        Some(b) => format!(
+            "header = \"{header}\"\ndata = \"{}\"\n",
+            curl_config_quoted(&b.to_string())
+        ),
+        None => format!("header = \"{header}\"\n"),
+    };
 
-    let output = cmd.output().map_err(|e| format!("curl failed: {e}"))?;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("curl failed: {e}"))?;
+    let config_written = child
+        .stdin
+        .take()
+        .ok_or_else(|| "curl stdin is not piped".to_string())
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(curl_config.as_bytes())
+                .map_err(|e| format!("could not pass the request to curl: {e}"))
+        });
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("curl failed: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("cloudflare API request failed: {stderr}"));
     }
+    config_written?;
 
     let resp: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("failed to parse cloudflare response: {e}"))?;
@@ -259,6 +284,11 @@ fn cf_request(
     }
 
     Ok(resp)
+}
+
+/// `text` escaped for a double-quoted value in a curl config file.
+fn curl_config_quoted(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn get_zone_domain(env: &CloudflareCreds) -> Result<String, String> {
@@ -294,10 +324,7 @@ fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
     }
 }
 
-fn delete_dns_record_if_exists(env: &CloudflareCreds, subdomain: &str) {
-    let Ok(domain) = get_zone_domain(env) else {
-        return;
-    };
+fn delete_dns_record_if_exists(env: &CloudflareCreds, domain: &str, subdomain: &str) {
     let fqdn = format!("{subdomain}.{domain}");
     let list_url = format!(
         "{}/zones/{}/dns_records?type=CNAME&name={}",
@@ -415,7 +442,6 @@ const ANIMALS: &[&str] = &[
     "phoenix",
     "pika",
     "piranha",
-    "puma",
     "python",
     "quail",
     "raven",
@@ -436,7 +462,6 @@ const ANIMALS: &[&str] = &[
     "viper",
     "vulture",
     "walrus",
-    "weasel",
     "whale",
     "wolf",
     "wolverine",
@@ -444,6 +469,392 @@ const ANIMALS: &[&str] = &[
     "wren",
     "yak",
     "zebra",
+    "aardvark",
+    "aardwolf",
+    "abalone",
+    "addax",
+    "adder",
+    "agouti",
+    "albacore",
+    "albatross",
+    "anaconda",
+    "anchovy",
+    "angelfish",
+    "anole",
+    "ant",
+    "anteater",
+    "antelope",
+    "antlion",
+    "aphid",
+    "armadillo",
+    "auk",
+    "avocet",
+    "axolotl",
+    "baboon",
+    "bandicoot",
+    "barb",
+    "barbet",
+    "barnacle",
+    "barracuda",
+    "basilisk",
+    "bass",
+    "bat",
+    "batfish",
+    "bear",
+    "bee",
+    "beetle",
+    "beluga",
+    "betta",
+    "bilby",
+    "bittern",
+    "blenny",
+    "bluebird",
+    "bluegill",
+    "boa",
+    "bobolink",
+    "bonefish",
+    "bongo",
+    "bonito",
+    "bonobo",
+    "brant",
+    "bream",
+    "bullfrog",
+    "bullhead",
+    "bumblebee",
+    "bunting",
+    "butterfly",
+    "caiman",
+    "canary",
+    "capuchin",
+    "caracal",
+    "carp",
+    "cassowary",
+    "cat",
+    "catbird",
+    "catfish",
+    "catshark",
+    "centipede",
+    "chafer",
+    "chaffinch",
+    "chamois",
+    "char",
+    "chickadee",
+    "chimp",
+    "chub",
+    "cicada",
+    "cichlid",
+    "civet",
+    "clam",
+    "clownfish",
+    "coati",
+    "cockle",
+    "cod",
+    "colobus",
+    "copperhead",
+    "cormorant",
+    "cowbird",
+    "cowfish",
+    "cowrie",
+    "crab",
+    "crake",
+    "crappie",
+    "crayfish",
+    "crocodile",
+    "crossbill",
+    "cuckoo",
+    "curlew",
+    "cusk",
+    "dab",
+    "dace",
+    "damselfly",
+    "puffin",
+    "dikdik",
+    "dipper",
+    "dog",
+    "dogfish",
+    "dorado",
+    "dormouse",
+    "dove",
+    "dragonfly",
+    "duck",
+    "dugong",
+    "dunlin",
+    "dunnock",
+    "earwig",
+    "echidna",
+    "eel",
+    "eider",
+    "eland",
+    "elephant",
+    "emu",
+    "ermine",
+    "fennec",
+    "firefly",
+    "fisher",
+    "flea",
+    "flicker",
+    "flounder",
+    "fossa",
+    "frog",
+    "fulmar",
+    "gannet",
+    "garfish",
+    "gator",
+    "gemsbok",
+    "genet",
+    "gerbil",
+    "gibbon",
+    "giraffe",
+    "gnat",
+    "gharial",
+    "goat",
+    "goatfish",
+    "goby",
+    "godwit",
+    "goldfinch",
+    "goldfish",
+    "goose",
+    "gorilla",
+    "grackle",
+    "grebe",
+    "greenfinch",
+    "grosbeak",
+    "grouper",
+    "grub",
+    "grunion",
+    "grunt",
+    "guan",
+    "guanaco",
+    "guppy",
+    "haddock",
+    "hake",
+    "halibut",
+    "kinglet",
+    "harrier",
+    "hawfinch",
+    "herring",
+    "hippo",
+    "hoopoe",
+    "hornbill",
+    "horse",
+    "hoverfly",
+    "hyrax",
+    "ibis",
+    "jackdaw",
+    "jackrabbit",
+    "jaeger",
+    "jerboa",
+    "junco",
+    "kakapo",
+    "kangaroo",
+    "katydid",
+    "kea",
+    "killdeer",
+    "kingfish",
+    "kinkajou",
+    "kite",
+    "koi",
+    "kookaburra",
+    "krill",
+    "kudu",
+    "ladybug",
+    "langur",
+    "lapwing",
+    "lemming",
+    "limpet",
+    "limpkin",
+    "ling",
+    "linnet",
+    "lizard",
+    "loach",
+    "locust",
+    "lorikeet",
+    "lungfish",
+    "macaque",
+    "mackerel",
+    "magpie",
+    "mahi",
+    "mallard",
+    "mandrill",
+    "manta",
+    "margay",
+    "marmoset",
+    "mayfly",
+    "meerkat",
+    "merganser",
+    "midge",
+    "millipede",
+    "minnow",
+    "mole",
+    "loris",
+    "monkey",
+    "moorhen",
+    "mosquito",
+    "moth",
+    "motmot",
+    "mouse",
+    "mudskipper",
+    "mule",
+    "mullet",
+    "muskox",
+    "muskrat",
+    "mussel",
+    "myna",
+    "nautilus",
+    "nightjar",
+    "numbat",
+    "nutcracker",
+    "nuthatch",
+    "nutria",
+    "opah",
+    "orangutan",
+    "oribi",
+    "oriole",
+    "oryx",
+    "oscar",
+    "ostrich",
+    "oyster",
+    "paca",
+    "pangolin",
+    "partridge",
+    "peacock",
+    "peafowl",
+    "peccary",
+    "peeper",
+    "perch",
+    "petrel",
+    "pheasant",
+    "pigeon",
+    "pike",
+    "pillbug",
+    "pinfish",
+    "pintail",
+    "pipit",
+    "platypus",
+    "plover",
+    "polecat",
+    "pollock",
+    "pompano",
+    "pony",
+    "porcupine",
+    "porpoise",
+    "potoroo",
+    "prawn",
+    "pronghorn",
+    "pupfish",
+    "quetzal",
+    "quokka",
+    "quoll",
+    "rabbit",
+    "raccoon",
+    "ram",
+    "rattler",
+    "ray",
+    "redfish",
+    "redpoll",
+    "redstart",
+    "redwing",
+    "remora",
+    "rhino",
+    "ptarmigan",
+    "rook",
+    "sable",
+    "sailfish",
+    "salamander",
+    "sandpiper",
+    "sardine",
+    "sawfly",
+    "scallop",
+    "scoter",
+    "seal",
+    "serval",
+    "shad",
+    "sheep",
+    "shiner",
+    "shoebill",
+    "shrew",
+    "shrimp",
+    "silverfish",
+    "siskin",
+    "skate",
+    "skink",
+    "skylark",
+    "sloth",
+    "slug",
+    "smelt",
+    "smew",
+    "snail",
+    "snapper",
+    "snipe",
+    "snook",
+    "marlin",
+    "spider",
+    "spoonbill",
+    "sprat",
+    "springbok",
+    "squirrel",
+    "stallion",
+    "starfish",
+    "starling",
+    "stilt",
+    "stingray",
+    "stoat",
+    "sturgeon",
+    "sunbird",
+    "sunfish",
+    "swallow",
+    "swan",
+    "swordfish",
+    "tamarin",
+    "tanager",
+    "tang",
+    "tarantula",
+    "tarpon",
+    "tayra",
+    "teal",
+    "tenrec",
+    "termite",
+    "terrapin",
+    "tetra",
+    "thrasher",
+    "thrush",
+    "tick",
+    "tilapia",
+    "tilefish",
+    "toadfish",
+    "tody",
+    "tortoise",
+    "towhee",
+    "trogon",
+    "trout",
+    "tuna",
+    "urchin",
+    "verdin",
+    "vervet",
+    "vicuna",
+    "vireo",
+    "vole",
+    "wagtail",
+    "wahoo",
+    "wallaby",
+    "wallaroo",
+    "walleye",
+    "warbler",
+    "warthog",
+    "wasp",
+    "waxwing",
+    "weaver",
+    "weevil",
+    "wheatear",
+    "whelk",
+    "whiptail",
+    "wigeon",
+    "wildcat",
+    "willet",
+    "wolffish",
+    "wrasse",
+    "wryneck",
+    "zebu",
 ];
 
 fn animal_for_user(username: &str, offset: usize) -> &'static str {
@@ -463,15 +874,102 @@ fn sanitize(s: &str) -> String {
     cleaned.trim_matches('-').to_string()
 }
 
+/// Upper bound on names tried before giving up: every animal three times over (bare, `-2`, `-3`).
+const SUBDOMAIN_PICK_MAX_ATTEMPTS: usize = 3 * ANIMALS.len();
+const DNS_LABEL_MAX_LEN: usize = 63;
+
+/// The gateway's generated subdomain at `offset`: the Linux user's animal first, then the next
+/// animals, then the same names numbered (`otter-2`) once the list is spent.
 fn generate_subdomain(offset: usize) -> String {
-    let animal = animal_for_user(&crate::paths::current_user(), offset);
-    let hostname = sanitize(&gethostname());
-    let short = if hostname.len() > 20 {
-        &hostname[..20]
-    } else {
-        &hostname
-    };
-    format!("{}-{}", animal, short.trim_end_matches('-'))
+    let animal = animal_for_user(&crate::paths::current_user(), offset % ANIMALS.len());
+    match offset / ANIMALS.len() {
+        0 => animal.to_string(),
+        round => format!("{animal}-{}", round + 1),
+    }
+}
+
+/// An explicit `VESTA_SUBDOMAIN` pin, when set.
+fn subdomain_pin() -> Option<String> {
+    std::env::var("VESTA_SUBDOMAIN")
+        .ok()
+        .map(|s| sanitize(&s))
+        .filter(|s| !s.is_empty())
+}
+
+pub(crate) fn is_valid_subdomain(subdomain: &str) -> bool {
+    !subdomain.is_empty()
+        && subdomain.len() <= DNS_LABEL_MAX_LEN
+        && !subdomain.starts_with('-')
+        && !subdomain.ends_with('-')
+        && subdomain
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The first generated name nobody holds. A failed check stops the pick: assuming a name is free
+/// would let `setup_tunnel` delete another gateway's tunnel.
+fn pick_free_subdomain(
+    mut is_taken: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<String, String> {
+    for offset in 0..SUBDOMAIN_PICK_MAX_ATTEMPTS {
+        let candidate = generate_subdomain(offset);
+        if !is_taken(&candidate)? {
+            return Ok(candidate);
+        }
+    }
+    Err("no free subdomain left in this zone".to_string())
+}
+
+/// Whether `subdomain` already has a DNS record in the zone or a live tunnel of our naming.
+fn subdomain_taken(env: &CloudflareCreds, domain: &str, subdomain: &str) -> Result<bool, String> {
+    let dns_url = format!(
+        "{CF_API_BASE}/zones/{}/dns_records?name={subdomain}.{domain}",
+        env.zone_id
+    );
+    let dns = cf_request("GET", &dns_url, &env.api_token, None)?;
+    if dns["result"]
+        .as_array()
+        .is_some_and(|records| !records.is_empty())
+    {
+        return Ok(true);
+    }
+    let tunnel_url = format!(
+        "{CF_API_BASE}/accounts/{}/cfd_tunnel?name=vesta-{subdomain}&is_deleted=false",
+        env.account_id
+    );
+    let tunnels = cf_request("GET", &tunnel_url, &env.api_token, None)?;
+    Ok(tunnels["result"]
+        .as_array()
+        .is_some_and(|list| !list.is_empty()))
+}
+
+/// Create this gateway's tunnel under `explicit` (which must be free) or the first free animal.
+fn create_unpinned_tunnel(
+    config_dir: &Path,
+    env: &CloudflareCreds,
+    explicit: Option<&str>,
+) -> Result<TunnelConfig, String> {
+    let domain = get_zone_domain(env)?;
+    let subdomain = choose_subdomain(explicit, &domain, |name| {
+        subdomain_taken(env, &domain, name)
+    })?;
+    create_named_tunnel(config_dir, env, &domain, &subdomain)
+}
+
+/// `explicit` when nobody holds it (a taken explicit name is an error, never a fallback), else
+/// the first free generated name.
+fn choose_subdomain(
+    explicit: Option<&str>,
+    domain: &str,
+    mut is_taken: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<String, String> {
+    match explicit {
+        Some(name) if is_taken(name)? => {
+            Err(format!("subdomain '{name}' is already in use in {domain}"))
+        }
+        Some(name) => Ok(name.to_string()),
+        None => pick_free_subdomain(is_taken),
+    }
 }
 
 pub(crate) fn gethostname() -> String {
@@ -497,15 +995,6 @@ pub fn connect_interactive(config_dir: &Path) -> Result<TunnelConfig, String> {
     ensure_tunnel(config_dir)
 }
 
-/// The subdomain this box wants: `VESTA_SUBDOMAIN` when set, else <animal>-<hostname>.
-fn preferred_subdomain() -> String {
-    std::env::var("VESTA_SUBDOMAIN")
-        .ok()
-        .map(|s| sanitize(&s))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| generate_subdomain(0))
-}
-
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // Managed (vesta.run) VMs: the control plane creates the tunnel + DNS and
     // SEEDS tunnel.json into the config dir. vestad holds no Cloudflare account
@@ -518,28 +1007,57 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
             .ok_or_else(|| "managed mode: no tunnel.json seeded by the control plane".to_string());
     }
 
-    // Self-hosted deployments pin an exact subdomain via VESTA_SUBDOMAIN only when
-    // set; otherwise keep the generated <animal>-<hostname>. Creation uses the
-    // BYOK creds in cloudflare.json (see cf_env / setup_cf_creds_interactive).
-    let preferred = preferred_subdomain();
+    ensure_tunnel_with(config_dir, subdomain_pin().as_deref())
+}
 
-    // Reuse existing tunnel if it matches our preferred subdomain
-    if let Some(tc) = get_tunnel_config(config_dir) {
-        let current = tc.hostname.split('.').next().unwrap_or("");
-        if current == preferred {
-            return Ok(tc);
+/// The boot converge. A saved tunnel is authoritative: only an explicit pin that differs from it
+/// recreates it. Without a saved tunnel, a pin is used as given and anything else takes a free name.
+fn ensure_tunnel_with(config_dir: &Path, pin: Option<&str>) -> Result<TunnelConfig, String> {
+    if let Some(saved) = get_tunnel_config(config_dir) {
+        let current = saved.hostname.split('.').next().unwrap_or("").to_string();
+        match pin {
+            None => return Ok(saved),
+            Some(pinned) if pinned == current => return Ok(saved),
+            Some(pinned) => {
+                tracing::info!(old = %current, new = %pinned, "pinned subdomain changed, recreating");
+                destroy_tunnel(config_dir).map_err(|e| {
+                    format!("could not destroy the old tunnel to recreate it (keeping the saved config): {e}")
+                })?;
+            }
         }
-        tracing::info!(old = %current, new = %preferred, "tunnel subdomain changed, recreating");
-        destroy_tunnel(config_dir).map_err(|e| {
-            format!("could not destroy the old tunnel to recreate it (keeping the saved config): {e}")
-        })?;
     }
+    match pin {
+        Some(pinned) => setup_tunnel(config_dir, pinned),
+        None => create_unpinned_tunnel(config_dir, &cf_env(config_dir)?, None),
+    }
+}
 
-    // setup_tunnel calls delete_tunnel_if_exists, so stale tunnels with our
-    // preferred name are cleaned up automatically — no need to skip to a
-    // different animal.
-    tracing::info!(subdomain = %preferred, "creating tunnel");
-    setup_tunnel(config_dir, &preferred)
+/// Provision's tunnel step: keep a tunnel this gateway already has (and the credentials that made
+/// it), or store the operator's credentials and create one under `explicit` or the first free animal.
+pub(crate) fn provision_tunnel(
+    config_dir: &Path,
+    creds: &CloudflareCreds,
+    explicit: Option<&str>,
+) -> Result<TunnelConfig, String> {
+    clear_declined_tunnel(config_dir);
+    if let Some(saved) = get_tunnel_config(config_dir) {
+        if explicit.is_some_and(|name| !saved.hostname.starts_with(&format!("{name}."))) {
+            eprintln!(
+                "warning: this gateway already has the tunnel {}; ignoring `subdomain`",
+                saved.hostname
+            );
+        }
+        if cf_env(config_dir).ok().as_ref() != Some(creds) {
+            eprintln!(
+                "warning: this gateway keeps the Cloudflare credentials of its tunnel {}; ignoring `cloudflare`",
+                saved.hostname
+            );
+        }
+        return Ok(saved);
+    }
+    ensure_cloudflared(config_dir)?;
+    save_cf_creds(config_dir, creds)?;
+    create_unpinned_tunnel(config_dir, creds, explicit)
 }
 
 /// Supervisor establish: converge tunnel.json without ever rewriting an
@@ -561,80 +1079,138 @@ fn establish_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
     let env = cf_env(config_dir)?;
     let domain = get_zone_domain(&env)?;
-    let hostname = format!("{subdomain}.{domain}");
+    create_named_tunnel(config_dir, &env, &domain, subdomain)
+}
+
+fn create_named_tunnel(
+    config_dir: &Path,
+    env: &CloudflareCreds,
+    domain: &str,
+    subdomain: &str,
+) -> Result<TunnelConfig, String> {
     let tunnel_name = format!("vesta-{subdomain}");
 
     tracing::info!(tunnel = %tunnel_name, "creating tunnel");
+    delete_tunnel_if_exists(env, &tunnel_name);
+    delete_dns_record_if_exists(env, domain, subdomain);
 
-    delete_tunnel_if_exists(&env, &tunnel_name);
+    let config = create_tunnel_records(
+        &mut |method, url, body| cf_request(method, url, &env.api_token, body),
+        env,
+        subdomain,
+        domain,
+        |config| {
+            write_secret_file(
+                &tunnel_config_path(config_dir),
+                &serde_json::to_string_pretty(config).expect("tunnel config serializes to json"),
+                "tunnel config",
+            )
+        },
+    )?;
+    tracing::info!(hostname = %config.hostname, "tunnel ready");
+    Ok(config)
+}
 
-    let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
+/// One Cloudflare API call: method, url, optional JSON body.
+type CfCall<'a> =
+    dyn FnMut(&str, &str, Option<serde_json::Value>) -> Result<serde_json::Value, String> + 'a;
+
+/// Create the tunnel, fetch its token, point a DNS record at it, then `persist` the config. A
+/// failed step deletes what the earlier steps created, so a failed run leaves no tunnel or record
+/// behind to block a re-run under the same subdomain.
+fn create_tunnel_records(
+    cf: &mut CfCall<'_>,
+    env: &CloudflareCreds,
+    subdomain: &str,
+    domain: &str,
+    persist: impl FnOnce(&TunnelConfig) -> Result<(), String>,
+) -> Result<TunnelConfig, String> {
     let tunnel_secret = hex::encode(rand::random::<[u8; 32]>());
     let secret_b64 = {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(tunnel_secret.as_bytes())
     };
-
-    let resp = cf_request(
+    let resp = cf(
         "POST",
-        &create_url,
-        &env.api_token,
+        &format!("{CF_API_BASE}/accounts/{}/cfd_tunnel", env.account_id),
         Some(serde_json::json!({
-            "name": tunnel_name,
+            "name": format!("vesta-{subdomain}"),
             "tunnel_secret": secret_b64,
             "config_src": "local",
         })),
     )?;
-
     let tunnel_id = resp["result"]["id"]
         .as_str()
         .ok_or("missing tunnel id in response")?
         .to_string();
 
+    let routed = route_tunnel(cf, env, subdomain, domain, &tunnel_id, persist);
+    if routed.is_err() {
+        let tunnel_url = format!(
+            "{CF_API_BASE}/accounts/{}/cfd_tunnel/{tunnel_id}",
+            env.account_id
+        );
+        roll_back(cf, &tunnel_url, "tunnel");
+    }
+    routed
+}
+
+/// The steps after the tunnel exists; on a failed `persist` it deletes the DNS record it created.
+fn route_tunnel(
+    cf: &mut CfCall<'_>,
+    env: &CloudflareCreds,
+    subdomain: &str,
+    domain: &str,
+    tunnel_id: &str,
+    persist: impl FnOnce(&TunnelConfig) -> Result<(), String>,
+) -> Result<TunnelConfig, String> {
     let token_url = format!(
-        "{}/accounts/{}/cfd_tunnel/{}/token",
-        CF_API_BASE, env.account_id, tunnel_id
+        "{CF_API_BASE}/accounts/{}/cfd_tunnel/{tunnel_id}/token",
+        env.account_id
     );
-    let token_resp = cf_request("GET", &token_url, &env.api_token, None)?;
-    let tunnel_token = token_resp["result"]
+    let tunnel_token = cf("GET", &token_url, None)?["result"]
         .as_str()
         .ok_or("missing tunnel token in response")?
         .to_string();
 
+    let hostname = format!("{subdomain}.{domain}");
     tracing::info!(hostname = %hostname, tunnel_id = %tunnel_id, "creating DNS record");
-
-    delete_dns_record_if_exists(&env, subdomain);
-
-    let dns_url = format!("{}/zones/{}/dns_records", CF_API_BASE, env.zone_id);
-    let dns_resp = cf_request(
+    let dns_resp = cf(
         "POST",
-        &dns_url,
-        &env.api_token,
+        &format!("{CF_API_BASE}/zones/{}/dns_records", env.zone_id),
         Some(serde_json::json!({
             "type": "CNAME",
             "name": subdomain,
-            "content": format!("{}.cfargotunnel.com", tunnel_id),
+            "content": format!("{tunnel_id}.cfargotunnel.com"),
             "proxied": true,
         })),
     )?;
-
-    let dns_record_id = dns_resp["result"]["id"].as_str().map(std::string::ToString::to_string);
-
     let config = TunnelConfig {
-        tunnel_id,
+        tunnel_id: tunnel_id.to_string(),
         tunnel_token,
-        hostname: hostname.clone(),
-        dns_record_id,
+        hostname,
+        dns_record_id: dns_resp["result"]["id"].as_str().map(ToString::to_string),
     };
 
-    write_secret_file(
-        &tunnel_config_path(config_dir),
-        &serde_json::to_string_pretty(&config).expect("tunnel config serializes to json"),
-        "tunnel config",
-    )?;
-
-    tracing::info!(hostname = %hostname, "tunnel ready");
+    if let Err(error) = persist(&config) {
+        if let Some(record_id) = &config.dns_record_id {
+            let record_url = format!(
+                "{CF_API_BASE}/zones/{}/dns_records/{record_id}",
+                env.zone_id
+            );
+            roll_back(cf, &record_url, "DNS record");
+        }
+        return Err(error);
+    }
     Ok(config)
+}
+
+/// Best-effort delete of something this run created; a failed delete is logged, never raised,
+/// so the caller still reports the error that caused the rollback.
+fn roll_back(cf: &mut CfCall<'_>, url: &str, what: &str) {
+    if let Err(error) = cf("DELETE", url, None) {
+        tracing::warn!(url = %url, "could not delete the {what} this run created: {error}");
+    }
 }
 
 pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
@@ -1168,6 +1744,218 @@ mod tests {
     use super::*;
 
     #[test]
+    fn provision_keeps_a_saved_tunnel_and_the_credentials_that_made_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let saved = TunnelConfig {
+            tunnel_id: "tunnel-1".to_string(),
+            tunnel_token: "tunnel-token".to_string(),
+            hostname: "otter.example.com".to_string(),
+            dns_record_id: None,
+        };
+        write_secret_file(
+            &tunnel_config_path(dir.path()),
+            &serde_json::to_string(&saved).expect("serialize"),
+            "tunnel config",
+        )
+        .expect("write tunnel.json");
+        save_cf_creds(dir.path(), &fake_env()).expect("write cloudflare.json");
+        let other = CloudflareCreds {
+            api_token: "other-token".to_string(),
+            ..fake_env()
+        };
+
+        let kept = provision_tunnel(dir.path(), &other, None).expect("keeps the saved tunnel");
+
+        assert_eq!(kept.hostname, "otter.example.com");
+        assert!(
+            cf_env(dir.path()).ok() == Some(fake_env()),
+            "cloudflare.json must be unchanged"
+        );
+    }
+
+    #[test]
+    fn a_cloudflare_request_sends_the_bearer_token_and_body() {
+        use std::io::{BufRead, BufReader, Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}/zones", listener.local_addr().expect("addr"));
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut headers = Vec::new();
+            let mut line = String::new();
+            while reader.read_line(&mut line).expect("read") > 0 && line.trim() != "" {
+                headers.push(line.trim().to_string());
+                line.clear();
+            }
+            let length = headers
+                .iter()
+                .find_map(|h| h.strip_prefix("Content-Length: "))
+                .map_or(0, |n| n.parse::<usize>().expect("content length"));
+            let mut request_body = vec![0; length];
+            reader.read_exact(&mut request_body).expect("read body");
+            let body = r#"{"success":true,"result":[]}"#;
+            write!(
+                &stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("respond");
+            (headers, request_body)
+        });
+
+        let sent = serde_json::json!({"name": "vesta-otter", "secret": "a\"b\\c"});
+        let response =
+            cf_request("POST", &url, "tok-1", Some(sent.clone())).expect("request succeeds");
+        let (headers, request_body) = server.join().expect("server thread");
+
+        assert_eq!(response["success"], true);
+        assert!(
+            headers.iter().any(|h| h == "Authorization: Bearer tok-1"),
+            "{headers:?}"
+        );
+        let received: serde_json::Value =
+            serde_json::from_slice(&request_body).expect("the body is the json sent");
+        assert_eq!(received, sent);
+    }
+
+    fn fake_env() -> CloudflareCreds {
+        CloudflareCreds {
+            api_token: "token".to_string(),
+            account_id: "account".to_string(),
+            zone_id: "zone".to_string(),
+        }
+    }
+
+    /// Which Cloudflare step a call is, by method and path.
+    fn cf_step(method: &str, url: &str) -> &'static str {
+        match method {
+            "DELETE" if url.contains("/dns_records/") => "delete record",
+            "DELETE" => "delete tunnel",
+            "GET" => "token",
+            _ if url.ends_with("/dns_records") => "dns",
+            _ => "create",
+        }
+    }
+
+    /// Run the create sequence against a fake Cloudflare that fails at `fail_at` (a step name or
+    /// `persist`); returns the outcome and every step called, in order.
+    fn create_with_failure(
+        fail_at: Option<&str>,
+    ) -> (Result<TunnelConfig, String>, Vec<&'static str>) {
+        let env = fake_env();
+        let mut steps = Vec::new();
+        let result = create_tunnel_records(
+            &mut |method, url, _body| {
+                let step = cf_step(method, url);
+                steps.push(step);
+                if fail_at == Some(step) {
+                    return Err(format!("{step} refused"));
+                }
+                Ok(match step {
+                    "create" => serde_json::json!({"result": {"id": "tunnel-1"}}),
+                    "token" => serde_json::json!({"result": "tunnel-token"}),
+                    "dns" => serde_json::json!({"result": {"id": "record-1"}}),
+                    _ => serde_json::json!({"result": null}),
+                })
+            },
+            &env,
+            "otter",
+            "example.com",
+            |_config| match fail_at {
+                Some("persist") => Err("persist refused".to_string()),
+                _ => Ok(()),
+            },
+        );
+        (result, steps)
+    }
+
+    #[test]
+    fn a_failed_tunnel_setup_deletes_what_it_created() {
+        for (fail_at, expected) in [
+            ("create", vec!["create"]),
+            ("token", vec!["create", "token", "delete tunnel"]),
+            ("dns", vec!["create", "token", "dns", "delete tunnel"]),
+            (
+                "persist",
+                vec!["create", "token", "dns", "delete record", "delete tunnel"],
+            ),
+        ] {
+            let (result, steps) = create_with_failure(Some(fail_at));
+            let error = result.err().unwrap_or_default();
+            assert_eq!(error, format!("{fail_at} refused"), "{fail_at}");
+            assert_eq!(steps, expected, "{fail_at}");
+        }
+    }
+
+    #[test]
+    fn a_successful_tunnel_setup_deletes_nothing() {
+        let (result, steps) = create_with_failure(None);
+        let config = result.expect("setup succeeds");
+        assert_eq!(config.hostname, "otter.example.com");
+        assert_eq!(config.dns_record_id.as_deref(), Some("record-1"));
+        assert_eq!(steps, ["create", "token", "dns"]);
+    }
+
+    #[test]
+    fn a_failed_rollback_still_reports_the_original_error() {
+        let env = fake_env();
+        let error = create_tunnel_records(
+            &mut |method, url, _body| match cf_step(method, url) {
+                "create" => Ok(serde_json::json!({"result": {"id": "tunnel-1"}})),
+                step => Err(format!("{step} refused")),
+            },
+            &env,
+            "otter",
+            "example.com",
+            |_config| Ok(()),
+        )
+        .err()
+        .unwrap_or_default();
+        assert_eq!(error, "token refused");
+    }
+
+    #[test]
+    fn subdomains_must_be_dns_labels() {
+        for good in ["otter", "aria-lucio", "a1"] {
+            assert!(is_valid_subdomain(good), "{good}");
+        }
+        for bad in [
+            "",
+            "-otter",
+            "otter-",
+            "Otter",
+            "ot_ter",
+            "ot.ter",
+            &"a".repeat(64),
+        ] {
+            assert!(!is_valid_subdomain(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_taken_explicit_subdomain_is_an_error_never_a_fallback() {
+        let err = choose_subdomain(Some("otter"), "example.com", |_| Ok(true))
+            .expect_err("taken name refused");
+        assert!(
+            err.contains("'otter' is already in use in example.com"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_free_explicit_subdomain_is_used_as_given() {
+        let picked = choose_subdomain(Some("otter"), "example.com", |_| Ok(false)).expect("free");
+        assert_eq!(picked, "otter");
+    }
+
+    #[test]
+    fn no_explicit_subdomain_takes_the_first_free_animal() {
+        let picked = choose_subdomain(None, "example.com", |_| Ok(false)).expect("free");
+        assert_eq!(picked, generate_subdomain(0));
+    }
+
+    #[test]
     fn animal_for_user_is_deterministic() {
         let a1 = animal_for_user("alice", 0);
         let a2 = animal_for_user("alice", 0);
@@ -1179,6 +1967,34 @@ mod tests {
         let a = animal_for_user("alice", 0);
         let b = animal_for_user("alice", 1);
         assert_ne!(a, b, "different offsets should give different animals");
+    }
+
+    #[test]
+    fn animal_list_is_large_unique_and_dns_safe() {
+        const MIN_ANIMALS: usize = 480;
+        const MAX_ANIMAL_LEN: usize = 10;
+        const DENY: &[&str] = &[
+            "ass", "cock", "bitch", "pussy", "booby", "tit", "swine", "pig", "rat", "snake",
+            "weasel", "worm", "louse", "leech",
+        ];
+        assert!(
+            ANIMALS.len() >= MIN_ANIMALS,
+            "only {} animals",
+            ANIMALS.len()
+        );
+        let mut seen = std::collections::HashSet::new();
+        for animal in ANIMALS {
+            assert!(seen.insert(animal), "duplicate {animal}");
+            assert!(
+                (3..=MAX_ANIMAL_LEN).contains(&animal.len()),
+                "length of {animal}"
+            );
+            assert!(
+                animal.bytes().all(|b| b.is_ascii_lowercase()),
+                "{animal} must be lowercase a-z"
+            );
+            assert!(!DENY.contains(animal), "{animal} reads as an insult");
+        }
     }
 
     #[test]
@@ -1220,14 +2036,73 @@ mod tests {
     }
 
     #[test]
-    fn subdomain_format_is_animal_dash_hostname() {
-        let sub = generate_subdomain(0);
-        assert!(sub.contains('-'), "subdomain should contain a dash: {sub}");
-        let animal_part = sub.split('-').next().unwrap();
+    fn generated_subdomains_are_animals_then_numbered() {
+        let first = generate_subdomain(0);
         assert!(
-            ANIMALS.contains(&animal_part),
-            "first part should be an animal: {sub}"
+            ANIMALS.contains(&first.as_str()),
+            "no hostname suffix: {first}"
         );
+        let wrapped = generate_subdomain(ANIMALS.len());
+        assert_eq!(wrapped, format!("{first}-2"));
+        assert_eq!(generate_subdomain(2 * ANIMALS.len()), format!("{first}-3"));
+    }
+
+    #[test]
+    fn picker_skips_taken_names() {
+        let first = generate_subdomain(0);
+        let second = generate_subdomain(1);
+        let picked = pick_free_subdomain(|name| Ok(name == first)).expect("a free name");
+        assert_eq!(picked, second);
+    }
+
+    #[test]
+    fn picker_numbers_names_once_every_animal_is_taken() {
+        let picked = pick_free_subdomain(|name| Ok(!name.contains('-'))).expect("a free name");
+        assert_eq!(picked, format!("{}-2", generate_subdomain(0)));
+    }
+
+    #[test]
+    fn picker_stops_on_a_failed_check_instead_of_assuming_free() {
+        let err =
+            pick_free_subdomain(|_| Err("dns read denied".to_string())).expect_err("must fail");
+        assert!(err.contains("dns read denied"), "{err}");
+    }
+
+    #[test]
+    fn boot_keeps_a_saved_tunnel_without_a_pin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let saved = TunnelConfig {
+            tunnel_id: "id".to_string(),
+            tunnel_token: "token".to_string(),
+            hostname: "aria-lucio.example.com".to_string(),
+            dns_record_id: Some("rec".to_string()),
+        };
+        let path = tunnel_config_path(dir.path());
+        std::fs::write(&path, serde_json::to_string_pretty(&saved).expect("json")).expect("write");
+        let before = std::fs::read_to_string(&path).expect("read");
+
+        let kept = ensure_tunnel_with(dir.path(), None).expect("saved tunnel is used");
+
+        assert_eq!(kept.hostname, saved.hostname);
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), before);
+    }
+
+    #[test]
+    fn boot_keeps_a_saved_tunnel_that_matches_the_pin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let saved = TunnelConfig {
+            tunnel_id: "id".to_string(),
+            tunnel_token: "token".to_string(),
+            hostname: "demo.example.com".to_string(),
+            dns_record_id: None,
+        };
+        std::fs::write(
+            tunnel_config_path(dir.path()),
+            serde_json::to_string_pretty(&saved).expect("json"),
+        )
+        .expect("write");
+        let kept = ensure_tunnel_with(dir.path(), Some("demo")).expect("pin matches");
+        assert_eq!(kept.hostname, "demo.example.com");
     }
 
     #[test]
@@ -1373,11 +2248,10 @@ mod tests {
     #[test]
     fn ensure_tunnel_keeps_the_saved_config_when_reconcile_fails_without_creds() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // A saved config whose subdomain does NOT match preferred_subdomain(),
-        // and no cloudflare.json / CLOUDFLARE_* env: the reconcile attempt
-        // fails at cf_env before any curl, so it must never touch the saved
-        // tunnel.json.
-        let preferred = preferred_subdomain();
+        // A saved config whose subdomain does NOT match the pin, and no
+        // cloudflare.json / CLOUDFLARE_* env: the reconcile attempt fails at
+        // cf_env before any curl, so it must never touch the saved tunnel.json.
+        let preferred = generate_subdomain(0);
         let stale = TunnelConfig {
             tunnel_id: "stale-tunnel-id".to_string(),
             tunnel_token: "stale-token".to_string(),
@@ -1389,7 +2263,7 @@ mod tests {
             .expect("write tunnel.json");
         let original_contents = std::fs::read_to_string(&path).expect("read back");
 
-        let result = ensure_tunnel(dir.path());
+        let result = ensure_tunnel_with(dir.path(), Some(&format!("{preferred}-other")));
 
         assert!(
             result.is_err(),

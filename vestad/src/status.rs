@@ -220,7 +220,7 @@ fn first_line_truncated(msg: &str, max: usize) -> String {
 /// Build the app connect link: the app reads the key from the URL fragment
 /// (`#k=...`), which browsers never send to the server, so the key stays out of
 /// request logs.
-fn connect_link(base_url: &str, api_key: &str) -> String {
+pub(crate) fn connect_link(base_url: &str, api_key: &str) -> String {
     format!("{base_url}/app#k={api_key}")
 }
 

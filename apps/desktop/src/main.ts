@@ -26,6 +26,7 @@ import {
   quitAndInstallUpdate,
 } from "./updater";
 import { createMainWindow, registerAppScheme, showMainWindow } from "./window";
+import { loadWindowState } from "./window-state";
 
 registerAppScheme();
 
@@ -137,7 +138,7 @@ if (!gotLock) {
     if (mainWindow) showMainWindow(mainWindow);
   });
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     // Packaged builds get the icon from electron-builder; set it explicitly so
     // the dock icon is Vesta in `npm run dev` too (raw electron shows its own).
     if (process.platform === "darwin" && !app.isPackaged) {
@@ -145,7 +146,7 @@ if (!gotLock) {
     }
     buildMenu();
     wireIpc();
-    mainWindow = createMainWindow();
+    mainWindow = createMainWindow(await loadWindowState());
     // macOS convention: closing the window keeps Vesta in the dock.
     mainWindow.on("close", (event) => {
       if (process.platform === "darwin" && !isQuitting()) {

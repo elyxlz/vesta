@@ -9,11 +9,13 @@ fn _point_harness_at_built_vestad() {
 mod agent_code;
 mod auth;
 mod backup;
+mod egress;
 mod gateway_update;
 mod health;
 mod layout;
 mod lifecycle;
 mod ports;
+mod provision;
 mod rename;
 mod service_keys;
 mod sync;

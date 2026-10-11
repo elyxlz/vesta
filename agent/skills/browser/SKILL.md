@@ -63,9 +63,12 @@ a bitmask: 1 Alt, 2 Control, 4 Meta, 8 Shift.
 
 ## Engine escape hatches
 
-Chromium adds `cdp(method, **params)` for a raw DevTools call, plus `http_get(url, headers=None)`,
-`iframe_target(url_substr)`, and `activate_tab(target)`. Camoufox adds `page` and `context`, the
-Playwright objects.
+Chromium adds `cdp(method, **params)` for a raw DevTools call, plus
+`http_get(url, headers=None, timeout=20.0)`, `iframe_target(url_substr)`, `activate_tab(target)`,
+`drain_events()` (returns and clears the CDP events buffered since the last call), and
+`dispatch_key(selector, key="Enter", event="keypress")` (focuses the element and fires a DOM
+`KeyboardEvent` on it, for a site that ignores `press_key`). Camoufox adds `page` and `context`,
+the Playwright objects.
 
 `cdp` on a stealth session answers `engine_capability_mismatch`. Every other engine-specific name
 does not exist on the other engine, so the program raises a `NameError` and the result carries
@@ -129,8 +132,8 @@ Search these before inventing an approach to a site, and read only the file that
 
 Map a recipe onto `browser exec` while you read it. The helpers are bound as globals already, so
 drop a recipe's `from helpers import ...` line: it names no module here. A recipe's `goto` is
-`goto_url`, `click(x, y)` is `click_at_xy`, and `screenshot` is `capture_screenshot`; `snapshot`,
-`bidi`, and `drain_events` have no equivalent, so read the DOM with `js`. `http_get` is a
-standard-mode call. Give `capture_screenshot` no path, so the file lands in the session's artifact
+`goto_url`, `click(x, y)` is `click_at_xy`, and `screenshot` is `capture_screenshot`; `snapshot` and
+`bidi` have no equivalent, so read the DOM with `js`. `http_get` and `drain_events` are
+standard-mode calls. Give `capture_screenshot` no path, so the file lands in the session's artifact
 directory; a file written to `/tmp` is left out of `artifacts`. Many sites also answer their own
 JSON endpoints with everything the page shows, so one `curl` can replace a whole session.

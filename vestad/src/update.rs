@@ -608,7 +608,7 @@ async fn run_update(run: UpdateRun) {
         |warning| run.state.operation.warn(warning),
         |agent| {
             let (state, kind, settings) = (&run.state, &kind, &backup_settings);
-            async move { crate::maintenance::snapshot_agent(state, &agent, kind, settings, now_epoch).await }
+            async move { crate::maintenance::snapshot_agent(state, &agent, kind, settings, now_epoch).await.map(drop) }
         },
     )
     .await;
@@ -624,7 +624,7 @@ async fn run_update(run: UpdateRun) {
     // Without systemd nothing can restart this process, so the swapped binary takes effect the next
     // time the user starts vestad. That is the end of the update, not a pending restart: leaving a
     // `Restarting` ledger behind would make the next boot report an interruption that never happened.
-    if !crate::systemd::is_active() {
+    if !crate::systemd::is_this_process() {
         tracing::info!(target_version = %run.target, "gateway binary updated; run 'vestad' to start it");
         return run.finish();
     }

@@ -41,7 +41,7 @@ export function chatDateLabel(timestamp: string | null): string {
   });
 }
 
-export type MarkdownLinkOpener = "in-app-browser" | "system" | "unsupported";
+export type MarkdownLinkOpener = "web" | "system" | "unsupported";
 
 export interface MarkdownLinkTarget {
   url: string;
@@ -54,7 +54,7 @@ export function resolveMarkdownLink(href: string): MarkdownLinkTarget {
     ? trimmedHref
     : `https://${trimmedHref.replace(/^\/+/, "")}`;
   const opener = /^https?:/i.test(url)
-    ? "in-app-browser"
+    ? "web"
     : /^(mailto|tel|sms):/i.test(url)
       ? "system"
       : "unsupported";

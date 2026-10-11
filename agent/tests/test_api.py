@@ -463,6 +463,40 @@ async def test_provider_put_maps_unusable_claude_credentials_to_bad_request(conf
     assert response.status == 400
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"kind": "kimi", "key": "sk-SECRET"}, id="sign-in body missing its model"),
+        pytest.param(
+            {"kind": "claude", "credentials": json.dumps({"claudeAiOauth": {"accessToken": ["at-SECRET"]}})},
+            id="claude oauth with a malformed field",
+        ),
+        pytest.param(
+            {"kind": "openai", "model": "gpt-5", "credentials": json.dumps({"access": "at-SECRET", "refresh": "rt-SECRET"})},
+            id="openai credentials missing expires",
+        ),
+    ],
+)
+@pytest.mark.anyio
+async def test_provider_put_rejection_never_echoes_the_submitted_credential(config, body):
+    import core.api as api_mod
+
+    state = vm.State()
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
+
+        async def json(self):
+            return body
+
+    response = await api_mod._provider_put_handler(typing.cast("web.Request", _Req()))
+    assert response.status == 400
+    assert isinstance(response.text, str)
+    assert "SECRET" not in response.text
+    assert "invalid " in response.text
+
+
 @pytest.mark.anyio
 async def test_model_patch_resets_model_specific_context(config):
     import core.api as api_mod

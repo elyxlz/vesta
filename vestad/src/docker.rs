@@ -107,6 +107,14 @@ fn host_docker_internal_mapping() -> String {
     format!("{AGENT_BOX_HOST}:host-gateway")
 }
 
+/// Marks an agent's egress sidecar and names the agent it serves. Deliberately not
+/// `LABEL_MANAGED`, so `list_managed_agents` never lists a sidecar as an agent.
+const LABEL_EGRESS_FOR: &str = "vesta.egress_for";
+/// Where the sidecar's TUN device comes from. A host without it cannot run the sidecar.
+pub(crate) const TUN_DEVICE: &str = "/dev/net/tun";
+/// Docker's network mode for a container that joins another container's network namespace.
+pub(crate) const CONTAINER_NETWORK_PREFIX: &str = "container:";
+
 /// User-scoped, matching `container_name`: Docker networks are a daemon-global namespace, so two
 /// independent vestad instances on the same host provisioning an agent under the same name would
 /// otherwise attach to the very same bridge network via `ensure_agent_network`'s idempotent
@@ -166,15 +174,19 @@ pub async fn resolve_docker_bridge_gateway(docker: &Docker) -> Result<std::net::
     })
 }
 
-/// The container's IP on its own agent network, as seen by `docker inspect`. `None` if the
-/// container isn't found, isn't attached to its expected network yet, or inspect fails --
+/// The container's IP on its own agent network, as seen by `docker inspect`. An agent that
+/// joins its egress sidecar's namespace has no network of its own, so the address is the
+/// sidecar's. `None` if the container isn't found, isn't attached yet, or inspect fails --
 /// callers treat a `None` as "try again on the next reconcile/proxy call", never as fatal.
 pub(crate) async fn resolve_bridge_ip(
     docker: &Docker,
     cname: &str,
     agent_name: &str,
 ) -> Option<String> {
-    let info = docker.inspect_container(cname, None).await.ok()?;
+    let mut info = docker.inspect_container(cname, None).await.ok()?;
+    if let Some(holder) = network_holder_of(&info) {
+        info = docker.inspect_container(&holder, None).await.ok()?;
+    }
     let networks = info.network_settings?.networks?;
     let network_name = agent_network_name(agent_name);
     networks
@@ -274,7 +286,7 @@ const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 // Override bollard's 120s default to absorb slow image builds under CI contention.
 const DOCKER_TIMEOUT_SECS: u64 = 600;
-const DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
+const DEFAULT_DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -456,13 +468,43 @@ pub struct ListEntry {
 
 // --- Docker connection ---
 
+/// The socket a stored `docker_socket` names, trimmed, or the system socket when it names none.
+pub(crate) fn socket_or_default(docker_socket: Option<&str>) -> &str {
+    docker_socket
+        .map(str::trim)
+        .filter(|socket| !socket.is_empty())
+        .unwrap_or(DEFAULT_DOCKER_SOCKET)
+}
+
+/// The daemon socket vestad talks to, refused unless it is a `unix://` socket: vestad only
+/// connects to a local daemon, and ignoring a remote one would split vestad across two daemons.
+pub(crate) fn socket_for(docker_socket: Option<&str>) -> Result<String, DockerError> {
+    let socket = socket_or_default(docker_socket);
+    if socket.starts_with("unix://") {
+        return Ok(socket.to_string());
+    }
+    Err(DockerError::Failed(format!(
+        "docker socket {socket} is not supported: vestad only connects to a local unix socket (unix:///path/to/docker.sock)"
+    )))
+}
+
+/// The filesystem path of a `unix://` socket.
+pub(crate) fn socket_file(socket: &str) -> &std::path::Path {
+    std::path::Path::new(socket.trim_start_matches("unix://"))
+}
+
+/// Export `docker_socket` from settings.json as this process's `DOCKER_HOST`, overriding any
+/// inherited `DOCKER_HOST` or docker context, so `connect` and every docker CLI child reach one
+/// daemon for the whole run. Call once at the top of `main`, before any thread exists.
+pub fn export_docker_host() {
+    let stored = crate::settings::read_settings().and_then(|settings| settings.docker_socket);
+    std::env::set_var("DOCKER_HOST", socket_or_default(stored.as_deref()));
+}
+
 pub fn connect() -> Result<Docker, DockerError> {
-    Docker::connect_with_socket(
-        DOCKER_SOCKET,
-        DOCKER_TIMEOUT_SECS,
-        bollard::API_DEFAULT_VERSION,
-    )
-    .map_err(|e| DockerError::Failed(format!("failed to connect to docker: {e}")))
+    let socket = socket_for(std::env::var("DOCKER_HOST").ok().as_deref())?;
+    Docker::connect_with_socket(&socket, DOCKER_TIMEOUT_SECS, bollard::API_DEFAULT_VERSION)
+        .map_err(|e| DockerError::Failed(format!("failed to connect to docker at {socket}: {e}")))
 }
 
 pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
@@ -725,6 +767,15 @@ pub(crate) fn container_info_from(
         id,
         started_at,
     }
+}
+
+fn network_holder_of(info: &bollard::models::ContainerInspectResponse) -> Option<String> {
+    info.host_config
+        .as_ref()?
+        .network_mode
+        .as_deref()?
+        .strip_prefix(CONTAINER_NETWORK_PREFIX)
+        .map(str::to_string)
 }
 
 pub(crate) async fn inspect_container(
@@ -1440,8 +1491,25 @@ pub async fn stop_container_with_timeout(
     Ok(())
 }
 
+/// Start a container, first starting the container whose network namespace it joins: Docker
+/// refuses to start a joined container while that one is down (after a host reboot, both are).
 pub async fn start_container(docker: &Docker, cname: &str) -> bool {
+    if let Ok(info) = docker.inspect_container(cname, None).await {
+        if let Some(holder) = network_holder_of(&info) {
+            if let Err(e) = start_if_stopped(docker, &holder).await {
+                tracing::warn!(container = %cname, error = %e, "failed to start the network holder");
+                return false;
+            }
+        }
+    }
     docker.start_container(cname, None).await.is_ok()
+}
+
+async fn start_if_stopped(docker: &Docker, container: &str) -> Result<(), DockerError> {
+    if container_status(docker, container).await != ContainerStatus::Running {
+        docker.start_container(container, None).await?;
+    }
+    Ok(())
 }
 
 /// Ensure a container carries the `on-failure:N` restart policy, updating in place (`docker
@@ -1586,7 +1654,14 @@ async fn remove_replaced_snapshot(docker: &Docker, prev: Option<&str>, keep: &st
 /// the tag the new container now depends on (a defensive guard -- the two never match in practice
 /// because every snapshot tag carries a unique timestamp).
 fn is_removable_snapshot(prev: &str, keep: &str) -> bool {
-    prev != keep && SNAPSHOT_IMAGE_PREFIXES.iter().any(|p| prev.starts_with(p))
+    prev != keep && is_snapshot_image(prev)
+}
+
+/// Whether `image` is one of our throwaway snapshot images, which a rebuild removes once replaced.
+fn is_snapshot_image(image: &str) -> bool {
+    SNAPSHOT_IMAGE_PREFIXES
+        .iter()
+        .any(|prefix| image.starts_with(prefix))
 }
 
 /// Split a rebuild snapshot tag into the agent it belongs to and the epoch it was taken at.
@@ -1822,9 +1897,9 @@ pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
     info.size_rw.and_then(|size| u64::try_from(size).ok())
 }
 
-/// Total size of the container's root filesystem (image layers + writable layer).
-/// This is what `docker export` streams out, so it's the right basis for sizing
-/// the first, full restic snapshot.
+/// Total size of the container's root filesystem (image layers + writable layer). An upper
+/// bound on what `docker export` streams: a file deleted or rewritten since the image was
+/// built still counts here, which is the dead weight compaction reclaims.
 pub async fn container_size_root_fs(docker: &Docker, cname: &str) -> Option<u64> {
     let info = docker
         .inspect_container(cname, Some(InspectContainerOptions { size: true }))
@@ -1883,6 +1958,452 @@ pub async fn ensure_container_removed(docker: &Docker, cname: &str) -> Result<()
     Err(DockerError::Failed(format!(
         "container {cname} still present after {CONTAINER_REMOVE_MAX_ATTEMPTS} force-remove attempts"
     )))
+}
+
+// --- Egress sidecar ---
+
+fn egress_failed(e: impl std::fmt::Display) -> DockerError {
+    DockerError::Failed(e.to_string())
+}
+
+/// Make sure the pinned sing-box image exists locally, importing it on first use. Returns its tag.
+pub(crate) async fn ensure_egress_image(docker: &Docker) -> Result<String, DockerError> {
+    let tag = crate::egress_net::image_tag();
+    if docker.inspect_image(&tag).await.is_ok() {
+        return Ok(tag);
+    }
+    tracing::info!(image = %tag, "installing the egress image");
+    let tar = crate::egress_net::fetch_image_tar(&reqwest::Client::new())
+        .await
+        .map_err(egress_failed)?;
+    import_image_tar(tar, &tag).await?;
+    Ok(tag)
+}
+
+async fn import_image_tar(tar: Vec<u8>, tag: &str) -> Result<(), DockerError> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::from(import_container_fs_tar_cmd(tag))
+        .spawn()
+        .map_err(|e| DockerError::Failed(format!("failed to spawn docker import: {e}")))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| DockerError::Failed("docker import has no stdin".to_string()))?;
+    stdin
+        .write_all(&tar)
+        .await
+        .map_err(|e| DockerError::Failed(format!("failed to feed docker import: {e}")))?;
+    drop(stdin);
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| DockerError::Failed(format!("docker import did not finish: {e}")))?;
+    finish_import_output(&output)
+}
+
+/// The id of `agent_name`'s sidecar when it exists on the pinned image. A sidecar on another
+/// image (a pin bump) counts as absent, so its agent is rebuilt onto a fresh one.
+async fn current_sidecar_id(docker: &Docker, agent_name: &str) -> Option<String> {
+    let info = docker
+        .inspect_container(&crate::egress::sidecar_name(agent_name), None)
+        .await
+        .ok()?;
+    let image = info.config.as_ref()?.image.as_deref()?;
+    if image != crate::egress_net::image_tag() {
+        return None;
+    }
+    info.id
+}
+
+/// Bring `agent_name`'s sidecar in line with `proxy` and leave it running, returning its id.
+/// When the config changes on an already-running sidecar, `running_agent` (the agent's own
+/// container name) is the one owner of the reload decision for that case: with it `Some`, the
+/// agent is stopped before the sidecar reloads and started again after, so its traffic is never
+/// live in the gap between the sidecar's clean shutdown (which drops its ip rules and tun0) and
+/// the fresh ones coming up; `None` means no running agent rides on this sidecar right now.
+async fn ensure_sidecar(
+    docker: &Docker,
+    agents_dir: &std::path::Path,
+    agent_name: &str,
+    proxy: &crate::egress::ProxyUrl,
+    running_agent: Option<&str>,
+) -> Result<String, DockerError> {
+    let image = ensure_egress_image(docker).await?;
+    let config =
+        crate::egress::write_config(agents_dir, agent_name, proxy).map_err(egress_failed)?;
+    if let Some(id) = current_sidecar_id(docker, agent_name).await {
+        let running = container_status(docker, &id).await == ContainerStatus::Running;
+        if running && config.changed {
+            let reason = &crate::lifecycle::CONTAINER_UPDATE;
+            if let Some(cname) = running_agent {
+                handoff_shutdown_reason(docker, agent_name, cname, reason).await;
+                stop_container_with_timeout(docker, cname, CONTAINER_STOP_TIMEOUT_SECS).await?;
+            }
+            if let Err(e) = docker
+                .restart_container(&id, None::<RestartContainerOptions>)
+                .await
+            {
+                if running_agent.is_some() {
+                    tracing::warn!(agent = %agent_name, error = %e, "failed to reload the egress sidecar; the agent was left stopped");
+                }
+                return Err(e.into());
+            }
+            if let Some(cname) = running_agent {
+                handoff_boot_reason(docker, agent_name, cname, reason).await;
+                if let Err(e) = start_agent(docker, agent_name, None).await {
+                    tracing::warn!(agent = %agent_name, error = %e, "failed to restart the agent after an egress reload; it was left stopped");
+                    return Err(e);
+                }
+            }
+            return Ok(id);
+        }
+        start_if_stopped(docker, &id).await?;
+        return Ok(id);
+    }
+
+    let sidecar = crate::egress::sidecar_name(agent_name);
+    ensure_container_removed(docker, &sidecar).await?;
+    let network = ensure_agent_network(docker, agent_name).await?;
+    let mut labels = HashMap::new();
+    labels.insert(LABEL_USER.to_string(), crate::paths::current_user());
+    labels.insert(LABEL_EGRESS_FOR.to_string(), agent_name.to_string());
+    let host_config = bollard::models::HostConfig {
+        binds: Some(vec![format!(
+            "{}:{}:ro,z",
+            config.path.display(),
+            crate::egress::CONFIG_MOUNT_PATH
+        )]),
+        network_mode: Some(network),
+        extra_hosts: Some(vec![host_docker_internal_mapping()]),
+        dns: Some(vec![crate::egress::SIDECAR_DNS.to_string()]),
+        cap_add: Some(vec!["NET_ADMIN".to_string()]),
+        devices: Some(vec![bollard::models::DeviceMapping {
+            path_on_host: Some(TUN_DEVICE.to_string()),
+            path_in_container: Some(TUN_DEVICE.to_string()),
+            cgroup_permissions: Some("rwm".to_string()),
+        }]),
+        restart_policy: Some(bollard::models::RestartPolicy {
+            name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
+            maximum_retry_count: Some(RESTART_MAX_RETRIES),
+        }),
+        ..Default::default()
+    };
+    let body = ContainerCreateBody {
+        image: Some(image),
+        labels: Some(labels),
+        // Busybox first drops the shared namespace's direct default route into a table only
+        // sing-box's own marked sockets can reach, then execs sing-box (see egress::init_script).
+        cmd: Some(vec![
+            crate::egress::BUSYBOX_IN_IMAGE.to_string(),
+            "sh".to_string(),
+            crate::egress::EGRESS_INIT_IN_IMAGE.to_string(),
+        ]),
+        host_config: Some(host_config),
+        ..Default::default()
+    };
+    let created = docker
+        .create_container(
+            Some(CreateContainerOptions {
+                name: Some(sidecar),
+                ..Default::default()
+            }),
+            body,
+        )
+        .await?;
+    start_if_stopped(docker, &created.id).await?;
+    Ok(created.id)
+}
+
+/// Remove `agent_name`'s sidecar and its config. Best-effort and idempotent. It must run before
+/// `remove_agent_network`, because a network with an attached container cannot be removed.
+async fn remove_sidecar(docker: &Docker, agents_dir: &std::path::Path, agent_name: &str) {
+    if let Err(e) = ensure_container_removed(docker, &crate::egress::sidecar_name(agent_name)).await
+    {
+        tracing::warn!(agent = %agent_name, error = %e, "failed to remove the egress sidecar");
+    }
+    crate::egress::delete_config(agents_dir, agent_name);
+}
+
+/// A network mode no container carries: the expected mode of a proxied agent whose sidecar is
+/// missing or on another image, so `needs_rebuild` always rebuilds it.
+const SIDECAR_MISSING_NETWORK_MODE: &str = "container:<missing-egress-sidecar>";
+
+/// The `network_mode` of an agent that joins the sidecar `sidecar_id`.
+fn sidecar_network_mode(sidecar_id: &str) -> String {
+    format!("{CONTAINER_NETWORK_PREFIX}{sidecar_id}")
+}
+
+/// Whether an agent's network should be its own or a sidecar's, the input `network_mode_for`
+/// decides on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Egress {
+    Direct,
+    Proxied,
+}
+
+/// The `network_mode` `create_container` would give `agent_name` for `egress`: its own network
+/// with `Direct`, its current sidecar's namespace (or the missing-sidecar sentinel) with `Proxied`.
+/// The one owner of that decision, shared by `expected_network_mode` (reconcile, from the stored
+/// proxy) and `apply_egress_change` (an in-flight change, before it is stored).
+async fn network_mode_for(docker: &Docker, agent_name: &str, egress: Egress) -> String {
+    match egress {
+        Egress::Direct => agent_network_name(agent_name),
+        Egress::Proxied => match current_sidecar_id(docker, agent_name).await {
+            Some(id) => sidecar_network_mode(&id),
+            None => SIDECAR_MISSING_NETWORK_MODE.to_string(),
+        },
+    }
+}
+
+/// The `network_mode` `create_container` would give `agent_name` now: its own network without a
+/// proxy, its current sidecar's namespace with one.
+pub(crate) async fn expected_network_mode(
+    docker: &Docker,
+    agents_dir: &std::path::Path,
+    agent_name: &str,
+) -> String {
+    let egress = if crate::egress::proxy_configured(agents_dir, agent_name) {
+        Egress::Proxied
+    } else {
+        Egress::Direct
+    };
+    network_mode_for(docker, agent_name, egress).await
+}
+
+/// Install the egress image before a recreate removes anything, so a host that cannot download
+/// it keeps the agent on its old container instead of stranding it with none.
+pub(crate) async fn prepare_egress(
+    docker: &Docker,
+    agents_dir: &std::path::Path,
+    agent_name: &str,
+) -> Result<(), DockerError> {
+    if crate::egress::load_proxy(agents_dir, agent_name)
+        .map_err(egress_failed)?
+        .is_some()
+    {
+        ensure_egress_image(docker).await?;
+    }
+    Ok(())
+}
+
+fn started_after(later: Option<&str>, earlier: Option<&str>) -> bool {
+    let parse = |stamp: Option<&str>| {
+        stamp.and_then(|value| {
+            time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+        })
+    };
+    matches!((parse(later), parse(earlier)), (Some(later), Some(earlier)) if later > earlier)
+}
+
+/// True when `cname`'s sidecar restarted on its own after the agent last started (a crash that
+/// Docker's `on-failure` recovered): the restart gave the sidecar a fresh namespace and left the
+/// agent joined to the old, empty one. A stopped sidecar is started first, so a merely-stopped one
+/// doesn't read as drifted.
+pub(crate) async fn egress_repair_needed(docker: &Docker, cname: &str) -> bool {
+    let Ok(info) = docker.inspect_container(cname, None).await else {
+        return false;
+    };
+    if info.state.as_ref().and_then(|s| s.running) != Some(true) {
+        return false;
+    }
+    let Some(sidecar_id) = network_holder_of(&info) else {
+        return false;
+    };
+    if let Err(e) = start_if_stopped(docker, &sidecar_id).await {
+        tracing::warn!(container = %cname, error = %e, "failed to start the egress sidecar");
+        return false;
+    }
+    let Ok(sidecar) = docker.inspect_container(&sidecar_id, None).await else {
+        return false;
+    };
+    let agent_started_at = info.state.as_ref().and_then(|s| s.started_at.as_deref());
+    let sidecar_started_at = sidecar.state.as_ref().and_then(|s| s.started_at.as_deref());
+    started_after(sidecar_started_at, agent_started_at)
+}
+
+/// Restart the agent so it rejoins its sidecar's fresh network namespace.
+pub(crate) async fn restart_into_sidecar(docker: &Docker, agent_name: &str, cname: &str) {
+    tracing::info!(agent = %agent_name, "egress sidecar restarted; restarting the agent to rejoin its network");
+    let reason = &crate::lifecycle::CONTAINER_UPDATE;
+    handoff_shutdown_reason(docker, agent_name, cname, reason).await;
+    handoff_boot_reason(docker, agent_name, cname, reason).await;
+    if let Err(e) = docker
+        .restart_container(
+            cname,
+            Some(RestartContainerOptions {
+                t: Some(CONTAINER_RESTART_TIMEOUT_SECS),
+                signal: None,
+            }),
+        )
+        .await
+    {
+        tracing::warn!(agent = %agent_name, error = %e, "failed to restart the agent onto its sidecar");
+    }
+}
+
+#[derive(Debug)]
+pub enum EgressChange {
+    Set(crate::egress::ProxyUrl),
+    Clear,
+}
+
+/// Store an agent's new egress choice and make it live. A URL change on a current, healthy
+/// sidecar only reloads it; adding or removing the proxy, or a `Set` whose sidecar is missing or
+/// on another image (so `ensure_sidecar` would otherwise tear down and replace the sidecar the
+/// agent is joined to, stranding it on the dead id), changes the layout and rebuilds instead.
+/// The rebuild decision compares the agent's actual `network_mode` against what `change` should
+/// leave it as (`network_mode_for`), before anything is stored, so the disk guard below can run
+/// before the choice is stored and a refusal changes nothing; only past it is the choice written,
+/// and if applying it still fails, reconcile converges at the next boot.
+pub async fn apply_egress_change(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    change: &EgressChange,
+    rebuilding: &RebuildTracker,
+) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let raw = docker.inspect_container(&cname, None).await?;
+    let was_running = raw.state.as_ref().and_then(|s| s.running) == Some(true);
+    let agents_dir = &env_config.agents_dir;
+    let actual = raw
+        .host_config
+        .as_ref()
+        .and_then(|h| h.network_mode.as_deref())
+        .unwrap_or("");
+    let egress = match change {
+        EgressChange::Set(_) => Egress::Proxied,
+        EgressChange::Clear => Egress::Direct,
+    };
+    let expected = network_mode_for(docker, name, egress).await;
+    let needs_rebuild = actual != expected;
+    if needs_rebuild && reconcile_blocked_by_disk(docker_storage_available_bytes(docker).await) {
+        return Err(DockerError::Failed(format!(
+            "cannot apply the proxy change for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+        )));
+    }
+    match change {
+        EgressChange::Set(proxy) => {
+            crate::egress::save_proxy(agents_dir, name, proxy).map_err(egress_failed)?;
+        }
+        EgressChange::Clear => crate::egress::delete_proxy(agents_dir, name),
+    }
+    if !needs_rebuild {
+        if let EgressChange::Set(proxy) = change {
+            ensure_sidecar(
+                docker,
+                agents_dir,
+                name,
+                proxy,
+                was_running.then_some(cname.as_str()),
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+    recreate_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+        &crate::lifecycle::CONTAINER_UPDATE,
+    )
+    .await
+}
+
+/// Rebuild an agent's container with `reason` handed to both ends, starting it again only if it
+/// was running.
+async fn recreate_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    rebuilding: &RebuildTracker,
+    reason: &crate::lifecycle::LifecycleReason,
+) -> Result<(), DockerError> {
+    let cname = container_name(name);
+    let was_running = container_status(docker, &cname).await == ContainerStatus::Running;
+    if was_running {
+        handoff_shutdown_reason(docker, name, &cname, reason).await;
+    }
+    Box::pin(rebuild_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+    ))
+    .await?;
+    handoff_boot_reason(docker, name, &cname, reason).await;
+    if was_running {
+        start_agent(docker, name, None).await?;
+    }
+    Ok(())
+}
+
+/// A container a compaction can shrink: whether it runs, and its size across every layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionTarget {
+    pub running: bool,
+    pub root_fs_bytes: u64,
+}
+
+/// Read a container as a compaction target, `None` when its image outlives a rebuild (a base or
+/// restore image stays, and its dead weight with it). The image is read before the size, whose
+/// measure walks every layer.
+pub async fn compaction_target(docker: &Docker, cname: &str) -> Option<CompactionTarget> {
+    let raw = docker.inspect_container(cname, None).await.ok()?;
+    if !is_snapshot_image(raw.config.as_ref()?.image.as_deref()?) {
+        return None;
+    }
+    Some(CompactionTarget {
+        running: raw.state.as_ref().and_then(|state| state.running) == Some(true),
+        root_fs_bytes: container_size_root_fs(docker, cname).await?,
+    })
+}
+
+/// Recreate an agent from its live filesystem, dropping the dead weight its image holds. Refused
+/// unless the disk holds the new image beside the old one; a failed recreate starts a running agent
+/// again, so optional work never leaves it stopped until the next boot.
+pub async fn compact_agent(
+    docker: &Docker,
+    name: &str,
+    env_config: &AgentEnvConfig,
+    user_mounts: &[crate::mounts::HostMount],
+    live_bytes: u64,
+    target: CompactionTarget,
+    rebuilding: &RebuildTracker,
+) -> Result<(), DockerError> {
+    validate_name(name)?;
+    if !compaction_has_room(docker_storage_available_bytes(docker).await, live_bytes) {
+        return Err(DockerError::Failed(format!(
+            "cannot compact '{name}': the disk has no room for a {live_bytes}-byte image beside the current one"
+        )));
+    }
+    let recreated = recreate_agent(
+        docker,
+        name,
+        env_config,
+        user_mounts,
+        rebuilding,
+        &crate::lifecycle::DISK_COMPACTION,
+    )
+    .await;
+    if recreated.is_err() && target.running {
+        if let Err(start_error) = start_agent(docker, name, None).await {
+            tracing::error!(agent = %name, error = %start_error, "could not start the agent after a failed compaction");
+        }
+    }
+    recreated
+}
+
+/// Whether the disk can take a compaction's new image with the reconcile floor to spare. Unknown
+/// free space refuses: a compaction is optional work, never worth an import that fills the disk.
+fn compaction_has_room(available: Option<u64>, live_bytes: u64) -> bool {
+    available.is_some_and(|bytes| bytes >= live_bytes.saturating_add(MIN_RECONCILE_DISK_BYTES))
 }
 
 // --- Snapshot ---
@@ -2091,6 +2612,18 @@ pub async fn create_container(
         agent_name,
         user_mounts,
     } = spec;
+    let network_name = ensure_agent_network(docker, agent_name).await?;
+    let proxy =
+        crate::egress::load_proxy(&env_config.agents_dir, agent_name).map_err(egress_failed)?;
+    let (network_mode, extra_hosts) = if let Some(proxy) = proxy {
+        // No running agent container rides on this sidecar yet: it's being (re)created fresh.
+        let sidecar_id =
+            ensure_sidecar(docker, &env_config.agents_dir, agent_name, &proxy, None).await?;
+        (sidecar_network_mode(&sidecar_id), None)
+    } else {
+        remove_sidecar(docker, &env_config.agents_dir, agent_name).await;
+        (network_name, Some(vec![host_docker_internal_mapping()]))
+    };
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
@@ -2146,12 +2679,10 @@ pub async fn create_container(
 
     tracing::info!(agent = %agent_name, image = %image, "creating container");
 
-    let network_name = ensure_agent_network(docker, agent_name).await?;
-
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
-        network_mode: Some(network_name),
-        extra_hosts: Some(vec![host_docker_internal_mapping()]),
+        network_mode: Some(network_mode),
+        extra_hosts,
         // core.main launches detached skill daemons and is not an init system. Without Docker's
         // tiny init as PID 1, an exited daemon is reparented to core.main and remains a zombie
         // indefinitely because nothing reaps it.
@@ -2666,7 +3197,8 @@ pub async fn reconcile_containers(
             }
         };
         let desired_mounts = mounts_for(name);
-        if !needs_rebuild(cname, name, &raw, &desired_mounts) {
+        let expected_network = expected_network_mode(docker, &env_config.agents_dir, name).await;
+        if !needs_rebuild(cname, &expected_network, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -2813,6 +3345,8 @@ pub async fn destroy_agent(
             .ok();
     }
     remove_container_force(docker, &cname).await?;
+    remove_sidecar(docker, agents_dir, name).await;
+    crate::egress::delete_proxy(agents_dir, name);
     remove_agent_network(docker, name).await;
     delete_agent_env_file(agents_dir, name);
     delete_constitution_file(agents_dir, name);
@@ -2876,7 +3410,7 @@ fn container_init_enabled(info: &bollard::models::ContainerInspectResponse) -> b
 
 fn needs_rebuild(
     cname: &str,
-    agent_name: &str,
+    expected_network: &str,
     info: &bollard::models::ContainerInspectResponse,
     desired_mounts: &[crate::mounts::HostMount],
 ) -> bool {
@@ -2934,9 +3468,8 @@ fn needs_rebuild(
         .as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
-    let expected_network = agent_network_name(agent_name);
     if network != expected_network {
-        tracing::info!(container = %cname, actual = network, expected = %expected_network, "rebuild needed: not on its own agent network");
+        tracing::info!(container = %cname, actual = network, expected = %expected_network, "rebuild needed: network layout changed");
         return true;
     }
 
@@ -3006,6 +3539,7 @@ pub async fn rebuild_agent(
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let _mark = rebuilding.mark(name);
+    prepare_egress(docker, &env_config.agents_dir, name).await?;
     let cname = container_name(name);
     let raw = docker
         .inspect_container(&cname, None)
@@ -3120,6 +3654,7 @@ pub async fn rename_agent(
             "agent name must not contain 'vesta'".into(),
         ));
     }
+    prepare_egress(docker, &env_config.agents_dir, old_name).await?;
 
     let old_container = container_name(old_name);
     let new_container = container_name(new_name);
@@ -3172,6 +3707,8 @@ pub async fn rename_agent(
     // file and constitution are still untouched, so failing here leaves the old agent fully
     // intact instead of leaving a live container squatting on the WS port under the old name.
     ensure_container_removed(docker, &old_container).await?;
+    remove_sidecar(docker, &env_config.agents_dir, old_name).await;
+    crate::egress::rename_proxy(&env_config.agents_dir, old_name, new_name).map_err(egress_failed)?;
     // Carry the constitution across the rename before the new container is created, so its
     // bind mount resolves to the existing content rather than a fresh empty file.
     let old_constitution = read_constitution(&env_config.agents_dir, old_name).unwrap_or_default();
@@ -3209,6 +3746,29 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socket_defaults_when_unset_or_blank() {
+        assert_eq!(socket_for(None).unwrap(), DEFAULT_DOCKER_SOCKET);
+        assert_eq!(socket_for(Some("")).unwrap(), DEFAULT_DOCKER_SOCKET);
+        assert_eq!(socket_for(Some("   ")).unwrap(), DEFAULT_DOCKER_SOCKET);
+    }
+
+    #[test]
+    fn socket_follows_a_unix_setting() {
+        assert_eq!(
+            socket_for(Some("unix:///run/docker-second.sock")).unwrap(),
+            "unix:///run/docker-second.sock"
+        );
+    }
+
+    #[test]
+    fn socket_refuses_a_non_unix_setting() {
+        let err = socket_for(Some("tcp://10.0.0.5:2376")).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("docker socket tcp://10.0.0.5:2376 is not supported"));
+    }
 
     #[test]
     fn agent_network_name_is_prefixed_scoped_by_user_and_stable() {
@@ -3663,6 +4223,49 @@ mod tests {
     }
 
     #[test]
+    fn network_holder_of_names_the_container_a_joined_network_mode_points_at() {
+        let mut joined = inspect_with_started_at(Some("2026-07-07T10:00:00Z"));
+        joined.host_config = Some(bollard::models::HostConfig {
+            network_mode: Some("container:abc123".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(network_holder_of(&joined).as_deref(), Some("abc123"));
+
+        let mut own_network = inspect_with_started_at(Some("2026-07-07T10:00:00Z"));
+        own_network.host_config = Some(bollard::models::HostConfig {
+            network_mode: Some("vesta-agent-emi-bot".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(network_holder_of(&own_network), None);
+    }
+
+    #[test]
+    fn started_after_compares_instants_not_strings() {
+        // Docker trims trailing zeros from the fraction, so a string compare gets these wrong.
+        assert!(started_after(
+            Some("2026-09-25T10:00:00.51Z"),
+            Some("2026-09-25T10:00:00.5Z")
+        ));
+        assert!(!started_after(
+            Some("2026-09-25T10:00:00.5Z"),
+            Some("2026-09-25T10:00:00.51Z")
+        ));
+        assert!(started_after(
+            Some("2026-09-25T10:00:01Z"),
+            Some("2026-09-25T10:00:00.999999999Z")
+        ));
+        assert!(!started_after(
+            Some("2026-09-25T10:00:00Z"),
+            Some("2026-09-25T10:00:00Z")
+        ));
+        assert!(!started_after(None, Some("2026-09-25T10:00:00Z")));
+        assert!(!started_after(
+            Some("garbage"),
+            Some("2026-09-25T10:00:00Z")
+        ));
+    }
+
+    #[test]
     fn guard_alive_rejects_terminal_states_and_passes_live_through() {
         // The two terminal states map to their standard errors with the exact agent-facing
         // wording the lifecycle ops rely on; Running/Stopped pass through unchanged.
@@ -3700,6 +4303,25 @@ mod tests {
         assert!(!reconcile_blocked_by_disk(Some(
             MIN_RECONCILE_DISK_BYTES + 1
         )));
+    }
+
+    #[test]
+    fn compaction_refuses_when_free_space_unknown() {
+        assert!(!compaction_has_room(None, 1));
+    }
+
+    #[test]
+    fn compaction_needs_room_for_the_new_image_plus_the_reconcile_floor() {
+        const LIVE: u64 = 54_000_000_000;
+        assert!(!compaction_has_room(Some(LIVE), LIVE));
+        assert!(!compaction_has_room(
+            Some(LIVE + MIN_RECONCILE_DISK_BYTES - 1),
+            LIVE
+        ));
+        assert!(compaction_has_room(
+            Some(LIVE + MIN_RECONCILE_DISK_BYTES),
+            LIVE
+        ));
     }
 
     #[test]
@@ -4336,7 +4958,7 @@ mod tests {
             .await
             .expect("inspect");
         // Every caller in this file names its test container the same as its agent name.
-        needs_rebuild(cname, cname, &info, desired)
+        needs_rebuild(cname, &agent_network_name(cname), &info, desired)
     }
 
     fn temp_core_mount() -> tempfile::TempDir {
@@ -4572,6 +5194,477 @@ mod tests {
                 .any(|h| h.starts_with("host.docker.internal:")),
             "expected a host.docker.internal mapping, got {extra_hosts:?}"
         );
+    }
+
+    /// The env config every egress test uses: a throwaway agents dir with its core mount.
+    fn egress_env_config(dir: &tempfile::TempDir) -> AgentEnvConfig {
+        std::fs::create_dir_all(crate::agent_code::agent_code_dir(dir.path()).join("core"))
+            .expect("core dir");
+        AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().join("agents"),
+            vestad_port: 1,
+            vestad_tunnel: None,
+            vestad_lan_url: None,
+        }
+    }
+
+    /// Remove a container by name when the guard drops, for sidecars the agent guard does not own.
+    fn scopeguard_remove(name: &str) -> impl Drop {
+        struct Remove(String);
+        impl Drop for Remove {
+            fn drop(&mut self) {
+                docker_cleanup(&["rm", "-f", &self.0]);
+            }
+        }
+        Remove(name.to_string())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn create_container_with_a_proxy_joins_a_running_sidecar() {
+        let docker = test_docker();
+        let agent = format!("egress-create-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &container_name(&agent),
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        let side = docker
+            .inspect_container(&sidecar, None)
+            .await
+            .expect("sidecar exists");
+        assert_eq!(side.state.and_then(|s| s.running), Some(true));
+        let side_host = side.host_config.expect("host config");
+        assert_eq!(side_host.cap_add, Some(vec!["NET_ADMIN".to_string()]));
+        assert_eq!(side_host.dns, Some(vec!["1.1.1.1".to_string()]));
+        let side_labels = side.config.and_then(|c| c.labels).expect("labels");
+        assert!(
+            !side_labels.contains_key(LABEL_MANAGED),
+            "a sidecar must never list as an agent"
+        );
+
+        let agent_info = docker
+            .inspect_container(&container_name(&agent), None)
+            .await
+            .expect("agent");
+        let agent_host = agent_info.host_config.expect("host config");
+        assert_eq!(
+            agent_host.network_mode,
+            Some(format!("container:{}", side.id.expect("id")))
+        );
+        assert_eq!(agent_host.extra_hosts, None);
+        assert!(env_config
+            .agents_dir
+            .join(format!("{agent}.egress.json"))
+            .exists());
+    }
+
+    /// Poll until the sidecar's main IPv6 table drops its default route (the init script's last
+    /// v6 step), bounded so a script that never converges fails the test instead of hanging.
+    async fn wait_for_ipv6_default_moved_out_of_main(sidecar: &str) -> ExecResult {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let main = docker_exec(sidecar, &["/busybox", "ip", "-6", "route"]);
+            if main.success && !main.stdout.lines().any(|line| line.starts_with("default")) {
+                return main;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "sidecar {sidecar}'s v6 default route was never moved out of the main table: {}",
+                main.stdout
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    /// On a host whose Docker hands new networks an IPv6 default route (verified on this host
+    /// with an explicit `--ipv6` network), the shared namespace carries one in the main table
+    /// too, exactly like the IPv4 one this sidecar already moves. This pre-creates the agent's
+    /// own network with IPv6 itself, since `ensure_agent_network` never asks for it, and checks
+    /// the init script's IPv6 branch clears it the same way.
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn a_proxied_agent_on_an_ipv6_network_loses_its_direct_v6_default_route() {
+        let docker = test_docker();
+        let agent = format!("egress-v6-{}", std::process::id());
+        let network = agent_network_name(&agent);
+        let v6_subnet = format!("fd00:e6e5:{:x}::/64", std::process::id() % 0xffff);
+        let v4_subnet = format!("10.254.{}.0/24", std::process::id() % 250);
+        let created = std::process::Command::new("docker")
+            .args([
+                "network", "create", "--ipv6", "--subnet", &v6_subnet, "--subnet", &v4_subnet,
+                &network,
+            ])
+            .status()
+            .expect("docker network create runs");
+        assert!(
+            created.success(),
+            "pre-creating the ipv6 agent network must succeed"
+        );
+        let _net_cleanup = TestNetwork {
+            name: network.clone(),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        wait_for_ipv6_default_moved_out_of_main(&sidecar).await;
+
+        let table_routes = docker_exec(
+            &sidecar,
+            &["/busybox", "ip", "-6", "route", "show", "table", "100"],
+        );
+        assert!(table_routes.success, "{}", table_routes.stdout);
+        assert!(
+            table_routes
+                .stdout
+                .lines()
+                .any(|line| line.starts_with("default")),
+            "the moved v6 default route must land in the routing table: {}",
+            table_routes.stdout
+        );
+
+        let rules = docker_exec(&sidecar, &["/busybox", "ip", "-6", "rule"]);
+        assert!(rules.success, "{}", rules.stdout);
+        assert!(
+            rules.stdout.contains("fwmark 0x2023 lookup 100"),
+            "the fwmark rule must reach the moved v6 table: {}",
+            rules.stdout
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn start_container_starts_a_stopped_sidecar_first() {
+        let docker = test_docker();
+        let agent = format!("egress-start-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+        stop_container_with_timeout(&docker, &sidecar, 5)
+            .await
+            .expect("stop sidecar");
+
+        assert!(
+            start_container(&docker, &cname).await,
+            "agent start must succeed"
+        );
+        assert_eq!(
+            container_status(&docker, &sidecar).await,
+            ContainerStatus::Running
+        );
+        let agent_info = docker
+            .inspect_container(&cname, None)
+            .await
+            .expect("agent inspect");
+        let started_at = agent_info
+            .state
+            .and_then(|s| s.started_at)
+            .expect("agent must report a start time");
+        assert!(
+            !started_at.is_empty() && started_at != NEVER_STARTED_AT,
+            "agent container must have actually started, got {started_at:?}"
+        );
+    }
+
+    /// Regression for the fix that has `repair_egress_drift`'s spawned task re-check under the
+    /// agent's write lock: the recheck is only safe because a not-running agent reads as
+    /// not-needing-repair, so a user's stop that lands first is never undone by it. This pins
+    /// that branch directly (a not-yet-started agent takes the same `running != Some(true)` path
+    /// a freshly stopped one does); `a_proxied_agent_through_its_whole_life` in
+    /// `tests/server/egress.rs` still covers the drifted-and-running repair happy path end to end.
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn egress_repair_needed_is_false_for_a_not_running_agent() {
+        let docker = test_docker();
+        let agent = format!("egress-repair-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        // The sidecar (created and started as part of `create_container`) restarts on its own,
+        // giving it a fresh namespace and a `started_at` newer than the agent's: the drift
+        // `egress_repair_needed` exists to detect once an agent is actually running.
+        docker
+            .restart_container(&sidecar, None::<RestartContainerOptions>)
+            .await
+            .expect("restart sidecar");
+
+        // The agent was never started, so it fails the same `running != Some(true)` check a
+        // user's stop racing the repair relies on: this must be false despite the sidecar drift.
+        assert!(
+            !egress_repair_needed(&docker, &cname).await,
+            "a not-running agent must never be reported as needing the repair restart"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn create_container_without_a_proxy_removes_a_leftover_sidecar() {
+        let docker = test_docker();
+        let agent = format!("egress-clear-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        let image = test_agent_image();
+        let spec = || ContainerSpec {
+            cname: &cname,
+            image: &image,
+            port: 1,
+            agent_name: &agent,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec())
+            .await
+            .expect("create proxied");
+        remove_container_force(&docker, &cname)
+            .await
+            .expect("remove agent");
+        crate::egress::delete_proxy(&env_config.agents_dir, &agent);
+
+        create_container(&docker, &env_config, spec())
+            .await
+            .expect("create plain");
+        assert_eq!(
+            container_status(&docker, &sidecar).await,
+            ContainerStatus::NotFound
+        );
+        assert!(!env_config
+            .agents_dir
+            .join(format!("{agent}.egress.json"))
+            .exists());
+        let agent_host = docker
+            .inspect_container(&cname, None)
+            .await
+            .expect("agent")
+            .host_config
+            .expect("hc");
+        assert_eq!(agent_host.network_mode, Some(agent_network_name(&agent)));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn a_freshly_created_proxied_agent_needs_no_rebuild() {
+        let docker = test_docker();
+        let agent = format!("egress-drift-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+        let info = docker
+            .inspect_container(&cname, None)
+            .await
+            .expect("inspect");
+
+        let expected = expected_network_mode(&docker, &env_config.agents_dir, &agent).await;
+        assert!(
+            !needs_rebuild(&cname, &expected, &info, &[]),
+            "a correct proxied agent must not rebuild"
+        );
+
+        crate::egress::delete_proxy(&env_config.agents_dir, &agent);
+        let expected = expected_network_mode(&docker, &env_config.agents_dir, &agent).await;
+        assert!(
+            needs_rebuild(&cname, &expected, &info, &[]),
+            "a cleared proxy must rebuild"
+        );
+
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        remove_container_force(&docker, &sidecar)
+            .await
+            .expect("remove sidecar");
+        let expected = expected_network_mode(&docker, &env_config.agents_dir, &agent).await;
+        assert!(
+            needs_rebuild(&cname, &expected, &info, &[]),
+            "a missing sidecar must rebuild"
+        );
+    }
+
+    /// Regression test: `apply_egress_change` used to decide `needs_rebuild` from whether the
+    /// agent's actual `network_mode` merely started with `container:`, true even when that
+    /// container (its sidecar) no longer exists. A `Set` then skipped the rebuild and the disk
+    /// guard and called `ensure_sidecar` directly, which tore down and replaced the sidecar the
+    /// agent was joined to -- but the agent's `network_mode` is baked in at creation, so it stayed
+    /// pointed at the dead id and could never start. The fix compares against the network mode
+    /// `change` should actually leave the agent with (`network_mode_for`), so this now rebuilds.
+    #[tokio::test]
+    #[ignore = "requires Docker and internet (downloads sing-box)"]
+    async fn set_after_a_missing_sidecar_rebuilds_instead_of_stranding_the_agent() {
+        let docker = test_docker();
+        let agent = format!("egress-missing-sidecar-{}", std::process::id());
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&agent),
+        };
+        let _tc = TestContainer::for_agent(&agent);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = egress_env_config(&dir);
+        let proxy = crate::egress::ProxyUrl::parse("socks5://u:p@192.0.2.1:1080").expect("parse");
+        crate::egress::save_proxy(&env_config.agents_dir, &agent, &proxy).expect("save");
+        let sidecar = crate::egress::sidecar_name(&agent);
+        let _sidecar_cleanup = scopeguard_remove(&sidecar);
+        let cname = container_name(&agent);
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &test_agent_image(),
+                port: 1,
+                agent_name: &agent,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        // The sidecar dies and its container is reaped (a pin bump has the same effect on
+        // `current_sidecar_id`), leaving the agent's baked-in `network_mode` pointed at nothing.
+        remove_container_force(&docker, &sidecar)
+            .await
+            .expect("remove sidecar");
+
+        let tracker = RebuildTracker::default();
+        apply_egress_change(
+            &docker,
+            &agent,
+            &env_config,
+            &[],
+            &EgressChange::Set(proxy),
+            &tracker,
+        )
+        .await
+        .expect("apply");
+
+        let agent_info = docker
+            .inspect_container(&cname, None)
+            .await
+            .expect("agent");
+        let network_mode = agent_info
+            .host_config
+            .expect("host config")
+            .network_mode
+            .expect("network mode");
+        assert!(
+            network_mode.starts_with(CONTAINER_NETWORK_PREFIX),
+            "agent must be joined to a sidecar, got {network_mode}"
+        );
+        let sidecar_id = network_mode
+            .strip_prefix(CONTAINER_NETWORK_PREFIX)
+            .expect("prefix");
+        let sidecar_info = docker
+            .inspect_container(sidecar_id, None)
+            .await
+            .expect("the agent's claimed sidecar must actually exist");
+        assert_eq!(sidecar_info.state.and_then(|s| s.running), Some(true));
     }
 
     /// `docker commit` copies an agent's labels onto the image a backup exports through, so the

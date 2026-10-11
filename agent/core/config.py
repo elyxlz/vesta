@@ -641,6 +641,13 @@ def stored_config(config: "VestaConfig") -> dict[str, pyd.JsonValue]:
     return data
 
 
+def validation_problems(error: pyd.ValidationError) -> str:
+    """Each rejected field and the reason, never the rejected value: the value can be a credential
+    the caller sent, and an error body must not return it."""
+    problems = error.errors(include_url=False, include_input=False, include_context=False)
+    return "; ".join(f"{'.'.join(str(part) for part in problem['loc'])}: {problem['msg']}" for problem in problems)
+
+
 def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, pyd.JsonValue]:
     """Validate a PUT /config (prefs) or PATCH/sign-in `provider` partial and return the to-write
     top-level dict. A `provider` partial is merged onto the current stored provider (see merge_provider)

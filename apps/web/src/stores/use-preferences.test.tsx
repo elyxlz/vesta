@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  agentViewPath,
   naturalPacingFor,
+  setChatFullscreen,
   setChatCollapsed,
   usePreferences,
 } from "./use-preferences";
@@ -10,6 +12,7 @@ beforeEach(() => {
   usePreferences.setState({
     naturalPacingByAgent: {},
     chatCollapsed: [],
+    chatFullscreen: [],
     lastAgent: null,
   });
 });
@@ -28,6 +31,14 @@ describe("usePreferences", () => {
     expect(usePreferences.getState().chatCollapsed).toEqual(["ada", "ben"]);
     setChatCollapsed("ada", false);
     expect(usePreferences.getState().chatCollapsed).toEqual(["ben"]);
+  });
+
+  it("opens an agent in the view it was last left in", () => {
+    setChatFullscreen("ada", true);
+    expect(agentViewPath("ada")).toBe("/agent/ada/chat");
+    expect(agentViewPath("ben")).toBe("/agent/ben");
+    setChatFullscreen("ada", false);
+    expect(agentViewPath("ada")).toBe("/agent/ada");
   });
 
   it("persists every preference under one key", () => {
