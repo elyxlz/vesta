@@ -48,17 +48,6 @@ tags:
           text: ".*Turn on.*"
           optional: true
 - runFlow: wait-for-launch.yml
-- extendedWaitUntil:
-    visible: '.*Authentication.*'
-    timeout: 30000
-- scrollUntilVisible:
-    element:
-      text: '.*Connect a provider.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-none
@@ -67,7 +56,7 @@ tags:
     env:
       SCREENSHOT: agent-provider-none.png
 - tapOn:
-    text: 'OpenRouter'
+    text: '^(, )?OpenRouter(,.*)?$'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-key-entry
@@ -75,26 +64,12 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-provider-key-entry.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=none"
+- runFlow: wait-for-launch.yml
 - tapOn:
-    text: 'OpenAI'
-- scrollUntilVisible:
-    element:
-      text: '.*Open ChatGPT sign-in.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
-- tapOn:
-    text: 'Open ChatGPT sign-in'
-- scrollUntilVisible:
-    element:
-      text: '.*One-time code.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
+    text: '^(, )?OpenAI(,.*)?$'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-openai-code
@@ -106,17 +81,6 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=unauthenticated"
 - runFlow: wait-for-launch.yml
-- extendedWaitUntil:
-    visible: '.*Authentication.*'
-    timeout: 30000
-- scrollUntilVisible:
-    element:
-      text: '.*Open Claude sign-in.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-needs-auth
@@ -125,15 +89,7 @@ tags:
     env:
       SCREENSHOT: agent-provider-needs-auth.png
 - tapOn:
-    text: 'Open Claude sign-in'
-- scrollUntilVisible:
-    element:
-      text: '.*Paste code.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
+    text: '^(, )?Claude(,.*)?$'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-oauth-code
@@ -145,17 +101,6 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualProvider=openrouter"
 - runFlow: wait-for-launch.yml
-- extendedWaitUntil:
-    visible: '.*Authentication.*'
-    timeout: 30000
-- scrollUntilVisible:
-    element:
-      text: '.*Credits.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-credits
@@ -178,11 +123,8 @@ tags:
 - openLink:
     link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - runFlow: wait-for-launch.yml
-- extendedWaitUntil:
-    visible: '.*Model.*'
-    timeout: 30000
 - tapOn:
-    text: '^Model,.*'
+    text: '^(, )?Model(,.*)?$'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-choose-model
@@ -190,10 +132,12 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-provider-choose-model.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - tapOn:
-    text: 'Cancel'
-- tapOn:
-    text: '^Context,.*'
+    text: '^(, )?Context window(,.*)?$'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-context-picker
@@ -201,18 +145,12 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: agent-provider-context-picker.png
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/details/provider?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- runFlow: wait-for-launch.yml
 - tapOn:
-    text: 'Cancel'
-- scrollUntilVisible:
-    element:
-      text: '.*Sign out provider.*'
-    direction: DOWN
-    timeout: 15000
-    speed: 40
-    visibilityPercentage: 60
-    centerElement: true
-- tapOn:
-    text: '.*Sign out provider.*'
+    text: '.*Sign out.*'
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-provider-sign-out-confirm

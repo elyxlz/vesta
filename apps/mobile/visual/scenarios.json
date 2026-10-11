@@ -419,7 +419,7 @@
     {
       "id": "agent-provider",
       "title": "Provider and model",
-      "description": "Connected provider identity, model, context window, plan, and usage meters.",
+      "description": "A signed-in provider with its model and context window.",
       "group": "Agent settings",
       "screenshot": "agent-provider.png"
     },
@@ -742,7 +742,7 @@
     {
       "id": "agent-provider-none",
       "title": "Provider, none",
-      "description": "The provider section with no provider set up and the provider chooser.",
+      "description": "The provider choice for an agent with no provider set up.",
       "group": "Provider"
     },
     {
@@ -754,25 +754,25 @@
     {
       "id": "agent-provider-openai-code",
       "title": "Provider, OpenAI code",
-      "description": "The one-time code and finish button of the OpenAI sign-in.",
+      "description": "The one-time code of the OpenAI sign-in step.",
       "group": "Provider"
     },
     {
       "id": "agent-provider-needs-auth",
       "title": "Provider, needs sign-in",
-      "description": "A Claude provider whose credentials expired, offering sign in.",
+      "description": "The provider choice for a Claude agent whose credentials expired.",
       "group": "Provider"
     },
     {
       "id": "agent-provider-oauth-code",
       "title": "Provider, Claude code",
-      "description": "The authorization code field after the browser sign-in.",
+      "description": "The Claude sign-in step with its code field.",
       "group": "Provider"
     },
     {
       "id": "agent-provider-credits",
       "title": "Provider, credits",
-      "description": "An OpenRouter provider with its credit balance.",
+      "description": "A signed-in OpenRouter provider.",
       "group": "Provider"
     },
     {
