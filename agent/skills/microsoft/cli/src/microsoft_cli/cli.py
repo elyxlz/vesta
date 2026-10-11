@@ -194,6 +194,12 @@ def _add_email_parsers(group):
     return email_sub
 
 
+_DATETIME_BOUND_HELP = (
+    "A datetime (2026-01-31T09:00) is also accepted: without an offset it is read in the local timezone ($TZ); "
+    "a +01:00 or Z offset is honoured."
+)
+
+
 def _add_email_read_parsers(email_sub) -> None:
     p_list_emails = email_sub.add_parser("list")
     p_list_emails.add_argument("--account", required=True)
@@ -211,10 +217,12 @@ def _add_email_read_parsers(email_sub) -> None:
         default=None,
         help=(
             "Only mail received on/after this date (YYYY-MM-DD, inclusive). Uses a date $filter to reach "
-            "any date, unlike relevance-ranked search."
+            "any date, unlike relevance-ranked search. " + _DATETIME_BOUND_HELP
         ),
     )
-    p_list_emails.add_argument("--until", default=None, help="Only mail received on/before this date (YYYY-MM-DD, inclusive).")
+    p_list_emails.add_argument(
+        "--until", default=None, help="Only mail received on/before this date (YYYY-MM-DD, inclusive), or datetime as for --since."
+    )
     _add_format_flags(p_list_emails)
 
     p_get_email = email_sub.add_parser("get")
@@ -233,10 +241,13 @@ def _add_email_read_parsers(email_sub) -> None:
         default=None,
         help=(
             "Restrict to mail received on/after this date (YYYY-MM-DD, inclusive). With a --query, Graph cannot combine "
-            "$search and $filter, so the date range is applied server-side and the query is matched client-side against subject/from/preview."
+            "$search and $filter, so the date range is applied server-side and the query is matched client-side against subject/from/preview. "
+            + _DATETIME_BOUND_HELP
         ),
     )
-    p_search.add_argument("--until", default=None, help="Restrict to mail received on/before this date (YYYY-MM-DD, inclusive).")
+    p_search.add_argument(
+        "--until", default=None, help="Restrict to mail received on/before this date (YYYY-MM-DD, inclusive), or datetime as for --since."
+    )
     _add_format_flags(p_search)
 
     p_attachment = email_sub.add_parser("attachment")
