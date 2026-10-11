@@ -1,7 +1,7 @@
 // Exercises localStorage, so it runs in the jsdom project (.test.tsx include).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionConfig } from "@/lib/connection";
-import { getConnection, setConnection } from "./connection";
+import { getConnection, restoreConnection } from "./connection";
 import { native } from "./native";
 import { useCredentialStorage } from "@/stores/use-credential-storage";
 import {
@@ -152,21 +152,18 @@ describe("storage-write failure survives", () => {
   ])("keeps a connected session when %s", async (_name, breakStore) => {
     breakStore();
 
-    expect(() =>
-      setConnection("https://box.example/", "access", "refresh", 60),
-    ).not.toThrow();
-    expect(getConnection()).toMatchObject({
-      url: "https://box.example",
-      accessToken: "access",
-      refreshToken: "refresh",
-    });
+    const active = conn("https://box.example");
+    expect(() => {
+      restoreConnection(active);
+    }).not.toThrow();
+    expect(getConnection()).toBe(active);
 
     await settle();
     expect(useCredentialStorage.getState().writeError).toMatch(
       /^could not save the active gateway: /,
     );
 
-    setConnection("https://box.example/", "access", "refresh", 60);
+    restoreConnection(active);
     await settle();
     expect(useCredentialStorage.getState().writeError).toBeNull();
   });

@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { useResource } from "@vesta/core/react";
-import { booleanField } from "@/lib/json-shape";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Eye, EyeOff, History } from "lucide-react";
@@ -8,11 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { LogoText } from "@/components/Logo/LogoText";
-import { ProgressBar } from "@/components/ProgressBar";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
-import { startHostedLogin } from "@/lib/pkce";
-import { runtimeInfo } from "@/lib/native";
 import { Navbar } from "@/components/Navbar";
 import { parseConnectLink } from "@/lib/connection";
 import { readRecentGateways } from "@/lib/recent-gateways";
@@ -26,8 +22,6 @@ import { GetAppsRow } from "@/components/GetApps";
 // server) needs the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
 
-const { isDesktopApp } = runtimeInfo;
-
 // A soft rise-and-fade so the connect card settles in rather than snapping on.
 const connectEntrance = {
   initial: { opacity: 0, y: 8 },
@@ -35,84 +29,12 @@ const connectEntrance = {
   transition: { duration: 0.3, ease: "easeOut" },
 } as const;
 
-function HostedSignInCard({
-  sessionExpired,
-  busy,
-  error,
-  onSignIn,
-  onSelfHost,
-  hasRecentGateways,
-  onRecentGateways,
-}: {
-  sessionExpired: boolean;
-  busy: boolean;
-  error: string;
-  onSignIn: () => void;
-  onSelfHost: () => void;
-  hasRecentGateways: boolean;
-  onRecentGateways: () => void;
-}) {
-  return (
-    <div className="flex h-full flex-col p-page">
-      <div className="flex flex-1 items-center justify-center">
-        <motion.div
-          {...connectEntrance}
-          className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
-        >
-          <ConnectHeader />
-          {sessionExpired && (
-            <FieldDescription className="text-center">
-              your session expired, sign in again
-            </FieldDescription>
-          )}
-          <Button
-            type="button"
-            onClick={onSignIn}
-            disabled={busy}
-            className="max-w-full px-6"
-          >
-            {busy
-              ? isDesktopApp
-                ? "waiting for browser..."
-                : "redirecting..."
-              : "continue with vesta account"}
-          </Button>
-          <AnimatePresence>
-            {error && (
-              <motion.p
-                {...fade}
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {error}
-              </motion.p>
-            )}
-          </AnimatePresence>
-          {hasRecentGateways && (
-            <RecentGatewaysButton onClick={onRecentGateways} />
-          )}
-          {isDesktopApp && (
-            <button
-              type="button"
-              onClick={onSelfHost}
-              className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
-            >
-              self-hosting? connect with a link
-            </button>
-          )}
-        </motion.div>
-      </div>
-      <GetAppsRow />
-    </div>
-  );
-}
-
 function RecentGatewaysButton({
   onClick,
-  visible = true,
+  visible,
 }: {
   onClick: () => void;
-  visible?: boolean;
+  visible: boolean;
 }) {
   if (!visible) return null;
   return (
@@ -138,25 +60,6 @@ function ConnectHeader() {
       </p>
     </div>
   );
-}
-
-// On a vestad-served bundle, whether this is a hosted (vesta.run) instance: managed instances log
-// in via the vesta.run handoff (PKCE) since the user never gets the api_key; self-hosted ones keep
-// the connect-link form. A probe that fails reads as self-hosted.
-async function probeManaged(): Promise<boolean> {
-  const resp = await fetch(`${window.location.origin}/info`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  const data: unknown = await resp.json();
-  return booleanField(data, "managed") === true;
-}
-
-// `null` while the probe is still answering; a vestad-served bundle only.
-function useManaged(): boolean | null {
-  const probed = useResource(needHostInput ? null : "managed", probeManaged);
-  if (needHostInput) return false;
-  if (probed.loading) return null;
-  return probed.error === null && probed.data === true;
 }
 
 // Re-read each time the switch dialog closes, since it can forget a gateway.
@@ -187,16 +90,6 @@ export function Connect() {
   };
   const hasRecentGateways = useHasRecentGateways(switchGatewayOpen);
   const inputRef = useRef<HTMLInputElement>(null);
-  // In the desktop app (and any vesta-account surface) we lead with "continue
-  // with vesta account"; `selfHost` flips to the connect-link form for people
-  // running their own agent. Only ever set in the desktop app (the web bundles
-  // know which form they need from `managed`).
-  const [selfHost, setSelfHost] = useState(false);
-  // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
-  // instance. Probe /info.managed: managed instances log in via the vesta.run
-  // handoff (PKCE, issue #19) since the user never gets the api_key; self-hosted
-  // ones keep the connect-link form. `null` = still probing.
-  const managed = useManaged();
 
   if (connected) return <Navigate to="/" replace />;
 
@@ -230,58 +123,6 @@ export function Connect() {
     e.preventDefault();
     void handleConnect();
   };
-
-  const handleHostedSignIn = () => {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    // Web: full-navigates to vesta.run/api/authorize. Native: opens the system
-    // browser and waits on a loopback redirect (the promise resolves only after
-    // a successful exchange, which itself navigates). On failure we stay put.
-    void startHostedLogin().catch(() => {
-      setError("could not start sign-in");
-      setBusy(false);
-    });
-  };
-
-  // Still probing /info to avoid flashing the wrong form. Keep the logo in place
-  // so resolving to a form doesn't jump the layout.
-  if (managed === null) {
-    return (
-      <div className="flex h-full flex-col p-page">
-        <div className="flex flex-1 items-center justify-center">
-          <motion.div
-            {...connectEntrance}
-            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
-          >
-            <ConnectHeader />
-            <div className="flex h-9 w-full items-center">
-              <ProgressBar />
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    );
-  }
-  // Hosted (vesta.run): the user never has an api_key, so log in through the
-  // control plane. Lead with the vesta account on a managed instance (web) and
-  // in the native app, unless the native user chose self-hosting.
-  if ((managed || isDesktopApp) && !selfHost) {
-    return (
-      <HostedSignInCard
-        sessionExpired={sessionExpired}
-        busy={busy}
-        error={error}
-        onSignIn={handleHostedSignIn}
-        onSelfHost={() => {
-          setError("");
-          setSelfHost(true);
-        }}
-        hasRecentGateways={hasRecentGateways}
-        onRecentGateways={() => setSwitchGatewayOpen(true)}
-      />
-    );
-  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
@@ -347,19 +188,6 @@ export function Connect() {
               visible={hasRecentGateways}
               onClick={() => setSwitchGatewayOpen(true)}
             />
-
-            {isDesktopApp && selfHost && (
-              <button
-                type="button"
-                onClick={() => {
-                  setError("");
-                  setSelfHost(false);
-                }}
-                className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
-              >
-                use a vesta account instead
-              </button>
-            )}
 
             <AnimatePresence>
               {error && (

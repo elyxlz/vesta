@@ -15,9 +15,6 @@ export const CHANNEL = {
   recentStoreRead: "recent-store:read",
   recentStoreWrite: "recent-store:write",
   recentStoreClear: "recent-store:clear",
-  oauthStart: "oauth:start",
-  oauthCallback: "oauth:callback",
-  oauthCancel: "oauth:cancel",
   geolocationRead: "geolocation:read",
   windowFocus: "window-focus",
   windowMinimize: "window:minimize",
@@ -33,7 +30,6 @@ export const CHANNEL = {
 // invoked or sent by the renderer and handled in main.
 export const PUSH_CHANNELS: readonly string[] = [
   CHANNEL.appUpdateProgress,
-  CHANNEL.oauthCallback,
   CHANNEL.windowFocus,
   CHANNEL.windowMaximized,
 ];

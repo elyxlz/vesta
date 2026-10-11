@@ -43,13 +43,11 @@ interface Harness {
   stored: ConnectionConfig | null;
   writes: ConnectionConfig[];
   expired: number;
-  reauthorized: number;
 }
 
 function harness(
   initial: ConnectionConfig | null,
   options: {
-    reauthorize?: boolean;
     write?: (next: ConnectionConfig) => Promise<void>;
   } = {},
 ) {
@@ -58,7 +56,6 @@ function harness(
     stored: initial,
     writes: [],
     expired: 0,
-    reauthorized: 0,
   };
   const session = createSession({
     fetch: state.fetch,
@@ -71,11 +68,6 @@ function harness(
     onExpired: () => {
       state.expired += 1;
     },
-    reauthorize: options.reauthorize
-      ? () => {
-          state.reauthorized += 1;
-        }
-      : undefined,
     now: () => NOW,
   });
   return { session, state };
@@ -184,17 +176,13 @@ describe("createSession", () => {
     expect(state.expired).toBe(1);
   });
 
-  it("re-authorizes a connection with no refresh token when the app can, else expires it", async () => {
-    const hosted = harness(connection({ refreshToken: "", expiresAt: NOW }), {
-      reauthorize: true,
-    });
-    expect(await hosted.session.ensureFresh()).toBe("transient");
-    expect(hosted.state.reauthorized).toBe(1);
-    expect(hosted.state.fetch).not.toHaveBeenCalled();
-
-    const bare = harness(connection({ refreshToken: "", expiresAt: NOW }));
-    expect(await bare.session.ensureFresh()).toBe("expired");
-    expect(bare.state.expired).toBe(1);
+  it("expires a connection with no refresh token without a request", async () => {
+    const { session, state } = harness(
+      connection({ refreshToken: "", expiresAt: NOW }),
+    );
+    expect(await session.ensureFresh()).toBe("expired");
+    expect(state.expired).toBe(1);
+    expect(state.fetch).not.toHaveBeenCalled();
   });
 
   it("stamps the token into an authed URL after refreshing an expiring one", async () => {

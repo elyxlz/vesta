@@ -15,8 +15,3 @@ export function numberField(value: unknown, key: string): number | null {
   const read = field(value, key);
   return typeof read === "number" && Number.isFinite(read) ? read : null;
 }
-
-export function booleanField(value: unknown, key: string): boolean | null {
-  const read = field(value, key);
-  return typeof read === "boolean" ? read : null;
-}

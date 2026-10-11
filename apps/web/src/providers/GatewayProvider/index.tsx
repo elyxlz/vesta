@@ -47,7 +47,6 @@ function selectGateway(tree: Tree | null) {
 function gatewayValues(gateway: ReturnType<typeof selectGateway>) {
   if (gateway === null) {
     return {
-      managed: false,
       gatewayChannel: "stable" as const,
       gatewayAutoUpdate: true,
       gatewayPort: 0,
@@ -59,7 +58,6 @@ function gatewayValues(gateway: ReturnType<typeof selectGateway>) {
     };
   }
   return {
-    managed: gateway.managed,
     gatewayChannel: gateway.channel,
     gatewayAutoUpdate: gateway.autoUpdate,
     gatewayPort: gateway.port,

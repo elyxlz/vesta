@@ -998,12 +998,6 @@
       "group": "App settings"
     },
     {
-      "id": "app-settings-managed",
-      "title": "App settings, managed",
-      "description": "The settings page for a managed gateway with the account card.",
-      "group": "App settings"
-    },
-    {
       "id": "app-settings-devices",
       "title": "App settings, devices",
       "description": "The devices card with present and last-seen devices.",
@@ -1094,19 +1088,6 @@
       "id": "connect-error",
       "title": "Connect, failed",
       "description": "The connect page after the gateway could not be reached.",
-      "group": "Connect"
-    },
-    {
-      "id": "connect-managed-desktop",
-      "title": "Connect, hosted",
-      "description": "The desktop connect page offering the hosted account flow.",
-      "group": "Connect",
-      "platforms": ["desktop"]
-    },
-    {
-      "id": "callback-error",
-      "title": "Callback, missing code",
-      "description": "The OAuth callback page without a code.",
       "group": "Connect"
     },
     {

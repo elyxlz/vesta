@@ -3,8 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   Settings as SettingsIcon,
   LogOut,
-  CreditCard,
-  ExternalLink,
   ScrollText,
   ArrowLeftRight,
 } from "lucide-react";
@@ -37,18 +35,13 @@ import {
   type GatewaySetup,
 } from "@/components/Settings/use-gateway-setup";
 import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
-import { native } from "@/lib/native";
-
-// Hosted (managed) boxes are always under vesta.run; the account + billing page
-// lives on the control plane. Self-hosted boxes never reach this.
-const ACCOUNT_URL = "https://vesta.run/account";
 
 // The app-level settings surface, rendered as a page at /settings. App/client +
 // gateway concerns only; per-agent config lives at /agent/:name/settings.
 export function AppSettings() {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
-  const { reachable, managed, gatewayVersion } = useGateway();
+  const { reachable, gatewayVersion } = useGateway();
   const hostname = connectionHostname();
   const gatewaySetup = useGatewaySetup();
   const openDialog = useDialogs((s) => s.setOpen);
@@ -137,26 +130,6 @@ export function AppSettings() {
       <DevicesCard />
 
       <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
-
-      {reachable && managed && (
-        <Card size="sm">
-          <CardContent>
-            <MenuSection title="account">
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                onClick={() => {
-                  void native.openExternal(ACCOUNT_URL);
-                }}
-              >
-                <CreditCard data-icon="inline-start" />
-                manage account &amp; billing
-                <ExternalLink data-icon="inline-end" className="ml-auto" />
-              </Button>
-            </MenuSection>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

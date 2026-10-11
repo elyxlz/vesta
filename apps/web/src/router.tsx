@@ -4,7 +4,6 @@ import { AgentLayout } from "@/layouts/AgentLayout";
 import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
 import { AppSettingsPage } from "@/components/AppSettingsPage";
-import { Callback } from "@/components/Callback";
 import { Connect } from "@/components/Connect";
 import { Debug } from "@/components/Debug";
 import { Home } from "@/components/Home";
@@ -18,7 +17,6 @@ export const router = createBrowserRouter(
       errorElement: <RouteErrorBoundary />,
       children: [
         { path: "/connect", element: <Connect /> },
-        { path: "/cb", element: <Callback /> },
         { path: "/debug", element: <Debug /> },
         {
           element: <NavigationGuard />,

@@ -4,8 +4,6 @@ import type { AgentRow } from "@/lib/types";
 
 export interface GatewayContextValue {
   reachable: boolean;
-  /** True iff this is a hosted (vesta.run-managed) gateway; gates the account link. */
-  managed: boolean;
   gatewayVersion: string;
   gatewayChannel: ReleaseChannel;
   gatewayAutoUpdate: boolean;
@@ -35,7 +33,6 @@ export const GatewayContext = createContext<GatewayContextValue | null>(null);
 
 export const disconnectedValue: GatewayContextValue = {
   reachable: false,
-  managed: false,
   gatewayVersion: "",
   gatewayChannel: "stable",
   gatewayAutoUpdate: true,

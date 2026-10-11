@@ -14,8 +14,7 @@ export interface ConnectionConfig {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
-  // A hosted (vesta.run) connection was minted by the apex, not by a connect key. One with no
-  // refresh token re-authorizes through the app instead of POST /auth/refresh.
+  // A hosted (vesta.run) connection was minted by the apex, not by a connect key.
   hosted?: boolean;
 }
 
@@ -37,8 +36,8 @@ export function isTokenExpiringSoon(
 }
 
 // "ok": the token is fresh, or was just refreshed. "transient": the refresh could not complete
-// (network, a server error, a hosted re-authorization in flight); retrying later may succeed.
-// "expired": the gateway definitively rejected the refresh token; only a new sign-in recovers.
+// (network, a server error); retrying later may succeed. "expired": the gateway definitively
+// rejected the refresh token, or there is none to present; only a new sign-in recovers.
 type RefreshResult = "ok" | "transient" | "expired";
 
 export type RefreshOutcome =
@@ -183,10 +182,6 @@ export interface SessionDeps {
   write: (next: ConnectionConfig) => Promise<void> | void;
   // Fires when a refresh is definitively rejected, so the app can sign the user out.
   onExpired?: () => void;
-  // Re-authorizes a connection that has no refresh token (a hosted web session: the apex cookie is
-  // the refresh root, so the app bounces through its authorize flow). Absent, such an expiry is
-  // final.
-  reauthorize?: () => void;
   formatError?: HttpDeps["formatError"];
   now?: () => number;
 }
@@ -214,10 +209,6 @@ export function createSession(deps: SessionDeps): Session {
     const connection = deps.read();
     if (connection === null) return "transient";
     if (!connection.refreshToken) {
-      if (deps.reauthorize) {
-        deps.reauthorize();
-        return "transient";
-      }
       deps.onExpired?.();
       return "expired";
     }
