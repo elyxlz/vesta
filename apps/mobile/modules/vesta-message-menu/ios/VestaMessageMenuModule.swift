@@ -26,6 +26,7 @@ private final class VestaMessageMenuView: ExpoView,
   UIContextMenuInteractionDelegate
 {
   let onAction = EventDispatcher()
+  let onOpenChange = EventDispatcher()
 
   var actions: [MessageMenuAction] = [] {
     didSet {
@@ -136,6 +137,30 @@ private final class VestaMessageMenuView: ExpoView,
       UIContextMenuConfiguration
   ) -> UITargetedPreview? {
     makeTargetedPreview()
+  }
+
+  func contextMenuInteraction(
+    _ interaction: UIContextMenuInteraction,
+    willDisplayMenuFor configuration: UIContextMenuConfiguration,
+    animator: (any UIContextMenuInteractionAnimating)?
+  ) {
+    onOpenChange(["open": true])
+  }
+
+  // Reports the close once the dismissal settles, so a composer refocused on it lands after the
+  // menu hands focus back to the app window.
+  func contextMenuInteraction(
+    _ interaction: UIContextMenuInteraction,
+    willEndFor configuration: UIContextMenuConfiguration,
+    animator: (any UIContextMenuInteractionAnimating)?
+  ) {
+    guard let animator else {
+      onOpenChange(["open": false])
+      return
+    }
+    animator.addCompletion { [weak self] in
+      self?.onOpenChange(["open": false])
+    }
   }
 
   private func makeMenu() -> UIMenu {
@@ -459,7 +484,7 @@ public final class VestaMessageMenuModule: Module {
         view.bubbleStrokeWidth = CGFloat(width)
         view.setNeedsLayout()
       }
-      Events("onAction")
+      Events("onAction", "onOpenChange")
     }
   }
 }

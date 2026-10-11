@@ -186,6 +186,7 @@ export const ChatEvent = memo(function ChatEvent({
   onReadAloud,
   onRetry,
   onOpenAttachment,
+  onMenuOpenChange,
 }: {
   event: ChatMessage;
   agentName: string;
@@ -202,6 +203,7 @@ export const ChatEvent = memo(function ChatEvent({
     attachments?: ChatAttachment[],
   ) => void;
   onOpenAttachment: (request: OpenViewerRequest) => void;
+  onMenuOpenChange: (open: boolean) => void;
 }) {
   const { colors } = usePreferences();
   const { api } = useSession();
@@ -488,6 +490,7 @@ export const ChatEvent = memo(function ChatEvent({
         bubbleStrokeColor={user ? "transparent" : colors.border}
         bubbleStrokeWidth={user ? 0 : StyleSheet.hairlineWidth}
         onAction={performAction}
+        onOpenChange={onMenuOpenChange}
         previewCornerRadius={radii.bubble}
         style={styles.bubbleMenu}
         tailOverhang={endsBubbleGroup ? (user ? 5 : 6) : 0}
