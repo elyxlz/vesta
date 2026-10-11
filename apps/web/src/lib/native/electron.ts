@@ -89,11 +89,6 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
     focusWindow: () => api.focusWindow(),
     setNativeTheme: (theme) => api.setTheme(theme),
     onWindowFocusChange: (cb) => api.onWindowFocus(cb),
-    oauthLoopback: {
-      start: () => api.oauthStart(),
-      onCallback: (cb) => api.onOauthCallback(cb),
-      cancel: (port) => api.oauthCancel(port),
-    },
     readGeolocation: async () => parseNativeFix(await api.readGeolocation()),
     credentialStorageIsSecure: () => api.storeIsSecure(),
     appUpdate: {

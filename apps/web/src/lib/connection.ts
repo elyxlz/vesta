@@ -1,4 +1,4 @@
-import { normalizeGatewayUrl, type ConnectionConfig } from "@vesta/core";
+import type { ConnectionConfig } from "@vesta/core";
 import { native } from "./native";
 import { useCredentialStorage } from "@/stores/use-credential-storage";
 import { errorMessage } from "./utils";
@@ -79,25 +79,6 @@ export function connectionHostname(): string {
   }
 }
 
-/**
- * Persist a hosted (vesta.run) connection: the PKCE-minted access token, no
- * refresh token. `url` is this gateway's own origin (the SPA talks to its own
- * vestad). On expiry the app re-authorizes rather than refreshing.
- */
-export function setHostedConnection(
-  url: string,
-  accessToken: string,
-  expiresIn: number,
-): void {
-  restoreConnection({
-    url: normalizeGatewayUrl(url),
-    accessToken,
-    refreshToken: "",
-    expiresAt: Date.now() + expiresIn * 1000,
-    hosted: true,
-  });
-}
-
 /** Write a whole config as the active connection: a freshly minted session, a
  * saved gateway restored with its tokens verbatim (expiry included), or the
  * session's own token rotation. The session revives an expired one on the next call. */
@@ -107,20 +88,6 @@ export function restoreConnection(config: ConnectionConfig): void {
     () => native.connectionStore.write(config),
     "could not save the active gateway",
   );
-}
-
-export function setConnection(
-  url: string,
-  accessToken: string,
-  refreshToken: string,
-  expiresIn: number,
-): void {
-  restoreConnection({
-    url: normalizeGatewayUrl(url),
-    accessToken,
-    refreshToken,
-    expiresAt: Date.now() + expiresIn * 1000,
-  });
 }
 
 export function clearConnection(): void {

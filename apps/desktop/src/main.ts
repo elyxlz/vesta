@@ -10,7 +10,6 @@ import path from "node:path";
 import { CHANNEL } from "./channels";
 import { readNativeGeolocation } from "./geolocation";
 import { trackQuitIntent } from "./lifecycle";
-import { cancelLoopback, startLoopback } from "./oauth-loopback";
 import {
   clearConnection,
   clearRecentGateways,
@@ -99,14 +98,6 @@ if (!gotLock) {
       writeRecentGateways(value),
     );
     ipcMain.handle(CHANNEL.recentStoreClear, () => clearRecentGateways());
-    ipcMain.handle(CHANNEL.oauthStart, () =>
-      startLoopback((url) =>
-        mainWindow?.webContents.send(CHANNEL.oauthCallback, url),
-      ),
-    );
-    ipcMain.handle(CHANNEL.oauthCancel, (_event, port: unknown) => {
-      if (typeof port === "number") cancelLoopback(port);
-    });
     // The macOS CoreLocation helper ships beside the web bundle in Resources; in dev it is the
     // `native/` build output.
     const macHelperPath = app.isPackaged

@@ -184,19 +184,7 @@ function whatsNew(releases: RouteFixture): Scenario {
   };
 }
 
-// The desktop app leads with the hosted account card; the connect-link form is
-// one click behind it. Web renders the form directly.
-async function toLinkForm(page: Page): Promise<void> {
-  const selfHost = page.getByRole("button", {
-    name: "self-hosting? connect with a link",
-  });
-  const linkInput = page.getByPlaceholder("paste your connect link");
-  await linkInput.or(selfHost).first().waitFor({ state: "visible" });
-  if (await selfHost.isVisible()) await selfHost.click();
-}
-
 async function submitLink(page: Page): Promise<void> {
-  await toLinkForm(page);
   await page
     .getByPlaceholder("paste your connect link")
     .fill("http://vestad.local/app#k=visual-api-key");
@@ -236,10 +224,6 @@ export const APP_SETTINGS: Record<string, Scenario> = {
   "app-settings": {
     state: settingsState(),
     drive: () => Promise.resolve(),
-  },
-  "app-settings-managed": {
-    state: settingsState({ sync: { gateway: { managed: true } } }),
-    drive: (page) => scrollTo(page, "manage account & billing"),
   },
   "app-settings-devices": {
     state: settingsState({ sync: { devices: DEVICES } }),
@@ -299,7 +283,7 @@ export const APP_SETTINGS: Record<string, Scenario> = {
   "whats-new-notes": whatsNew({ path: RELEASES_URL, json: RELEASES }),
   "connect-form": {
     state: SIGNED_OUT,
-    drive: toLinkForm,
+    drive: () => Promise.resolve(),
   },
   "connect-recent-gateways": {
     state: {
@@ -316,7 +300,6 @@ export const APP_SETTINGS: Record<string, Scenario> = {
   "connect-get-apps": {
     state: SIGNED_OUT,
     drive: async (page) => {
-      await toLinkForm(page);
       await page.getByRole("button", { name: /Linux/ }).click();
     },
   },
@@ -327,14 +310,6 @@ export const APP_SETTINGS: Record<string, Scenario> = {
   "connect-error": {
     state: { ...SIGNED_OUT, routes: [{ path: "/health", status: 503 }] },
     drive: submitLink,
-  },
-  "connect-managed-desktop": {
-    state: SIGNED_OUT,
-    drive: () => Promise.resolve(),
-  },
-  "callback-error": {
-    state: { route: "/cb", connection: false },
-    drive: () => Promise.resolve(),
   },
   "disconnected-overlay": {
     state: { route: "/", sync: { mode: "refuse" } },

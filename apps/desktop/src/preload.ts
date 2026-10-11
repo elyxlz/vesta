@@ -34,12 +34,6 @@ contextBridge.exposeInMainWorld("vestaNative", {
   recentStoreWrite: (value: unknown) =>
     ipcRenderer.invoke(CHANNEL.recentStoreWrite, value),
   recentStoreClear: () => ipcRenderer.invoke(CHANNEL.recentStoreClear),
-  oauthStart: () => ipcRenderer.invoke(CHANNEL.oauthStart),
-  onOauthCallback: (cb: (url: string) => void) =>
-    subscribe(CHANNEL.oauthCallback, (_event, url: string) => {
-      cb(url);
-    }),
-  oauthCancel: (port: number) => ipcRenderer.invoke(CHANNEL.oauthCancel, port),
   readGeolocation: () => ipcRenderer.invoke(CHANNEL.geolocationRead),
   onWindowFocus: (cb: (focused: boolean) => void) =>
     subscribe(CHANNEL.windowFocus, (_event, focused: boolean) => {

@@ -75,7 +75,6 @@ export function createBrowserBridge(): NativeBridge {
         /* noop: nothing to unsubscribe */
       };
     },
-    oauthLoopback: null,
     windowControls: null,
     readGeolocation: null,
     credentialStorageIsSecure: null,

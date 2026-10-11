@@ -57,9 +57,6 @@ export async function installNativeStub(
           recentStored = null;
           return Promise.resolve();
         },
-        oauthStart: () => Promise.resolve(0),
-        onOauthCallback: () => noop,
-        oauthCancel: resolved,
         readGeolocation: () => Promise.resolve(null),
         onWindowFocus: () => noop,
         windowMinimize: resolved,

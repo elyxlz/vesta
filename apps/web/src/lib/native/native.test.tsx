@@ -36,9 +36,6 @@ function fakeApi(overrides: Partial<VestaNativeApi> = {}): VestaNativeApi {
     recentStoreRead: vi.fn(() => Promise.resolve(null)),
     recentStoreWrite: vi.fn(() => Promise.resolve()),
     recentStoreClear: vi.fn(() => Promise.resolve()),
-    oauthStart: vi.fn(() => Promise.resolve(4242)),
-    onOauthCallback: vi.fn(() => noopUnsubscribe),
-    oauthCancel: vi.fn(() => Promise.resolve()),
     readGeolocation: vi.fn(() => Promise.resolve<unknown>(null)),
     onWindowFocus: vi.fn(() => noopUnsubscribe),
     windowMinimize: vi.fn(() => Promise.resolve()),
@@ -109,7 +106,7 @@ describe("browser bridge", () => {
     expect(await createBrowserBridge().connectionStore.read()).toBeNull();
   });
 
-  it("accepts a hosted connection without a refresh token", async () => {
+  it("rejects a stored hosted connection that has no refresh token", async () => {
     const hosted: ConnectionConfig = {
       url: "https://box.example",
       accessToken: "at",
@@ -119,7 +116,7 @@ describe("browser bridge", () => {
     };
     const bridge = createBrowserBridge();
     await bridge.connectionStore.write(hosted);
-    expect(await bridge.connectionStore.read()).toEqual(hosted);
+    expect(await bridge.connectionStore.read()).toBeNull();
   });
 });
 

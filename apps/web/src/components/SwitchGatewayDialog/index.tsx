@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useResource } from "@vesta/core/react";
-import { Cloud, Server, Trash2 } from "lucide-react";
+import { Server, Trash2 } from "lucide-react";
 import { router } from "@/router";
 import { getConnection, restoreConnection } from "@/lib/connection";
 import { cn } from "@/lib/utils";
@@ -68,8 +68,6 @@ function GatewayRow({
   onSwitch: () => void;
   onForget: () => void;
 }) {
-  const Icon = gateway.hosted ? Cloud : Server;
-  const kind = gateway.hosted ? "vesta.run" : "self-hosted";
   return (
     <li
       className={cn(
@@ -87,14 +85,14 @@ function GatewayRow({
         className="flex min-w-0 flex-1 items-center gap-3 rounded-xl py-2.5 pl-3 text-left disabled:cursor-default"
       >
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
-          <Icon className="size-4" />
+          <Server className="size-4" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-sm font-medium leading-none">
             {gatewayHost(gateway.url)}
           </span>
           <span className="truncate text-xs leading-none text-muted-foreground">
-            {kind} · {lastConnectedLabel(gateway.lastConnectedAt)}
+            self-hosted · {lastConnectedLabel(gateway.lastConnectedAt)}
           </span>
         </span>
       </button>
