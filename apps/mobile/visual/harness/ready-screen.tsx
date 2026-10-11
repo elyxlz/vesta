@@ -11,13 +11,7 @@ export function ReadyScreen({ children }: { children: ReactNode }) {
       {children}
       {!active && (
         <View
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            width: 1,
-            height: 1,
-          }}
+          style={{ position: "absolute", top: "50%", left: "50%", width: 1, height: 1 }}
           pointerEvents="none"
           collapsable={false}
           testID="visual-harness-ready"
