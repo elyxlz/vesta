@@ -304,11 +304,18 @@ jobs:
       - name: Install app deps
         run: npm --prefix apps ci
 
+      # EAS Submit reads the App Store Connect API key from these three variables.
       - name: Build and submit iOS to TestFlight
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: ./scripts/deliver-mobile.sh --platform ios --profile production --submit
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          EXPO_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          export EXPO_ASC_API_KEY_PATH="$RUNNER_TEMP/asc-api-key.p8"
+          printf '%s\n' "$ASC_API_KEY_P8" > "$EXPO_ASC_API_KEY_PATH"
+          ./scripts/deliver-mobile.sh --platform ios --profile production --submit
 
   mobile-android:
     name: Mobile · Build and attach Android APK

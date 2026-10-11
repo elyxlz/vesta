@@ -11,9 +11,13 @@ const appVariant =
     : "production";
 const isDevelopment = appVariant === "development";
 const localIosNoPush = process.env.VESTA_LOCAL_IOS_NO_PUSH === "1";
-const bundleIdentifier =
-  process.env.VESTA_APP_BUNDLE_ID ??
-  (isDevelopment ? "com.vesta.mobile.dev" : "com.vesta.mobile");
+// The two stores hold different ids: the Apple team that owns the iOS app could not take the
+// id the Play listing already ships under.
+const variantSuffix = isDevelopment ? ".dev" : "";
+const iosBundleIdentifier =
+  process.env.VESTA_APP_BUNDLE_ID ?? `ai.vesta.mobile${variantSuffix}`;
+const androidPackage =
+  process.env.VESTA_APP_BUNDLE_ID ?? `com.vesta.mobile${variantSuffix}`;
 const appIcon = isDevelopment
   ? "./assets/app-icon-dev.png"
   : "./assets/app-icon.png";
@@ -49,10 +53,10 @@ const config: ExpoConfig = {
     policy: "appVersion",
   },
   ios: {
-    bundleIdentifier,
+    bundleIdentifier: iosBundleIdentifier,
     buildNumber: "1",
     supportsTablet: false,
-    ...(localIosNoPush ? { appleTeamId: "H78XNVF428" } : {}),
+    ...(localIosNoPush ? { appleTeamId: "QB32XS5CT9" } : {}),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription:
@@ -65,7 +69,7 @@ const config: ExpoConfig = {
     },
   },
   android: {
-    package: bundleIdentifier,
+    package: androidPackage,
     adaptiveIcon: {
       foregroundImage: androidForegroundIcon,
       backgroundColor: nativeConfigTokens.iconBackground,

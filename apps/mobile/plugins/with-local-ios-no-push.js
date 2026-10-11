@@ -4,7 +4,7 @@ const {
   withXcodeProject,
 } = require("expo/config-plugins");
 
-const LOCAL_APPLE_TEAM_ID = "H78XNVF428";
+const LOCAL_APPLE_TEAM_ID = "QB32XS5CT9";
 
 module.exports = function withLocalIosNoPush(config) {
   config = withEntitlementsPlist(config, (modConfig) => {
