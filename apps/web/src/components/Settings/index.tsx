@@ -29,6 +29,7 @@ import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { UpdatesCard } from "@/components/Settings/UpdatesCard";
 import { StartupCard } from "@/components/Settings/StartupCard";
 import { CredentialStorageCard } from "@/components/Settings/CredentialStorageCard";
+import { GetAppsCard } from "@/components/GetApps";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -70,6 +71,8 @@ export function AppSettings() {
       <UpdatesCard />
 
       <StartupCard />
+
+      <GetAppsCard />
 
       <Card size="sm" className="md:col-span-2">
         <CardContent>

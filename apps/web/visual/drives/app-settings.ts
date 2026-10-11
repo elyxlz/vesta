@@ -313,6 +313,13 @@ export const APP_SETTINGS: Record<string, Scenario> = {
       await trigger.click();
     },
   },
+  "connect-get-apps": {
+    state: SIGNED_OUT,
+    drive: async (page) => {
+      await toLinkForm(page);
+      await page.getByRole("button", { name: /Linux/ }).click();
+    },
+  },
   "connect-connecting": {
     state: { ...SIGNED_OUT, routes: [{ path: "/health", hang: true }] },
     drive: submitLink,
