@@ -18,6 +18,9 @@
      subtracts this to sit its cards flush under the navbar row
      (layouts/AgentLayout/DesktopPanelView.tsx). */
   --navbar-pb: 0.625rem;
+  /* Navbar side padding: the gap above the row, so a corner button sits the
+     same distance from the two edges it meets. */
+  --navbar-px: 1rem;
 }
 
 /* macOS desktop app: the navbar row is the titlebar. The traffic lights are
@@ -26,6 +29,7 @@
    keep these two values and that constant in sync. */
 :root.desktop[data-platform="macos"] {
   --safe-area-pt: 10px;
+  --navbar-px: 10px;
   --titlebar-inset-left: 80px;
 }
 

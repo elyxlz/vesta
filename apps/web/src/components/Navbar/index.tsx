@@ -52,8 +52,9 @@ export function Navbar({
     <div
       ref={measureRef}
       data-drag-region
-      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-2.5"
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible"
       style={{
+        paddingInline: "var(--navbar-px)",
         paddingTop: "var(--safe-area-pt)",
         paddingBottom: "var(--navbar-pb)",
       }}

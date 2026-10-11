@@ -14,7 +14,7 @@ import { appTiles, type AppTile } from "./app-downloads";
 import { AndroidLogo, AppleLogo, LinuxLogo, WindowsLogo } from "./logos";
 
 // Browser only: inside the desktop app the user already has it, and it updates itself.
-const { isDesktopApp, platform } = runtimeInfo;
+const { isDesktopApp } = runtimeInfo;
 
 const LOGOS: Record<Platform, ComponentType<{ className?: string }>> = {
   macos: AppleLogo,
@@ -62,8 +62,6 @@ function AppTiles({ className }: { className?: string }) {
 
 function Tile({ tile }: { tile: AppTile }) {
   const Logo = LOGOS[tile.platform];
-  // The visitor's own device stands out, so most people never read the rest of the row.
-  const ownDevice = tile.platform === platform;
   const face = (
     <>
       <Logo className="size-5" />
@@ -72,7 +70,6 @@ function Tile({ tile }: { tile: AppTile }) {
   );
   const className = cn(
     TILE_CLASS,
-    ownDevice && "ring-1 ring-primary",
     tile.choices.length > 0 ? "hover:bg-foreground/10" : "opacity-50",
   );
   const [only, ...rest] = tile.choices;

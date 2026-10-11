@@ -32,7 +32,7 @@ export function AgentCard({ agent }: AgentCardProps) {
   const inFlight = request !== "idle" || agent.operation !== null;
 
   return (
-    <Card className="flex items-center justify-center h-full w-full">
+    <Card className="flex items-center justify-center h-full w-full py-0">
       <button
         type="button"
         aria-label={`open ${agent.name}`}
