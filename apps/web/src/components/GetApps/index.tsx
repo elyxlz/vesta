@@ -88,7 +88,7 @@ function Tile({ tile }: { tile: AppTile }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className={className}>{face}</DropdownMenuTrigger>
-      <DropdownMenuContent align="center">
+      <DropdownMenuContent align="center" size="sm">
         {tile.choices.map((choice) => (
           <DropdownMenuItem key={choice.url} asChild className="justify-center">
             <a href={choice.url}>{choice.label}</a>
