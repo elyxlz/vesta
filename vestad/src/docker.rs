@@ -1472,6 +1472,27 @@ async fn gpu_available(docker: &Docker) -> GpuStatus {
     }
 }
 
+const GPU_CAPABILITY: &str = "gpu";
+
+async fn gpu_passthrough_ready(docker: &Docker) -> bool {
+    matches!(gpu_available(docker).await, GpuStatus::Ready)
+}
+
+/// Docker refuses to start a container that asks for a GPU while the host's NVIDIA stack is
+/// broken (a driver upgraded under a running kernel, say), so a request the host cannot serve
+/// takes the agent down at its next start.
+fn requests_gpu(info: &bollard::models::ContainerInspectResponse) -> bool {
+    info.host_config
+        .as_ref()
+        .and_then(|h| h.device_requests.as_deref())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|request| request.capabilities.as_deref())
+        .flatten()
+        .flatten()
+        .any(|capability| capability == GPU_CAPABILITY)
+}
+
 // --- Container lifecycle helpers (used by backup.rs) ---
 
 pub async fn stop_container_with_timeout(
@@ -2666,7 +2687,7 @@ pub async fn create_container(
         GpuStatus::Ready => {
             device_requests = Some(vec![bollard::models::DeviceRequest {
                 count: Some(-1),
-                capabilities: Some(vec![vec!["gpu".to_string()]]),
+                capabilities: Some(vec![vec![GPU_CAPABILITY.to_string()]]),
                 ..Default::default()
             }]);
             tracing::info!("GPU detected, enabling passthrough");
@@ -3030,23 +3051,31 @@ pub async fn restart_agent(
     // A grant change can't be applied by a plain restart (binds are fixed at creation), so if the
     // desired mounts drifted from the container, recreate; otherwise a cheap restart.
     if let Ok(raw) = docker.inspect_container(&cname, None).await {
-        // Scope the recreate to GRANT changes only: a plain restart can't add/remove a bind, but we
-        // must not turn every restart into a full rebuild for unrelated drift (that's reconcile's job,
-        // and it would mint a new agent token mid-session). Only user-mount drift triggers a recreate.
+        // Scope the recreate to what a plain restart cannot survive or apply: a changed grant (binds
+        // are fixed at creation) and a GPU request the host can no longer serve (the start half of
+        // the restart would fail and leave the agent down). Any other drift is reconcile's job: a
+        // rebuild on every restart would mint a new agent token mid-session.
         let actual_mounts = actual_user_mounts(&raw);
-        if user_mounts_drifted(&actual_mounts, user_mounts) {
+        let mounts_drifted = user_mounts_drifted(&actual_mounts, user_mounts);
+        let gpu_lost = requests_gpu(&raw) && !gpu_passthrough_ready(docker).await;
+        if mounts_drifted || gpu_lost {
             // A recreate snapshots the container; skip it when disk is critically low (a mid-snapshot
-            // failure corrupts the writable layer). Applying the grant IS the point of this restart, and
-            // reconcile also skips rebuilds on low disk — so a plain restart wouldn't apply it either.
-            // Surface a truthful error instead of reporting success on a grant we didn't apply.
+            // failure corrupts the writable layer). The recreate IS the point of this restart, and
+            // reconcile also skips rebuilds on low disk, so surface a truthful error and leave the
+            // agent running as it is.
             let available = docker_storage_available_bytes(docker).await;
             if reconcile_blocked_by_disk(available) {
-                tracing::error!(agent = %name, "mount grants changed but disk is critically low; cannot recreate to apply them");
+                let blocked = if mounts_drifted {
+                    "apply host-folder grants for"
+                } else {
+                    "restart without the unavailable GPU"
+                };
+                tracing::error!(agent = %name, mounts_drifted, gpu_lost, "restart needs a recreate but disk is critically low");
                 return Err(DockerError::Failed(format!(
-                    "cannot apply host-folder grants for '{name}': disk is critically low (a recreate needs free space); free space and retry"
+                    "cannot {blocked} '{name}': disk is critically low (a recreate needs free space); free space and retry"
                 )));
             }
-            tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
+            tracing::info!(agent = %name, mounts_drifted, gpu_lost, "restart: recreating");
             let effective = restart_reason_for_mount_change(reason, &actual_mounts, user_mounts);
             handoff_shutdown_reason(docker, name, &cname, &effective).await;
             rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
@@ -3183,6 +3212,7 @@ pub async fn reconcile_containers(
     // can't redirect the rebuild into wiping bind-mounted core code. The whole batch is determined
     // and marked as rebuilding up front: rebuilds run serially and take minutes each, so agents
     // waiting their turn must already report `Rebuilding`, not `Stopped`.
+    let gpu_ready = gpu_passthrough_ready(docker).await;
     let mut pending = Vec::new();
     for ManagedAgent {
         cname,
@@ -3198,7 +3228,7 @@ pub async fn reconcile_containers(
         };
         let desired_mounts = mounts_for(name);
         let expected_network = expected_network_mode(docker, &env_config.agents_dir, name).await;
-        if !needs_rebuild(cname, &expected_network, &raw, &desired_mounts) {
+        if !needs_rebuild(cname, &expected_network, &raw, &desired_mounts, gpu_ready) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -3413,6 +3443,7 @@ fn needs_rebuild(
     expected_network: &str,
     info: &bollard::models::ContainerInspectResponse,
     desired_mounts: &[crate::mounts::HostMount],
+    gpu_ready: bool,
 ) -> bool {
     let mounts = info.mounts.as_deref().unwrap_or(&[]);
     let has_env_mount = mounts
@@ -3502,6 +3533,12 @@ fn needs_rebuild(
 
     if user_mounts_drifted(&actual_user_mounts(info), desired_mounts) {
         tracing::info!(container = %cname, "rebuild needed: host-mount grants changed");
+        return true;
+    }
+
+    // Both directions: drop a request the host cannot serve, and give the GPU back once it can.
+    if requests_gpu(info) != gpu_ready {
+        tracing::info!(container = %cname, gpu_ready, "rebuild needed: GPU passthrough changed");
         return true;
     }
 
@@ -4220,6 +4257,43 @@ mod tests {
 
         let missing = container_info_from("vesta-bot", &inspect_with_started_at(None), None);
         assert_eq!(missing.started_at, None);
+    }
+
+    fn inspect_with_device_capabilities(
+        capabilities: Option<&[&str]>,
+    ) -> bollard::models::ContainerInspectResponse {
+        let device_requests = capabilities.map(|capabilities| {
+            vec![bollard::models::DeviceRequest {
+                count: Some(-1),
+                capabilities: Some(vec![capabilities.iter().map(|c| (*c).to_string()).collect()]),
+                ..Default::default()
+            }]
+        });
+        bollard::models::ContainerInspectResponse {
+            host_config: Some(bollard::models::HostConfig {
+                device_requests,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn requests_gpu_reads_the_gpu_capability_from_the_device_requests() {
+        assert!(requests_gpu(&inspect_with_device_capabilities(Some(&[
+            "gpu"
+        ]))));
+        assert!(requests_gpu(&inspect_with_device_capabilities(Some(&[
+            "compute", "gpu"
+        ]))));
+        assert!(!requests_gpu(&inspect_with_device_capabilities(Some(&[
+            "compute"
+        ]))));
+        assert!(!requests_gpu(&inspect_with_device_capabilities(Some(&[]))));
+        assert!(!requests_gpu(&inspect_with_device_capabilities(None)));
+        assert!(!requests_gpu(
+            &bollard::models::ContainerInspectResponse::default()
+        ));
     }
 
     #[test]
@@ -4958,7 +5032,13 @@ mod tests {
             .await
             .expect("inspect");
         // Every caller in this file names its test container the same as its agent name.
-        needs_rebuild(cname, &agent_network_name(cname), &info, desired)
+        needs_rebuild(
+            cname,
+            &agent_network_name(cname),
+            &info,
+            desired,
+            requests_gpu(&info),
+        )
     }
 
     fn temp_core_mount() -> tempfile::TempDir {
@@ -5567,14 +5647,14 @@ mod tests {
 
         let expected = expected_network_mode(&docker, &env_config.agents_dir, &agent).await;
         assert!(
-            !needs_rebuild(&cname, &expected, &info, &[]),
+            !needs_rebuild(&cname, &expected, &info, &[], requests_gpu(&info)),
             "a correct proxied agent must not rebuild"
         );
 
         crate::egress::delete_proxy(&env_config.agents_dir, &agent);
         let expected = expected_network_mode(&docker, &env_config.agents_dir, &agent).await;
         assert!(
-            needs_rebuild(&cname, &expected, &info, &[]),
+            needs_rebuild(&cname, &expected, &info, &[], requests_gpu(&info)),
             "a cleared proxy must rebuild"
         );
 
@@ -5584,7 +5664,7 @@ mod tests {
             .expect("remove sidecar");
         let expected = expected_network_mode(&docker, &env_config.agents_dir, &agent).await;
         assert!(
-            needs_rebuild(&cname, &expected, &info, &[]),
+            needs_rebuild(&cname, &expected, &info, &[], requests_gpu(&info)),
             "a missing sidecar must rebuild"
         );
     }
@@ -6398,6 +6478,53 @@ mod tests {
         assert!(
             !inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
             "fresh container should NOT need rebuild"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_needs_rebuild_true_when_gpu_passthrough_no_longer_matches_the_host() {
+        let docker = test_docker();
+        let tc = TestContainer::new("rebuild-gpu");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
+            (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
+        ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
+
+        create_test_container_async(
+            &docker,
+            &tc,
+            &mounts,
+            agent_container_cmd(),
+            &agent_network_name(&tc.name),
+            RESTART_POLICY,
+        )
+        .await;
+
+        let info = docker
+            .inspect_container(&tc.name, None)
+            .await
+            .expect("inspect");
+        let network = agent_network_name(&tc.name);
+        assert!(
+            !requests_gpu(&info),
+            "the test container is created without a GPU request"
+        );
+        assert!(
+            !needs_rebuild(&tc.name, &network, &info, &[], false),
+            "no request on a host without a usable GPU should NOT need rebuild"
+        );
+        assert!(
+            needs_rebuild(&tc.name, &network, &info, &[], true),
+            "no request on a host whose GPU is usable should need rebuild"
         );
     }
 
