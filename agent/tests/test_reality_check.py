@@ -468,3 +468,30 @@ def test_an_old_restart_loop_ages_out(tmp_path):
     run = _run(home)
 
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+def _restart_lines(day: str, down_at: str, up_at: str) -> str:
+    shutdown = f"{GREEN}{day} {down_at} [SYSTEM] [SHUTDOWN] Shutting down (compaction){RESET}\n"
+    startup = f"{GREEN}{day} {up_at} [SYSTEM] [INIT] agent starting on vesta v0.0.0{RESET}\n"
+    return shutdown + startup
+
+
+def test_a_long_shutdown_to_startup_gap_goes_red(tmp_path):
+    # Nothing runs while the agent is down, so a restart that failed for hours leaves only this gap.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text(_restart_lines(_day(0), "04:00:00", "10:00:00"))
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED agent was down 360 minutes" in run.stdout
+
+
+def test_a_quick_restart_stays_green(tmp_path):
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text(_restart_lines(_day(0), "04:00:00", "04:00:02"))
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  longest shutdown-to-startup gap in 2 days: 0 minutes" in run.stdout

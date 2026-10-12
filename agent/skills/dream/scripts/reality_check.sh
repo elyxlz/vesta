@@ -114,6 +114,23 @@ else
     ok "the provider refused $refused turns today"
 fi
 
+# Downtime: a shutdown whose next startup comes much later means the agent sat stopped (a restart
+# that failed, a host fault) and every message and reminder in that window waited or was skipped.
+# Nothing else records it, because nothing runs while the agent is down. Shutdown and startup lines
+# carry their date and time as the first two fields once colour codes are stripped.
+gap=$(cat "$HOME"/agent/logs/vesta.log* 2>/dev/null | sed "s/$esc\[[0-9;]*m//g" | grep -v '\[AGENT\]' \
+    | grep -E '\[SHUTDOWN\] Shutting down|\[INIT\] .* starting' | sort | awk -v today="$today" -v yesterday="$yesterday" '
+    { cmd = "date -d \"" $1 " " $2 "\" +%s"; cmd | getline t; close(cmd) }
+    /\[SHUTDOWN\]/ { down = t; day = $1; next }
+    /\[INIT\]/ && down && (day == today || day == yesterday) { g = int((t - down) / 60); if (g > max) { max = g; at = day " " } down = 0 }
+    END { print max + 0, at }')
+gap_min=${gap%% *}
+if [ "$gap_min" -ge "${DOWNTIME_MIN_RED:-30}" ]; then
+    bad "agent was down $gap_min minutes after a shutdown on ${gap#* }; find why the restart failed (vestad /gateway/logs) and what fired while down"
+else
+    ok "longest shutdown-to-startup gap in 2 days: $gap_min minutes"
+fi
+
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
 # checkpoints the recent commits touch only the -wal sibling; judge by the newest of the pair.
 db="$HOME/agent/data/events.db"
