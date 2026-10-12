@@ -266,10 +266,10 @@ def _do_chunked_upload(
         response = _retry_http_call(
             lambda chunk=chunk, chunk_headers=chunk_headers: client.put(upload_url, content=chunk, headers=chunk_headers), _MAX_RETRIES
         )
-        if response:
-            if response.status_code in (200, 201):
-                return response.json()
-            break
+        # Mail sessions answer 200 + nextExpectedRanges per chunk and 201 (often empty) when done.
+        body = response.json() if response and response.content else {}
+        if response and (response.status_code == 201 or "nextExpectedRanges" not in body):
+            return body
 
     raise ValueError("Upload completed but no final response received")
 
@@ -313,10 +313,8 @@ def upload_large_mail_attachment(
     }
 
     session = create_mail_upload_session(conn, message_id, attachment_item, account_id)
-    upload_url = session["uploadUrl"]
-
-    headers = {"Authorization": f"Bearer {get_token(conn.cache_file, conn.scopes, account_id=account_id)}"}
-    return _do_chunked_upload(conn.client, upload_url, data, headers, upload_chunk_size)
+    # The uploadUrl is pre-authenticated; a bearer token on it is rejected with 401.
+    return _do_chunked_upload(conn.client, session["uploadUrl"], data, {}, upload_chunk_size)
 
 
 # Config-bound convenience wrappers: the command modules always source cache_file,
