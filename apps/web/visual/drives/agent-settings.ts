@@ -93,6 +93,7 @@ interface VoiceSetting {
 interface VoiceStatus {
   configured: boolean;
   provider: string | null;
+  connected?: string[];
   enabled?: boolean;
   settings?: VoiceSetting[];
 }
@@ -246,6 +247,7 @@ const BACKUPS: BackupInfo[] = [
 const STT_STATUS: VoiceStatus = {
   configured: true,
   provider: "deepgram",
+  connected: ["deepgram", "elevenlabs"],
   enabled: true,
   settings: [
     {
@@ -279,6 +281,7 @@ const VOICE_BEHAVIORS: VoiceBehaviors = {
 const TTS_STATUS: VoiceStatus = {
   configured: true,
   provider: "elevenlabs",
+  connected: ["elevenlabs"],
   enabled: true,
   settings: [
     {
@@ -295,6 +298,14 @@ const TTS_STATUS: VoiceStatus = {
       ],
     },
   ],
+};
+
+const JUDGE_STATUS: VoiceStatus = {
+  configured: true,
+  provider: "typesafe",
+  connected: ["typesafe"],
+  enabled: false,
+  settings: [],
 };
 
 const UNCONFIGURED_VOICE: VoiceStatus = { configured: false, provider: null };
@@ -479,6 +490,7 @@ const HAPPY_ROUTES: RouteFixture[] = [
   agentRoute("/voice/stt/status", STT_STATUS),
   agentRoute("/voice/tts/status", TTS_STATUS),
   agentRoute("/voice/behavior/status", VOICE_BEHAVIORS),
+  agentRoute("/voice/judge/status", JUDGE_STATUS),
   agentRoute("/voice/stt/usage", STT_USAGE),
   agentRoute("/voice/tts/usage", TTS_USAGE),
   agentRoute(

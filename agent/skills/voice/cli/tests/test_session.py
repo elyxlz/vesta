@@ -590,3 +590,20 @@ def test_the_url_of_a_play_answers_404_after_its_session_ends(tmp_path: pl.Path,
                 assert audio.status == 404
 
     asyncio.run(scenario())
+
+
+def test_live_text_that_ends_with_no_other_frame_tells_the_client_that_it_is_over(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
+            await speak_and_start(ws)
+            await stream.emit("transcription", "uh")
+            await frames_until(ws, "state")
+
+            await stream.emit("committed", "")
+            assert await frames_until(ws, "transcript") == [
+                {"type": "resume_playback"},
+                {"type": "state", "value": "agent_speaking"},
+                {"type": "transcript", "text": ""},
+            ]
+
+    asyncio.run(scenario())

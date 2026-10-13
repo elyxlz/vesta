@@ -4,26 +4,36 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 )
 
-// This is the edge to the voice skill's server, Vesta's one voice backend (STT + TTS providers,
-// keys, and the chosen voice). The call bridge holds no provider logic: it hands 16 kHz PCM to
-// these functions and gets transcripts and synthesized speech back, so the phone call and the app
-// share the exact same voice. The voice server is a sibling daemon in the same container; vestad
-// assigns its port, so we resolve it the same idempotent way `register-service` does.
+// This is the edge to the voice skill's service, which owns the STT and TTS providers, their
+// keys, and the chosen voice. A call is one client of its voice engine: one WebSocket,
+// `GET /voice/session`, for each call. The call sends the other person's audio and the lines to
+// speak, and the engine sends the turns it heard and the audio to play
+// (~/agent/skills/voice/PROTOCOL.md is the reference). The voice service is a sibling daemon in
+// the same container; vestad assigns its port, so we resolve it the same idempotent way
+// `register-service` does.
 
 const (
 	voiceResolveTimeout = 5 * time.Second
-	voiceSynthTimeout   = 60 * time.Second
-	sttSendQueue        = 64 // peer frames buffered between the meowcaller sink and the STT socket
+	// How long `say` waits for the first audio of its line before it reports the line as queued.
+	sayAudioWait = 4 * time.Second
+	// Peer frames buffered between the meowcaller sink and the socket.
+	peerAudioQueue = 64
+	// The session's first frame: the mic format the engine accepts, and plays as PCM on the socket.
+	startSessionFrame = `{"type":"start_session","client":"whatsapp-call",` +
+		`"audio":{"encoding":"pcm_s16le","sample_rate":16000,"channels":1},` +
+		`"playback":{"delivery":"bytes","formats":["pcm_16000"]}}`
 )
 
 // insecureVestadClient talks to vestad over its self-signed TLS (fingerprint-pinned
@@ -97,122 +107,286 @@ func voiceHealthy(ctx context.Context, baseURL string) error {
 	return nil
 }
 
-// synthesizeSpeech turns text into 16 kHz mono float32 samples via the voice backend's TTS,
-// requesting the raw `pcm` format so the bytes drop straight into a call with no decode step.
-func synthesizeSpeech(ctx context.Context, baseURL, text string) ([]float32, error) {
-	body, err := json.Marshal(map[string]string{"text": text, "format": "pcm"})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/tts/speak", strings.NewReader(string(body)))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: voiceSynthTimeout}).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("voice TTS request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
-		return nil, fmt.Errorf("voice TTS returned %d: %s", resp.StatusCode, string(msg))
-	}
-	pcm, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return pcm16ToFloat(pcm), nil
+// clientFrame is a text frame that the call sends after `start_session`: `speak {id, text}` or
+// `playback {id, state}`.
+type clientFrame struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Text  string `json:"text,omitempty"`
+	State string `json:"state,omitempty"`
 }
 
-// sttTurn is one thing the caller said, finalized at end-of-turn by the voice backend.
-type sttTurn struct {
-	transcript string
+// engineFrame holds the fields of the engine's text frames that the call acts on. A field that
+// a frame type does not carry stays empty.
+type engineFrame struct {
+	Type    string   `json:"type"`
+	ID      string   `json:"id"`
+	Text    string   `json:"text"`
+	Message string   `json:"message"`
+	Reason  string   `json:"reason"`
+	Dropped []string `json:"dropped"`
 }
 
-// sttEvents carries the decoded output of a live STT session: onSpeechStart fires when the caller
-// begins a turn (the cue to stop Vesta talking, natural barge-in), and turns delivers each
-// finalized utterance.
-type sttEvents struct {
-	onSpeechStart func()
-	turns         chan sttTurn
+// spoken is what `say` learned about its line.
+type spoken struct {
+	// "speaking": audio of the line arrived, so it plays after the lines before it. "queued": no
+	// audio arrived in time, which is what a line held for the other person's turn looks like.
+	status string
+	// The engine's newest error since the line was sent. Set only with "queued".
+	engineError string
 }
 
-// streamSTT opens a WebSocket to the voice backend's /stt/listen relay and runs it until ctx is
-// cancelled (the call ended) or the socket closes. Peer PCM frames arriving on `frames` are sent
-// up as binary; the relay's TurnInfo events are decoded into speech-start cues and finalized
-// turns. The backend already fixes linear16 @ 16 kHz, exactly meowcaller's frame format, so no
-// audio params are needed on the URL.
-func streamSTT(ctx context.Context, baseURL string, frames <-chan []byte, events sttEvents) error {
-	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/stt/listen"
+// sayWaiter is one `say` that waits to learn what became of its line.
+type sayWaiter struct {
+	// nil: audio of the line arrived. An error: the line will not play.
+	result chan error
+	// How many error frames the engine had sent when the line went out.
+	errorsBefore int
+	// The play ended with no audio, and the error frame that says why did not arrive yet.
+	empty bool
+}
+
+// voiceSession is the call's side of one voice engine session. run holds the socket for the
+// life of the call, say sends a line, and speaker is the audio source the call plays.
+type voiceSession struct {
+	speaker   *callSpeaker
+	onTurn    func(text string)
+	logf      func(format string, args ...any)
+	audioWait time.Duration
+	// wake tells the writer that the outbox has frames. done closes when the session is over.
+	wake chan struct{}
+	done chan struct{}
+
+	mu      sync.Mutex
+	outbox  [][]byte
+	waiting map[string]*sayWaiter
+	// The count of the engine's error frames, and the newest message.
+	errors    int
+	lastError string
+	// Why the session is over.
+	over error
+}
+
+// newVoiceSession builds a session that is not connected yet. onTurn gets each finished turn of
+// the other person, on the socket reader.
+func newVoiceSession(onTurn func(text string), logf func(format string, args ...any)) *voiceSession {
+	s := &voiceSession{
+		onTurn:    onTurn,
+		logf:      logf,
+		audioWait: sayAudioWait,
+		wake:      make(chan struct{}, 1),
+		done:      make(chan struct{}),
+		waiting:   map[string]*sayWaiter{},
+	}
+	s.speaker = &callSpeaker{report: func(id, state string) {
+		s.send(clientFrame{Type: "playback", ID: id, State: state})
+	}}
+	return s
+}
+
+// send queues a text frame for the writer. It never blocks, so the call's send loop can report
+// playback through it, and a frame queued before the socket is open goes out when it opens.
+func (s *voiceSession) send(frame clientFrame) {
+	// A struct of strings always encodes.
+	text, _ := json.Marshal(frame)
+	s.mu.Lock()
+	s.outbox = append(s.outbox, text)
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// run opens the session and holds it until ctx is cancelled (the call ended), the engine ends
+// it, or the socket fails. It returns why the session is over, and every `say` after that fails.
+func (s *voiceSession) run(ctx context.Context, baseURL string, peerAudio <-chan []byte) error {
+	err := s.serve(ctx, baseURL, peerAudio)
+	s.mu.Lock()
+	s.over = err
+	s.mu.Unlock()
+	close(s.done)
+	return err
+}
+
+func (s *voiceSession) serve(ctx context.Context, baseURL string, peerAudio <-chan []byte) error {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/voice/session"
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
-		return fmt.Errorf("voice STT connect failed: %w", err)
+		return fmt.Errorf("voice session connect failed: %w", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	conn.SetReadLimit(-1)
+	if err := conn.Write(ctx, websocket.MessageText, []byte(startSessionFrame)); err != nil {
+		return err
+	}
+	// A write that fails ends the reader too, with the write error as the cause.
+	go func() { cancel(s.write(ctx, conn, peerAudio)) }()
+	err = s.read(ctx, conn)
+	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
+	return err
+}
 
-	sendErr := make(chan error, 1)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				sendErr <- ctx.Err()
-				return
-			case frame, ok := <-frames:
-				if !ok {
-					sendErr <- nil
-					return
-				}
-				if err := conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
-					sendErr <- err
-					return
-				}
-			}
-		}
-	}()
-
-	var latest string
+// write sends the other person's audio as binary frames and the queued text frames in order.
+func (s *voiceSession) write(ctx context.Context, conn *websocket.Conn, peerAudio <-chan []byte) error {
 	for {
 		select {
-		case err := <-sendErr:
-			return err
-		default:
-		}
-		typ, data, err := conn.Read(ctx)
-		if err != nil {
-			return err
-		}
-		if typ != websocket.MessageText {
-			continue
-		}
-		var turnInfo struct {
-			Type       string  `json:"type"`
-			Event      string  `json:"event"`
-			Transcript *string `json:"transcript"`
-		}
-		if err := json.Unmarshal(data, &turnInfo); err != nil || turnInfo.Type != "TurnInfo" {
-			continue
-		}
-		// The transcript of an EndOfTurn is the final text of the turn, also when it is empty:
-		// live text that ends in no words is no turn.
-		if turnInfo.Transcript != nil && (*turnInfo.Transcript != "" || turnInfo.Event == "EndOfTurn") {
-			latest = *turnInfo.Transcript
-		}
-		switch turnInfo.Event {
-		case "StartOfTurn":
-			if events.onSpeechStart != nil {
-				events.onSpeechStart()
+		case <-ctx.Done():
+			return ctx.Err()
+		case pcm := <-peerAudio:
+			if err := conn.Write(ctx, websocket.MessageBinary, pcm); err != nil {
+				return err
 			}
-		case "EndOfTurn":
-			if latest != "" {
-				select {
-				case events.turns <- sttTurn{transcript: latest}:
-				case <-ctx.Done():
-					return ctx.Err()
+		case <-s.wake:
+			s.mu.Lock()
+			queued := s.outbox
+			s.outbox = nil
+			s.mu.Unlock()
+			for _, text := range queued {
+				if err := conn.Write(ctx, websocket.MessageText, text); err != nil {
+					return err
 				}
-				latest = ""
 			}
 		}
 	}
+}
+
+// read does what each engine frame says until the session ends. Binary frames are the audio of
+// the last play that has no `play_done` yet.
+func (s *voiceSession) read(ctx context.Context, conn *websocket.Conn) error {
+	receiving := ""
+	for {
+		kind, data, err := conn.Read(ctx)
+		if err != nil {
+			return err
+		}
+		if kind == websocket.MessageBinary {
+			if s.speaker.feed(data) {
+				s.settle(receiving, nil)
+			}
+			continue
+		}
+		var frame engineFrame
+		if err := json.Unmarshal(data, &frame); err != nil {
+			continue
+		}
+		switch frame.Type {
+		case "turn_end":
+			s.onTurn(frame.Text)
+		case "play":
+			receiving = frame.ID
+			s.speaker.begin(frame.ID)
+		case "play_done":
+			receiving = ""
+			if s.speaker.end(frame.ID) {
+				s.madeNoAudio(frame.ID)
+			}
+		case "pause_playback":
+			s.speaker.pause()
+		case "resume_playback":
+			s.speaker.resume()
+		case "stop_playback":
+			receiving = ""
+			s.speaker.stop()
+			for _, id := range frame.Dropped {
+				s.settle(id, errors.New("the other person took the floor before this line played, so the voice service dropped it; hear their turn, then speak again"))
+			}
+		case "error":
+			s.logf("call voice session: the voice engine reported: %s", frame.Message)
+			s.engineError(frame.Message)
+		case "ended":
+			return fmt.Errorf("the voice engine ended the session: %s", frame.Reason)
+		}
+	}
+}
+
+// settle gives the `say` that waits on this line its result. A line with no waiter is a no-op.
+func (s *voiceSession) settle(id string, result error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if waiter, waits := s.waiting[id]; waits {
+		delete(s.waiting, id)
+		waiter.result <- result
+	}
+}
+
+func noAudioError(message string) error {
+	return fmt.Errorf("the voice service made no audio for this line: %s", message)
+}
+
+// madeNoAudio fails the `say` of a play that ended with no audio (a failed synthesis). The
+// engine says why in an error frame, which can arrive before the play or right after it, so a
+// waiter with no error yet stays until the next error frame.
+func (s *voiceSession) madeNoAudio(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	waiter, waits := s.waiting[id]
+	if !waits {
+		return
+	}
+	if s.errors == waiter.errorsBefore {
+		waiter.empty = true
+		return
+	}
+	delete(s.waiting, id)
+	waiter.result <- noAudioError(s.lastError)
+}
+
+func (s *voiceSession) engineError(message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.errors++
+	s.lastError = message
+	for id, waiter := range s.waiting {
+		if waiter.empty {
+			delete(s.waiting, id)
+			waiter.result <- noAudioError(message)
+		}
+	}
+}
+
+// say asks the engine to speak text and waits to learn what became of the line: its audio
+// arrived, it will not play, or nothing arrived within audioWait. The engine decides when the
+// line plays.
+func (s *voiceSession) say(text string) (spoken, error) {
+	id := uuid.NewString()
+	waiter := &sayWaiter{result: make(chan error, 1)}
+	s.mu.Lock()
+	waiter.errorsBefore = s.errors
+	s.waiting[id] = waiter
+	s.mu.Unlock()
+	s.send(clientFrame{Type: "speak", ID: id, Text: text})
+
+	timer := time.NewTimer(s.audioWait)
+	defer timer.Stop()
+	select {
+	case err := <-waiter.result:
+		if err != nil {
+			return spoken{}, err
+		}
+		return spoken{status: "speaking"}, nil
+	case <-timer.C:
+	case <-s.done:
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.waiting, id)
+	select {
+	case <-s.done:
+		return spoken{}, fmt.Errorf("the voice session of this call is over (%v), so the call cannot hear or speak; end it with `whatsapp hangup`", s.over)
+	default:
+	}
+	if waiter.empty {
+		return spoken{}, errors.New("the voice service made no audio for this line")
+	}
+	line := spoken{status: "queued"}
+	if s.errors > waiter.errorsBefore {
+		line.engineError = s.lastError
+	}
+	return line, nil
 }

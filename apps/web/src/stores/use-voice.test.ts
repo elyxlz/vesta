@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // The true edges of the voice paths: the HTTP call that registers TTS text
-// (POST /voice/tts/prepare), the authed-url owner that builds both the streamed
-// GET url and the STT socket url, and the media primitives (<audio>, WebSocket)
+// (POST /voice/tts/prepare), the authed-url owner that builds the streamed GET
+// urls and the engine socket url, and the media primitives (<audio>, WebSocket)
 // that carry them. The credential is the whole point — a media element and a
 // WebSocket cannot send a header, so both urls carry the refreshed access token
 // in the query string. Everything between the edges (the store's gate and queue,
@@ -25,7 +25,7 @@ import {
   type VoiceMode,
 } from "@/stores/use-voice";
 import { useToastStore } from "@/stores/use-toast";
-import type { TtsStatus, VoiceBehaviors } from "@/lib/voice";
+import type { TtsStatus } from "@/lib/voice";
 
 const apiJsonMock = vi.mocked(httpClient.json);
 
@@ -66,10 +66,6 @@ class FakeSocket {
     /* noop */
   }
 }
-
-const BARGE_IN_OFF: VoiceBehaviors = {
-  settings: [{ key: "barge_in", type: "bool", label: "", value: false }],
-};
 
 const ENABLED_TTS: TtsStatus = {
   configured: true,
@@ -238,16 +234,35 @@ class FakeWorkletNode {
   }
 }
 
+// The voice engine at the far end of the socket: it accepts each session at once, and the
+// test sends its frames by hand.
 class RecordingSocket extends FakeSocket {
   static instances: RecordingSocket[] = [];
+  sent: unknown[] = [];
   constructor(url: string) {
     super(url);
     RecordingSocket.instances.push(this);
-  }
-  emit(event: "StartOfTurn" | "Update" | "EndOfTurn", transcript: string) {
-    this.onmessage?.({
-      data: JSON.stringify({ type: "TurnInfo", event, transcript }),
+    queueMicrotask(() => {
+      this.emit({ type: "state", value: "listening" });
     });
+  }
+  send(data: unknown): void {
+    this.sent.push(data);
+  }
+  emit(frame: Record<string, unknown>) {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+  // One whole turn said to the agent.
+  turn(text: string) {
+    this.emit({ type: "turn_start" });
+    this.emit({ type: "transcript", text });
+    this.emit({ type: "turn_end", text });
+  }
+  // The text frames the client sent, parsed.
+  frames(): unknown[] {
+    return this.sent
+      .filter((data): data is string => typeof data === "string")
+      .map((data): unknown => JSON.parse(data));
   }
 }
 
@@ -282,10 +297,10 @@ describe("recording modes", () => {
     useVoice.getState().registerChat(send, clearInput, () => undefined);
   });
 
-  it("dials the authed STT socket url on the ws scheme", async () => {
+  it("dials the authed engine socket url on the ws scheme", async () => {
     const socket = await startRecording("dictation");
     expect(RecordingSocket.urls).toContain(
-      "wss://host:8443/agents/test-agent/voice/stt/listen?token=tok",
+      "wss://host:8443/agents/test-agent/voice/voice/session?token=tok",
     );
     useVoice.getState().stopVoice();
     expect(socket).toBeDefined();
@@ -302,12 +317,9 @@ describe("recording modes", () => {
 
   it("dictation accumulates turns and sends them all on confirm", async () => {
     const socket = await startRecording("dictation");
-    socket.emit("StartOfTurn", "");
-    socket.emit("Update", "hello");
-    socket.emit("EndOfTurn", "hello");
+    socket.turn("hello");
     expect(send).not.toHaveBeenCalled();
-    socket.emit("StartOfTurn", "");
-    socket.emit("Update", "there");
+    socket.emit({ type: "transcript", text: "there" });
     expect(useVoice.getState().liveTranscript).toBe("hello there");
     useVoice.getState().stopVoice();
     expect(send).toHaveBeenCalledTimes(1);
@@ -317,13 +329,10 @@ describe("recording modes", () => {
 
   it("a conversation sends each turn as it ends and keeps listening", async () => {
     const socket = await startRecording("conversation");
-    socket.emit("StartOfTurn", "");
-    socket.emit("Update", "first");
-    socket.emit("EndOfTurn", "first");
+    socket.turn("first");
     expect(send).toHaveBeenCalledWith("first", "voice");
     expect(useVoice.getState().recordingMode).toBe("conversation");
-    socket.emit("StartOfTurn", "");
-    socket.emit("EndOfTurn", "second");
+    socket.turn("second");
     expect(send).toHaveBeenLastCalledWith("second", "voice");
     useVoice.getState().stopVoice();
     expect(send).toHaveBeenCalledTimes(2);
@@ -339,15 +348,14 @@ describe("recording modes", () => {
 
   it("discarding a dictation sends nothing", async () => {
     const socket = await startRecording("dictation");
-    socket.emit("StartOfTurn", "");
-    socket.emit("EndOfTurn", "never mind");
+    socket.turn("never mind");
     useVoice.getState().cancelVoice();
     expect(send).not.toHaveBeenCalled();
     expect(useVoice.getState().recordingMode).toBeNull();
     expect(useVoice.getState().liveTranscript).toBe("");
   });
 
-  it("reports listening once the microphone and socket are up", async () => {
+  it("reports listening once the microphone is up and the engine accepted the session", async () => {
     useVoice.getState().startVoice("conversation");
     expect(useVoice.getState().listening).toBe(false);
     await startRecording("conversation");
@@ -356,34 +364,23 @@ describe("recording modes", () => {
     expect(useVoice.getState().listening).toBe(false);
   });
 
-  it("a user turn leaves playback alone in dictation when the barge_in behavior is off", async () => {
-    useVoice.getState().setBehaviors(BARGE_IN_OFF);
-    const socket = await startRecording("dictation");
-    useVoice.getState().speak("a long reply");
-    await vi.waitFor(() => {
-      expect(useVoice.getState().isSpeaking).toBe(true);
+  it("dictation states that the user's voice never stops a reply, and a conversation that it can", async () => {
+    const dictation = await startRecording("dictation");
+    expect(dictation.frames()[0]).toMatchObject({
+      type: "start_session",
+      client: "web",
+      barge_in: false,
     });
-    socket.emit("StartOfTurn", "");
-    expect(useVoice.getState().isSpeaking).toBe(true);
-  });
-
-  it("a user turn always cuts playback in a conversation, whatever barge_in says", async () => {
-    useVoice.getState().setBehaviors(BARGE_IN_OFF);
-    const socket = await startRecording("conversation");
-    useVoice.getState().speak("a long reply");
-    await vi.waitFor(() => {
-      expect(useVoice.getState().isSpeaking).toBe(true);
-    });
-    socket.emit("StartOfTurn", "");
-    expect(useVoice.getState().isSpeaking).toBe(false);
+    useVoice.getState().cancelVoice();
+    const conversation = await startRecording("conversation");
+    expect(conversation.frames()[0]).toMatchObject({ barge_in: true });
   });
 
   it("a conversation silent for the inactivity budget ends with a toast", async () => {
     const socket = await startRecording("conversation");
     vi.useFakeTimers();
     try {
-      socket.emit("StartOfTurn", "");
-      socket.emit("EndOfTurn", "last words");
+      socket.turn("last words");
       vi.advanceTimersByTime(CONVERSATION_INACTIVITY_MS - 1);
       expect(useVoice.getState().recordingMode).toBe("conversation");
       vi.advanceTimersByTime(1);
@@ -397,16 +394,16 @@ describe("recording modes", () => {
     }
   });
 
-  it("a transcription error mid-conversation resets the session and disarms the inactivity toast", async () => {
+  it("an engine that ends a conversation resets the session and disarms the inactivity toast", async () => {
     const socket = await startRecording("conversation");
     vi.useFakeTimers();
     try {
-      socket.onmessage?.({ data: JSON.stringify({ type: "Error" }) });
+      socket.emit({ type: "ended", reason: "stt_failed" });
       expect(useVoice.getState()).toMatchObject({
         recordingMode: null,
         listening: false,
         liveTranscript: "",
-        voiceError: "Transcription service error",
+        voiceError: "The transcription service failed",
       });
       vi.advanceTimersByTime(CONVERSATION_INACTIVITY_MS);
       expect(useToastStore.getState().current).toBeNull();
@@ -482,12 +479,38 @@ describe("recording modes", () => {
     expect(FakeAudio.created).toHaveLength(0);
   });
 
-  it("a conversation speaks even while muted", async () => {
+  it("a conversation speaks even while muted: the reply goes to the engine", async () => {
     useVoice.setState({ muted: true });
-    await startRecording("conversation");
+    const socket = await startRecording("conversation");
     useVoice.getState().speak("a conversation reply");
+    expect(socket.frames().at(-1)).toEqual({
+      type: "speak",
+      id: "reply-1",
+      text: "a conversation reply",
+    });
+    // The engine speaks, so the streamed read-aloud route is not asked.
+    expect(apiJsonMock).not.toHaveBeenCalled();
+  });
+
+  it("plays what the engine sends from the authed play url and reports the speaker", async () => {
+    const socket = await startRecording("conversation");
+    socket.emit({
+      type: "play",
+      id: "reply-1",
+      format: "mp3_22050",
+      url: "/voice/play/tok1",
+    });
     await vi.waitFor(() => {
-      expect(FakeAudio.created.length).toBeGreaterThan(0);
+      expect(FakeAudio.created.map((a) => a.src)).toEqual([
+        "https://host:8443/agents/test-agent/voice/voice/play/tok1?token=tok",
+      ]);
+    });
+    await vi.waitFor(() => {
+      expect(socket.frames().at(-1)).toEqual({
+        type: "playback",
+        id: "reply-1",
+        state: "finished",
+      });
     });
   });
 });

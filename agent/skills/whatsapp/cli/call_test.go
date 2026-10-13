@@ -2,14 +2,15 @@ package main
 
 import (
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	meowcaller "github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow/types"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func TestPCM16RoundTripPreservesSamples(t *testing.T) {
@@ -36,52 +37,81 @@ func TestFloatFrameToPCM16ClampsOutOfRange(t *testing.T) {
 	}
 }
 
-func TestPCMSourceFramesAndZeroPadsThenEOF(t *testing.T) {
-	// 2000 samples -> two full FrameSamples frames plus a short final frame, zero-padded to full
-	// length, then io.EOF.
-	total := 2*meowcaller.FrameSamples + 80
-	samples := make([]float32, total)
-	for i := range samples {
-		samples[i] = 0.1
-	}
-	src := newPCMSource(samples)
-
-	for frameNum := 0; frameNum < 3; frameNum++ {
-		frame, err := src.ReadFrame()
-		if err != nil {
-			t.Fatalf("frame %d: unexpected error %v", frameNum, err)
-		}
-		if len(frame) != meowcaller.FrameSamples {
-			t.Fatalf("frame %d: length %d want %d", frameNum, len(frame), meowcaller.FrameSamples)
-		}
-	}
-	// The final frame's tail past the 80 real samples must be silence (zero-padded).
-	// Re-read is exhausted.
-	if _, err := src.ReadFrame(); err != io.EOF {
-		t.Fatalf("expected io.EOF after draining, got %v", err)
-	}
-}
-
-func TestPCMSourceLastFrameZeroPadsTail(t *testing.T) {
-	samples := []float32{0.5, 0.5, 0.5}
-	frame, err := newPCMSource(samples).ReadFrame()
-	if err != nil {
-		t.Fatalf("unexpected error %v", err)
-	}
-	if len(frame) != meowcaller.FrameSamples {
-		t.Fatalf("length %d want %d", len(frame), meowcaller.FrameSamples)
-	}
-	for i := 3; i < len(frame); i++ {
-		if frame[i] != 0 {
-			t.Fatalf("tail sample %d not zero-padded: %v", i, frame[i])
-		}
-	}
-}
-
 func TestSayWithoutActiveCallErrors(t *testing.T) {
 	cm := &CallManager{}
 	if _, err := cm.Say("hello"); err == nil {
 		t.Fatal("expected an error saying into a call with no active call")
+	}
+}
+
+// bridgedCall starts the bridge of an answered inbound call from Alice against the fake engine,
+// and returns the manager and the directory its notifications land in. The call is a bare
+// meowcaller.Call: it takes the bridge's sink and player, and no media loop runs on it.
+func bridgedCall(t *testing.T, engine *fakeEngine) (*CallManager, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cm := &CallManager{wac: &WhatsAppClient{notificationsDir: dir, instance: "personal", logger: waLog.Noop}}
+	peer := types.NewJID("15551234567", types.DefaultUserServer)
+	ac := cm.beginLocked(&meowcaller.Call{}, peer, "Alice", "+15551234567", "inbound", engine.url)
+	ac.answered = true
+	cm.startBridge(ac)
+	t.Cleanup(func() {
+		ac.cancel()
+		<-ac.voice.done
+	})
+	return cm, dir
+}
+
+func TestTurnEndBecomesOneCallUtteranceNotification(t *testing.T) {
+	engine := startFakeEngine(t)
+	_, dir := bridgedCall(t, engine)
+	side := engine.session(t)
+
+	side.send(map[string]any{"type": "turn_start"})
+	side.send(map[string]any{"type": "turn_end", "text": "are you there"})
+	// The bridge handles the frames in order, so its answer to an empty play says that the turn
+	// before it was handled.
+	side.send(map[string]any{"type": "play", "id": "marker", "format": "pcm_16000"})
+	side.send(map[string]any{"type": "play_done", "id": "marker"})
+	await(t, engine.text, "the report of the marker play")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one notification file, got %d (%v)", len(entries), err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	var got callNotif
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("notification is not valid json: %v", err)
+	}
+	if got.Type != "call_utterance" || got.Message != "are you there" || got.ContactName != "Alice" || got.Direction != "inbound" {
+		t.Errorf("notification fields are wrong: %+v", got)
+	}
+}
+
+func TestSayOnABridgedCallAnswersSpeakingWhenItsAudioArrives(t *testing.T) {
+	engine := startFakeEngine(t)
+	cm, _ := bridgedCall(t, engine)
+	side := engine.session(t)
+
+	type answer struct {
+		result any
+		err    error
+	}
+	said := make(chan answer, 1)
+	go func() {
+		result, err := cm.Say("Hello Alice.")
+		said <- answer{result, err}
+	}()
+	side.play(side.speakID("Hello Alice."), tone(0.1, 1))
+
+	got := await(t, said, "say to return")
+	want := map[string]any{"status": "speaking", "contact_name": "Alice"}
+	if got.err != nil || !reflect.DeepEqual(got.result, want) {
+		t.Fatalf("say = %+v, want %v", got, want)
 	}
 }
 

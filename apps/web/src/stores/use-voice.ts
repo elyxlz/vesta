@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { usePreferences } from "@/stores/use-preferences";
 import {
-  bargeInEnabled,
   createVoiceSession,
   type InputMethod,
   type ServiceInfo,
@@ -10,7 +9,10 @@ import {
 } from "@vesta/core";
 import {
   browserCapture,
-  browserPlayer,
+  browserSpeaker,
+  fetchJudgeStatus,
+  prepareSpeechUrl,
+  voicePlayUrl,
   voiceWsUrl,
   fetchSttStatus,
   fetchTtsStatus,
@@ -38,6 +40,8 @@ interface VoiceState {
   // Status
   sttStatus: SttStatus | null;
   ttsStatus: TtsStatus | null;
+  // The judge role; null until loaded, and for an agent whose voice service has none.
+  judgeStatus: SttStatus | null;
   // What every voice session of this agent does, whichever provider is selected; null until
   // loaded, and for an agent whose voice service reports none.
   behaviors: VoiceBehaviors | null;
@@ -49,7 +53,7 @@ interface VoiceState {
 
   // Recording (set at press time so a release that beats the microphone still lands).
   recordingMode: VoiceMode | null;
-  // True once the microphone and the transcription socket are up.
+  // True once the microphone is up and the voice engine accepted the session.
   listening: boolean;
   liveTranscript: string;
   voiceError: string | null;
@@ -60,13 +64,10 @@ interface VoiceState {
   // ambient read-aloud of replies outside one.
   muted: boolean;
   // Microphone mute inside a conversation: silence flows instead of speech, so the session
-  // (and any live turn's endpointing) stays up while nothing the user says gets through.
+  // (and the end of a live turn) stays up while nothing the user says gets through.
   micMuted: boolean;
   // End a silent conversation on its own after the inactivity window (on by default).
   conversationAutoEnd: boolean;
-  // A conversation yields the floor: replies are held off the speaker while you talk, and the
-  // agent is told you are speaking so it waits for your whole thought (on by default).
-  conversationYield: boolean;
 
   // Actions
   startVoice: (mode: VoiceMode) => void;
@@ -80,9 +81,8 @@ interface VoiceState {
   toggleMuted: () => void;
   toggleMicMuted: () => void;
   setConversationAutoEnd: (value: boolean) => void;
-  setConversationYield: (value: boolean) => void;
   // The chat's send, its input reset (a voice mode takes the composer over, so typed text is
-  // dropped when one starts), and the chat socket's speaking report for a yielding conversation.
+  // dropped when one starts), and the chat socket's speaking report for a conversation.
   registerChat: (
     send: (text: string, inputMethod?: InputMethod) => void,
     clearInput: () => void,
@@ -93,6 +93,7 @@ interface VoiceState {
   patchStt: (patch: Partial<SttStatus>) => void;
   patchTts: (patch: Partial<TtsStatus>) => void;
   setBehaviors: (behaviors: VoiceBehaviors | null) => void;
+  setJudgeStatus: (status: SttStatus | null) => void;
   refreshVoiceStatus: () => void;
 
   // Internal (used by VoiceStoreEffects)
@@ -138,7 +139,14 @@ export const useVoice = create<VoiceState>((set, get) => {
     {
       buildUrl: () => voiceWsUrl(get().agentName ?? ""),
       capture: browserCapture(() => get().micMuted),
-      player: browserPlayer(() => get().agentName),
+      speaker: browserSpeaker(),
+      playUrl: (path) => voicePlayUrl(get().agentName ?? "", path),
+      prepareSpeech: (text) => {
+        const name = get().agentName;
+        if (!name) return Promise.reject(new Error("no agent selected"));
+        return prepareSpeechUrl(name, text);
+      },
+      client: "web",
     },
     {
       onTranscript: (text) => set({ liveTranscript: text }),
@@ -163,9 +171,7 @@ export const useVoice = create<VoiceState>((set, get) => {
           ),
     },
     () => ({
-      bargeIn: bargeInEnabled(get().behaviors),
       inactivityMs: get().conversationAutoEnd ? CONVERSATION_INACTIVITY_MS : 0,
-      yieldToUser: get().conversationYield,
     }),
   );
 
@@ -177,6 +183,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     sttStatus: null,
     ttsStatus: null,
     behaviors: null,
+    judgeStatus: null,
     sttAvailable: false,
     speechEnabled: false,
     voiceConfigured: false,
@@ -184,7 +191,6 @@ export const useVoice = create<VoiceState>((set, get) => {
     recordingMode: null,
     micMuted: false,
     conversationAutoEnd: usePreferences.getState().conversationAutoEnd,
-    conversationYield: usePreferences.getState().conversationYield,
     listening: false,
     liveTranscript: "",
     voiceError: null,
@@ -251,10 +257,6 @@ export const useVoice = create<VoiceState>((set, get) => {
       usePreferences.getState().update({ conversationAutoEnd: value });
       set({ conversationAutoEnd: value });
     },
-    setConversationYield: (value) => {
-      usePreferences.getState().update({ conversationYield: value });
-      set({ conversationYield: value });
-    },
     toggleMuted: () => {
       const next = !get().muted;
       usePreferences.getState().update({ voiceMuted: next });
@@ -290,6 +292,10 @@ export const useVoice = create<VoiceState>((set, get) => {
       set({ behaviors });
     },
 
+    setJudgeStatus: (judgeStatus) => {
+      set({ judgeStatus });
+    },
+
     refreshVoiceStatus: () => {
       const { agentName } = get();
       if (!agentName) return;
@@ -297,12 +303,14 @@ export const useVoice = create<VoiceState>((set, get) => {
         fetchSttStatus(agentName),
         fetchTtsStatus(agentName),
         fetchVoiceBehaviors(agentName),
+        fetchJudgeStatus(agentName),
       ])
-        .then(([stt, tts, behaviors]) => {
+        .then(([stt, tts, behaviors, judgeStatus]) => {
           set({
             sttStatus: stt,
             ttsStatus: tts,
             behaviors,
+            judgeStatus,
             ...deriveStatus(stt, tts),
           });
         })

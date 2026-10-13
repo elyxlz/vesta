@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
 import {
+  fetchJudgeStatus,
   fetchSttStatus,
   fetchTtsStatus,
   fetchVoiceBehaviors,
@@ -18,6 +19,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
   const _setSttStatus = useVoice((s) => s._setSttStatus);
   const _setTtsStatus = useVoice((s) => s._setTtsStatus);
   const setBehaviors = useVoice((s) => s.setBehaviors);
+  const setJudgeStatus = useVoice((s) => s.setJudgeStatus);
   const _setVoiceError = useVoice((s) => s._setVoiceError);
   const _cleanup = useVoice((s) => s._cleanup);
   const voiceError = useVoice((s) => s.voiceError);
@@ -33,6 +35,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
       _setSttStatus(null);
       _setTtsStatus(null);
       setBehaviors(null);
+      setJudgeStatus(null);
       return;
     }
 
@@ -41,12 +44,14 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
       fetchSttStatus(agentName, ctrl.signal),
       fetchTtsStatus(agentName, ctrl.signal),
       fetchVoiceBehaviors(agentName, ctrl.signal),
+      fetchJudgeStatus(agentName, ctrl.signal),
     ])
-      .then(([stt, tts, behaviors]) => {
+      .then(([stt, tts, behaviors, judge]) => {
         if (ctrl.signal.aborted) return;
         _setSttStatus(stt);
         _setTtsStatus(tts);
         setBehaviors(behaviors);
+        setJudgeStatus(judge);
       })
       .catch(() => {
         /* ignore */
@@ -60,6 +65,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
     _setSttStatus,
     _setTtsStatus,
     setBehaviors,
+    setJudgeStatus,
   ]);
 
   // Preload worklet module when STT is available

@@ -132,8 +132,9 @@ export type { DraftSource, DraftStore } from "./attachments/draft-store";
 
 export { createVoiceSession } from "./voice/voice-session";
 export type { VoiceMode, VoiceSession } from "./voice/voice-session";
-export type { AudioCapture } from "./voice/stt-session";
-export type { SpeechPlayer } from "./voice/tts-queue";
+export type { AudioCapture } from "./voice/engine-session";
+export type { Speaker } from "./voice/play-queue";
+export { sttUsageSummary, ttsUsage } from "./voice/usage";
 
 export { sendMessage } from "./intents/send-message";
 
@@ -236,11 +237,13 @@ export {
   fetchVoiceBehaviors,
   fetchVoiceStatus,
   prepareSpeech,
+  selectVoiceProvider,
   setVoiceBehavior,
   setVoiceEnabled,
   setVoiceSetting,
-  sttListenPath,
   ttsStreamPath,
+  voicePlayPath,
+  voiceSessionPath,
 } from "./api/voice";
 export type {
   SettingDef,

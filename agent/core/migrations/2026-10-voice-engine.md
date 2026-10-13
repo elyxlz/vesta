@@ -10,13 +10,12 @@ change from a different design can load without an error and then fail in the mi
 This box can hold voice work of its own: a change inside the voice skill, a provider or a local
 model that you added, or code in a different place that talks to the voice service. This migration
 saves that work, makes the voice skill equal to stock, and then you build your work again on the
-stock interfaces. On a box with no voice work of its own, steps 2 to 4 are the whole job and take
+stock interfaces. On a box with no voice work of its own, steps 2 and 3 are the whole job and take
 about a minute. Every step checks before acting, so this is safe to run more than once, and a user
 message can interrupt it.
 
-Your keys, your selected providers, and your settings are in `~/.voice/voice_config.json`. Step 4
-can add one behavior to that file with the `voice` command, and no step removes anything from it.
-Do not ask the user for a key.
+Your keys, your selected providers, and your settings are in `~/.voice/voice_config.json`. No step
+changes that file. Do not ask the user for a key.
 
 ### 1. Check that the workspace is ready
 
@@ -89,34 +88,12 @@ voice status
 
 It must print one line of JSON with the roles `stt`, `tts`, and `judge`. If it fails, read
 `~/agent/logs/voice.log`. If it names a provider that the skill does not know, that provider is
-part of your own work: build it in step 5, then run this step again.
+part of your own work: build it in step 4, then run this step again.
 
-### 4. Keep the user's choice about interruptions
-
-The behavior `barge_in` decides if the user's voice stops a reply that you speak. A box whose
-user turned that off can hold the choice under the key `interrupt_tts`, which nothing reads.
-
-```bash
-python3 - <<'EOF'
-import json, pathlib
-try:
-    config = json.loads((pathlib.Path.home() / ".voice/voice_config.json").read_text())
-except (OSError, ValueError):
-    config = {}
-stt = config["stt"] if "stt" in config and config["stt"] else {}
-behavior = config["behavior"] if "behavior" in config and config["behavior"] else {}
-off = "interrupt_tts" in stt and stt["interrupt_tts"] is False
-print("move" if off and "barge_in" not in behavior else "nothing-to-move")
-EOF
-```
-
-- `move`: run `voice behavior set barge_in off`.
-- `nothing-to-move`: continue.
-
-### 5. Build your work again on the stock interfaces
+### 4. Build your work again on the stock interfaces
 
 If `~/.voice/own-work.patch` is empty, the search of step 2 printed nothing, and you run no speech
-model or device of your own, you have nothing to build. Go to step 7.
+model or device of your own, you have nothing to build. Go to step 6.
 
 Read these first: the "Own providers" section of `~/agent/skills/voice/SKILL.md`, and
 `~/agent/skills/voice/PROTOCOL.md`. Then read the whole patch file and each hit of the search. If
@@ -131,8 +108,8 @@ Decide for each piece of work where it goes:
 | A changed default or a tuned value | A setting: `voice <role> set <key> <value>` or `voice behavior set <key> <value>`. |
 | A voice that you added | `voice tts voices add <id> --name <name>`. |
 | Your own rule for the end of a turn, for barge-in, or for when to play a reply | Nowhere. The engine owns these decisions. Tune them with the settings. If you need a different answer to "who are these words for" or "does the user want me to stop", that is a `judge` provider. |
-| Code that opens the mic socket or fetches speech audio for a device or a channel of your own | A client of `/voice/session`, as `PROTOCOL.md` says. `/stt/listen` and the `/tts/` routes serve the stock app and the stock skills only. Your client keeps what belongs to it: the chat, the queue of its device, and when a session starts and ends. |
-| Work that fits no row | Do not put it into a stock file. Keep the patch file, and tell the user in step 7 what it is and why it has no place. If it helps each Vesta, propose it with `~/agent/skills/upstream/SKILL.md`. |
+| Code that opens the mic socket or fetches speech audio for a device or a channel of your own | A client of `/voice/session`, as `PROTOCOL.md` says. `/stt/listen` serves older builds of the app only. Your client keeps what belongs to it: the chat, the queue of its device, and when a session starts and ends. |
+| Work that fits no row | Do not put it into a stock file. Keep the patch file, and tell the user in step 6 what it is and why it has no place. If it helps each Vesta, propose it with `~/agent/skills/upstream/SKILL.md`. |
 
 One rule decides if you are done. This command must list only `providers/own.py`, your own
 provider files, and your own rows in the tests:
@@ -146,7 +123,7 @@ git diff --stat "$TAG" -- agent/skills/voice
 Each other stock file stays equal to stock, because an update merges new stock lines into it, and
 a local change there conflicts or breaks at each update.
 
-### 6. Check that it works
+### 5. Check that it works
 
 ```bash
 uv run --project ~/agent/skills/voice/cli pytest ~/agent/skills/voice/cli/tests/ -q
@@ -167,7 +144,7 @@ Fix what fails before you continue. Then commit:
 git -C ~ add -A && { git -C ~ diff --cached --quiet || git -C ~ commit -m "voice: my work on the stock interfaces"; }
 ```
 
-### 7. Tell the user, and mark this migration applied
+### 6. Tell the user, and mark this migration applied
 
 If you built something again, or you could not, tell the user in a few lines: what works as
 before, what works in a different way, and what you did not build and why. If you had no voice

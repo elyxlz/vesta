@@ -86,6 +86,8 @@ voice judge connect typesafe --key <key>
 voice judge on
 ```
 
+Once the judge is connected, the user can also turn it on and off in the voice settings of the app, where its card says what it sends to its provider.
+
 ## Text you speak
 
 With ElevenLabs selected, text in square brackets is an instruction to the voice and is not read aloud: `[laughs]`, `[whispering]`, `[sighs]`. Use it only when you mean it, and never put text you want heard in square brackets. With Deepgram selected, write no such tags: they are plain text there.
@@ -128,7 +130,7 @@ transcribe ~/meeting.mp4 --language it
 
 `--key` is necessary for a provider that needs a key and refused for one that needs none. A setting belongs to one provider and each provider keeps its own, so `voice <role> use` loses nothing: switch back and the voice, the tuning, and the key are as they were.
 
-**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. The Vesta app follows it in dictation; in a conversation the app always stops your reply when the user talks.
+**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. It applies to a conversation. In dictation the user talks to the message box, so their voice never stops a reply.
 
 **Transcribe a file**: `transcribe <file> [--language <code>]` prints the transcript of any audio or video file on stdout and nothing else. It sends the file to the selected STT provider (language detected unless `--language` pins one such as `it`) and, when STT is unset, off, or the provider fails, runs the whisper skill's local whisper.cpp instead; it prints `{"error": ...}` on stderr and exits non-zero only when both fail. Every skill that needs speech as text calls this one command (the whatsapp daemon runs it on each incoming voice note), so a transcription problem anywhere is fixed here: check `voice status`, then the whisper skill's setup.
 
@@ -186,4 +188,6 @@ A judge that runs on this box keeps the live transcript on the box.
 
 ## A voice client of your own
 
-A device, a room speaker, or a phone bridge that you build is a client of the engine socket, `GET /voice/session` on the voice service. It sends mic audio and the text to speak, and the engine decides turns, barge-in, and playback. [PROTOCOL.md](PROTOCOL.md) has every frame. `/stt/listen` and the `/tts/` routes serve the stock app and the stock skills only.
+A device, a room speaker, or a phone bridge that you build is a client of the engine socket, `GET /voice/session` on the voice service. It sends mic audio and the text to speak, and the engine decides turns, barge-in, and playback. [PROTOCOL.md](PROTOCOL.md) has every frame. The Vesta app (dictation and conversation) and a WhatsApp call are clients of the same socket.
+
+Two more routes make audio with no session. `POST /tts/speak` with `{"text": ..., "format": "mp3" | "pcm"}` answers with the audio of one text, and the app reads a reply aloud through `/tts/prepare` and `/tts/stream/{id}` when no session is open. `/stt/listen` serves older builds of the app only: do not build on it.

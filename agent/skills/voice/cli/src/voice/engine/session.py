@@ -70,6 +70,8 @@ Item = ClientItem | SttItem | JudgedItem | SynthFailedItem | SignalItem
 # gone, or with an `error` when a part of the engine itself failed.
 Outcome = frames.EndedReason | tp.Literal["client_gone", "engine_failed"] | None
 ENGINE_FAILED = "the engine failed and this session is over; open a new session"
+# The frames that end the live text of a segment on the client.
+SEGMENT_ENDINGS = ("turn_end", "turn_dropped", "ignored")
 
 
 @dc.dataclass(frozen=True)
@@ -374,7 +376,7 @@ async def _apply(session: Session, action: turns.Action) -> None:
         await _release_held(session)
 
 
-async def _step(session: Session, event: turns.TurnEvent) -> None:
+async def _step(session: Session, event: turns.TurnEvent) -> list[turns.Action]:
     session.turn, actions = turns.step(
         session.turn,
         event,
@@ -385,6 +387,7 @@ async def _step(session: Session, event: turns.TurnEvent) -> None:
     for action in actions:
         await _apply(session, action)
     await _sync_state(session)
+    return actions
 
 
 def _question(session: Session, text: str) -> Question:
@@ -445,7 +448,11 @@ async def _on_committed(session: Session, text: str) -> None:
     verdict = await _verdict_for(session, text)
     _drop_pending_ask(session)
     session.verdict = None
-    await _step(session, {"kind": "committed", "text": text, "verdict": verdict})
+    actions = await _step(session, {"kind": "committed", "text": text, "verdict": verdict})
+    if not any(action["type"] in SEGMENT_ENDINGS for action in actions):
+        # No frame says what became of this segment, so the client is told that its live
+        # text is over.
+        await _send(session.ws, {"type": "transcript", "text": ""})
 
 
 # --- the loop ---

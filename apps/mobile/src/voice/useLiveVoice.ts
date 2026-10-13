@@ -10,8 +10,9 @@ import {
   createVoiceSession,
   type VoiceMode,
   type VoiceSession,
-  sttListenPath,
   ttsStreamPath,
+  voicePlayPath,
+  voiceSessionPath,
 } from "@vesta/core";
 import { fetchVoiceStatus, prepareSpeech } from "@vesta/core";
 import { useSession } from "@/session/SessionProvider";
@@ -25,8 +26,6 @@ import {
 interface LiveVoiceOptions {
   name: string;
   enabled: boolean;
-  // The agent's barge_in behavior: in dictation a user turn cuts a spoken reply only when set.
-  bargeIn: boolean;
   onTranscript: (text: string) => void;
   onSend: (text: string) => void;
   onError: (message: string) => void;
@@ -52,13 +51,12 @@ const PLAYBACK_AUDIO_MODE = {
 } as const;
 
 // The mobile adapter over @vesta/core's voice session: expo-audio capture and playback as the
-// ports, the session as the behavior (dictation vs conversation, barge-in, the TTS queue). A
+// ports, the session as the behavior (dictation vs conversation, the plays of the engine). A
 // conversation additionally holds the native hands-free session (Bluetooth routing, echo
 // cancellation, and the Android microphone foreground service) around the microphone.
 export function useLiveVoice({
   name,
   enabled,
-  bargeIn,
   onTranscript,
   onSend,
   onError,
@@ -70,7 +68,7 @@ export function useLiveVoice({
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
-  // A muted mic streams silence rather than nothing, so the STT stream stays alive.
+  // A muted mic streams silence rather than nothing, so the session stays up.
   const [micMuted, setMicMuted] = useState(false);
   const micMutedRef = useRef(false);
 
@@ -83,10 +81,13 @@ export function useLiveVoice({
     onInactivityStop,
     onUserSpeakingChange,
   });
-  const bargeInRef = useRef(bargeIn);
   const ttsEnabledRef = useRef(false);
 
   const frameSinkRef = useRef<((pcm: ArrayBuffer) => void) | null>(null);
+  // The capture port owns one microphone for the whole app. Each start and each stop is a
+  // new attempt, so a start still in one of its awaits learns that it is no longer the
+  // newest, and `wanted` says if the newest one was a start.
+  const captureRef = useRef({ attempt: 0, wanted: false });
   const permissionGrantedRef = useRef(false);
   const sessionRef = useRef<VoiceSession | null>(null);
 
@@ -113,7 +114,6 @@ export function useLiveVoice({
       onInactivityStop,
       onUserSpeakingChange,
     };
-    bargeInRef.current = bargeIn;
     ttsEnabledRef.current = ttsEnabled;
     micMutedRef.current = micMuted;
     streamRef.current = stream;
@@ -147,18 +147,18 @@ export function useLiveVoice({
     };
   }, [enabled]);
 
-  const playPrepared = useCallback(
-    async (identifier: string, signal: AbortSignal) => {
-      const url = await api.authedUrl(ttsStreamPath(name, identifier));
+  const playUrl = useCallback(
+    async (url: string, signal: AbortSignal, onStarted: () => void) => {
       if (signal.aborted) return;
       const target = playerRef.current;
       await new Promise<void>((resolve) => {
         // The source dropping out of a loaded/buffering state after it started is a failed or
         // interrupted stream. Settling on that (as well as a natural finish and abort) keeps
         // the queue advancing instead of blocking on a promise that never settles. A source
-        // that errors before it ever loads emits no such transition; that reply is silent
-        // until the next stopSpeech or barge-in aborts it, which every conversation turn does.
+        // that errors before it ever loads emits no such transition; the caller aborts a
+        // play whose sound does not start in time.
         let started = false;
+        let sounded = false;
         const settle = () => {
           subscription.remove();
           resolve();
@@ -168,6 +168,11 @@ export function useLiveVoice({
           (status) => {
             if (status.isLoaded || status.isBuffering || status.playing)
               started = true;
+            // The first sound of this url: a resume after a pause plays again and is no start.
+            if (status.playing && !sounded) {
+              sounded = true;
+              onStarted();
+            }
             if (
               status.didJustFinish ||
               (started && !status.isLoaded && !status.isBuffering)
@@ -183,17 +188,30 @@ export function useLiveVoice({
         target.play();
       });
     },
-    [api, name],
+    [],
   );
 
   // Created in an effect rather than during render: the session's ports close over refs, and
   // only post-render code may read them.
   useEffect(() => {
+    const releaseCapture = () => {
+      frameSinkRef.current = null;
+      streamRef.current.stop();
+      void setRecordingHapticsEnabled(false).catch(() => undefined);
+      void setHandsFreeSessionActive(false).catch(() => undefined);
+      void stopVoiceForegroundService().catch(() => undefined);
+      void setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => undefined);
+    };
     const session = createVoiceSession(
       {
-        buildUrl: () => api.websocketUrl(sttListenPath(name)),
+        buildUrl: () => api.websocketUrl(voiceSessionPath(name)),
         capture: {
           start: async (onFrame) => {
+            captureRef.current = {
+              attempt: captureRef.current.attempt + 1,
+              wanted: true,
+            };
+            const { attempt } = captureRef.current;
             if (!permissionGrantedRef.current) {
               const permission = await requestRecordingPermissionsAsync();
               if (!permission.granted)
@@ -213,23 +231,43 @@ export function useLiveVoice({
                 `${name} is listening`,
               );
             }
-            frameSinkRef.current = onFrame;
-            await streamRef.current.start();
-            await setRecordingHapticsEnabled(true).catch(() => undefined);
+            if (captureRef.current.attempt === attempt) {
+              frameSinkRef.current = onFrame;
+              await streamRef.current.start();
+              await setRecordingHapticsEnabled(true).catch(() => undefined);
+            }
+            // A stop ran during the awaits above and no later start took the microphone
+            // over, so that stop turned off less than this start turned on.
+            if (
+              captureRef.current.attempt !== attempt &&
+              !captureRef.current.wanted
+            )
+              releaseCapture();
           },
           stop: () => {
-            frameSinkRef.current = null;
-            streamRef.current.stop();
-            void setRecordingHapticsEnabled(false).catch(() => undefined);
-            void setHandsFreeSessionActive(false).catch(() => undefined);
-            void stopVoiceForegroundService().catch(() => undefined);
-            void setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => undefined);
+            captureRef.current = {
+              attempt: captureRef.current.attempt + 1,
+              wanted: false,
+            };
+            releaseCapture();
           },
         },
-        player: {
-          prepare: (text) => prepareSpeech(api, name, text),
-          play: playPrepared,
+        speaker: {
+          play: playUrl,
+          pause: () => {
+            playerRef.current.pause();
+          },
+          resume: () => {
+            playerRef.current.play();
+          },
         },
+        playUrl: (path) => api.authedUrl(voicePlayPath(name, path)),
+        // A reply read aloud outside a session: the text is registered, then streamed.
+        prepareSpeech: async (text) =>
+          api.authedUrl(
+            ttsStreamPath(name, await prepareSpeech(api, name, text)),
+          ),
+        client: "mobile",
       },
       {
         onTranscript: (text) => callbacksRef.current.onTranscript(text),
@@ -245,12 +283,7 @@ export function useLiveVoice({
           callbacksRef.current.onUserSpeakingChange(speaking),
         onInactivityStop: () => callbacksRef.current.onInactivityStop(),
       },
-      () => ({
-        bargeIn: bargeInRef.current,
-        inactivityMs: CONVERSATION_INACTIVITY_MS,
-        // Always yields for now; the per-device toggle lands with the mobile settings pass.
-        yieldToUser: true,
-      }),
+      () => ({ inactivityMs: CONVERSATION_INACTIVITY_MS }),
     );
     sessionRef.current = session;
     return () => {
@@ -258,7 +291,7 @@ export function useLiveVoice({
       session.cancel();
       session.stopSpeech();
     };
-  }, [api, name, playPrepared]);
+  }, [api, name, playUrl]);
 
   const start = useCallback(
     (mode: VoiceMode) => sessionRef.current?.start(mode) ?? Promise.resolve(),

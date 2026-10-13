@@ -13,12 +13,12 @@ import (
 
 // A live WhatsApp voice call is Vesta talking to someone on the phone with the same voice as in
 // the app. CallManager owns the one active call: it answers inbound calls and places outbound
-// ones, streams the caller's speech to the voice backend for transcription (each finished turn
-// becomes a `call_utterance` whatsapp notification, so the model responds live through the normal
-// interrupt flow), and speaks the model's `whatsapp say` replies back into the call. Only one call
-// runs at a time; a second inbound call is rejected while one is active. meowcaller carries the
-// VoIP signaling and media on top of the already-connected whatsmeow client; this manager holds
-// no audio codec or provider logic of its own.
+// ones, and bridges each to one voice engine session (voice_client.go). Each finished turn of the
+// other person becomes a `call_utterance` whatsapp notification, so the model responds live
+// through the normal interrupt flow. `whatsapp say` sends a line to the engine, which decides
+// when it plays and when the other person interrupts it. Only one call runs at a time; a second
+// inbound call is rejected while one is active. meowcaller carries the VoIP signaling and media
+// on the connected whatsmeow client; this manager holds no codec, turn, or provider logic.
 
 const (
 	// How long to wait for the far end to answer an outbound call before giving up.
@@ -34,9 +34,10 @@ type activeCall struct {
 	baseURL      string
 	ctx          context.Context
 	cancel       context.CancelFunc
-	player       *meowcaller.Player
-	answered     bool
-	endOnce      sync.Once
+	// voice is the call's voice engine session. It connects when the bridge starts.
+	voice    *voiceSession
+	answered bool
+	endOnce  sync.Once
 }
 
 type CallManager struct {
@@ -131,6 +132,9 @@ func (cm *CallManager) beginLocked(call *meowcaller.Call, peer types.JID, name, 
 		ctx:          ctx,
 		cancel:       cancel,
 	}
+	ac.voice = newVoiceSession(func(text string) {
+		cm.notifyCall(callNotif{Type: "call_utterance", Direction: direction, ContactName: name, ContactPhone: phone, Message: text})
+	}, cm.wac.logger.Warnf)
 	cm.active = ac
 	return ac
 }
@@ -208,8 +212,10 @@ func (cm *CallManager) Place(target string) (any, error) {
 	}
 }
 
-// Say speaks text into the active call using the voice backend's TTS. It replaces any utterance
-// still playing, so the model's newest line always wins.
+// Say sends text to the call's voice engine session, which speaks it into the call after the
+// lines before it. The result says what became of the line: "speaking" when its audio arrived,
+// "queued" when none arrived yet (the engine holds a line while the other person has the
+// floor), or an error when the line will not play.
 func (cm *CallManager) Say(text string) (any, error) {
 	cm.mu.Lock()
 	ac := cm.active
@@ -217,22 +223,20 @@ func (cm *CallManager) Say(text string) (any, error) {
 		cm.mu.Unlock()
 		return nil, fmt.Errorf("no active call to speak into; place or answer a call first")
 	}
-	call, baseURL, ctx := ac.call, ac.baseURL, ac.ctx
 	cm.mu.Unlock()
 
-	samples, err := synthesizeSpeech(ctx, baseURL, text)
+	line, err := ac.voice.say(text)
+	if ac.ctx.Err() != nil {
+		return nil, fmt.Errorf("the call ended before the reply could be spoken")
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	// The call may have ended while we synthesized; only play if it is still the active call.
-	if cm.active != ac {
-		return nil, fmt.Errorf("the call ended before the reply could be spoken")
+	result := map[string]any{"status": line.status, "contact_name": ac.contactName}
+	if line.engineError != "" {
+		result["voice_error"] = line.engineError
 	}
-	ac.player = call.Play(newPCMSource(samples))
-	return map[string]any{"status": "speaking", "contact_name": ac.contactName}, nil
+	return result, nil
 }
 
 // Hangup ends the active call.
@@ -265,56 +269,31 @@ func (cm *CallManager) Status() (any, error) {
 	}, nil
 }
 
-// startBridge wires the peer's audio to the voice backend for transcription and turns each
-// finished utterance into a call_utterance notification. It also stops Vesta mid-sentence when the
-// caller starts talking (barge-in), and tears the call down when meowcaller reports it ended.
+// startBridge opens the call's voice engine session and wires the call to it: the peer's audio
+// goes up, the call plays the session's speaker, and the bridge comes down when meowcaller
+// reports that the call ended. A session that ends while the call is up is logged, and `say`
+// reports it.
 func (cm *CallManager) startBridge(ac *activeCall) {
-	frames := make(chan []byte, sttSendQueue)
-	turns := make(chan sttTurn, 8)
+	peerAudio := make(chan []byte, peerAudioQueue)
 
 	// The sink runs on meowcaller's decode goroutine and must not block; drop a frame rather than
-	// stall decoding if the STT socket is momentarily behind.
+	// stall decoding if the socket is momentarily behind.
 	ac.call.Receive(meowcaller.SinkFunc(func(frame []float32) {
 		pcm := floatFrameToPCM16(frame)
 		select {
-		case frames <- pcm:
+		case peerAudio <- pcm:
 		case <-ac.ctx.Done():
 		default:
 		}
 	}))
+	ac.call.Play(ac.voice.speaker)
 
 	ac.call.OnEnd(func(reason string) { cm.endCall(ac, reason) })
 
-	bargeIn := func() {
-		cm.mu.Lock()
-		if cm.active == ac && ac.player != nil {
-			ac.player.Stop()
-			ac.player = nil
-		}
-		cm.mu.Unlock()
-	}
-
 	go func() {
-		err := streamSTT(ac.ctx, ac.baseURL, frames, sttEvents{onSpeechStart: bargeIn, turns: turns})
-		if err != nil && ac.ctx.Err() == nil {
-			cm.wac.logger.Warnf("call STT stream ended: %v", err)
-		}
-	}()
-
-	go func() {
-		for {
-			select {
-			case <-ac.ctx.Done():
-				return
-			case turn := <-turns:
-				cm.notifyCall(callNotif{
-					Type:         "call_utterance",
-					Direction:    ac.direction,
-					ContactName:  ac.contactName,
-					ContactPhone: ac.contactPhone,
-					Message:      turn.transcript,
-				})
-			}
+		err := ac.voice.run(ac.ctx, ac.baseURL, peerAudio)
+		if ac.ctx.Err() == nil {
+			cm.wac.logger.Warnf("call voice session ended: %v", err)
 		}
 	}()
 }

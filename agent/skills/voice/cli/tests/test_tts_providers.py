@@ -8,7 +8,7 @@ import typing as tp
 import aiohttp
 import pytest
 from aiohttp import web
-from voice.providers import deepgram_tts, elevenlabs
+from voice.providers import deepgram, deepgram_tts, elevenlabs
 from voice.providers.base import TtsError, TtsProvider
 from voice.settings import JsonValue
 
@@ -269,3 +269,22 @@ def test_every_aura_voice_is_an_option_of_the_deepgram_voice_setting() -> None:
     assert provider.voice_setting == "aura_voice"
     assert len(options) == 90
     assert {"value": "aura-2-melia-it", "label": "Melia", "description": "Italian, feminine: clear, comfortable, engaging"} in options
+
+
+def test_the_deepgram_subscription_is_the_balance_of_the_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def projects(_request: web.Request) -> web.Response:
+        return web.json_response({"projects": [{"project_id": "p1"}]})
+
+    async def balances(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Token dg-key"
+        return web.json_response({"balances": [{"amount": 12.5, "units": "usd"}]})
+
+    async def scenario() -> dict[str, JsonValue]:
+        app = web.Application()
+        app.router.add_get("/v1/projects", projects)
+        app.router.add_get("/v1/projects/p1/balances", balances)
+        async with serving(app) as client:
+            monkeypatch.setattr(deepgram, "DEEPGRAM_API", str(client.make_url("")).rstrip("/"))
+            return await deepgram_tts.DeepgramTts().subscription({"api_key": "dg-key"})
+
+    assert asyncio.run(scenario()) == {"balances": [{"amount": 12.5, "units": "usd"}]}

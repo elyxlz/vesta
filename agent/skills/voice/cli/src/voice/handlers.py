@@ -1,7 +1,8 @@
-"""The HTTP routes of the voice service: status, settings, and the stock app's audio routes.
+"""The HTTP routes of the voice service: status, settings, and the audio routes with no session.
 
-`/stt/listen` (listen.py) and the `/tts/` audio routes serve the stock app and the stock skills.
-A client of its own uses the engine socket (engine/session.py).
+A voice session is the engine socket (engine/session.py). The `/tts/` audio routes make the
+audio of one text with no session: the stock app reads a reply aloud through them when no
+session is open. `/stt/listen` (listen.py) serves older builds of the app.
 """
 
 import asyncio
@@ -45,8 +46,8 @@ def _load(request: web.Request) -> voice_config.VoiceConfig:
 
 
 def _role(request: web.Request) -> voice_config.Role:
-    """The role a `/{role:stt|tts}/...` route names."""
-    return "stt" if request.match_info["role"] == "stt" else "tts"
+    """The role a `/{role}/...` route names. The route pattern admits only a role."""
+    return next(role for role in voice_config.ROLES if role == request.match_info["role"])
 
 
 def _selected[P](request: web.Request, role: voice_config.Role, registry: dict[str, P]) -> tuple[Domain, str, P] | web.Response:
@@ -151,9 +152,7 @@ async def set_setting(request: web.Request) -> web.Response:
     key = body["key"] if "key" in body else None
     if not key or not isinstance(key, str):
         return _error("key required", 400)
-    section = request.match_info["domain"]
-    if section not in ("stt", "tts", "behavior"):
-        return _error("domain must be stt, tts, or behavior", 400)
+    section = next(name for name in voice_config.SECTIONS if name == request.match_info["domain"])
     return await _store_setting(request, section, key, body["value"] if "value" in body else None)
 
 

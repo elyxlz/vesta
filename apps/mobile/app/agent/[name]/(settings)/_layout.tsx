@@ -34,6 +34,7 @@ export default function AgentSettingsLayout() {
         <Stack.Screen name="provider/sign-in" />
         <Stack.Screen name="provider/model" />
         <Stack.Screen name="provider/context" />
+        <Stack.Screen name="voice/select" />
       </Stack>
     </ProviderDraftProvider>
   );

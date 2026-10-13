@@ -1,13 +1,15 @@
 import { jsonInit, type HttpClient } from "../transport/http";
 import { agentPath } from "./agents";
 
-export type VoiceDomain = "stt" | "tts";
+// A role of the voice service: the mic, the voice, and the judge that decides who the user's
+// words are for while a reply plays.
+export type VoiceDomain = "stt" | "tts" | "judge";
 
 // A dynamic setting the voice service describes for its settings card; `config` nests the settings
 // of a chosen option (a provider's own knobs).
 export interface SettingDef {
   key: string;
-  type: "bool" | "number" | "select";
+  type: "bool" | "number" | "select" | "text";
   label: string;
   description?: string;
   value: unknown;
@@ -30,6 +32,8 @@ export interface SettingDef {
 export interface VoiceStatus {
   configured: boolean;
   provider: string | null;
+  // Every provider connected to this role, the selected one included.
+  connected?: string[];
   enabled?: boolean;
   settings?: SettingDef[];
 }
@@ -51,8 +55,13 @@ export interface SttUsage {
   balance?: { balances?: { amount?: number; units?: string }[] };
 }
 
+// A provider with a character quota reports the count; one with none reports its balance.
 export interface TtsUsage {
-  usage?: { character_count?: number; character_limit?: number };
+  usage?: {
+    character_count?: number;
+    character_limit?: number;
+    balances?: { amount?: number; units?: string }[];
+  };
 }
 
 function voicePath(name: string, suffix: string): string {
@@ -76,9 +85,16 @@ async function voiceStatus(
   };
 }
 
-// The live transcription socket (GET .../voice/stt/listen); dialed with the token in the query.
-export function sttListenPath(name: string): string {
-  return voicePath(name, "stt/listen");
+// The voice engine socket (GET .../voice/voice/session), one for each voice session; dialed
+// with the token in the query.
+export function voiceSessionPath(name: string): string {
+  return voicePath(name, "voice/session");
+}
+
+// The audio of one play of a session. The engine names it as a path on the voice service
+// (`/voice/play/<token>`), and a media element fetches it with the token in the query.
+export function voicePlayPath(name: string, enginePath: string): string {
+  return voicePath(name, enginePath.replace(/^\//, ""));
 }
 
 // The streamed speech a media element plays (GET .../voice/tts/stream/{id}?token=...). A media
@@ -142,6 +158,21 @@ export async function setVoiceEnabled(
     http,
     voicePath(name, `${domain}/set-enabled`),
     jsonInit("POST", { value }),
+  );
+}
+
+// Switches a role to one of its connected providers. Each provider keeps its own key and
+// settings, so the answer is the status of the role under the new provider.
+export async function selectVoiceProvider(
+  http: HttpClient,
+  name: string,
+  domain: VoiceDomain,
+  provider: string,
+): Promise<VoiceStatus> {
+  return voiceStatus(
+    http,
+    voicePath(name, `${domain}/use`),
+    jsonInit("POST", { provider }),
   );
 }
 

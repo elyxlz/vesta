@@ -8,7 +8,11 @@ vi.mock("react", async (load) => ({
 }));
 vi.mock("@/agent/AgentProvider", () => ({
   useAgent: () => ({
-    agent: { status: "not_authenticated", startedAt: null, services: { chat: {} } },
+    agent: {
+      status: "not_authenticated",
+      startedAt: null,
+      services: { chat: {} },
+    },
     activityState: "idle",
   }),
 }));
@@ -36,9 +40,12 @@ it("keeps technical rows collapsed until explicitly opened", () => {
 it("shows the agent's technical facts without another identity hero", () => {
   fixture.expanded = true;
   const rows = AgentTechnicalDetails().props.children[1].props.children;
-  expect(rows.map((row: { props: { label: string; value: string } }) => [
-    row.props.label, row.props.value,
-  ])).toEqual([
+  expect(
+    rows.map((row: { props: { label: string; value: string } }) => [
+      row.props.label,
+      row.props.value,
+    ]),
+  ).toEqual([
     ["Agent state", "not authenticated"],
     ["Activity", "idle"],
     ["Started", "not available"],

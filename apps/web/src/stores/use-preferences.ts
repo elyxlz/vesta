@@ -16,7 +16,6 @@ export interface Preferences {
   voiceActivation: VoiceActivationMode;
   voiceMuted: boolean;
   conversationAutoEnd: boolean;
-  conversationYield: boolean;
   // Agents whose desktop panel remembers a collapsed chat with the dashboard full-page.
   chatCollapsed: string[];
   // Agents whose desktop view was the full-screen chat when last left, so opening them returns there.
@@ -37,7 +36,6 @@ const DEFAULTS: Preferences = {
   voiceActivation: "toggle",
   voiceMuted: false,
   conversationAutoEnd: true,
-  conversationYield: true,
   chatCollapsed: [],
   chatFullscreen: [],
   lastAgent: null,
@@ -80,7 +78,6 @@ function legacyPreferences(): Preferences {
       localStorage.getItem("voice-activation") === "hold" ? "hold" : "toggle",
     voiceMuted: flag("voice-muted", false),
     conversationAutoEnd: flag("voice-conversation-auto-end", true),
-    conversationYield: flag("voice-conversation-yield", true),
     chatCollapsed,
     chatFullscreen: [],
     lastAgent: localStorage.getItem("vesta:last-agent"),

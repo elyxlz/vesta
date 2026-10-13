@@ -47,9 +47,9 @@ def create_app(data_dir: Path | None = None) -> web.Application:
     app.router.add_get("/voice/play/{token}", session.voice_play)
 
     # Each role: its status, its switch, and the choice between its connected providers
-    app.router.add_get("/{role:stt|tts}/status", handlers.role_status)
-    app.router.add_post("/{role:stt|tts}/set-enabled", handlers.set_enabled)
-    app.router.add_post("/{role:stt|tts}/use", handlers.use)
+    app.router.add_get("/{role:stt|tts|judge}/status", handlers.role_status)
+    app.router.add_post("/{role:stt|tts|judge}/set-enabled", handlers.set_enabled)
+    app.router.add_post("/{role:stt|tts|judge}/use", handlers.use)
 
     # STT
     app.router.add_get("/stt/usage", handlers.stt_usage)
@@ -66,7 +66,7 @@ def create_app(data_dir: Path | None = None) -> web.Application:
 
     # Behaviors, and the generic setter (one provider setting or one behavior)
     app.router.add_get("/behavior/status", handlers.behavior_status)
-    app.router.add_post("/{domain:stt|tts|behavior}/set", handlers.set_setting)
+    app.router.add_post("/{domain:stt|tts|judge|behavior}/set", handlers.set_setting)
 
     # Health
     app.router.add_get("/health", _health)

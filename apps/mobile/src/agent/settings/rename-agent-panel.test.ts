@@ -22,13 +22,20 @@ vi.mock("react-native", () => ({
   View: "View",
   StyleSheet: { create: (styles: unknown) => styles },
 }));
-vi.mock("expo-router", () => ({ useRouter: () => ({ replace: fixture.replace }) }));
+vi.mock("expo-router", () => ({
+  useRouter: () => ({ replace: fixture.replace }),
+}));
 vi.mock("@/agent/AgentProvider", () => ({
   useAgent: () => ({ name: "aria", agent: fixture.agent }),
 }));
-vi.mock("@/session/SessionProvider", () => ({ useSession: () => ({ api: {} }) }));
+vi.mock("@/session/SessionProvider", () => ({
+  useSession: () => ({ api: {} }),
+}));
 vi.mock("@/components/ui/Button", () => ({ Button: "Button" }));
-vi.mock("@/components/ui/Form", () => ({ Field: "Field", FormSection: "FormSection" }));
+vi.mock("@/components/ui/Form", () => ({
+  Field: "Field",
+  FormSection: "FormSection",
+}));
 vi.mock("@tanstack/react-query", () => ({
   useMutation: (options: typeof fixture.mutation) => {
     fixture.mutation = options;

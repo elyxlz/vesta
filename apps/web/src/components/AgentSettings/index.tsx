@@ -28,6 +28,7 @@ import { ServicesCard } from "./ServicesCard";
 import {
   ConversationCard,
   DictationCard,
+  JudgeCard,
   SttCard,
   TtsCard,
 } from "./VoiceSection";
@@ -91,6 +92,7 @@ export function AgentSettings() {
         <ConversationCard />
         <SttCard />
         <TtsCard />
+        <JudgeCard />
       </TabsContent>
 
       <TabsContent

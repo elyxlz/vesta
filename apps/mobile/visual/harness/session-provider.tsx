@@ -11,8 +11,11 @@ import type {
   HostMount,
   NotificationInterruptRule,
   ProviderCatalog,
+  SttUsage,
+  TtsUsage,
   Usage,
   VoiceBehaviors,
+  VoiceDomain,
   VoiceStatus,
 } from "@vesta/core";
 import {
@@ -286,7 +289,24 @@ const voiceBehaviors: VoiceBehaviors = {
     },
   ],
 };
-const voiceStatuses: Record<"stt" | "tts", VoiceStatus> = {
+// More voices than the system alert holds, so the voice setting opens the list screen.
+const voiceOptions = [
+  ["amalthea", "Amalthea", "Filipino English, feminine: engaging, cheerful"],
+  ["andromeda", "Andromeda", "American English, feminine: casual, expressive"],
+  ["apollo", "Apollo", "American English, masculine: confident, casual"],
+  ["arcas", "Arcas", "American English, masculine: natural, smooth, clear"],
+  ["aries", "Aries", "American English, masculine: warm, energetic, caring"],
+  ["asteria", "Asteria", "American English, feminine: clear, confident"],
+  ["athena", "Athena", "American English, feminine: calm, professional"],
+  ["atlas", "Atlas", "American English, masculine: enthusiastic, friendly"],
+  ["aurora", "Aurora", "American English, feminine: cheerful, energetic"],
+  ["callista", "Callista", "American English, feminine: clear, professional"],
+].map(([value = "", label = "", description]) => ({
+  value,
+  label,
+  description,
+}));
+const voiceStatuses: Record<VoiceDomain, VoiceStatus> = {
   stt: {
     configured: true,
     provider: "Deepgram Nova-3",
@@ -322,11 +342,8 @@ const voiceStatuses: Record<"stt" | "tts", VoiceStatus> = {
         type: "select",
         label: "Voice",
         description: "Voice used when replies are read aloud.",
-        value: "Warm",
-        options: [
-          { value: "Warm", label: "Warm" },
-          { value: "Clear", label: "Clear" },
-        ],
+        value: "andromeda",
+        options: voiceOptions,
       },
       {
         key: "stability",
@@ -334,9 +351,27 @@ const voiceStatuses: Record<"stt" | "tts", VoiceStatus> = {
         label: "Stability",
         description: "Balance consistency and expression.",
         value: 0.65,
+        min: 0,
+        max: 1,
+        step: 0.05,
       },
     ],
   },
+  // Connected and off, which is how a judge starts.
+  judge: {
+    configured: true,
+    provider: "typesafe",
+    connected: ["typesafe"],
+    enabled: false,
+    settings: [],
+  },
+};
+const sttUsage: SttUsage = {
+  usage: { results: [{ hours: 3.25 }, { hours: 1.5 }] },
+  balance: { balances: [{ amount: 187.42, units: "usd" }] },
+};
+const ttsUsage: TtsUsage = {
+  usage: { character_count: 12480, character_limit: 100000 },
 };
 const memoryFile: FileReadResponse = {
   path: "/root/agent/MEMORY.md",
@@ -404,6 +439,9 @@ function fixtureFor(path: string): unknown {
   if (path.endsWith("/provider")) {
     return { ...provider, catalog: providerCatalog };
   }
+  // The usage of a voice provider, ahead of the usage of the model provider that ends alike.
+  if (path.endsWith("/voice/stt/usage")) return sttUsage;
+  if (path.endsWith("/voice/tts/usage")) return ttsUsage;
   if (path.endsWith("/usage")) {
     if (!provider.authed) return { meters: [], credits: null, account: null };
     return provider.kind === "openrouter" ? openRouterUsage : usage;
@@ -427,6 +465,9 @@ function fixtureFor(path: string): unknown {
   }
   if (path.includes("/voice/tts/status")) {
     return voiceUnconfigured ? unconfiguredVoice : voiceStatuses.tts;
+  }
+  if (path.includes("/voice/judge/status")) {
+    return voiceUnconfigured ? unconfiguredVoice : voiceStatuses.judge;
   }
   if (path.includes("/voice/behavior/status")) return voiceBehaviors;
   if (path.includes("/history?channel=notifications")) {

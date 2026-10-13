@@ -10,7 +10,7 @@ import voice.config as vc
 from aiohttp.test_utils import TestClient
 from voice import providers
 
-from .fakes import FRAME_TIMEOUT_SECS, FakeStt, FakeTts, next_frame, voice_service
+from .fakes import FRAME_TIMEOUT_SECS, FakeJudge, FakeStt, FakeTts, next_frame, voice_service
 
 
 @pytest.fixture
@@ -179,6 +179,22 @@ def test_a_behavior_is_read_and_set_like_a_provider_setting(tmp_path: pl.Path) -
             assert resp.status == 400
 
     serve(tmp_path, scenario)
+
+
+def test_the_judge_has_a_status_and_a_switch_like_the_two_other_roles(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(providers.JUDGES, "fake", FakeJudge())
+
+    async def scenario(client: TestClient) -> None:
+        async with client.get("/judge/status") as resp:
+            assert await resp.json() == {"configured": False, "provider": None, "connected": []}
+        vc.connect(tmp_path, "judge", "fake", {})
+        async with client.get("/judge/status") as resp:
+            assert await resp.json() == {"configured": True, "provider": "fake", "enabled": False, "connected": ["fake"], "settings": []}
+        async with client.post("/judge/set-enabled", json={"value": True}) as resp:
+            assert await resp.json() == {"ok": True}
+
+    serve(tmp_path, scenario)
+    assert vc.is_enabled(vc.load(tmp_path)["judge"]) is True
 
 
 def test_turning_a_role_on_needs_a_selected_provider(tmp_path: pl.Path) -> None:

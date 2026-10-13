@@ -167,6 +167,14 @@ class DeepgramStt:
         return await _get_json(url, {"Authorization": f"Token {key}"})
 
 
+async def account_balance(key: str) -> dict[str, JsonValue]:
+    """The balances of the project that owns this key, as Deepgram reports them."""
+    project = await _project_id(key)
+    if not project:
+        return {"error": "no project"}
+    return await _get_json(f"{DEEPGRAM_API}/v1/projects/{project}/balances", {"Authorization": f"Token {key}"})
+
+
 def _eot_params(settings: Domain) -> tuple[float, int]:
     """The end-of-turn threshold and timeout to send, held inside the range Flux accepts."""
     return (
