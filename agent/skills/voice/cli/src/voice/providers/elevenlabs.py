@@ -180,12 +180,13 @@ class ElevenLabsTts:
         http: aiohttp.ClientSession,
     ) -> tp.AsyncIterator[bytes]:
         url = f"{ELEVENLABS_API}/v1/text-to-speech/{voice}/stream"
-        payload = {"text": text, "model_id": MODEL_ID, "output_format": OUTPUT_FORMATS[audio_format]}
         try:
             async with http.post(
                 url,
+                # ElevenLabs reads the format from the query only. In the body it has no effect.
+                params={"output_format": OUTPUT_FORMATS[audio_format]},
                 headers={"xi-api-key": api_key(creds)},
-                json=payload,
+                json={"text": text, "model_id": MODEL_ID},
                 timeout=aiohttp.ClientTimeout(total=SYNTHESIS_TIMEOUT_SECS),
             ) as upstream:
                 if upstream.status != 200:

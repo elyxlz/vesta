@@ -54,9 +54,11 @@ class Row:
 
 
 def _elevenlabs_format(request: dict[str, JsonValue]) -> dict[str, str]:
-    body = request["body"]
+    body, query = request["body"], request["query"]
     assert isinstance(body, dict)
-    return {"output_format": str(body["output_format"]), "model_id": str(body["model_id"])}
+    assert isinstance(query, dict)
+    assert "output_format" not in body
+    return {"output_format": str(query["output_format"]), "model_id": str(body["model_id"])}
 
 
 def _deepgram_format(request: dict[str, JsonValue]) -> dict[str, str]:
