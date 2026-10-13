@@ -501,6 +501,21 @@ def test_a_client_that_goes_away_closes_the_stt_connection(tmp_path: pl.Path, st
     asyncio.run(scenario())
 
 
+def test_a_failure_inside_the_engine_tells_the_client_before_the_socket_closes(tmp_path: pl.Path, stt: FakeStt) -> None:
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
+            stream.broken = True
+            await ws.send_bytes(b"\x00\x00")
+
+            failed = await next_frame(ws)
+            assert failed["type"] == "error"
+            assert "the engine failed" in str(failed["message"])
+            assert (await ws.receive(timeout=5)).type == aiohttp.WSMsgType.CLOSE
+            assert stream.closed is True
+
+    asyncio.run(scenario())
+
+
 def test_two_sessions_speak_the_same_id_and_each_gets_its_own_audio(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, session(client, stt) as (one, _s1), session(client, stt) as (two, _s2):
@@ -539,6 +554,25 @@ def test_a_lost_stt_connection_ends_one_session_and_the_other_continues(tmp_path
 
             await second.emit("transcription", "still here")
             assert await next_frame(two) == {"type": "transcript", "text": "still here"}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("last_report", ["finished", "failed"])
+def test_the_url_of_a_play_answers_404_after_the_speaker_is_done_with_it(
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, last_report: str
+) -> None:
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
+            play = await speak_and_start(ws)
+            async with client.get(str(play["url"])) as audio:
+                assert audio.status == 200
+
+            await ws.send_json({"type": "playback", "id": "r1", "state": last_report})
+            assert await next_frame(ws) == {"type": "state", "value": "listening"}
+
+            async with client.get(str(play["url"])) as audio:
+                assert audio.status == 404
 
     asyncio.run(scenario())
 

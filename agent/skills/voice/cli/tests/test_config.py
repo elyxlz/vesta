@@ -110,12 +110,26 @@ def test_a_custom_voice_belongs_to_the_selected_tts_provider(tmp_path: pl.Path) 
     vc.connect(tmp_path, "tts", "deepgram", {"api_key": "dg"})
     entry = vc.add_custom_voice(tmp_path, "aura-2-new-en", "New", "a new voice")["tts"] or {}
 
-    assert vc.custom_voice_ids(entry, "elevenlabs") == ["v1"]
-    assert vc.custom_voice_ids(entry, "deepgram") == ["aura-2-new-en"]
-    assert vc.custom_voice_ids(vc.remove_custom_voice(tmp_path, "v1")["tts"] or {}, "elevenlabs") == []
+    assert [v["id"] for v in vc.provider_voices(entry, "elevenlabs")] == ["v1"]
+    assert vc.provider_voices(entry, "deepgram") == [
+        {"provider": "deepgram", "id": "aura-2-new-en", "name": "New", "description": "a new voice"}
+    ]
+    assert vc.provider_voices(vc.remove_custom_voice(tmp_path, "v1")["tts"] or {}, "elevenlabs") == []
 
 
 def test_an_unreadable_file_reads_as_no_config(tmp_path: pl.Path) -> None:
     vc.config_path(tmp_path).write_text("{not json")
 
     assert vc.load(tmp_path) == {"stt": None, "tts": None, "judge": None, "behavior": None}
+
+
+def test_a_provider_sees_its_settings_and_never_a_key() -> None:
+    entry: vc.Domain = {
+        "provider": "deepgram",
+        "credentials": {"deepgram": {"api_key": "dg"}, "elevenlabs": {"api_key": "el"}},
+        "enabled": True,
+        "eot_threshold": 0.7,
+        "keyterms": ["Roscioli"],
+    }
+
+    assert vc.provider_settings(entry) == {"eot_threshold": 0.7, "keyterms": ["Roscioli"]}

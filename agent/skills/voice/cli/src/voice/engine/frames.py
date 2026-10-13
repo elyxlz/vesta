@@ -167,7 +167,8 @@ def _text(body: dict[str, JsonValue], key: str) -> str:
 
 def _start_session(body: dict[str, JsonValue]) -> StartSession:
     playback = body["playback"] if "playback" in body else None
-    if not isinstance(playback, dict) or "delivery" not in playback or playback["delivery"] not in ("url", "bytes"):
+    delivery = playback["delivery"] if isinstance(playback, dict) and "delivery" in playback else None
+    if not isinstance(playback, dict) or not isinstance(delivery, str) or delivery not in ("url", "bytes"):
         raise FrameError("start_session: `playback.delivery` must be `url` or `bytes`")
     formats = playback["formats"] if "formats" in playback else None
     if not isinstance(formats, list) or not all(isinstance(name, str) for name in formats):
@@ -179,7 +180,7 @@ def _start_session(body: dict[str, JsonValue]) -> StartSession:
         "type": "start_session",
         "client": str(body["client"]) if "client" in body else "",
         "mic_supported": "audio" in body and body["audio"] == MIC_AUDIO,
-        "delivery": "url" if playback["delivery"] == "url" else "bytes",
+        "delivery": delivery,
         "formats": [str(name) for name in formats],
         "barge_in": barge_in,
     }
@@ -187,12 +188,8 @@ def _start_session(body: dict[str, JsonValue]) -> StartSession:
 
 def _playback_report(body: dict[str, JsonValue]) -> PlaybackReport:
     state = body["state"] if "state" in body else None
-    if state == "started":
-        return {"type": "playback", "id": _text(body, "id"), "state": "started"}
-    if state == "finished":
-        return {"type": "playback", "id": _text(body, "id"), "state": "finished"}
-    if state == "failed":
-        return {"type": "playback", "id": _text(body, "id"), "state": "failed"}
+    if isinstance(state, str) and state in ("started", "finished", "failed"):
+        return {"type": "playback", "id": _text(body, "id"), "state": state}
     if state == "stopped_by_user":
         # The id is optional here: the user stopped whatever played.
         play_id = body["id"] if "id" in body else ""

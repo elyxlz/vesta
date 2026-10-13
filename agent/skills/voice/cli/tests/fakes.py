@@ -10,8 +10,8 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from voice import server
-from voice.providers.base import Question, SttEvent, SttOpenError, TtsError, Validation, Verdict, Voice
-from voice.settings import Domain, JsonValue, SettingDef
+from voice.providers.base import Question, SttEvent, SttOpenError, TtsError, Validation, Verdict
+from voice.settings import Domain, JsonValue, SettingDef, SettingOption
 
 FRAME_TIMEOUT_SECS = 5
 
@@ -24,8 +24,12 @@ class FakeStream:
         self.audio: list[bytes] = []
         self.commits = 0
         self.closed = False
+        # When true, `send` raises an error that is not part of the contract: an adapter bug.
+        self.broken = False
 
     async def send(self, pcm: bytes) -> None:
+        if self.broken:
+            raise RuntimeError("the adapter broke")
         self.audio.append(pcm)
 
     async def commit(self) -> None:
@@ -48,7 +52,6 @@ class FakeStream:
 
 @dc.dataclass
 class FakeStt:
-    name: str = "fake"
     needs_key: bool = False
     refuse: tp.Literal["failed", "limit"] | None = None
     valid: bool = True
@@ -80,7 +83,6 @@ class FakeStt:
 
 @dc.dataclass
 class FakeTts:
-    name: str = "fake"
     needs_key: bool = False
     voice_setting: str = "fake_voice"
     formats: frozenset[str] = frozenset({"mp3_22050", "pcm_16000"})
@@ -106,9 +108,6 @@ class FakeTts:
                 await self.gate.wait()
             yield chunk + text.encode()
 
-    def premade_voices(self) -> list[Voice]:
-        return [{"id": "v-default", "name": "Default"}, {"id": "v-other", "name": "Other"}]
-
     async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
         return {}
 
@@ -116,13 +115,12 @@ class FakeTts:
         return (True, None) if self.valid else (False, "the fake says no")
 
     def settings_schema(self) -> list[SettingDef]:
-        options = [{"value": v["id"], "label": v["name"]} for v in self.premade_voices()]
+        options: list[SettingOption] = [{"value": "v-default", "label": "Default"}, {"value": "v-other", "label": "Other"}]
         return [{"key": self.voice_setting, "type": "select", "default": "v-default", "options": options}]
 
 
 @dc.dataclass
 class FakeJudge:
-    name: str = "fake"
     needs_key: bool = False
     # Text -> the verdict for it. Text with no entry gets no verdict.
     verdicts: dict[str, Verdict] = dc.field(default_factory=dict)

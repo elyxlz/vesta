@@ -35,7 +35,7 @@ def _git(home: pl.Path, *args: str) -> str:
 
 def _bash(home: pl.Path, script: str) -> str:
     result = subprocess.run(
-        ["bash", "-c", f"set -e\nTAG={TAG}\n{script}"],
+        ["bash", "-c", f"set -e\n{script}"],
         cwd=home,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null"},
         check=True,
@@ -61,6 +61,8 @@ def home(tmp_path: pl.Path) -> pl.Path:
     _git(home, "config", "user.email", "testbox@vesta")
     _git(home, "config", "commit.gpgsign", "false")
     _write(home, ".gitignore", "/*\n!/.gitignore\n!/agent/\n/agent/core/\n")
+    # Each block reads the version of the engine and sets `$TAG` from it.
+    _write(home, "agent/core/pyproject.toml", f'[project]\nversion = "{TAG.removeprefix("agent-v")}"\n')
     _write(home, HANDLERS, "stock handlers\n")
     _write(home, OWN, "STT = {}\n")
     _write(home, "agent/skills/whatsapp/SKILL.md", "calls use /tts/speak and /stt/listen\n")

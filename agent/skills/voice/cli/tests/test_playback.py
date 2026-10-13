@@ -39,34 +39,38 @@ def test_speaking_begins_on_a_started_report_and_ends_when_every_sent_play_is_ov
     state = _sent(A, B)
     assert playback.speaking(state) is False
 
-    state = playback.report(state, "a", "started")
+    state, _ended = playback.report(state, "a", "started")
     assert playback.speaking(state) is True
 
-    state = playback.report(state, "a", "finished")
+    state, _ended = playback.report(state, "a", "finished")
     assert playback.speaking(state) is True
 
-    state = playback.report(state, "b", "started")
-    state = playback.report(state, "b", "finished")
+    state, _ended = playback.report(state, "b", "started")
+    state, _ended = playback.report(state, "b", "finished")
     assert playback.speaking(state) is False
     assert state.sent == ()
 
 
 def test_a_failed_play_counts_as_over() -> None:
-    state = playback.report(_sent(A), "a", "started")
+    state, _ended = playback.report(_sent(A), "a", "started")
 
-    assert playback.speaking(playback.report(state, "a", "failed")) is False
+    state, ended = playback.report(state, "a", "failed")
+
+    assert playback.speaking(state) is False
+    assert ended is not None
+    assert ended.id == "a"
 
 
 def test_the_play_that_runs_now_is_the_one_that_started_and_is_not_over() -> None:
-    state = playback.report(_sent(A, B), "a", "started")
+    state, _ended = playback.report(_sent(A, B), "a", "started")
     assert playback.saying(state) == Play(id="a", text="first reply", token="ta", started=True)
 
-    state = playback.report(state, "a", "finished")
+    state, _ended = playback.report(state, "a", "finished")
     assert playback.saying(state) is None
 
 
 def test_a_stop_names_the_cut_play_and_drops_every_play_that_never_started() -> None:
-    state = playback.report(_sent(A, B, C), "a", "started")
+    state, _ended = playback.report(_sent(A, B, C), "a", "started")
 
     stopped = playback.stop(state)
 
@@ -84,9 +88,9 @@ def test_a_stop_with_nothing_playing_cuts_nothing() -> None:
 
 
 def test_a_finished_play_is_neither_cut_nor_dropped() -> None:
-    state = playback.report(_sent(A, B), "a", "started")
-    state = playback.report(state, "a", "finished")
-    state = playback.report(state, "b", "started")
+    state, _ended = playback.report(_sent(A, B), "a", "started")
+    state, _ended = playback.report(state, "a", "finished")
+    state, _ended = playback.report(state, "b", "started")
 
     stopped = playback.stop(state)
 
@@ -96,7 +100,8 @@ def test_a_finished_play_is_neither_cut_nor_dropped() -> None:
 
 
 def test_a_stop_keeps_the_plays_that_wait_for_the_end_of_the_users_turn() -> None:
-    state, _none = playback.speak(playback.report(_sent(A), "a", "started"), B, hold=True)
+    state, _ended = playback.report(_sent(A), "a", "started")
+    state, _none = playback.speak(state, B, hold=True)
 
     assert playback.stop(state).state.held == (B,)
 
@@ -105,17 +110,29 @@ def test_a_held_play_whose_synthesis_failed_is_forgotten() -> None:
     state, _none = playback.speak(PlaybackState(), A, hold=True)
     state, _none = playback.speak(state, B, hold=True)
 
-    assert playback.drop_held(state, "ta").held == (B,)
+    state, was_held = playback.drop_held(state, "ta")
+
+    assert (state.held, was_held) == ((B,), True)
+    assert playback.drop_held(state, "ta") == (state, False)
 
 
 def test_two_plays_with_one_id_take_their_reports_in_order() -> None:
     again = Play(id="a", text="first reply", token="ta2")
     state = _sent(A, again)
 
-    state = playback.report(state, "a", "started")
-    state = playback.report(state, "a", "finished")
-    state = playback.report(state, "a", "started")
+    state, _ended = playback.report(state, "a", "started")
+    state, _ended = playback.report(state, "a", "finished")
+    state, _ended = playback.report(state, "a", "started")
 
     running = playback.saying(state)
     assert running is not None
     assert running.token == "ta2"
+
+
+def test_a_report_names_the_play_it_ended_and_a_started_report_ends_none() -> None:
+    state, ended = playback.report(_sent(A), "a", "started")
+    assert ended is None
+
+    state, ended = playback.report(state, "a", "finished")
+    assert ended == Play(id="a", text="first reply", token="ta", started=True)
+    assert playback.report(state, "a", "finished") == (state, None)

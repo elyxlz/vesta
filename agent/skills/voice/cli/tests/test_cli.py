@@ -17,8 +17,8 @@ def home(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch) -> pl.Path:
     """A hermetic config dir, and a fake provider for each role: `keyed` needs a key, `local` needs none."""
     monkeypatch.setattr(cli, "_data_dir", lambda: tmp_path)
     for registry, fake in ((providers.STT, FakeStt), (providers.TTS, FakeTts), (providers.JUDGES, FakeJudge)):
-        monkeypatch.setitem(registry, "keyed", fake(name="keyed", needs_key=True))
-        monkeypatch.setitem(registry, "local", fake(name="local", needs_key=False))
+        monkeypatch.setitem(registry, "keyed", fake(needs_key=True))
+        monkeypatch.setitem(registry, "local", fake(needs_key=False))
     return tmp_path
 
 
@@ -99,7 +99,7 @@ def test_connect_turns_stt_and_tts_on_and_leaves_the_judge_off(home: pl.Path, ca
 def test_connect_refuses_a_provider_that_fails_its_check_and_stores_nothing(
     home: pl.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setitem(providers.STT, "keyed", FakeStt(name="keyed", needs_key=True, valid=False))
+    monkeypatch.setitem(providers.STT, "keyed", FakeStt(needs_key=True, valid=False))
 
     assert failure(capsys, "stt", "connect", "keyed", "--key", "bad") == "keyed failed the stt check: the fake says no"
     assert vc.load(home)["stt"] is None
@@ -194,7 +194,7 @@ def test_a_behavior_is_set_with_its_own_command(home: pl.Path, capsys: pytest.Ca
 def test_voice_sets_the_voice_of_the_selected_provider_only(
     home: pl.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setitem(providers.TTS, "keyed", FakeTts(name="keyed", needs_key=True, voice_setting="keyed_voice"))
+    monkeypatch.setitem(providers.TTS, "keyed", FakeTts(needs_key=True, voice_setting="keyed_voice"))
     run(capsys, "tts", "connect", "local")
     run(capsys, "tts", "voice", "v-other")
     run(capsys, "tts", "connect", "keyed", "--key", "k")
@@ -210,7 +210,7 @@ def test_voice_sets_the_voice_of_the_selected_provider_only(
 def test_the_voice_of_each_provider_is_the_same_after_two_switches(
     home: pl.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setitem(providers.TTS, "keyed", FakeTts(name="keyed", needs_key=True, voice_setting="keyed_voice"))
+    monkeypatch.setitem(providers.TTS, "keyed", FakeTts(needs_key=True, voice_setting="keyed_voice"))
     run(capsys, "tts", "connect", "local")
     run(capsys, "tts", "voice", "v-other")
     run(capsys, "tts", "connect", "keyed", "--key", "k")
@@ -237,7 +237,7 @@ def test_key_terms_are_edited_with_their_own_verbs(home: pl.Path, capsys: pytest
 
 
 def test_a_provider_of_this_box_is_in_the_registry_of_its_role(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(providers.STT, "whisper-local", FakeStt(name="whisper-local"))
+    monkeypatch.setitem(providers.STT, "whisper-local", FakeStt())
 
     assert "whisper-local" in providers.names("stt")
     assert providers.get("stt", "whisper-local") is providers.STT["whisper-local"]
@@ -246,8 +246,8 @@ def test_a_provider_of_this_box_is_in_the_registry_of_its_role(monkeypatch: pyte
 def test_a_provider_name_used_two_times_fails_every_command_and_names_it(
     home: pl.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setitem(own.STT, "deepgram", FakeStt(name="deepgram"))
-    monkeypatch.setitem(own.JUDGES, "typesafe", FakeJudge(name="typesafe"))
+    monkeypatch.setitem(own.STT, "deepgram", FakeStt())
+    monkeypatch.setitem(own.JUDGES, "typesafe", FakeJudge())
 
     expected = "a provider name is used two times in providers/own.py (stt: deepgram; judge: typesafe); give it a new name"
     assert failure(capsys, "status") == expected

@@ -20,18 +20,13 @@ fails prints one line of JSON on stderr and exits non-zero.
 
 import argparse
 import asyncio
-import contextlib
 import json
-import os
 import pathlib as pl
-import ssl
 import sys
 import typing as tp
-import urllib.request
 
 from . import config as vc
-from . import daemon, providers, sections, server
-from .engine import behavior
+from . import daemon, invalidation, providers, sections, server
 from .settings import JsonValue
 
 USAGE_EXIT = 2
@@ -47,28 +42,6 @@ class _Parser(argparse.ArgumentParser):
         raise SystemExit(USAGE_EXIT)
 
 
-def _env(name: str) -> str:
-    return os.environ[name] if name in os.environ else ""
-
-
-def _notify_invalidation(scope: str) -> None:
-    """Best-effort POST to vestad to invalidate the voice service."""
-    vestad_port, vestad_host, agent_name, agent_token = _env("VESTAD_PORT"), _env("BOX_HOST"), _env("AGENT_NAME"), _env("AGENT_TOKEN")
-    if not vestad_port or not vestad_host or not agent_name:
-        return
-    url = f"https://{vestad_host}:{vestad_port}/agents/{agent_name}/services/voice/invalidate"
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    headers = {"Content-Type": "application/json"}
-    if agent_token:
-        headers["X-Agent-Token"] = agent_token
-    data = json.dumps({"scope": scope}).encode()
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with contextlib.suppress(Exception):
-        urllib.request.urlopen(req, context=ctx, timeout=5)
-
-
 def _data_dir() -> pl.Path:
     return vc.data_dir()
 
@@ -76,14 +49,12 @@ def _data_dir() -> pl.Path:
 def _role_view(config: vc.VoiceConfig, role: vc.Role) -> dict[str, JsonValue]:
     """One role as `voice status` shows it. A key is never printed."""
     entry = config[role] or {}
-    selected = vc.provider_name(entry)
-    provider = providers.get(role, selected) if selected is not None else None
     view: dict[str, JsonValue] = {
         "providers": providers.names(role),
         "connected": vc.connected(entry),
-        "selected": selected,
+        "selected": vc.provider_name(entry),
         "on": vc.is_enabled(entry),
-        "settings": {s["key"]: s["value"] for s in sections.settings_view(provider.settings_schema(), entry)} if provider else {},
+        "settings": {s["key"]: s["value"] for s in sections.section_view(config, role)},
     }
     if role == "stt":
         view["keyterms"] = vc.keyterms(entry)
@@ -94,7 +65,7 @@ def _role_view(config: vc.VoiceConfig, role: vc.Role) -> dict[str, JsonValue]:
 
 def status_view(config: vc.VoiceConfig) -> dict[str, JsonValue]:
     view: dict[str, JsonValue] = {role: _role_view(config, role) for role in vc.ROLES}
-    view["behavior"] = {s["key"]: s["value"] for s in sections.settings_view(behavior.BEHAVIOR_SCHEMA, vc.behaviors(config))}
+    view["behavior"] = {s["key"]: s["value"] for s in sections.section_view(config, "behavior")}
     return view
 
 
@@ -102,7 +73,7 @@ def _print_status(scope: vc.Section | None = None) -> int:
     """The answer of every command that reads or changes the config: the whole status, one line."""
     print(json.dumps(status_view(vc.load(_data_dir()))))
     if scope is not None:
-        _notify_invalidation(scope)
+        asyncio.run(invalidation.notify(scope))
     return 0
 
 
@@ -122,7 +93,8 @@ def _provider_creds(
 def _check(role: vc.Role, name: str, key: str | None) -> dict[str, str]:
     """Check that the provider can do the role. Returns its credentials entry."""
     provider, creds = _provider_creds(role, name, key)
-    ok, error = asyncio.run(provider.validate(creds, vc.load(_data_dir())[role] or {}))
+    settings = vc.provider_settings(vc.load(_data_dir())[role] or {})
+    ok, error = asyncio.run(provider.validate(creds, settings))
     if not ok:
         raise CommandError(f"{name} failed the {role} check: {error}")
     return creds
@@ -169,12 +141,7 @@ def cmd_set(args: argparse.Namespace) -> int:
 
 
 def cmd_voice(args: argparse.Namespace) -> int:
-    config = vc.load(_data_dir())
-    name = vc.provider_name(config["tts"])
-    provider = providers.get_tts(name) if name is not None else None
-    if provider is None:
-        raise CommandError("tts has no selected provider; run `voice tts connect <provider>` first")
-    sections.store_setting(_data_dir(), "tts", provider.voice_setting, args.id)
+    sections.store_voice(_data_dir(), args.id)
     return _print_status("tts")
 
 

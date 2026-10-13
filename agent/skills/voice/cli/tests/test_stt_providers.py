@@ -22,6 +22,8 @@ from .fakes import serving
 
 EVENT_TIMEOUT_SECS = 5
 CREDS = {"api_key": "good-key"}
+# An outbox entry that makes the fake send a ping in place of a text frame.
+PING = "<ping>"
 
 
 @dc.dataclass
@@ -30,23 +32,31 @@ class FakeSocket:
 
     # Text frames the server sends: the test puts them, in the provider's wire format.
     outbox: asyncio.Queue[str | None] = dc.field(default_factory=asyncio.Queue)
+    pongs: asyncio.Queue[None] = dc.field(default_factory=asyncio.Queue)
     refuse_status: int | None = None
+    # When set, the server does not answer the handshake until the test sets it.
+    stall: asyncio.Event | None = None
     first_message: dict[str, str] | None = None
     queries: list[dict[str, list[str]]] = dc.field(default_factory=list)
     audio: list[bytes] = dc.field(default_factory=list)
     commit_flags: list[bool] = dc.field(default_factory=list)
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
+        if self.stall is not None:
+            await self.stall.wait()
         if self.refuse_status is not None:
             return web.Response(status=self.refuse_status)
         self.queries.append({key: request.query.getall(key) for key in request.query})
-        ws = web.WebSocketResponse()
+        # The fake reads the pongs itself: a pong is how a test knows what the adapter has read.
+        ws = web.WebSocketResponse(autoping=False)
         await ws.prepare(request)
         if self.first_message is not None:
             await ws.send_json(self.first_message)
         sender = asyncio.create_task(self._send(ws))
         async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.BINARY:
+            if msg.type == aiohttp.WSMsgType.PONG:
+                self.pongs.put_nowait(None)
+            elif msg.type == aiohttp.WSMsgType.BINARY:
                 self.audio.append(msg.data)
             elif msg.type == aiohttp.WSMsgType.TEXT:
                 chunk = json.loads(msg.data)
@@ -63,7 +73,16 @@ class FakeSocket:
             if frame is None:
                 await ws.close()
                 return
-            await ws.send_str(frame)
+            if frame == PING:
+                await ws.ping()
+            else:
+                await ws.send_str(frame)
+
+    async def read_by_the_adapter(self) -> None:
+        """Wait until the adapter has read every frame sent so far. It answers a ping only when
+        it reads it, and it reads in order, so its pong says that all earlier frames were handled."""
+        await self.outbox.put(PING)
+        await asyncio.wait_for(self.pongs.get(), EVENT_TIMEOUT_SECS)
 
 
 @dc.dataclass
@@ -266,6 +285,22 @@ def test_a_working_key_passes_the_check(row: Row, monkeypatch: pytest.MonkeyPatc
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("row", ROWS, ids=[row.name for row in ROWS])
+def test_a_provider_that_does_not_answer_the_handshake_fails_the_open_at_the_connect_timeout(row: Row, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(row.module, "CONNECT_TIMEOUT_SECS", 0.05)
+
+    async def scenario() -> None:
+        stall = asyncio.Event()
+        async with provider_socket(row, monkeypatch, FakeSocket(stall=stall, refuse_status=503)):
+            with pytest.raises(SttOpenError) as refused:
+                await asyncio.wait_for(row.provider.open(CREDS, {}), EVENT_TIMEOUT_SECS)
+            stall.set()
+
+            assert refused.value.reason == "failed"
+
+    asyncio.run(scenario())
+
+
 def test_scribe_at_its_limit_of_sessions_fails_the_open_with_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         socket = FakeSocket(first_message={"message_type": "rate_limited", "error": "too many"})
@@ -333,6 +368,23 @@ def test_flux_commit_with_no_open_turn_gives_an_empty_committed_and_drops_nothin
 
             assert await _next(events) == {"kind": "committed", "text": ""}
             assert await _next(events) == {"kind": "transcription", "text": "hello"}
+
+    asyncio.run(scenario())
+
+
+def test_a_flux_commit_while_flux_reports_only_silence_does_not_drop_the_next_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        socket = FakeSocket()
+        async with provider_socket(BY_NAME["deepgram"], monkeypatch, socket), open_stream(BY_NAME["deepgram"]) as (stream, events):
+            await socket.outbox.put(_flux("Update", ""))
+            await socket.read_by_the_adapter()
+            await stream.commit()
+            await socket.outbox.put(_flux("StartOfTurn", "hello"))
+            await socket.outbox.put(_flux("EndOfTurn", "Hello."))
+
+            assert await _next(events) == {"kind": "committed", "text": ""}
+            assert await _next(events) == {"kind": "transcription", "text": "hello"}
+            assert await _next(events) == {"kind": "committed", "text": "Hello."}
 
     asyncio.run(scenario())
 

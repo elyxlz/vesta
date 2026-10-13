@@ -17,6 +17,11 @@ from voice.settings import Domain, JsonValue, SettingDef
 Validation = tuple[bool, str | None]
 
 
+def api_key(creds: dict[str, str]) -> str:
+    """The key of a provider that needs one. `creds` is empty for a provider that needs none."""
+    return creds["api_key"] if "api_key" in creds else ""
+
+
 class SttEvent(tp.TypedDict):
     # transcription: the live text of the open segment.
     # committed: the final text of the segment, sent when the turn is over.
@@ -49,7 +54,6 @@ class SttStream(tp.Protocol):
 
 
 class SttProvider(tp.Protocol):
-    name: str
     needs_key: bool
 
     async def open(self, creds: dict[str, str], settings: Domain) -> SttStream:
@@ -77,19 +81,11 @@ class SttProvider(tp.Protocol):
     def settings_schema(self) -> list[SettingDef]: ...
 
 
-class Voice(tp.TypedDict, total=False):
-    id: str
-    name: str
-    description: str
-    preview: str
-
-
 class TtsError(Exception):
     """The provider refused one synthesis, or the connection failed."""
 
 
 class TtsProvider(tp.Protocol):
-    name: str
     needs_key: bool
     # The key of this provider's voice setting, so each provider keeps its own voice.
     voice_setting: str
@@ -108,8 +104,6 @@ class TtsProvider(tp.Protocol):
         """The audio bytes in order, as the provider makes them. `audio_format` is one name from
         `formats`; the caller checks that first. Raises TtsError."""
         ...
-
-    def premade_voices(self) -> list[Voice]: ...
 
     async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
         """Subscription and usage info, or an empty object for a provider with no quota."""
@@ -142,7 +136,6 @@ class Verdict(tp.TypedDict):
 
 
 class Judge(tp.Protocol):
-    name: str
     needs_key: bool
 
     async def ask(self, question: Question, creds: dict[str, str], settings: Domain, http: aiohttp.ClientSession) -> Verdict | None:

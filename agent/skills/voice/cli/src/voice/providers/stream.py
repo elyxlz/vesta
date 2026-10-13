@@ -16,7 +16,7 @@ import aiohttp
 
 from voice.settings import JsonValue
 
-from .base import SttEvent
+from .base import SttEvent, SttOpenError, SttStream, Validation
 
 logger = logging.getLogger("voice.stream")
 
@@ -63,3 +63,14 @@ class SocketStream:
             logger.error("%s got a message it cannot read: %s", type(self).__name__, e)
         finally:
             self._emit(CLOSED)
+
+
+async def check_open(opening: tp.Awaitable[SttStream]) -> Validation:
+    """An STT provider's `validate`: open one stream and close it. The open is the one thing the
+    role needs, so a key, a model, or a local service that cannot do it fails here."""
+    try:
+        stream = await opening
+    except SttOpenError as e:
+        return False, str(e)
+    await stream.close()
+    return True, None

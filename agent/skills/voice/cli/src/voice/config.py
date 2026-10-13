@@ -23,6 +23,9 @@ SECTIONS: tuple[Section, ...] = ("stt", "tts", "judge", "behavior")
 # it on as a separate step.
 ROLES_ON_AT_CONNECT: tuple[Role, ...] = ("stt", "tts")
 
+# The keys of a role entry that are not a provider's settings.
+ROLE_KEYS = ("provider", "credentials", "enabled")
+
 VoiceConfig = dict[Section, Domain | None]
 
 
@@ -79,6 +82,11 @@ def provider_creds(entry: Domain, provider: str) -> dict[str, str]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def provider_settings(entry: Domain) -> Domain:
+    """What a provider sees of its role entry: the settings, and never a key of another provider."""
+    return {key: value for key, value in entry.items() if key not in ROLE_KEYS}
+
+
 def is_enabled(entry: Domain | None) -> bool:
     return bool(entry and "enabled" in entry and entry["enabled"])
 
@@ -102,12 +110,13 @@ def custom_voices(entry: Domain) -> list[dict[str, str]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def custom_voice_ids(entry: Domain, provider: str) -> list[str]:
-    """The voice ids the user added for one provider."""
-    return [v["id"] for v in custom_voices(entry) if "provider" in v and v["provider"] == provider and "id" in v]
+def provider_voices(entry: Domain, provider: str) -> list[dict[str, str]]:
+    """The voices the user added for one provider."""
+    return [v for v in custom_voices(entry) if "provider" in v and v["provider"] == provider and "id" in v]
 
 
-def _selected_entry(config: VoiceConfig, role: Role) -> tuple[Domain, str]:
+def selected_entry(config: VoiceConfig, role: Role) -> tuple[Domain, str]:
+    """The role's entry and its selected provider name. Raises ValueError when it has none."""
     entry = config[role]
     name = provider_name(entry)
     if not entry or name is None:
@@ -168,7 +177,7 @@ def disconnect(data_dir: pl.Path, role: Role, provider: str) -> VoiceConfig:
 def set_enabled(data_dir: pl.Path, role: Role, value: bool) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         if value:
-            entry, _name = _selected_entry(cfg, role)
+            entry, _name = selected_entry(cfg, role)
         else:
             entry = cfg[role] or {}
         cfg[role] = {**entry, "enabled": value}
@@ -184,7 +193,7 @@ def set_setting(data_dir: pl.Path, section: Section, key: str, value: SettingVal
         if section == "behavior":
             cfg["behavior"] = {**behaviors(cfg), key: value}
             return cfg
-        entry, _name = _selected_entry(cfg, section)
+        entry, _name = selected_entry(cfg, section)
         cfg[section] = {**entry, key: value}
         return cfg
 
@@ -195,7 +204,7 @@ def add_custom_voice(data_dir: pl.Path, voice_id: str, name: str, description: s
     """Add a voice of the user's own to the selected TTS provider, or rename one that is there."""
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        tts, provider = _selected_entry(cfg, "tts")
+        tts, provider = selected_entry(cfg, "tts")
         voice: dict[str, str] = {"provider": provider, "id": voice_id, "name": name}
         if description:
             voice["description"] = description
@@ -223,7 +232,7 @@ def keyterms(entry: Domain) -> list[str]:
 
 def add_keyterm(data_dir: pl.Path, term: str) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        stt, _name = _selected_entry(cfg, "stt")
+        stt, _name = selected_entry(cfg, "stt")
         terms = keyterms(stt)
         if term not in terms:
             terms.append(term)

@@ -83,6 +83,22 @@ def test_a_prepared_id_streams_its_text_and_an_unknown_id_is_404(tmp_path: pl.Pa
     serve(tmp_path, scenario)
 
 
+def test_prepare_rejects_empty_text(tmp_path: pl.Path, tts: FakeTts) -> None:
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/tts/prepare", json={"text": "   "}) as resp:
+            assert resp.status == 400
+
+    serve(tmp_path, scenario)
+
+
+def test_prepare_when_tts_has_no_provider_is_503(tmp_path: pl.Path) -> None:
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/tts/prepare", json={"text": "hello"}) as resp:
+            assert resp.status == 503
+
+    serve(tmp_path, scenario)
+
+
 def test_the_tts_status_shows_the_voices_of_the_selected_provider_and_the_users_own(tmp_path: pl.Path, tts: FakeTts) -> None:
     vc.add_custom_voice(tmp_path, "v-mine", "Mine")
 

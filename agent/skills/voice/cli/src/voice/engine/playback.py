@@ -49,20 +49,24 @@ def release(state: PlaybackState) -> tuple[PlaybackState, tuple[Play, ...]]:
     return PlaybackState(sent=(*state.sent, *state.held)), state.held
 
 
-def report(state: PlaybackState, play_id: str, status: tp.Literal["started", "finished", "failed"]) -> PlaybackState:
-    """Apply one report to the oldest play with that id that is not over."""
+def report(state: PlaybackState, play_id: str, status: tp.Literal["started", "finished", "failed"]) -> tuple[PlaybackState, Play | None]:
+    """Apply one report to the play it is about: the oldest sent one with that id that is not
+    over. Also returns the play that this report ended (None for `started`), as it was before."""
     target = next((play for play in state.sent if play.id == play_id and not play.over), None)
     if target is None:
-        return state
+        return state, None
     updated = dc.replace(target, started=True) if status == "started" else dc.replace(target, over=True)
     sent = tuple(updated if play is target else play for play in state.sent)
     # Once every sent play is over, nothing of them matters to a later stop.
-    return dc.replace(state, sent=() if all(play.over for play in sent) else sent)
+    after = dc.replace(state, sent=() if all(play.over for play in sent) else sent)
+    return after, None if status == "started" else target
 
 
-def drop_held(state: PlaybackState, token: str) -> PlaybackState:
-    """Forget a held play whose synthesis failed: it never reaches the client."""
-    return dc.replace(state, held=tuple(play for play in state.held if play.token != token))
+def drop_held(state: PlaybackState, token: str) -> tuple[PlaybackState, bool]:
+    """Forget a held play whose synthesis failed: it never reaches the client. Also returns
+    whether the play was held."""
+    held = tuple(play for play in state.held if play.token != token)
+    return dc.replace(state, held=held), len(held) < len(state.held)
 
 
 def speaking(state: PlaybackState) -> bool:

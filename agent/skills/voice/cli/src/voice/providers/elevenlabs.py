@@ -4,16 +4,13 @@ Text in square brackets is an instruction to this model, not speech: `[laughs]` 
 changes how the line is said. The provider sends the text as it gets it.
 """
 
-import logging
 import typing as tp
 
 import aiohttp
 
 from voice.settings import Domain, JsonValue, SettingDef
 
-from .base import TtsError, Validation, Voice
-
-logger = logging.getLogger("voice.elevenlabs")
+from .base import TtsError, Validation, api_key
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
 MODEL_ID = "eleven_v4_turbo"
@@ -32,7 +29,7 @@ OUTPUT_FORMATS: dict[str, str] = {
     "opus_48000": "opus_48000_64",
 }
 
-PREMADE_VOICES: list[Voice] = [
+PREMADE_VOICES: list[dict[str, str]] = [
     {
         "id": "CwhRBWXzGAHq8TQ4Fs17",
         "name": "Roger",
@@ -151,7 +148,6 @@ PREMADE_VOICES: list[Voice] = [
 
 
 class ElevenLabsTts:
-    name = "elevenlabs"
     needs_key = True
     voice_setting = "selected_voice_id"
     formats = frozenset(OUTPUT_FORMATS)
@@ -184,7 +180,7 @@ class ElevenLabsTts:
         try:
             async with http.post(
                 url,
-                headers={"xi-api-key": _api_key(creds)},
+                headers={"xi-api-key": api_key(creds)},
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=SYNTHESIS_TIMEOUT_SECS),
             ) as upstream:
@@ -196,18 +192,11 @@ class ElevenLabsTts:
         except (TimeoutError, aiohttp.ClientError) as e:
             raise TtsError(f"elevenlabs request failed: {e}") from e
 
-    def premade_voices(self) -> list[Voice]:
-        return list(PREMADE_VOICES)
-
     async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return await fetch_subscription(_api_key(creds))
+        return await fetch_subscription(api_key(creds))
 
     async def validate(self, creds: dict[str, str], _settings: Domain) -> Validation:
-        return subscription_validation(await fetch_subscription(_api_key(creds)))
-
-
-def _api_key(creds: dict[str, str]) -> str:
-    return creds["api_key"] if "api_key" in creds else ""
+        return subscription_validation(await fetch_subscription(api_key(creds)))
 
 
 def subscription_validation(result: dict[str, JsonValue]) -> Validation:

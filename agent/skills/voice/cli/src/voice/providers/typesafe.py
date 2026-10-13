@@ -11,7 +11,7 @@ import aiohttp
 
 from voice.settings import Domain, SettingDef
 
-from .base import Question, Validation, Verdict
+from .base import Question, Validation, Verdict, api_key
 
 logger = logging.getLogger("voice.typesafe")
 
@@ -81,7 +81,6 @@ def verdict_from(answers: dict[str, dict[str, dict[str, float] | float | str]]) 
 
 
 class TypesafeJudge:
-    name = "typesafe"
     needs_key = True
 
     def settings_schema(self) -> list[SettingDef]:
@@ -95,7 +94,7 @@ class TypesafeJudge:
             async with http.post(
                 JEV_URL,
                 json={"state": question, "model": JEV_MODEL, "questions": questions},
-                headers={"Authorization": f"Bearer {_api_key(creds)}"},
+                headers={"Authorization": f"Bearer {api_key(creds)}"},
                 timeout=aiohttp.ClientTimeout(total=JEV_TIMEOUT_MS / 1000),
             ) as resp:
                 if resp.status != 200:
@@ -115,7 +114,7 @@ class TypesafeJudge:
                 session.post(
                     JEV_URL,
                     json={"state": probe, "model": JEV_MODEL, "questions": {"said_to": SAID_TO_QUESTION}},
-                    headers={"Authorization": f"Bearer {_api_key(creds)}"},
+                    headers={"Authorization": f"Bearer {api_key(creds)}"},
                     timeout=aiohttp.ClientTimeout(total=VALIDATE_TIMEOUT_SECS),
                 ) as resp,
             ):
@@ -126,7 +125,3 @@ class TypesafeJudge:
         except (TimeoutError, aiohttp.ClientError) as e:
             return False, f"typesafe request failed: {e}"
         return True, None
-
-
-def _api_key(creds: dict[str, str]) -> str:
-    return creds["api_key"] if "api_key" in creds else ""

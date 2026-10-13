@@ -26,8 +26,8 @@ Phase = tp.Literal["idle", "user_turn", "paused"]
 @dc.dataclass(frozen=True)
 class TurnState:
     phase: Phase = "idle"
-    # The clock time of `pause_playback`, while the phase is `paused`.
-    paused_at: float | None = None
+    # The clock time of `pause_playback`. It means something only while the phase is `paused`.
+    paused_at: float = 0.0
     # Live text of the open segment arrived.
     segment_seen: bool = False
     # The open segment already got its `ignored`, so its commit sends nothing.
@@ -89,9 +89,9 @@ def _to_agent(verdict: Verdict | None) -> bool:
     return verdict is None or verdict["said_to"] == "agent"
 
 
-def _takes_floor(verdict: Verdict) -> bool:
-    """Said to the agent while a reply plays, and not a backchannel."""
-    return verdict["said_to"] == "agent" and verdict["wants_stop"] is not False
+def _takes_floor(verdict: Verdict | None) -> bool:
+    """A verdict that the words are said to the agent while a reply plays, and are not a backchannel."""
+    return verdict is not None and verdict["said_to"] == "agent" and verdict["wants_stop"] is not False
 
 
 def _ignored(text: str, verdict: Verdict | None) -> frames.Ignored:
@@ -110,11 +110,11 @@ def _on_live(state: TurnState, *, can_pause: bool, now: float) -> tuple[TurnStat
 
 def _on_judged(state: TurnState, event: Judged, *, can_pause: bool) -> tuple[TurnState, list[Action]]:
     verdict = event["verdict"]
-    takes_floor = verdict is not None and _takes_floor(verdict)
+    takes_floor = _takes_floor(verdict)
     if state.phase == "paused" and verdict is not None:
         if takes_floor:
-            return dc.replace(state, phase="user_turn", paused_at=None), [STOP, TURN_START]
-        return dc.replace(state, phase="idle", paused_at=None, segment_settled=True), [RESUME, _ignored(event["text"], verdict)]
+            return dc.replace(state, phase="user_turn"), [STOP, TURN_START]
+        return dc.replace(state, phase="idle", segment_settled=True), [RESUME, _ignored(event["text"], verdict)]
     # While a reply plays and this segment did not pause it (it began before the reply, or it
     # was already answered with a resume), only a clear verdict takes the floor.
     if state.phase == "idle" and (takes_floor if can_pause else _to_agent(verdict)):
@@ -124,7 +124,7 @@ def _on_judged(state: TurnState, event: Judged, *, can_pause: bool) -> tuple[Tur
 
 def _committed_while_playing(text: str, verdict: Verdict | None, *, resume: bool) -> list[Action]:
     """A segment that ended while a reply played (paused when `resume` is true)."""
-    if verdict is not None and _takes_floor(verdict):
+    if _takes_floor(verdict):
         return [STOP, TURN_START, {"type": "turn_end", "text": text}]
     ignored: list[Action] = [_ignored(text, verdict)] if text else []
     return [RESUME, *ignored] if resume else ignored
@@ -154,15 +154,13 @@ def _on_committed(state: TurnState, event: Committed, *, can_pause: bool) -> tup
 
 
 def _on_tick(state: TurnState, *, now: float) -> tuple[TurnState, list[Action]]:
-    if state.phase == "paused" and state.paused_at is not None and (now - state.paused_at) * 1000 >= HOLD_WAIT_MS:
-        return dc.replace(state, phase="user_turn", paused_at=None), [STOP, TURN_START]
+    if state.phase == "paused" and (now - state.paused_at) * 1000 >= HOLD_WAIT_MS:
+        return dc.replace(state, phase="user_turn"), [STOP, TURN_START]
     return state, []
 
 
 def _on_stopped_by_user(state: TurnState) -> tuple[TurnState, list[Action]]:
-    if state.phase == "paused":
-        return dc.replace(state, phase="idle", paused_at=None), [STOP]
-    return state, [STOP]
+    return dc.replace(state, phase="idle") if state.phase == "paused" else state, [STOP]
 
 
 def step(state: TurnState, event: TurnEvent, *, speaking: bool, barge_in: bool, now: float) -> tuple[TurnState, list[Action]]:

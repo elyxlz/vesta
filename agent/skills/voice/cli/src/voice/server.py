@@ -18,9 +18,16 @@ from . import appkeys, handlers
 from . import config as voice_config
 from .engine import session
 
+# A provider connection stays open this long with no request on it. The gap between two
+# replies is longer than aiohttp's 15 s default, and a closed connection costs the next reply
+# a new handshake before its first audio (80 ms to 240 ms, measured).
+PROVIDER_KEEPALIVE_SECS = 90
+PROVIDER_DNS_CACHE_SECS = 300
+
 
 async def _provider_http(app: web.Application) -> tp.AsyncIterator[None]:
-    async with aiohttp.ClientSession() as http:
+    connector = aiohttp.TCPConnector(keepalive_timeout=PROVIDER_KEEPALIVE_SECS, ttl_dns_cache=PROVIDER_DNS_CACHE_SECS)
+    async with aiohttp.ClientSession(connector=connector) as http:
         app[appkeys.HTTP] = http
         yield
 
@@ -39,20 +46,19 @@ def create_app(data_dir: Path | None = None) -> web.Application:
     app.router.add_get("/voice/session", session.voice_session)
     app.router.add_get("/voice/play/{token}", session.voice_play)
 
+    # Each role: its status, its switch, and the choice between its connected providers
+    app.router.add_get("/{role:stt|tts}/status", handlers.role_status)
+    app.router.add_post("/{role:stt|tts}/set-enabled", handlers.set_enabled)
+    app.router.add_post("/{role:stt|tts}/use", handlers.use)
+
     # STT
-    app.router.add_get("/stt/status", handlers.stt_status)
     app.router.add_get("/stt/usage", handlers.stt_usage)
-    app.router.add_post("/stt/set-enabled", handlers.stt_set_enabled)
     app.router.add_post("/stt/set-eot", handlers.stt_set_eot)
-    app.router.add_post("/stt/use", handlers.stt_use)
     app.router.add_get("/stt/listen", handlers.stt_listen)
 
     # TTS
-    app.router.add_get("/tts/status", handlers.tts_status)
     app.router.add_get("/tts/usage", handlers.tts_usage)
-    app.router.add_post("/tts/set-enabled", handlers.tts_set_enabled)
     app.router.add_post("/tts/set-voice", handlers.tts_set_voice)
-    app.router.add_post("/tts/use", handlers.tts_use)
     app.router.add_post("/tts/speak", handlers.tts_speak)
     app.router.add_post("/tts/prepare", handlers.tts_prepare)
     app.router.add_get("/tts/stream/{id}", handlers.tts_stream)

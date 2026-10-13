@@ -15,11 +15,11 @@ import pathlib as pl
 import aiohttp
 
 from voice.config import keyterms
-from voice.settings import Domain, JsonValue, SettingDef
+from voice.settings import Domain, JsonValue, SettingDef, clamped
 
-from .base import SttEvent, SttOpenError, SttStream, Validation
+from .base import SttEvent, SttOpenError, SttStream, Validation, api_key
 from .elevenlabs import ELEVENLABS_API, fetch_subscription
-from .stream import SocketStream
+from .stream import SocketStream, check_open
 
 logger = logging.getLogger("voice.elevenlabs_stt")
 
@@ -77,7 +77,6 @@ class ScribeStream(SocketStream):
 
 
 class ElevenLabsStt:
-    name = "elevenlabs"
     needs_key = True
 
     def settings_schema(self) -> list[SettingDef]:
@@ -100,13 +99,7 @@ class ElevenLabsStt:
         return ScribeStream(session, ws)
 
     async def validate(self, creds: dict[str, str], settings: Domain) -> Validation:
-        try:
-            session, ws = await _connect(creds, settings)
-        except SttOpenError as e:
-            return False, str(e)
-        await ws.close()
-        await session.close()
-        return True, None
+        return await check_open(self.open(creds, settings))
 
     async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], language: str | None) -> str:
         form = aiohttp.FormData()
@@ -119,7 +112,7 @@ class ElevenLabsStt:
             session.post(
                 f"{ELEVENLABS_API}/v1/speech-to-text",
                 data=form,
-                headers={"xi-api-key": _api_key(creds)},
+                headers={"xi-api-key": api_key(creds)},
                 timeout=aiohttp.ClientTimeout(total=FILE_TIMEOUT_SECS),
             ) as resp,
         ):
@@ -129,21 +122,10 @@ class ElevenLabsStt:
             return body["text"].strip() if "text" in body and isinstance(body["text"], str) else ""
 
     async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return await fetch_subscription(_api_key(creds))
+        return await fetch_subscription(api_key(creds))
 
     async def balance(self, _creds: dict[str, str]) -> dict[str, JsonValue]:
         return {}
-
-
-def _api_key(creds: dict[str, str]) -> str:
-    return creds["api_key"] if "api_key" in creds else ""
-
-
-def _silence_secs(settings: Domain) -> float:
-    value = settings["vad_silence_threshold_secs"] if "vad_silence_threshold_secs" in settings else DEFAULT_SILENCE_SECS
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return DEFAULT_SILENCE_SECS
-    return max(SILENCE_MIN_SECS, min(SILENCE_MAX_SECS, float(value)))
 
 
 def _query(settings: Domain) -> list[tuple[str, str]]:
@@ -160,7 +142,10 @@ def _query(settings: Domain) -> list[tuple[str, str]]:
         ("model_id", SCRIBE_MODEL),
         ("commit_strategy", SCRIBE_COMMIT_STRATEGY),
         ("audio_format", f"pcm_{SAMPLE_RATE}"),
-        ("vad_silence_threshold_secs", str(_silence_secs(settings))),
+        (
+            "vad_silence_threshold_secs",
+            str(clamped(settings, "vad_silence_threshold_secs", DEFAULT_SILENCE_SECS, SILENCE_MIN_SECS, SILENCE_MAX_SECS)),
+        ),
         *(("keyterms", term) for term in fitting),
     ]
 
@@ -171,13 +156,13 @@ async def _connect(creds: dict[str, str], settings: Domain) -> tuple[aiohttp.Cli
     time, and every other first message is a refusal."""
     session = aiohttp.ClientSession()
     try:
-        ws = await session.ws_connect(
-            f"{ELEVENLABS_WS}/v1/speech-to-text/realtime",
-            params=_query(settings),
-            headers={"xi-api-key": _api_key(creds)},
-            timeout=aiohttp.ClientWSTimeout(ws_close=CONNECT_TIMEOUT_SECS),
-        )
-        first = await ws.receive(timeout=CONNECT_TIMEOUT_SECS)
+        async with asyncio.timeout(CONNECT_TIMEOUT_SECS):
+            ws = await session.ws_connect(
+                f"{ELEVENLABS_WS}/v1/speech-to-text/realtime",
+                params=_query(settings),
+                headers={"xi-api-key": api_key(creds)},
+            )
+            first = await ws.receive()
     except (TimeoutError, aiohttp.ClientError) as e:
         await session.close()
         raise SttOpenError("failed", f"elevenlabs connect failed: {e}") from e

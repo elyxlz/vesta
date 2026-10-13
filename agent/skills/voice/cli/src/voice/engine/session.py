@@ -62,12 +62,14 @@ class SynthFailedItem(tp.TypedDict):
 
 
 class SignalItem(tp.TypedDict):
-    kind: tp.Literal["tick", "client_closed"]
+    kind: tp.Literal["tick", "client_closed", "task_failed"]
 
 
 Item = ClientItem | SttItem | JudgedItem | SynthFailedItem | SignalItem
-# How one handled item ends the session: with an `ended` reason, or silently when the client is gone.
-Outcome = frames.EndedReason | tp.Literal["client_gone"] | None
+# How one handled item ends the session: with an `ended` reason, silently when the client is
+# gone, or with an `error` when a part of the engine itself failed.
+Outcome = frames.EndedReason | tp.Literal["client_gone", "engine_failed"] | None
+ENGINE_FAILED = "the engine failed and this session is over; open a new session"
 
 
 @dc.dataclass(frozen=True)
@@ -105,10 +107,10 @@ class Session:
     # Play token -> its synthesis task.
     synthesis: dict[str, asyncio.Task[None]] = dc.field(default_factory=dict)
     recent: list[Line] = dc.field(default_factory=list)
-    # The live text of the open segment, and the verdict for one exact text.
-    live_text: str = ""
-    verdict: tuple[str, Verdict | None] | None = None
+    # The judge call for the newest live text of the open segment, and the verdict for one
+    # exact text.
     asking: tuple[str, asyncio.Task[None]] | None = None
+    verdict: tuple[str, Verdict | None] | None = None
     wire: frames.StateValue | None = None
     tasks: set[asyncio.Task[None]] = dc.field(default_factory=set)
     # `bytes` delivery only: the plays to send, and the task that sends them one at a time.
@@ -141,7 +143,7 @@ def _task_done(session: Session, task: asyncio.Task[None]) -> None:
         # A part of the session died. End the session so the client is not left on a socket
         # that no longer listens.
         logger.error("voice session task failed", exc_info=error)
-        session.inbox.put_nowait({"kind": "client_closed"})
+        session.inbox.put_nowait({"kind": "task_failed"})
 
 
 # --- session start ---
@@ -177,7 +179,8 @@ def _tts_link(entry: Domain | None, wanted_formats: list[str]) -> TtsLink | None
     audio_format = next((f for f in wanted_formats if f in provider.formats and f in frames.PLAY_FORMATS), None)
     if audio_format is None:
         raise _UnsupportedFormatError
-    return TtsLink(provider, voice_config.provider_creds(entry, name), entry, providers.selected_voice(provider, entry), audio_format)
+    settings = voice_config.provider_settings(entry)
+    return TtsLink(provider, voice_config.provider_creds(entry, name), settings, providers.selected_voice(provider, entry), audio_format)
 
 
 def _judge_link(entry: Domain | None) -> JudgeLink | None:
@@ -185,14 +188,16 @@ def _judge_link(entry: Domain | None) -> JudgeLink | None:
     if not entry or name is None or not voice_config.is_enabled(entry):
         return None
     provider = providers.get_judge(name)
-    return JudgeLink(provider, voice_config.provider_creds(entry, name), entry) if provider is not None else None
+    if provider is None:
+        return None
+    return JudgeLink(provider, voice_config.provider_creds(entry, name), voice_config.provider_settings(entry))
 
 
 async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.StartSession) -> Session | frames.EndedReason:
     config = voice_config.load(app[appkeys.DATA_DIR])
     stt_entry = config["stt"]
     stt_name = voice_config.provider_name(stt_entry)
-    stt_provider = providers.get_stt(stt_name) if stt_name is not None else None
+    stt_provider = providers.get_stt(stt_name)
     if not stt_entry or stt_name is None or stt_provider is None or not voice_config.is_enabled(stt_entry):
         return "not_configured"
     if not start["mic_supported"]:
@@ -202,7 +207,7 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
     except _UnsupportedFormatError:
         return "unsupported_format"
     try:
-        stt = await stt_provider.open(voice_config.provider_creds(stt_entry, stt_name), stt_entry)
+        stt = await stt_provider.open(voice_config.provider_creds(stt_entry, stt_name), voice_config.provider_settings(stt_entry))
     except SttOpenError as e:
         logger.warning("stt open failed for %s (%s): %s", start["client"], stt_name, e)
         return "stt_limit" if e.reason == "limit" else "stt_failed"
@@ -301,7 +306,7 @@ async def _release_held(session: Session) -> None:
 async def _forget(session: Session, token: str) -> None:
     """End one play of this session: its synthesis stops, and its token answers 404."""
     task = session.synthesis.pop(token, None)
-    if task is not None:
+    if task is not None and not task.done():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -330,11 +335,13 @@ async def _on_report(session: Session, frame: frames.PlaybackReport) -> None:
     if frame["state"] == "stopped_by_user":
         await _step(session, {"kind": "stopped_by_user"})
         return
-    running = playback.saying(session.speaker)
-    if frame["state"] != "started" and running is not None and running.id == frame["id"]:
-        # The play was heard, in whole or in part: it becomes a line the judge can see.
-        _remember(session, session.agent_name, running.text)
-    session.speaker = playback.report(session.speaker, frame["id"], frame["state"])
+    session.speaker, over = playback.report(session.speaker, frame["id"], frame["state"])
+    if over is not None:
+        if over.started:
+            # The play was heard, in whole or in part: it becomes a line the judge can see.
+            _remember(session, session.agent_name, over.text)
+        # The speaker is done with this play, so the session holds its audio no longer.
+        await _forget(session, over.token)
     await _sync_state(session)
 
 
@@ -406,7 +413,6 @@ async def _on_live(session: Session, text: str) -> None:
     if not text.strip():
         return
     await _send(session.ws, {"type": "transcript", "text": text})
-    session.live_text = text
     await _step(session, {"kind": "live", "text": text})
     if session.judge is None:
         await _step(session, {"kind": "judged", "text": text, "verdict": None})
@@ -417,7 +423,7 @@ async def _on_live(session: Session, text: str) -> None:
 
 
 async def _on_judged(session: Session, text: str) -> None:
-    if text != session.live_text or session.verdict is None or session.verdict[0] != text:
+    if session.asking is None or session.asking[0] != text or session.verdict is None or session.verdict[0] != text:
         return
     await _step(session, {"kind": "judged", "text": text, "verdict": session.verdict[1]})
 
@@ -429,8 +435,7 @@ async def _verdict_for(session: Session, text: str) -> Verdict | None:
         return None
     if session.verdict is None or session.verdict[0] != text:
         if session.asking is not None and session.asking[0] == text:
-            with contextlib.suppress(asyncio.CancelledError):
-                await session.asking[1]
+            await session.asking[1]
         else:
             return await judge.provider.ask(_question(session, text), judge.creds, judge.settings, session.http)
     return session.verdict[1] if session.verdict is not None and session.verdict[0] == text else None
@@ -439,7 +444,6 @@ async def _verdict_for(session: Session, text: str) -> Verdict | None:
 async def _on_committed(session: Session, text: str) -> None:
     verdict = await _verdict_for(session, text)
     _drop_pending_ask(session)
-    session.live_text = ""
     session.verdict = None
     await _step(session, {"kind": "committed", "text": text, "verdict": verdict})
 
@@ -475,8 +479,8 @@ async def _on_synth_failed(session: Session, item: SynthFailedItem) -> None:
     """The play stays with the client, which reports `failed` for it. A play that was still
     held never reaches the client, so it goes now."""
     await _send(session.ws, {"type": "error", "message": item["message"]})
-    if any(play.token == item["token"] for play in session.speaker.held):
-        session.speaker = playback.drop_held(session.speaker, item["token"])
+    session.speaker, was_held = playback.drop_held(session.speaker, item["token"])
+    if was_held:
         await _forget(session, item["token"])
 
 
@@ -487,6 +491,8 @@ async def _handle(session: Session, item: Item) -> Outcome:
         return await _on_stt(session, item["event"])
     if item["kind"] == "client_closed":
         return "client_gone"
+    if item["kind"] == "task_failed":
+        return "engine_failed"
     if item["kind"] == "judged":
         await _on_judged(session, item["text"])
     elif item["kind"] == "tick":
@@ -519,7 +525,8 @@ async def _close(session: Session) -> None:
 
 
 async def voice_session(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT_SECS)
+    # Mic PCM and encoded audio do not compress, so deflate would only cost time on each frame.
+    ws = web.WebSocketResponse(heartbeat=WS_HEARTBEAT_SECS, compress=False)
     await ws.prepare(request)
     start = await _await_start(ws)
     if start is None:
@@ -531,7 +538,9 @@ async def voice_session(request: web.Request) -> web.WebSocketResponse:
         return ws
     try:
         outcome = await _run(opened)
-        if outcome is not None and outcome != "client_gone":
+        if outcome == "engine_failed":
+            await _send(ws, {"type": "error", "message": ENGINE_FAILED})
+        elif outcome is not None and outcome != "client_gone":
             await _send(ws, {"type": "ended", "reason": outcome})
     finally:
         await asyncio.shield(_close(opened))
@@ -540,7 +549,8 @@ async def voice_session(request: web.Request) -> web.WebSocketResponse:
 
 
 async def voice_play(request: web.Request) -> web.StreamResponse:
-    """The audio of one play, for `url` delivery. A token of an ended session answers 404."""
+    """The audio of one play, for `url` delivery. A token answers 404 once its play is over or
+    stopped, and after its session ends."""
     plays = request.app[appkeys.PLAYS]
     token = request.match_info["token"]
     if token not in plays:

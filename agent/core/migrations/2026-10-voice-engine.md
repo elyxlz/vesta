@@ -31,11 +31,14 @@ git merge-base --is-ancestor "$TAG" HEAD && echo synced || echo not-synced
   run this step again.
 - `not-synced`: the workspace does not have the stock voice skill of your version. STOP and leave
   this migration unmarked. It runs again on the next boot, after the sync.
-- `synced`: continue. The later steps use `$TAG`.
+- `synced`: continue. A shell variable does not last from one command to the next, so each later
+  block that needs `$TAG` sets it again.
 
 ### 2. Save your voice work, then take the stock skill
 
 ```bash
+cd ~
+TAG="agent-v$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)"
 mkdir -p ~/.voice
 [ -f ~/.voice/own-work.patch ] || {
   git add -A agent/skills/voice &&
@@ -60,6 +63,8 @@ exception, for the reason at the top. Nothing is lost, because the patch file ha
 Then find your voice work outside the skill. Only a file that you changed or created can hold it:
 
 ```bash
+cd ~
+TAG="agent-v$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)"
 { git diff --name-only "$TAG" -- agent; git ls-files --others --exclude-standard -- agent; } \
   | sort -u | grep -v '^agent/skills/voice/' | tr '\n' '\0' \
   | xargs -0 -r grep -nE "stt/listen|tts/(speak|prepare|stream)|voice_config\.json|services/voice"
@@ -110,7 +115,9 @@ One rule decides if you are done. This command must list only `providers/own.py`
 provider files, and your own rows in the tests:
 
 ```bash
-git -C ~ diff --stat "$TAG" -- agent/skills/voice
+cd ~
+TAG="agent-v$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)"
+git diff --stat "$TAG" -- agent/skills/voice
 ```
 
 Each other stock file stays equal to stock, because an update merges new stock lines into it, and

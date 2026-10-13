@@ -77,6 +77,8 @@ A frame before `start_session`, and a second `start_session`, gets `error` and c
 
 `kind` is `backchannel` (a short sound while the agent speaks, such as "mhm"), `echo` (the agent's own voice in the mic), `other_person`, or `not_speech`.
 
+A socket that closes with no `ended` frame means the engine failed or the network dropped. When the engine itself failed, an `error` frame that says so comes right before the close. Open a new session in both cases.
+
 `ended.reason`: `client_ended`, `stt_failed` (the STT provider refused or dropped the connection), `stt_limit` (the provider is at its limit of sessions at the same time), `not_configured` (the `stt` role is off or has no provider), `unsupported_format`.
 
 ## States
@@ -96,7 +98,7 @@ The STT provider decides when a turn ends: you do not need a silence timer. Send
 
 The engine does not pace the plays: it sends each one as soon as it can, and you play them in arrival order. A device that holds one item at a time keeps its own queue.
 
-**`url` delivery.** `play {id, format, url}`. `url` is a path on the voice service, such as `/voice/play/<token>`: fetch it as given, beside the path you opened the socket on. The audio streams while it is made, so start to play at the first byte. A token answers 404 after its session ends.
+**`url` delivery.** `play {id, format, url}`. `url` is a path on the voice service, such as `/voice/play/<token>`: fetch it as given, beside the path you opened the socket on. The audio streams while it is made, so start to play at the first byte. The engine keeps the audio of a play until your speaker is done with it: a token answers 404 after you report its play `finished` or `failed`, after a `stop_playback` that cut or dropped it, and after its session ends.
 
 **`bytes` delivery.**
 

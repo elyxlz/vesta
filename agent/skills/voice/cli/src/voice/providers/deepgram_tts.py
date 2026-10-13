@@ -5,7 +5,6 @@ One request takes AURA_MAX_CHARS characters or less, so a longer text is split a
 and its audio is joined in order.
 """
 
-import logging
 import re
 import typing as tp
 
@@ -13,9 +12,7 @@ import aiohttp
 
 from voice.settings import Domain, JsonValue, SettingDef
 
-from .base import TtsError, Validation, Voice
-
-logger = logging.getLogger("voice.deepgram_tts")
+from .base import TtsError, Validation, api_key
 
 DEEPGRAM_API = "https://api.deepgram.com"
 DEFAULT_VOICE = "aura-2-thalia-en"
@@ -127,7 +124,6 @@ _AURA_VOICES: tuple[tuple[str, str, str], ...] = (
     ("aura-2-izanami-ja", "Izanami", "Japanese, feminine: approachable, clear, polite"),
     ("aura-2-ama-ja", "Ama", "Japanese, feminine: casual, comfortable, confident"),
 )
-PREMADE_VOICES: list[Voice] = [{"id": model, "name": name, "description": description} for model, name, description in _AURA_VOICES]
 
 _SENTENCE_END = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s+")
 
@@ -157,7 +153,6 @@ def split_text(text: str, limit: int = AURA_MAX_CHARS) -> list[str]:
 
 
 class DeepgramTts:
-    name = "deepgram"
     needs_key = True
     voice_setting = "aura_voice"
     formats = frozenset(FORMAT_PARAMS)
@@ -170,7 +165,7 @@ class DeepgramTts:
                 "label": "voice",
                 "description": "select a voice for speech synthesis; each voice speaks one language",
                 "default": DEFAULT_VOICE,
-                "options": [{"value": v["id"], "label": v["name"], "description": v["description"]} for v in PREMADE_VOICES],
+                "options": [{"value": model, "label": name, "description": description} for model, name, description in _AURA_VOICES],
             },
         ]
 
@@ -184,7 +179,7 @@ class DeepgramTts:
         http: aiohttp.ClientSession,
     ) -> tp.AsyncIterator[bytes]:
         params = {"model": voice, **FORMAT_PARAMS[audio_format]}
-        headers = {"Authorization": f"Token {_api_key(creds)}"}
+        headers = {"Authorization": f"Token {api_key(creds)}"}
         for part in split_text(text):
             try:
                 async with http.post(
@@ -201,9 +196,6 @@ class DeepgramTts:
             except (TimeoutError, aiohttp.ClientError) as e:
                 raise TtsError(f"deepgram request failed: {e}") from e
 
-    def premade_voices(self) -> list[Voice]:
-        return list(PREMADE_VOICES)
-
     async def subscription(self, _creds: dict[str, str]) -> dict[str, JsonValue]:
         # Deepgram has no character quota, so there is no number to report.
         return {}
@@ -216,7 +208,7 @@ class DeepgramTts:
                 session.post(
                     f"{DEEPGRAM_API}/v1/speak",
                     params={"model": DEFAULT_VOICE, **FORMAT_PARAMS["mp3_22050"]},
-                    headers={"Authorization": f"Token {_api_key(creds)}"},
+                    headers={"Authorization": f"Token {api_key(creds)}"},
                     json={"text": VALIDATE_TEXT},
                     timeout=aiohttp.ClientTimeout(total=VALIDATE_TIMEOUT_SECS),
                 ) as resp,
@@ -227,10 +219,6 @@ class DeepgramTts:
                 return False, "invalid api key" if "INVALID_AUTH" in message else message
         except (TimeoutError, aiohttp.ClientError) as e:
             return False, f"deepgram request failed: {e}"
-
-
-def _api_key(creds: dict[str, str]) -> str:
-    return creds["api_key"] if "api_key" in creds else ""
 
 
 async def _error_message(resp: aiohttp.ClientResponse) -> str:

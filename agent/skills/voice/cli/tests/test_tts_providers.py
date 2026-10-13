@@ -267,5 +267,5 @@ def test_every_aura_voice_is_an_option_of_the_deepgram_voice_setting() -> None:
     options = provider.settings_schema()[0]["options"]
 
     assert provider.voice_setting == "aura_voice"
-    assert len(options) == len(provider.premade_voices()) == 90
+    assert len(options) == 90
     assert {"value": "aura-2-melia-it", "label": "Melia", "description": "Italian, feminine: clear, comfortable, engaging"} in options

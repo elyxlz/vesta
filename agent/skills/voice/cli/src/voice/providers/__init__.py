@@ -31,29 +31,24 @@ def duplicate_names() -> list[str]:
     return [f"{role}: {name}" for role, mine, shipped in pairs for name in sorted(mine) if name in shipped]
 
 
-def get_stt(name: str) -> SttProvider | None:
-    return STT[name] if name in STT else None
+def get_stt(name: str | None) -> SttProvider | None:
+    return STT[name] if name is not None and name in STT else None
 
 
-def get_tts(name: str) -> TtsProvider | None:
-    return TTS[name] if name in TTS else None
+def get_tts(name: str | None) -> TtsProvider | None:
+    return TTS[name] if name is not None and name in TTS else None
 
 
-def get_judge(name: str) -> Judge | None:
-    return JUDGES[name] if name in JUDGES else None
+def get_judge(name: str | None) -> Judge | None:
+    return JUDGES[name] if name is not None and name in JUDGES else None
 
 
-def get(role: Role, name: str) -> SttProvider | TtsProvider | Judge | None:
-    if role == "stt":
-        return get_stt(name)
-    if role == "tts":
-        return get_tts(name)
-    return get_judge(name)
+def get(role: Role, name: str | None) -> SttProvider | TtsProvider | Judge | None:
+    return {"stt": get_stt, "tts": get_tts, "judge": get_judge}[role](name)
 
 
 def names(role: Role) -> list[str]:
-    registry = {"stt": STT, "tts": TTS, "judge": JUDGES}[role]
-    return sorted(registry)
+    return sorted({"stt": STT, "tts": TTS, "judge": JUDGES}[role])
 
 
 def selected_voice(provider: TtsProvider, entry: Domain) -> str:

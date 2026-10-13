@@ -16,10 +16,10 @@ import aiohttp
 from aiohttp import web
 
 from voice.config import keyterms
-from voice.settings import Domain, JsonValue, SettingDef
+from voice.settings import Domain, JsonValue, SettingDef, clamped
 
-from .base import SttEvent, SttOpenError, SttStream, Validation
-from .stream import SocketStream
+from .base import SttEvent, SttOpenError, SttStream, Validation, api_key
+from .stream import SocketStream, check_open
 
 logger = logging.getLogger("voice.deepgram")
 
@@ -80,7 +80,8 @@ class FluxStream(SocketStream):
             self._turn_open = False
             self._transcript = ""
             return {"kind": "committed", "text": transcript}
-        self._turn_open = True
+        # Flux also reports on silence: a turn is open once it started or has words.
+        self._turn_open = self._turn_open or message["event"] == "StartOfTurn" or bool(transcript)
         if transcript == self._transcript:
             return None
         self._transcript = transcript
@@ -88,7 +89,6 @@ class FluxStream(SocketStream):
 
 
 class DeepgramStt:
-    name = "deepgram"
     needs_key = True
 
     def settings_schema(self) -> list[SettingDef]:
@@ -98,9 +98,9 @@ class DeepgramStt:
                 "type": "number",
                 "label": "end-of-turn sensitivity",
                 "description": "lower finalizes turns faster; higher waits for more confidence before ending the turn",
-                "default": 0.8,
-                "min": 0.5,
-                "max": 0.9,
+                "default": DEFAULT_EOT_THRESHOLD,
+                "min": EOT_THRESHOLD_MIN,
+                "max": EOT_THRESHOLD_MAX,
                 "step": 0.05,
             },
             {
@@ -108,9 +108,9 @@ class DeepgramStt:
                 "type": "number",
                 "label": "max silence timeout",
                 "description": "max silence before forcing end of turn; timer resets when speech resumes",
-                "default": 5000,
-                "min": 500,
-                "max": 10000,
+                "default": DEFAULT_EOT_TIMEOUT_MS,
+                "min": EOT_TIMEOUT_MS_MIN,
+                "max": EOT_TIMEOUT_MS_MAX,
                 "step": 500,
                 "unit": "ms",
             },
@@ -140,13 +140,7 @@ class DeepgramStt:
         return FluxStream(session, ws)
 
     async def validate(self, creds: dict[str, str], settings: Domain) -> Validation:
-        try:
-            session, ws = await _connect_flux(creds, settings)
-        except SttOpenError as e:
-            return False, str(e)
-        await ws.close()
-        await session.close()
-        return True, None
+        return await check_open(self.open(creds, settings))
 
     async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], language: str | None) -> str:
         if "api_key" not in creds or not creds["api_key"]:
@@ -162,29 +156,29 @@ class DeepgramStt:
                 raise RuntimeError(f"deepgram returned {resp.status}: {(await resp.text()).strip()}")
             return _prerecorded_transcript(await resp.json())
 
-    async def _cached_project_id(self, api_key: str) -> str | None:
-        if (cached := self._project_id_cache.get(api_key)) is not None:
+    async def _cached_project_id(self, key: str) -> str | None:
+        if (cached := self._project_id_cache.get(key)) is not None:
             return cached
-        project_id = await _project_id(api_key)
+        project_id = await _project_id(key)
         if project_id:
-            self._project_id_cache[api_key] = project_id
+            self._project_id_cache[key] = project_id
         return project_id
 
     async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        api_key = creds["api_key"] if "api_key" in creds else ""
-        project_id = await self._cached_project_id(api_key)
+        key = api_key(creds)
+        project_id = await self._cached_project_id(key)
         if not project_id:
             return {"error": "no project"}
         url = f"{DEEPGRAM_API}/v1/projects/{project_id}/usage/breakdown?endpoint=listen"
-        return await _get_json(url, {"Authorization": f"Token {api_key}"})
+        return await _get_json(url, {"Authorization": f"Token {key}"})
 
     async def balance(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        api_key = creds["api_key"] if "api_key" in creds else ""
-        project_id = await self._cached_project_id(api_key)
+        key = api_key(creds)
+        project_id = await self._cached_project_id(key)
         if not project_id:
             return {"error": "no project"}
         url = f"{DEEPGRAM_API}/v1/projects/{project_id}/balances"
-        return await _get_json(url, {"Authorization": f"Token {api_key}"})
+        return await _get_json(url, {"Authorization": f"Token {key}"})
 
 
 async def relay(
@@ -192,14 +186,14 @@ async def relay(
     creds: dict[str, str],
     stt_domain: Domain,
 ) -> None:
-    api_key = creds["api_key"] if "api_key" in creds else ""
-    if not api_key:
+    key = api_key(creds)
+    if not key:
         await browser_ws.close(code=1008, message=b"missing api_key")
         return
 
     multi_language = "multi_language" in stt_domain and bool(stt_domain["multi_language"])
-    url = _listen_url(stt_domain, multi_language)
-    headers = {"Authorization": f"Token {api_key}"}
+    url = _nova_url(stt_domain) if multi_language else _flux_url(stt_domain)
+    headers = {"Authorization": f"Token {key}"}
 
     session = aiohttp.ClientSession()
     try:
@@ -228,15 +222,9 @@ async def relay(
 
 def _eot_params(settings: Domain) -> tuple[float, int]:
     """The end-of-turn threshold and timeout to send, held inside the range Flux accepts."""
-    threshold = settings["eot_threshold"] if "eot_threshold" in settings else DEFAULT_EOT_THRESHOLD
-    timeout_ms = settings["eot_timeout_ms"] if "eot_timeout_ms" in settings else DEFAULT_EOT_TIMEOUT_MS
-    if isinstance(threshold, bool) or not isinstance(threshold, int | float):
-        threshold = DEFAULT_EOT_THRESHOLD
-    if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int | float):
-        timeout_ms = DEFAULT_EOT_TIMEOUT_MS
     return (
-        max(EOT_THRESHOLD_MIN, min(EOT_THRESHOLD_MAX, float(threshold))),
-        max(EOT_TIMEOUT_MS_MIN, min(EOT_TIMEOUT_MS_MAX, int(timeout_ms))),
+        clamped(settings, "eot_threshold", DEFAULT_EOT_THRESHOLD, EOT_THRESHOLD_MIN, EOT_THRESHOLD_MAX),
+        int(clamped(settings, "eot_timeout_ms", DEFAULT_EOT_TIMEOUT_MS, EOT_TIMEOUT_MS_MIN, EOT_TIMEOUT_MS_MAX)),
     )
 
 
@@ -257,15 +245,15 @@ def _flux_url(settings: Domain) -> str:
 async def _connect_flux(creds: dict[str, str], settings: Domain) -> tuple[aiohttp.ClientSession, aiohttp.ClientWebSocketResponse]:
     """Open the Flux socket. A refused handshake is an SttOpenError: `limit` for 429, the
     provider's limit on sessions at the same time, and `failed` for every other refusal."""
-    api_key = creds["api_key"] if "api_key" in creds else ""
+    key = api_key(creds)
     session = aiohttp.ClientSession()
     try:
-        ws = await session.ws_connect(
-            _flux_url(settings),
-            headers={"Authorization": f"Token {api_key}"},
-            heartbeat=HEARTBEAT_SECS,
-            timeout=aiohttp.ClientWSTimeout(ws_close=CONNECT_TIMEOUT_SECS),
-        )
+        async with asyncio.timeout(CONNECT_TIMEOUT_SECS):
+            ws = await session.ws_connect(
+                _flux_url(settings),
+                headers={"Authorization": f"Token {key}"},
+                heartbeat=HEARTBEAT_SECS,
+            )
     except aiohttp.WSServerHandshakeError as e:
         await session.close()
         if e.status == 429:
@@ -279,33 +267,20 @@ async def _connect_flux(creds: dict[str, str], settings: Domain) -> tuple[aiohtt
     return session, ws
 
 
-def _listen_url(stt_domain: Domain, multi_language: bool) -> str:
-    eot_threshold, eot_timeout_ms = _eot_params(stt_domain)
-
-    if multi_language:
-        # Nova-3 only works on /v1/listen; v2 returns 400 for non-Flux models.
-        params: list[tuple[str, str]] = [
-            ("model", MODEL_MULTI),
-            ("language", "multi"),
-            ("encoding", ENCODING),
-            ("sample_rate", str(SAMPLE_RATE)),
-            ("interim_results", "true"),
-            ("utterance_end_ms", str(eot_timeout_ms)),
-        ]
-        keyterm_param = "keywords"
-        listen_path = "/v1/listen"
-    else:
-        params = [
-            ("model", MODEL),
-            ("encoding", ENCODING),
-            ("sample_rate", str(SAMPLE_RATE)),
-            ("eot_threshold", str(eot_threshold)),
-            ("eot_timeout_ms", str(eot_timeout_ms)),
-        ]
-        keyterm_param = "keyterm"
-        listen_path = "/v2/listen"
-    params.extend((keyterm_param, term) for term in keyterms(stt_domain))
-    return f"{DEEPGRAM_WS}{listen_path}?{urlencode(params)}"
+def _nova_url(stt_domain: Domain) -> str:
+    """The multi-language socket of `relay`: Nova-3 only works on /v1/listen, and v2 returns 400
+    for a model that is not Flux."""
+    _eot_threshold, eot_timeout_ms = _eot_params(stt_domain)
+    params: list[tuple[str, str]] = [
+        ("model", MODEL_MULTI),
+        ("language", "multi"),
+        ("encoding", ENCODING),
+        ("sample_rate", str(SAMPLE_RATE)),
+        ("interim_results", "true"),
+        ("utterance_end_ms", str(eot_timeout_ms)),
+        *(("keywords", term) for term in keyterms(stt_domain)),
+    ]
+    return f"{DEEPGRAM_WS}/v1/listen?{urlencode(params)}"
 
 
 def _prerecorded_params(language: str | None) -> list[tuple[str, str]]:
@@ -382,13 +357,13 @@ async def _pipe_to_browser(dg_ws: aiohttp.ClientWebSocketResponse, browser_ws: w
             break
 
 
-async def _project_id(api_key: str) -> str | None:
+async def _project_id(key: str) -> str | None:
     try:
         async with (
             aiohttp.ClientSession() as session,
             session.get(
                 f"{DEEPGRAM_API}/v1/projects",
-                headers={"Authorization": f"Token {api_key}"},
+                headers={"Authorization": f"Token {key}"},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp,
         ):
