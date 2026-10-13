@@ -1,33 +1,95 @@
-"""Deepgram STT provider — Flux v2 realtime streaming, Nova-3 v1 for multi-language."""
+"""Deepgram STT provider: Flux on the v2 realtime socket.
+
+Flux predicts the end of a turn from the words and the silence, so `open` maps its `EndOfTurn`
+to `committed`. `relay` is the pass-through socket of the `/stt/listen` route, which speaks the
+Deepgram wire format to its client and uses Nova-3 on v1 for multi-language.
+"""
 
 import asyncio
+import contextlib
 import json
 import logging
 import pathlib as pl
-import typing as tp
 from urllib.parse import urlencode
 
 import aiohttp
 from aiohttp import web
 
-from .base import SettingDef
+from voice.config import keyterms
+from voice.settings import Domain, JsonValue, SettingDef
+
+from .base import SttEvent, SttOpenError, SttStream, Validation
+from .stream import SocketStream
 
 logger = logging.getLogger("voice.deepgram")
 
 DEEPGRAM_API = "https://api.deepgram.com"
 DEEPGRAM_WS = "wss://api.deepgram.com"
 MODEL = "flux-general-en"
+FLUX_MODEL_MULTI = "flux-general-multi"
 MODEL_MULTI = "nova-3"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
+HEARTBEAT_SECS = 30.0
+CONNECT_TIMEOUT_SECS = 10
+
+DEFAULT_EOT_THRESHOLD = 0.8
+DEFAULT_EOT_TIMEOUT_MS = 5000
+EOT_THRESHOLD_MIN = 0.5
+EOT_THRESHOLD_MAX = 0.9
+EOT_TIMEOUT_MS_MIN = 500
+EOT_TIMEOUT_MS_MAX = 10000
 
 # Prerecorded (one-shot file) transcription, the `transcribe` command's provider path.
 PRERECORDED_MODEL = "nova-3"
 PRERECORDED_TIMEOUT_SECS = 120
 
 
+class FluxStream(SocketStream):
+    """One Flux connection. `commit` puts its own `committed` in order with Flux's events."""
+
+    def __init__(self, session: aiohttp.ClientSession, ws: aiohttp.ClientWebSocketResponse) -> None:
+        super().__init__(session, ws)
+        self._turn_open = False
+        self._transcript = ""
+        # commit() ended the turn here, and Flux has not ended it yet: its events for that
+        # turn, up to and including its EndOfTurn, belong to text that is already committed.
+        self._dropping = False
+
+    async def send(self, pcm: bytes) -> None:
+        with contextlib.suppress(ConnectionError):
+            await self._ws.send_bytes(pcm)
+
+    async def commit(self) -> None:
+        text = self._transcript if self._turn_open and not self._dropping else ""
+        self._dropping = self._turn_open
+        self._transcript = ""
+        self._emit({"kind": "committed", "text": text})
+
+    def _event(self, message: dict[str, JsonValue]) -> SttEvent | None:
+        if "type" not in message or message["type"] != "TurnInfo":
+            return None
+        transcript = str(message["transcript"])
+        ended = message["event"] == "EndOfTurn"
+        if self._dropping:
+            if ended:
+                self._dropping = False
+                self._turn_open = False
+            return None
+        if ended:
+            self._turn_open = False
+            self._transcript = ""
+            return {"kind": "committed", "text": transcript}
+        self._turn_open = True
+        if transcript == self._transcript:
+            return None
+        self._transcript = transcript
+        return {"kind": "transcription", "text": transcript}
+
+
 class DeepgramStt:
     name = "deepgram"
+    needs_key = True
 
     def settings_schema(self) -> list[SettingDef]:
         return [
@@ -73,44 +135,18 @@ class DeepgramStt:
         # twice per request (usage + balance both need it).
         self._project_id_cache: dict[str, str] = {}
 
-    async def relay(
-        self,
-        browser_ws: web.WebSocketResponse,
-        creds: dict[str, str],
-        stt_domain: dict,
-    ) -> None:
-        api_key = creds.get("api_key")
-        if not api_key:
-            await browser_ws.close(code=1008, message=b"missing api_key")
-            return
+    async def open(self, creds: dict[str, str], settings: Domain) -> SttStream:
+        session, ws = await _connect_flux(creds, settings)
+        return FluxStream(session, ws)
 
-        multi_language = bool(stt_domain.get("multi_language"))
-        url = _listen_url(stt_domain, multi_language)
-        headers = {"Authorization": f"Token {api_key}"}
-
-        session = aiohttp.ClientSession()
+    async def validate(self, creds: dict[str, str], settings: Domain) -> Validation:
         try:
-            try:
-                dg_ws = await session.ws_connect(url, headers=headers, heartbeat=30.0)
-            except (TimeoutError, aiohttp.ClientError) as e:
-                logger.error("deepgram connect failed: %s", e)
-                await browser_ws.close(code=1011, message=f"deepgram connect failed: {e}".encode())
-                return
-
-            pump = _translate_v1_to_browser if multi_language else _pipe_to_browser
-            tasks = [
-                asyncio.create_task(_browser_to_deepgram(browser_ws, dg_ws)),
-                asyncio.create_task(pump(dg_ws, browser_ws)),
-            ]
-            try:
-                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for t in tasks:
-                    t.cancel()
-            finally:
-                if not dg_ws.closed:
-                    await dg_ws.close()
-        finally:
-            await session.close()
+            session, ws = await _connect_flux(creds, settings)
+        except SttOpenError as e:
+            return False, str(e)
+        await ws.close()
+        await session.close()
+        return True, None
 
     async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], language: str | None) -> str:
         if "api_key" not in creds or not creds["api_key"]:
@@ -134,59 +170,117 @@ class DeepgramStt:
             self._project_id_cache[api_key] = project_id
         return project_id
 
-    async def usage(self, creds: dict[str, str]) -> dict:
-        api_key = creds.get("api_key", "")
+    async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
+        api_key = creds["api_key"] if "api_key" in creds else ""
         project_id = await self._cached_project_id(api_key)
         if not project_id:
             return {"error": "no project"}
         url = f"{DEEPGRAM_API}/v1/projects/{project_id}/usage/breakdown?endpoint=listen"
         return await _get_json(url, {"Authorization": f"Token {api_key}"})
 
-    async def balance(self, creds: dict[str, str]) -> dict:
-        api_key = creds.get("api_key", "")
+    async def balance(self, creds: dict[str, str]) -> dict[str, JsonValue]:
+        api_key = creds["api_key"] if "api_key" in creds else ""
         project_id = await self._cached_project_id(api_key)
         if not project_id:
             return {"error": "no project"}
         url = f"{DEEPGRAM_API}/v1/projects/{project_id}/balances"
         return await _get_json(url, {"Authorization": f"Token {api_key}"})
 
-    async def validate(self, api_key: str) -> tuple[bool, str | None]:
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(
-                f"{DEEPGRAM_API}/v1/projects",
-                headers={"Authorization": f"Token {api_key}"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp,
-        ):
-            if resp.status == 401:
-                return False, "invalid api key"
-            if resp.status != 200:
-                return False, f"deepgram returned {resp.status}"
-            body = await resp.json()
-            if not body.get("projects"):
-                return False, "no projects on this account"
-        return True, None
+
+async def relay(
+    browser_ws: web.WebSocketResponse,
+    creds: dict[str, str],
+    stt_domain: Domain,
+) -> None:
+    api_key = creds["api_key"] if "api_key" in creds else ""
+    if not api_key:
+        await browser_ws.close(code=1008, message=b"missing api_key")
+        return
+
+    multi_language = "multi_language" in stt_domain and bool(stt_domain["multi_language"])
+    url = _listen_url(stt_domain, multi_language)
+    headers = {"Authorization": f"Token {api_key}"}
+
+    session = aiohttp.ClientSession()
+    try:
+        try:
+            dg_ws = await session.ws_connect(url, headers=headers, heartbeat=HEARTBEAT_SECS)
+        except (TimeoutError, aiohttp.ClientError) as e:
+            logger.error("deepgram connect failed: %s", e)
+            await browser_ws.close(code=1011, message=f"deepgram connect failed: {e}".encode())
+            return
+
+        pump = _translate_v1_to_browser if multi_language else _pipe_to_browser
+        tasks = [
+            asyncio.create_task(_browser_to_deepgram(browser_ws, dg_ws)),
+            asyncio.create_task(pump(dg_ws, browser_ws)),
+        ]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in tasks:
+                t.cancel()
+        finally:
+            if not dg_ws.closed:
+                await dg_ws.close()
+    finally:
+        await session.close()
 
 
-def _listen_url(stt_domain: dict, multi_language: bool) -> str:
-    from voice import config as voice_config
+def _eot_params(settings: Domain) -> tuple[float, int]:
+    """The end-of-turn threshold and timeout to send, held inside the range Flux accepts."""
+    threshold = settings["eot_threshold"] if "eot_threshold" in settings else DEFAULT_EOT_THRESHOLD
+    timeout_ms = settings["eot_timeout_ms"] if "eot_timeout_ms" in settings else DEFAULT_EOT_TIMEOUT_MS
+    if isinstance(threshold, bool) or not isinstance(threshold, int | float):
+        threshold = DEFAULT_EOT_THRESHOLD
+    if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int | float):
+        timeout_ms = DEFAULT_EOT_TIMEOUT_MS
+    return (
+        max(EOT_THRESHOLD_MIN, min(EOT_THRESHOLD_MAX, float(threshold))),
+        max(EOT_TIMEOUT_MS_MIN, min(EOT_TIMEOUT_MS_MAX, int(timeout_ms))),
+    )
 
-    keyterms: list[str] = stt_domain.get("keyterms") or []
-    eot_threshold = float(
-        stt_domain.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD),
-    )
-    eot_threshold = max(
-        voice_config.EOT_THRESHOLD_MIN,
-        min(voice_config.EOT_THRESHOLD_MAX, eot_threshold),
-    )
-    eot_timeout_ms = int(
-        stt_domain.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS),
-    )
-    eot_timeout_ms = max(
-        voice_config.EOT_TIMEOUT_MS_MIN,
-        min(voice_config.EOT_TIMEOUT_MS_MAX, eot_timeout_ms),
-    )
+
+def _flux_url(settings: Domain) -> str:
+    multi_language = "multi_language" in settings and bool(settings["multi_language"])
+    eot_threshold, eot_timeout_ms = _eot_params(settings)
+    params: list[tuple[str, str]] = [
+        ("model", FLUX_MODEL_MULTI if multi_language else MODEL),
+        ("encoding", ENCODING),
+        ("sample_rate", str(SAMPLE_RATE)),
+        ("eot_threshold", str(eot_threshold)),
+        ("eot_timeout_ms", str(eot_timeout_ms)),
+        *(("keyterm", term) for term in keyterms(settings)),
+    ]
+    return f"{DEEPGRAM_WS}/v2/listen?{urlencode(params)}"
+
+
+async def _connect_flux(creds: dict[str, str], settings: Domain) -> tuple[aiohttp.ClientSession, aiohttp.ClientWebSocketResponse]:
+    """Open the Flux socket. A refused handshake is an SttOpenError: `limit` for 429, the
+    provider's limit on sessions at the same time, and `failed` for every other refusal."""
+    api_key = creds["api_key"] if "api_key" in creds else ""
+    session = aiohttp.ClientSession()
+    try:
+        ws = await session.ws_connect(
+            _flux_url(settings),
+            headers={"Authorization": f"Token {api_key}"},
+            heartbeat=HEARTBEAT_SECS,
+            timeout=aiohttp.ClientWSTimeout(ws_close=CONNECT_TIMEOUT_SECS),
+        )
+    except aiohttp.WSServerHandshakeError as e:
+        await session.close()
+        if e.status == 429:
+            raise SttOpenError("limit", "deepgram refused the connection: too many sessions") from e
+        if e.status in (401, 403):
+            raise SttOpenError("failed", "invalid api key") from e
+        raise SttOpenError("failed", f"deepgram refused the connection: {e.status}") from e
+    except (TimeoutError, aiohttp.ClientError) as e:
+        await session.close()
+        raise SttOpenError("failed", f"deepgram connect failed: {e}") from e
+    return session, ws
+
+
+def _listen_url(stt_domain: Domain, multi_language: bool) -> str:
+    eot_threshold, eot_timeout_ms = _eot_params(stt_domain)
 
     if multi_language:
         # Nova-3 only works on /v1/listen; v2 returns 400 for non-Flux models.
@@ -210,9 +304,7 @@ def _listen_url(stt_domain: dict, multi_language: bool) -> str:
         ]
         keyterm_param = "keyterm"
         listen_path = "/v2/listen"
-    for term in keyterms:
-        params.append((keyterm_param, term))
-    # Build the URL only after keyterms are appended, otherwise they are dropped.
+    params.extend((keyterm_param, term) for term in keyterms(stt_domain))
     return f"{DEEPGRAM_WS}{listen_path}?{urlencode(params)}"
 
 
@@ -311,13 +403,13 @@ async def _project_id(api_key: str) -> str | None:
         return None
 
 
-async def _get_json(url: str, headers: dict[str, str]) -> dict:
+async def _get_json(url: str, headers: dict[str, str]) -> dict[str, JsonValue]:
     try:
         async with (
             aiohttp.ClientSession() as session,
             session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp,
         ):
-            body: tp.Any = await resp.json()
+            body: dict[str, JsonValue] = await resp.json()
             if resp.status != 200:
                 return {"error": f"status {resp.status}", "body": body}
             return body

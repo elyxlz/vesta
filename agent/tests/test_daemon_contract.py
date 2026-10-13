@@ -257,7 +257,7 @@ SKILLS = [
         public=True,
     ),
     Daemon(
-        command=["uv", "run", "--project", str(SKILLS_DIR / "voice/cli"), "voice-keys"],
+        command=["uv", "run", "--project", str(SKILLS_DIR / "voice/cli"), "voice"],
         name="voice",
         serves_port=True,
         emits_daemon_died=True,

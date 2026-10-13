@@ -114,7 +114,7 @@ def audio(tmp_path: pl.Path) -> pl.Path:
 
 
 def _configure_stt(home: pl.Path, *, enabled: bool = True) -> None:
-    vc.set_key(home / ".voice", "stt", "deepgram", "dg-key")
+    vc.connect(home / ".voice", "stt", "deepgram", {"api_key": "dg-key"})
     vc.set_enabled(home / ".voice", "stt", enabled)
 
 

@@ -22,7 +22,7 @@ PORTFILE = DAEMONS_DIR / f"{NAME}.port"
 LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
 # /health needs no provider key, so it answers before any STT or TTS credential exists.
 READY_URL_PATH = "health"
-USAGE = "Usage: voice-keys daemon <start|stop|restart|status>"
+USAGE = "Usage: voice daemon <start|stop|restart|status>"
 POLL_SECS = 0.5
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_WAIT_SECS = 3
@@ -182,9 +182,9 @@ def _start() -> int:
     if live_pid() is not None:
         print(json.dumps({"status": "already_running"}))
         return 0
-    binary = shutil.which("voice-server")
+    binary = shutil.which("voice")
     if binary is None:
-        return _fail("voice-server is not on PATH; run `uv tool install --editable ~/agent/skills/voice/cli` first")
+        return _fail("voice is not on PATH; run `uv tool install --editable ~/agent/skills/voice/cli` first")
     DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
     LOG.parent.mkdir(parents=True, exist_ok=True)
     answer = _claim_start()
@@ -196,7 +196,7 @@ def _start() -> int:
         return _fail(f"could not register {NAME} with vestad; not launching")
     PORTFILE.write_text(port)
     with LOG.open("ab") as log:
-        child = subprocess.Popen([binary], env={**os.environ, "SKILL_PORT": port}, start_new_session=True, stdout=log, stderr=log)
+        child = subprocess.Popen([binary, "serve"], env={**os.environ, "SKILL_PORT": port}, start_new_session=True, stdout=log, stderr=log)
     PIDFILE.write_text(_record(child.pid))
     return _await_ready(child, port)
 

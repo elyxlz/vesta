@@ -4,35 +4,45 @@ Drives the real aiohttp app and routes; the TTS provider and on-disk config are
 faked at the edge so no ElevenLabs call or ~/.voice file is needed.
 """
 
-from unittest.mock import MagicMock
+import typing as tp
 
+import aiohttp
 import pytest
-from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from voice import handlers, server
+from voice.settings import Domain, SettingDef
 
 CONFIGURED_TTS = {
     "stt": None,
     "tts": {"provider": "fake", "selected_voice_id": "v1", "credentials": {"fake": {"api_key": "k"}}},
+    "judge": None,
+    "behavior": None,
 }
+UNCONFIGURED = {"stt": None, "tts": None, "judge": None, "behavior": None}
 
 
-def _fake_provider():
-    provider = MagicMock()
-    provider.premade_voices.return_value = [{"id": "v1"}]
+class FakeTts:
+    """A TTS provider whose audio is the text itself."""
 
-    async def fake_speak(text, voice_id, creds, request, audio_format):
-        return web.Response(body=text.encode(), headers={"Content-Type": "audio/mpeg"})
+    name = "fake"
+    needs_key = True
+    voice_setting = "selected_voice_id"
+    formats = frozenset({"mp3_22050", "pcm_16000"})
 
-    provider.speak = fake_speak
-    return provider
+    async def synthesize(
+        self, text: str, _voice: str, _audio_format: str, _creds: dict[str, str], _settings: Domain, _http: aiohttp.ClientSession
+    ) -> tp.AsyncIterator[bytes]:
+        yield text.encode()
+
+    def settings_schema(self) -> list[SettingDef]:
+        return [{"key": "selected_voice_id", "type": "select", "default": "v1", "options": [{"value": "v1", "label": "V1"}]}]
 
 
 @pytest.fixture
 def voice_app(monkeypatch):
     """A fresh voice app wired to a faked, configured TTS provider with an empty id store."""
     monkeypatch.setattr("voice.config.load", lambda data_dir: dict(CONFIGURED_TTS))
-    monkeypatch.setattr("voice.providers.get_tts", lambda name: _fake_provider())
+    monkeypatch.setattr("voice.providers.get_tts", lambda name: FakeTts())
     handlers._PENDING_TTS.clear()
     return server.create_app()
 
@@ -66,7 +76,7 @@ async def test_stream_unknown_id_is_404(voice_app):
 
 @pytest.mark.anyio
 async def test_prepare_when_tts_unconfigured_is_503(monkeypatch):
-    monkeypatch.setattr("voice.config.load", lambda data_dir: {"stt": None, "tts": None})
+    monkeypatch.setattr("voice.config.load", lambda data_dir: dict(UNCONFIGURED))
     async with TestClient(TestServer(server.create_app())) as client:
         resp = await client.post("/tts/prepare", json={"text": "hello"})
         assert resp.status == 503

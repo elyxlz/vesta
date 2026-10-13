@@ -39,10 +39,9 @@ async def _provider_transcript(path: pl.Path, language: str | None) -> str:
     provider = providers.get_stt(name)
     if provider is None:
         raise RuntimeError(f"unknown STT provider: {name}")
-    creds = vc.provider_creds(entry, name)
-    if not creds:
-        raise RuntimeError(f"no credentials for STT provider: {name}")
-    return await provider.transcribe_file(path, creds, language)
+    if name not in vc.connected(entry):
+        raise RuntimeError(f"STT provider is not connected: {name}")
+    return await provider.transcribe_file(path, vc.provider_creds(entry, name), language)
 
 
 def _whisper_transcript(path: pl.Path, language: str | None) -> str:

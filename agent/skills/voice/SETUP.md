@@ -6,25 +6,25 @@
 uv tool install --editable ~/agent/skills/voice/cli
 ```
 
-Provides the `voice-server`, `voice-keys`, and `transcribe` commands. Re-run it whenever `[project.scripts]` in `cli/pyproject.toml` gains a command: an editable install picks up code changes on its own, but a new console script exists only after a reinstall.
+Provides the `voice` and `transcribe` commands. Re-run it whenever `[project.scripts]` in `cli/pyproject.toml` gains a command: an editable install picks up code changes on its own, but a new console script exists only after a reinstall.
 
-## 2. Start the voice server
+## 2. Start the voice daemon
 
 1. Start the daemon:
    ```bash
-   voice-keys daemon start
+   voice daemon start
    ```
-   Idempotent (a running daemon is a no-op) and owns the register-service call (see [vestad](../vestad/SKILL.md)). Check with `voice-keys daemon status`, which reads the pid and port records at `~/agent/data/daemons/voice.pid` and `voice.port`; startup output lands in `~/agent/logs/voice.log`.
+   Idempotent (a running daemon is a no-op) and owns the register-service call (see [vestad](../vestad/SKILL.md)). Check with `voice daemon status`, which reads the pid and port records at `~/agent/data/daemons/voice.pid` and `voice.port`; startup output lands in `~/agent/logs/voice.log`.
 2. Read the `restart` skill and add this line to your restart daemons:
    ```
-   voice-keys daemon start
+   voice daemon start
    ```
 
 ## 3. API keys
 
-Each user needs their own keys: one Deepgram key for STT (voice input), one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's config.
+Each user needs their own keys. Deepgram and ElevenLabs can each do both jobs, STT (voice input) and TTS (voice output), so one key from either is enough for the whole flow, and a user can also mix them. The judge is optional and needs a TypeSafe key. Keys stay on this container; they never transit vestad's config. SKILL.md says how the providers differ.
 
-## Deepgram (STT, voice input)
+## Deepgram (STT and TTS)
 
 **Dashboard:** https://console.deepgram.com
 
@@ -35,15 +35,15 @@ Each user needs their own keys: one Deepgram key for STT (voice input), one Elev
    - `projects:read` (list project)
    - `usage:read` (monthly usage in Settings)
    - `billing:read` (remaining balance in Settings)
-   - scopes for real-time transcription (the "Member" preset covers all of these)
+   - scopes for real-time transcription, and for text to speech when Deepgram is the voice (the "Member" preset covers all of these)
 
    The **Admin** preset is easiest if you don't want to think about scopes.
 5. Copy the generated key (a long hex string).
-6. Paste it into chat for the agent to validate and save.
+6. Paste it into chat for the agent to check and connect (`voice stt connect deepgram --key <key>`, and `voice tts connect deepgram --key <key>` for the voice).
 
-**Note:** new accounts get $200 free credit. The `flux-general-en` model is billed at roughly $0.0048/min of audio.
+**Note:** new accounts get $200 free credit. The `flux-general-en` model is billed at roughly $0.0048/min of audio, and Aura-2 speech at roughly $0.03 per 1000 characters.
 
-## ElevenLabs (TTS, voice output)
+## ElevenLabs (TTS and STT)
 
 **Dashboard:** https://elevenlabs.io
 
@@ -52,12 +52,24 @@ Each user needs their own keys: one Deepgram key for STT (voice input), one Elev
 3. Click **Create New Key**.
 4. Give the key permission for:
    - **Text to Speech** (required for synthesis)
+   - **Speech to Text** (when ElevenLabs is the mic)
    - **Voices** (to list custom voices)
    - **User** (to read subscription/character count)
 5. Copy the key (starts with `sk_`).
-6. Paste it into chat for the agent to validate and save.
+6. Paste it into chat for the agent to check and connect (`voice tts connect elevenlabs --key <key>`, and `voice stt connect elevenlabs --key <key>` for the mic).
 
-**Note:** free tier is 10k characters/month. Model `eleven_flash_v2_5`, output format `mp3_22050_32`.
+A key with fewer permissions still connects: each role checks only what it needs. Without **User**, the usage card in the app shows no number.
+
+**Note:** free tier is 10k characters/month. Model `eleven_v4_turbo`.
+
+## TypeSafe (the judge, optional)
+
+**Dashboard:** https://typesafe.ai
+
+1. Sign in or create an account, and create an API key.
+2. Paste it into chat for the agent to check and connect (`voice judge connect typesafe --key <key>`), then turn the judge on (`voice judge on`).
+
+With the judge on, the live transcript goes to TypeSafe. SKILL.md says what the judge does.
 
 ## 4. Local transcription fallback (whisper.cpp)
 

@@ -1,23 +1,35 @@
+"""The HTTP routes of the voice service: status, settings, and the stock app's audio routes.
+
+`/stt/listen` and the `/tts/` audio routes serve the stock app and the stock skills. A client of
+its own uses the engine socket (engine/session.py).
+"""
+
 import asyncio
 import logging
 import os
-import pathlib as pl
 import ssl
 import time
-import typing as tp
 
 import aiohttp
 from aiohttp import web
 
+from . import appkeys, providers, tts_pending
 from . import config as voice_config
-from . import providers, tts_pending
+from .engine import behavior, frames
+from .providers import deepgram
+from .providers.base import SttProvider, TtsError, TtsProvider
+from .sections import settings_view, store_setting
+from .settings import Domain, JsonValue
 
 logger = logging.getLogger("voice")
 
-DATA_DIR = pl.Path.home() / ".voice"
-
 # Pending TTS clips awaiting a streamed GET (see tts_pending / issue #466).
 _PENDING_TTS: tts_pending.PendingStore = {}
+
+# The audio format names of `/tts/speak`, and the play format each one is.
+SPEAK_FORMATS: dict[str, str] = {"mp3": "mp3_22050", "pcm": "pcm_16000"}
+# `/stt/listen` speaks the Deepgram wire format to its client, so it works with Deepgram only.
+LISTEN_PROVIDER = "deepgram"
 
 _VESTAD_PORT = os.environ.get("VESTAD_PORT", "")
 _BOX_HOST = os.environ.get("BOX_HOST", "")
@@ -62,81 +74,75 @@ def _spawn_invalidation(scope: str) -> None:
     task.add_done_callback(_INVALIDATION_TASKS.discard)
 
 
-def _resolve_domain(
-    domain: tp.Literal["stt", "tts"],
-) -> tuple[dict, str, tp.Any, dict[str, str]] | web.Response:
-    """Load config and resolve provider + creds for a domain.
-
-    Returns (entry, provider_name, provider, creds) or a 503/500 Response.
-    """
-    cfg = voice_config.load(DATA_DIR)
-    entry = cfg[domain]
-    provider_name = voice_config.provider_name(entry)
-    if not entry or provider_name is None:
-        return web.json_response({"error": f"{domain.upper()} not configured"}, status=503)
-    provider = providers.get_stt(provider_name) if domain == "stt" else providers.get_tts(provider_name)
-    if not provider:
-        return web.json_response({"error": f"unknown {domain} provider: {provider_name}"}, status=500)
-    return entry, provider_name, provider, voice_config.provider_creds(entry, provider_name)
+def _error(message: str, status: int) -> web.Response:
+    return web.json_response({"error": message}, status=status)
 
 
-async def _json_body(request: web.Request) -> dict | web.Response:
-    """Parse JSON body. Returns dict on success, or a 400 Response on failure."""
+def _role_entry(request: web.Request, role: voice_config.Role) -> tuple[Domain, str] | web.Response:
+    """The role's entry and its selected provider name, or a 503 when it has none."""
+    entry = voice_config.load(request.app[appkeys.DATA_DIR])[role]
+    name = voice_config.provider_name(entry)
+    if not entry or name is None:
+        return _error(f"{role.upper()} not configured", 503)
+    return entry, name
+
+
+def _stt(request: web.Request) -> tuple[Domain, str, SttProvider] | web.Response:
+    resolved = _role_entry(request, "stt")
+    if isinstance(resolved, web.Response):
+        return resolved
+    entry, name = resolved
+    provider = providers.get_stt(name)
+    return (entry, name, provider) if provider is not None else _error(f"unknown stt provider: {name}", 500)
+
+
+def _tts(request: web.Request) -> tuple[Domain, str, TtsProvider] | web.Response:
+    resolved = _role_entry(request, "tts")
+    if isinstance(resolved, web.Response):
+        return resolved
+    entry, name = resolved
+    provider = providers.get_tts(name)
+    return (entry, name, provider) if provider is not None else _error(f"unknown tts provider: {name}", 500)
+
+
+async def _json_body(request: web.Request) -> dict[str, JsonValue] | web.Response:
+    """Parse a JSON object body. Returns the object, or a 400 Response."""
     try:
         body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON body"}, status=400)
-    return body or {}
+    except ValueError:
+        return _error("invalid JSON body", 400)
+    return body if isinstance(body, dict) else {}
+
+
+def _status(entry: Domain | None, settings: list[dict[str, JsonValue]]) -> web.Response:
+    name = voice_config.provider_name(entry)
+    connected = voice_config.connected(entry)
+    if not entry or name is None:
+        return web.json_response({"configured": False, "provider": None, "connected": connected})
+    return web.json_response(
+        {"configured": True, "provider": name, "enabled": voice_config.is_enabled(entry), "connected": connected, "settings": settings}
+    )
 
 
 # --- STT ---
 
 
-def _merge_setting_values(setting: dict, entry: dict) -> dict:
-    merged = dict(setting)
-    merged["value"] = entry.get(merged["key"], merged.get("default"))
-    raw_config = merged.get("config")
-    if isinstance(raw_config, list):
-        merged["config"] = [_merge_setting_values(dict(ch), entry) for ch in raw_config]
-    return merged
+async def stt_status(request: web.Request) -> web.Response:
+    """STT config (local read only, so it is instant)."""
+    entry = voice_config.load(request.app[appkeys.DATA_DIR])["stt"]
+    name = voice_config.provider_name(entry)
+    provider = providers.get_stt(name) if name is not None else None
+    return _status(entry, settings_view(provider.settings_schema(), entry) if entry and provider else [])
 
 
-def _build_settings(provider: tp.Any, entry: tp.Any) -> list[dict]:
-    """Merge provider schema with current config values."""
-    if not hasattr(provider, "settings_schema"):
-        return []
-    return [_merge_setting_values(dict(s), entry) for s in provider.settings_schema()]
-
-
-async def stt_status(_request: web.Request) -> web.Response:
-    """STT config (local read only — instant)."""
-    cfg = voice_config.load(DATA_DIR)
-    stt_entry = cfg["stt"]
-
-    provider_name = voice_config.provider_name(stt_entry)
-    if not stt_entry or provider_name is None:
-        return web.json_response({"configured": False, "provider": None})
-
-    provider = providers.get_stt(provider_name)
-    settings = _build_settings(provider, stt_entry) if provider else []
-
-    return web.json_response(
-        {
-            "configured": True,
-            "provider": provider_name,
-            "enabled": stt_entry.get("enabled", False),
-            "settings": settings,
-        }
-    )
-
-
-async def stt_usage(_request: web.Request) -> web.Response:
+async def stt_usage(request: web.Request) -> web.Response:
     """STT provider usage/balance (hits external API)."""
-    resolved = _resolve_domain("stt")
+    resolved = _stt(request)
     if isinstance(resolved, web.Response):
         return resolved
-    _entry, _name, provider, creds = resolved
-    out: dict = {}
+    entry, name, provider = resolved
+    creds = voice_config.provider_creds(entry, name)
+    out: dict[str, JsonValue] = {}
     usage, balance = await asyncio.gather(provider.usage(creds), provider.balance(creds), return_exceptions=True)
     if not isinstance(usage, BaseException):
         out["usage"] = usage
@@ -145,232 +151,234 @@ async def stt_usage(_request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
-async def _set_bool(request: web.Request, setter: tp.Callable[..., tp.Any]) -> web.Response:
+async def _set_enabled(request: web.Request, role: voice_config.Role) -> web.Response:
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
-    value = body.get("value")
+    value = body["value"] if "value" in body else None
     if not isinstance(value, bool):
-        return web.json_response({"error": "value must be a boolean"}, status=400)
-    setter(DATA_DIR, value)
+        return _error("value must be a boolean", 400)
+    try:
+        voice_config.set_enabled(request.app[appkeys.DATA_DIR], role, value)
+    except ValueError as e:
+        return _error(str(e), 400)
+    _spawn_invalidation(role)
     return web.json_response({"ok": True})
 
 
 async def stt_set_enabled(request: web.Request) -> web.Response:
-    resp = await _set_bool(request, lambda d, v: voice_config.set_enabled(d, "stt", v))
-    if resp.status == 200:
-        _spawn_invalidation("stt")
-    return resp
+    return await _set_enabled(request, "stt")
 
 
 async def stt_set_eot(request: web.Request) -> web.Response:
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
-    try:
-        if "threshold" in body:
-            voice_config.set_eot_threshold(DATA_DIR, float(body["threshold"]))
-        elif "timeout_ms" in body:
-            voice_config.set_eot_timeout_ms(DATA_DIR, int(body["timeout_ms"]))
-        else:
-            return web.json_response({"error": "threshold or timeout_ms required"}, status=400)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    _spawn_invalidation("stt")
-    return web.json_response({"ok": True})
+    if "threshold" in body:
+        return await _store_setting(request, "stt", "eot_threshold", body["threshold"])
+    if "timeout_ms" in body:
+        return await _store_setting(request, "stt", "eot_timeout_ms", body["timeout_ms"])
+    return _error("threshold or timeout_ms required", 400)
 
 
 async def stt_listen(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
-    resolved = _resolve_domain("stt")
-    if isinstance(resolved, web.Response):
-        await ws.prepare(request)
+    await ws.prepare(request)
+    entry = voice_config.load(request.app[appkeys.DATA_DIR])["stt"]
+    if not entry or LISTEN_PROVIDER not in voice_config.connected(entry):
         await ws.close(code=1011, message=b"STT not configured")
         return ws
-    entry, _name, provider, creds = resolved
-    await ws.prepare(request)
-    await provider.relay(ws, creds, dict(entry))
+    await deepgram.relay(ws, voice_config.provider_creds(entry, LISTEN_PROVIDER), entry)
     return ws
 
 
 # --- TTS ---
 
 
-async def tts_status(_request: web.Request) -> web.Response:
-    """TTS config + voices (local read only — instant)."""
-    cfg = voice_config.load(DATA_DIR)
-    tts_entry = cfg["tts"]
-
-    provider_name = voice_config.provider_name(tts_entry)
-    if not tts_entry or provider_name is None:
-        return web.json_response({"configured": False, "provider": None})
-
-    provider = providers.get_tts(provider_name)
-    settings = _build_settings(provider, tts_entry) if provider else []
-
-    # Merge custom voices into the select options for voice selection settings
-    custom = voice_config.custom_voices(tts_entry)
+async def tts_status(request: web.Request) -> web.Response:
+    """TTS config + voices (local read only, so it is instant)."""
+    entry = voice_config.load(request.app[appkeys.DATA_DIR])["tts"]
+    name = voice_config.provider_name(entry)
+    provider = providers.get_tts(name) if name is not None else None
+    if not entry or name is None or provider is None:
+        return _status(entry, [])
+    settings = settings_view(provider.settings_schema(), entry)
     for setting in settings:
-        if setting.get("type") == "select" and setting["key"] == "selected_voice_id":
-            options = list(setting.get("options") or [])
-            for v in custom:
-                if v.get("provider") == provider_name:
-                    entry: dict = {"value": v["id"], "label": v["name"], "custom": True}
-                    if v.get("description"):
-                        entry["description"] = v["description"]
-                    options.append(entry)
+        if setting["key"] == provider.voice_setting:
+            # The voice select offers the provider's voices and the user's own, and it always
+            # shows the voice that speaks.
+            options = [*(setting["options"] if "options" in setting and isinstance(setting["options"], list) else [])]
+            for voice in voice_config.custom_voices(entry):
+                if "provider" in voice and voice["provider"] == name and "id" in voice:
+                    option: dict[str, JsonValue] = {
+                        "value": voice["id"],
+                        "label": voice["name"] if "name" in voice else voice["id"],
+                        "custom": True,
+                    }
+                    if "description" in voice:
+                        option["description"] = voice["description"]
+                    options.append(option)
             setting["options"] = options
-            # Auto-select first voice if none selected
-            selected = setting.get("value")
-            if options and (not selected or not any(o["value"] == selected for o in options)):
-                setting["value"] = options[0]["value"]
-
-    return web.json_response(
-        {
-            "configured": True,
-            "provider": provider_name,
-            "enabled": tts_entry.get("enabled", False),
-            "settings": settings,
-        }
-    )
+            setting["value"] = providers.selected_voice(provider, entry)
+    return _status(entry, settings)
 
 
-async def tts_usage(_request: web.Request) -> web.Response:
+async def tts_usage(request: web.Request) -> web.Response:
     """TTS provider usage (hits external API)."""
-    resolved = _resolve_domain("tts")
+    resolved = _tts(request)
     if isinstance(resolved, web.Response):
         return resolved
-    _entry, _name, provider, creds = resolved
-    try:
-        sub = await provider.subscription(creds)
-        return web.json_response({"usage": sub})
-    except Exception as e:
-        logger.error("tts usage fetch failed: %s", e)
-        return web.json_response({"error": str(e)}, status=500)
+    entry, name, provider = resolved
+    return web.json_response({"usage": await provider.subscription(voice_config.provider_creds(entry, name))})
 
 
 async def tts_set_enabled(request: web.Request) -> web.Response:
-    resp = await _set_bool(request, lambda d, v: voice_config.set_enabled(d, "tts", v))
-    if resp.status == 200:
-        _spawn_invalidation("tts")
-    return resp
+    return await _set_enabled(request, "tts")
 
 
 async def tts_set_voice(request: web.Request) -> web.Response:
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
-    voice_id = body.get("voice_id", "").strip()
+    voice_id = body["voice_id"].strip() if "voice_id" in body and isinstance(body["voice_id"], str) else ""
     if not voice_id:
-        return web.json_response({"error": "voice_id required"}, status=400)
+        return _error("voice_id required", 400)
+    resolved = _tts(request)
+    if isinstance(resolved, web.Response):
+        return resolved
+    _entry, _name, provider = resolved
+    response = await _store_setting(request, "tts", provider.voice_setting, voice_id)
+    return web.json_response({"ok": True}) if response.status == 200 else response
+
+
+# --- settings ---
+
+
+async def _store_setting(request: web.Request, section: voice_config.Section, key: str, value: JsonValue) -> web.Response:
+    if not isinstance(value, bool | int | float | str):
+        return _error("value must be a boolean, a number, or text", 400)
     try:
-        voice_config.set_voice(DATA_DIR, voice_id)
+        store_setting(request.app[appkeys.DATA_DIR], section, key, value)
     except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    _spawn_invalidation("tts")
-    return web.json_response({"ok": True})
-
-
-def _setting_payload(body: dict) -> tuple[str, voice_config.SettingValue] | web.Response:
-    """Validate the key/value pair of a set-setting body."""
-    key = body.get("key")
-    value = body.get("value")
-    if not key or not isinstance(key, str):
-        return web.json_response({"error": "key required"}, status=400)
-    if isinstance(value, list):
-        if not all(isinstance(item, str) for item in value):
-            return web.json_response({"error": "value list must contain only strings"}, status=400)
-    elif not isinstance(value, bool | int | float | str):
-        return web.json_response({"error": "value must be a boolean, number, string, or list of strings"}, status=400)
-    return key, value
+        return _error(str(e), 400)
+    _spawn_invalidation(section)
+    # Return the full updated status so the client doesn't need a separate refresh.
+    if section == "stt":
+        return await stt_status(request)
+    if section == "tts":
+        return await tts_status(request)
+    return await behavior_status(request)
 
 
 async def set_setting(request: web.Request) -> web.Response:
-    """Generic setter — saves value and returns the updated domain status."""
-    domain: tp.Literal["stt", "tts"]
-    match request.match_info["domain"]:
-        case "stt":
-            domain = "stt"
-        case "tts":
-            domain = "tts"
-        case _:
-            return web.json_response({"error": "domain must be stt or tts"}, status=400)
+    """Generic setter: checks the value, saves it, and returns the updated status."""
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
-    parsed = _setting_payload(body)
-    if isinstance(parsed, web.Response):
-        return parsed
-    key, value = parsed
+    key = body["key"] if "key" in body else None
+    if not key or not isinstance(key, str):
+        return _error("key required", 400)
+    section = request.match_info["domain"]
+    if section not in ("stt", "tts", "behavior"):
+        return _error("domain must be stt, tts, or behavior", 400)
+    return await _store_setting(request, section, key, body["value"] if "value" in body else None)
+
+
+async def behavior_status(request: web.Request) -> web.Response:
+    config = voice_config.load(request.app[appkeys.DATA_DIR])
+    return web.json_response({"settings": settings_view(behavior.BEHAVIOR_SCHEMA, voice_config.behaviors(config))})
+
+
+async def _use(request: web.Request, role: voice_config.Role) -> web.Response:
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    provider = body["provider"] if "provider" in body else None
+    if not provider or not isinstance(provider, str):
+        return _error("provider required", 400)
     try:
-        voice_config.set_setting(DATA_DIR, domain, key, value)
+        voice_config.use(request.app[appkeys.DATA_DIR], role, provider)
     except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    _spawn_invalidation(domain)
-    # Return the full updated status so the client doesn't need a separate refresh.
-    if domain == "stt":
-        return await stt_status(request)
-    return await tts_status(request)
+        return _error(str(e), 400)
+    _spawn_invalidation(role)
+    return await (stt_status(request) if role == "stt" else tts_status(request))
 
 
-async def _synthesize(
-    entry: dict, provider: tp.Any, creds: dict[str, str], text: str, request: web.Request, audio_format: str = "mp3"
-) -> web.StreamResponse:
-    voice_id = entry.get("selected_voice_id")
-    if not voice_id:
-        voices = provider.premade_voices()
-        voice_id = voices[0]["id"] if voices else None
-    if not voice_id:
-        return web.json_response({"error": "no voice selected"}, status=500)
-    return await provider.speak(text, voice_id, creds, request, audio_format)
+async def stt_use(request: web.Request) -> web.Response:
+    return await _use(request, "stt")
+
+
+async def tts_use(request: web.Request) -> web.Response:
+    return await _use(request, "tts")
+
+
+# --- TTS audio for the stock app ---
+
+
+async def _speak_response(request: web.Request, text: str, speak_format: str) -> web.StreamResponse:
+    resolved = _tts(request)
+    if isinstance(resolved, web.Response):
+        return resolved
+    entry, name, provider = resolved
+    if speak_format not in SPEAK_FORMATS or SPEAK_FORMATS[speak_format] not in provider.formats:
+        return _error(f"unsupported audio format: {speak_format}", 400)
+    play_format = SPEAK_FORMATS[speak_format]
+    audio = provider.synthesize(
+        text, providers.selected_voice(provider, entry), play_format, voice_config.provider_creds(entry, name), entry, request.app[appkeys.HTTP]
+    )
+    # Read the first audio before the headers go out, so a refused synthesis gets an error status.
+    try:
+        first = await anext(audio, b"")
+    except TtsError as e:
+        logger.error("tts synthesis failed: %s", e)
+        return _error(str(e), 502)
+    response = web.StreamResponse(status=200, headers={"Content-Type": frames.PLAY_FORMATS[play_format]})
+    await response.prepare(request)
+    await response.write(first)
+    try:
+        async for chunk in audio:
+            await response.write(chunk)
+    except TtsError as e:
+        logger.error("tts synthesis failed mid-stream: %s", e)
+    await response.write_eof()
+    return response
+
+
+def _text_of(body: dict[str, JsonValue]) -> str:
+    return body["text"].strip() if "text" in body and isinstance(body["text"], str) else ""
 
 
 async def tts_speak(request: web.Request) -> web.StreamResponse:
-    resolved = _resolve_domain("tts")
-    if isinstance(resolved, web.Response):
-        return resolved
-    entry, _name, provider, creds = resolved
-
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
-    text = body.get("text", "").strip()
+    text = _text_of(body)
     if not text:
-        return web.json_response({"error": "text required"}, status=400)
-
+        return _error("text required", 400)
     # "format" selects the audio encoding: "mp3" (default, the app's <audio> element) or "pcm"
-    # (raw 16 kHz PCM a phone-call consumer plays into a live call). See providers.base.speak.
-    audio_format = body.get("format", "mp3")
-
-    return await _synthesize(entry, provider, creds, text, request, audio_format)
+    # (raw signed 16-bit LE mono at 16 kHz, which a phone-call consumer plays into a live call).
+    speak_format = body["format"] if "format" in body and isinstance(body["format"], str) else "mp3"
+    return await _speak_response(request, text, speak_format)
 
 
 async def tts_prepare(request: web.Request) -> web.Response:
     """Register text and return a short-lived id the app streams via GET (issue #466)."""
-    resolved = _resolve_domain("tts")
+    resolved = _tts(request)
     if isinstance(resolved, web.Response):
         return resolved
-
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
-    text = body.get("text", "").strip()
+    text = _text_of(body)
     if not text:
-        return web.json_response({"error": "text required"}, status=400)
-
+        return _error("text required", 400)
     token = tts_pending.register(_PENDING_TTS, text, time.monotonic())
     return web.json_response({"id": token})
 
 
 async def tts_stream(request: web.Request) -> web.StreamResponse:
     """Stream the audio for a prepared id so a native <audio> element can play it."""
-    resolved = _resolve_domain("tts")
-    if isinstance(resolved, web.Response):
-        return resolved
-    entry, _name, provider, creds = resolved
-
     text = tts_pending.resolve(_PENDING_TTS, request.match_info["id"], time.monotonic())
     if text is None:
-        return web.json_response({"error": "unknown or expired tts id"}, status=404)
-
-    return await _synthesize(entry, provider, creds, text, request)
+        return _error("unknown or expired tts id", 404)
+    return await _speak_response(request, text, "mp3")
