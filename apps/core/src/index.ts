@@ -230,10 +230,13 @@ export {
 } from "./api/catalogs";
 export type { Personality, PersonalityCatalog } from "./api/catalogs";
 export {
+  bargeInEnabled,
   fetchSttUsage,
   fetchTtsUsage,
+  fetchVoiceBehaviors,
   fetchVoiceStatus,
   prepareSpeech,
+  setVoiceBehavior,
   setVoiceEnabled,
   setVoiceSetting,
   sttListenPath,
@@ -243,6 +246,7 @@ export type {
   SettingDef,
   SttUsage,
   TtsUsage,
+  VoiceBehaviors,
   VoiceDomain,
   VoiceStatus,
 } from "./api/voice";

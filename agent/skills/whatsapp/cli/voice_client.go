@@ -187,15 +187,17 @@ func streamSTT(ctx context.Context, baseURL string, frames <-chan []byte, events
 			continue
 		}
 		var turnInfo struct {
-			Type       string `json:"type"`
-			Event      string `json:"event"`
-			Transcript string `json:"transcript"`
+			Type       string  `json:"type"`
+			Event      string  `json:"event"`
+			Transcript *string `json:"transcript"`
 		}
 		if err := json.Unmarshal(data, &turnInfo); err != nil || turnInfo.Type != "TurnInfo" {
 			continue
 		}
-		if turnInfo.Transcript != "" {
-			latest = turnInfo.Transcript
+		// The transcript of an EndOfTurn is the final text of the turn, also when it is empty:
+		// live text that ends in no words is no turn.
+		if turnInfo.Transcript != nil && (*turnInfo.Transcript != "" || turnInfo.Event == "EndOfTurn") {
+			latest = *turnInfo.Transcript
 		}
 		switch turnInfo.Event {
 		case "StartOfTurn":

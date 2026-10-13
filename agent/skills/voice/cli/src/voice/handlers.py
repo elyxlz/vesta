@@ -1,7 +1,7 @@
 """The HTTP routes of the voice service: status, settings, and the stock app's audio routes.
 
-`/stt/listen` and the `/tts/` audio routes serve the stock app and the stock skills. A client of
-its own uses the engine socket (engine/session.py).
+`/stt/listen` (listen.py) and the `/tts/` audio routes serve the stock app and the stock skills.
+A client of its own uses the engine socket (engine/session.py).
 """
 
 import asyncio
@@ -10,11 +10,10 @@ import time
 
 from aiohttp import web
 
-from . import appkeys, invalidation, providers, sections, tts_pending
+from . import appkeys, invalidation, listen, providers, sections, tts_pending
 from . import config as voice_config
 from .engine import frames
-from .providers import deepgram
-from .providers.base import TtsError
+from .providers.base import SttOpenError, TtsError
 from .settings import Domain, JsonValue
 
 logger = logging.getLogger("voice")
@@ -24,8 +23,8 @@ _PENDING_TTS: tts_pending.PendingStore = {}
 
 # The audio format names of `/tts/speak`, and the play format each one is.
 SPEAK_FORMATS: dict[str, str] = {"mp3": "mp3_22050", "pcm": "pcm_16000"}
-# `/stt/listen` speaks the Deepgram wire format to its client, so it works with Deepgram only.
-LISTEN_PROVIDER = "deepgram"
+# A WebSocket close reason holds 123 bytes at most.
+CLOSE_REASON_MAX_BYTES = 123
 
 # Fire-and-forget invalidation tasks; the set keeps a strong reference until each completes.
 _INVALIDATION_TASKS: set[asyncio.Task[None]] = set()
@@ -54,7 +53,7 @@ def _selected[P](request: web.Request, role: voice_config.Role, registry: dict[s
     """The role's entry, its selected provider name, and that provider, or the error to answer."""
     entry = _load(request)[role]
     name = voice_config.provider_name(entry)
-    if not entry or name is None:
+    if name is None:
         return _error(f"{role.upper()} not configured", 503)
     if name not in registry:
         return _error(f"unknown {role} provider: {name}", 500)
@@ -77,7 +76,7 @@ def _role_status(config: voice_config.VoiceConfig, role: voice_config.Role) -> w
     entry = config[role]
     name = voice_config.provider_name(entry)
     connected = voice_config.connected(entry)
-    if not entry or name is None:
+    if name is None:
         return web.json_response({"configured": False, "provider": None, "connected": connected})
     status = {"configured": True, "provider": name, "enabled": voice_config.is_enabled(entry), "connected": connected}
     return web.json_response({**status, "settings": sections.section_view(config, role)})
@@ -191,11 +190,18 @@ async def stt_set_eot(request: web.Request) -> web.Response:
 async def stt_listen(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    entry = _load(request)["stt"]
-    if not entry or LISTEN_PROVIDER not in voice_config.connected(entry):
+    resolved = _selected(request, "stt", providers.STT)
+    if isinstance(resolved, web.Response):
         await ws.close(code=1011, message=b"STT not configured")
         return ws
-    await deepgram.relay(ws, voice_config.provider_creds(entry, LISTEN_PROVIDER), voice_config.provider_settings(entry))
+    entry, name, provider = resolved
+    try:
+        stream = await provider.open(voice_config.provider_creds(entry, name), voice_config.provider_settings(entry))
+    except SttOpenError as e:
+        logger.warning("stt open failed for the listen socket (%s): %s", name, e)
+        await ws.close(code=1011, message=str(e).encode()[:CLOSE_REASON_MAX_BYTES])
+        return ws
+    await listen.relay(ws, stream)
     return ws
 
 
@@ -209,6 +215,15 @@ async def tts_usage(request: web.Request) -> web.Response:
         return resolved
     entry, name, provider = resolved
     return web.json_response({"usage": await provider.subscription(voice_config.provider_creds(entry, name))})
+
+
+async def tts_reply_hint(request: web.Request) -> web.Response:
+    """What the agent must know to write a reply that this box can speak: the hint of the
+    selected TTS provider while the role is on, and empty text in every other case."""
+    entry = _load(request)["tts"]
+    provider = providers.get_tts(voice_config.provider_name(entry))
+    hint = provider.reply_hint if provider is not None and voice_config.is_enabled(entry) else ""
+    return web.json_response({"reply_hint": hint})
 
 
 async def tts_set_voice(request: web.Request) -> web.Response:

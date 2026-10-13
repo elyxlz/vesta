@@ -167,11 +167,11 @@ async def _await_start(ws: web.WebSocketResponse) -> frames.StartSession | None:
     return None
 
 
-def _tts_link(entry: Domain | None, wanted_formats: list[str]) -> TtsLink | None:
+def _tts_link(entry: Domain, wanted_formats: list[str]) -> TtsLink | None:
     """The TTS provider of this session, or None when the role is off or has no provider: a
     session needs TTS only for `speak`. Raises when the provider can make none of the formats."""
     name = voice_config.provider_name(entry)
-    if not entry or name is None or not voice_config.is_enabled(entry):
+    if name is None or not voice_config.is_enabled(entry):
         return None
     provider = providers.get_tts(name)
     if provider is None:
@@ -183,9 +183,9 @@ def _tts_link(entry: Domain | None, wanted_formats: list[str]) -> TtsLink | None
     return TtsLink(provider, voice_config.provider_creds(entry, name), settings, providers.selected_voice(provider, entry), audio_format)
 
 
-def _judge_link(entry: Domain | None) -> JudgeLink | None:
+def _judge_link(entry: Domain) -> JudgeLink | None:
     name = voice_config.provider_name(entry)
-    if not entry or name is None or not voice_config.is_enabled(entry):
+    if name is None or not voice_config.is_enabled(entry):
         return None
     provider = providers.get_judge(name)
     if provider is None:
@@ -198,7 +198,7 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
     stt_entry = config["stt"]
     stt_name = voice_config.provider_name(stt_entry)
     stt_provider = providers.get_stt(stt_name)
-    if not stt_entry or stt_name is None or stt_provider is None or not voice_config.is_enabled(stt_entry):
+    if stt_name is None or stt_provider is None or not voice_config.is_enabled(stt_entry):
         return "not_configured"
     if not start["mic_supported"]:
         return "unsupported_format"
@@ -219,7 +219,7 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
         tts=tts,
         judge=_judge_link(config["judge"]),
         delivery=start["delivery"],
-        barge_in=behavior.barge_in_allowed(voice_config.behaviors(config), start["barge_in"]),
+        barge_in=behavior.barge_in_allowed(config["behavior"], start["barge_in"]),
         agent_name=os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else DEFAULT_AGENT_NAME,
     )
 

@@ -1,19 +1,15 @@
 """Deepgram STT provider: Flux on the v2 realtime socket.
 
 Flux predicts the end of a turn from the words and the silence, so `open` maps its `EndOfTurn`
-to `committed`. `relay` is the pass-through socket of the `/stt/listen` route, which speaks the
-Deepgram wire format to its client and uses Nova-3 on v1 for multi-language.
+to `committed`.
 """
 
 import asyncio
 import contextlib
-import json
-import logging
 import pathlib as pl
 from urllib.parse import urlencode
 
 import aiohttp
-from aiohttp import web
 
 from voice.config import keyterms
 from voice.settings import Domain, JsonValue, SettingDef, clamped
@@ -21,13 +17,10 @@ from voice.settings import Domain, JsonValue, SettingDef, clamped
 from .base import SttEvent, SttOpenError, SttStream, Validation, api_key
 from .stream import SocketStream, check_open
 
-logger = logging.getLogger("voice.deepgram")
-
 DEEPGRAM_API = "https://api.deepgram.com"
 DEEPGRAM_WS = "wss://api.deepgram.com"
 MODEL = "flux-general-en"
-FLUX_MODEL_MULTI = "flux-general-multi"
-MODEL_MULTI = "nova-3"
+MODEL_MULTI = "flux-general-multi"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
 HEARTBEAT_SECS = 30.0
@@ -115,17 +108,10 @@ class DeepgramStt:
                 "unit": "ms",
             },
             {
-                "key": "interrupt_tts",
-                "type": "bool",
-                "label": "interrupt speech on talk",
-                "description": "stop text-to-speech playback when you start speaking",
-                "default": True,
-            },
-            {
                 "key": "multi_language",
                 "type": "bool",
                 "label": "multi-language detection",
-                "description": "automatically detect spoken language per utterance (English, Italian, and more); uses Nova-3 model",
+                "description": "automatically detect spoken language per utterance (English, Italian, and more)",
                 "default": False,
             },
         ]
@@ -181,45 +167,6 @@ class DeepgramStt:
         return await _get_json(url, {"Authorization": f"Token {key}"})
 
 
-async def relay(
-    browser_ws: web.WebSocketResponse,
-    creds: dict[str, str],
-    stt_domain: Domain,
-) -> None:
-    key = api_key(creds)
-    if not key:
-        await browser_ws.close(code=1008, message=b"missing api_key")
-        return
-
-    multi_language = "multi_language" in stt_domain and bool(stt_domain["multi_language"])
-    url = _nova_url(stt_domain) if multi_language else _flux_url(stt_domain)
-    headers = {"Authorization": f"Token {key}"}
-
-    session = aiohttp.ClientSession()
-    try:
-        try:
-            dg_ws = await session.ws_connect(url, headers=headers, heartbeat=HEARTBEAT_SECS)
-        except (TimeoutError, aiohttp.ClientError) as e:
-            logger.error("deepgram connect failed: %s", e)
-            await browser_ws.close(code=1011, message=f"deepgram connect failed: {e}".encode())
-            return
-
-        pump = _translate_v1_to_browser if multi_language else _pipe_to_browser
-        tasks = [
-            asyncio.create_task(_browser_to_deepgram(browser_ws, dg_ws)),
-            asyncio.create_task(pump(dg_ws, browser_ws)),
-        ]
-        try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for t in tasks:
-                t.cancel()
-        finally:
-            if not dg_ws.closed:
-                await dg_ws.close()
-    finally:
-        await session.close()
-
-
 def _eot_params(settings: Domain) -> tuple[float, int]:
     """The end-of-turn threshold and timeout to send, held inside the range Flux accepts."""
     return (
@@ -232,7 +179,7 @@ def _flux_url(settings: Domain) -> str:
     multi_language = "multi_language" in settings and bool(settings["multi_language"])
     eot_threshold, eot_timeout_ms = _eot_params(settings)
     params: list[tuple[str, str]] = [
-        ("model", FLUX_MODEL_MULTI if multi_language else MODEL),
+        ("model", MODEL_MULTI if multi_language else MODEL),
         ("encoding", ENCODING),
         ("sample_rate", str(SAMPLE_RATE)),
         ("eot_threshold", str(eot_threshold)),
@@ -267,22 +214,6 @@ async def _connect_flux(creds: dict[str, str], settings: Domain) -> tuple[aiohtt
     return session, ws
 
 
-def _nova_url(stt_domain: Domain) -> str:
-    """The multi-language socket of `relay`: Nova-3 only works on /v1/listen, and v2 returns 400
-    for a model that is not Flux."""
-    _eot_threshold, eot_timeout_ms = _eot_params(stt_domain)
-    params: list[tuple[str, str]] = [
-        ("model", MODEL_MULTI),
-        ("language", "multi"),
-        ("encoding", ENCODING),
-        ("sample_rate", str(SAMPLE_RATE)),
-        ("interim_results", "true"),
-        ("utterance_end_ms", str(eot_timeout_ms)),
-        *(("keywords", term) for term in keyterms(stt_domain)),
-    ]
-    return f"{DEEPGRAM_WS}/v1/listen?{urlencode(params)}"
-
-
 def _prerecorded_params(language: str | None) -> list[tuple[str, str]]:
     """Nova-3 with smart formatting; `multi` makes Deepgram detect the spoken language."""
     return [("model", PRERECORDED_MODEL), ("smart_format", "true"), ("language", language or "multi")]
@@ -293,68 +224,6 @@ def _prerecorded_transcript(body: dict) -> str:
         return body["results"]["channels"][0]["alternatives"][0]["transcript"].strip()
     except (KeyError, IndexError, TypeError):
         return ""
-
-
-async def _browser_to_deepgram(browser_ws: web.WebSocketResponse, dg_ws: aiohttp.ClientWebSocketResponse) -> None:
-    async for msg in browser_ws:
-        if msg.type == aiohttp.WSMsgType.BINARY:
-            await dg_ws.send_bytes(msg.data)
-        elif msg.type == aiohttp.WSMsgType.TEXT:
-            await dg_ws.send_str(msg.data)
-        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
-            break
-
-
-async def _forward_results(browser_ws: web.WebSocketResponse, data: dict, accumulated: str, in_turn: bool) -> tuple[str, bool]:
-    alts = (data.get("channel") or {}).get("alternatives") or []
-    transcript = alts[0].get("transcript", "") if alts else ""
-    is_final = data.get("is_final", False)
-    if transcript and not in_turn:
-        in_turn = True
-        await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "StartOfTurn"}))
-    if transcript:
-        display = (accumulated + " " + transcript).strip() if accumulated else transcript
-        await browser_ws.send_str(json.dumps({"type": "TurnInfo", "transcript": display}))
-    if is_final and transcript:
-        accumulated = (accumulated + " " + transcript).strip() if accumulated else transcript
-    return accumulated, in_turn
-
-
-async def _translate_v1_to_browser(dg_ws: aiohttp.ClientWebSocketResponse, browser_ws: web.WebSocketResponse) -> None:
-    """v1 emits Results + UtteranceEnd; translate to the TurnInfo format the app expects."""
-    accumulated = ""
-    in_turn = False
-    async for msg in dg_ws:
-        if msg.type == aiohttp.WSMsgType.TEXT:
-            try:
-                data = json.loads(msg.data)
-            except json.JSONDecodeError:
-                await browser_ws.send_str(msg.data)
-                continue
-            msg_type = data.get("type")
-            if msg_type == "Results":
-                accumulated, in_turn = await _forward_results(browser_ws, data, accumulated, in_turn)
-            elif msg_type == "UtteranceEnd":
-                if in_turn:
-                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "EndOfTurn"}))
-                    accumulated = ""
-                    in_turn = False
-            elif msg_type in ("Error", "ConfigureFailure"):
-                await browser_ws.send_str(msg.data)
-        elif msg.type == aiohttp.WSMsgType.BINARY:
-            await browser_ws.send_bytes(msg.data)
-        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
-            break
-
-
-async def _pipe_to_browser(dg_ws: aiohttp.ClientWebSocketResponse, browser_ws: web.WebSocketResponse) -> None:
-    async for msg in dg_ws:
-        if msg.type == aiohttp.WSMsgType.TEXT:
-            await browser_ws.send_str(msg.data)
-        elif msg.type == aiohttp.WSMsgType.BINARY:
-            await browser_ws.send_bytes(msg.data)
-        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
-            break
 
 
 async def _project_id(key: str) -> str | None:

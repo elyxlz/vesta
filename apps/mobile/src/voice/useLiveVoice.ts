@@ -12,8 +12,6 @@ import {
   type VoiceSession,
   sttListenPath,
   ttsStreamPath,
-  SettingDef,
-  VoiceStatus,
 } from "@vesta/core";
 import { fetchVoiceStatus, prepareSpeech } from "@vesta/core";
 import { useSession } from "@/session/SessionProvider";
@@ -27,7 +25,8 @@ import {
 interface LiveVoiceOptions {
   name: string;
   enabled: boolean;
-  sttStatus: VoiceStatus | null;
+  // The agent's barge_in behavior: in dictation a user turn cuts a spoken reply only when set.
+  bargeIn: boolean;
   onTranscript: (text: string) => void;
   onSend: (text: string) => void;
   onError: (message: string) => void;
@@ -52,15 +51,6 @@ const PLAYBACK_AUDIO_MODE = {
   playsInSilentMode: true,
 } as const;
 
-function boolSetting(
-  status: VoiceStatus | null,
-  key: string,
-  fallback: boolean,
-): boolean {
-  const value = status?.settings?.find((s: SettingDef) => s.key === key)?.value;
-  return typeof value === "boolean" ? value : fallback;
-}
-
 // The mobile adapter over @vesta/core's voice session: expo-audio capture and playback as the
 // ports, the session as the behavior (dictation vs conversation, barge-in, the TTS queue). A
 // conversation additionally holds the native hands-free session (Bluetooth routing, echo
@@ -68,7 +58,7 @@ function boolSetting(
 export function useLiveVoice({
   name,
   enabled,
-  sttStatus,
+  bargeIn,
   onTranscript,
   onSend,
   onError,
@@ -93,7 +83,7 @@ export function useLiveVoice({
     onInactivityStop,
     onUserSpeakingChange,
   });
-  const sttStatusRef = useRef(sttStatus);
+  const bargeInRef = useRef(bargeIn);
   const ttsEnabledRef = useRef(false);
 
   const frameSinkRef = useRef<((pcm: ArrayBuffer) => void) | null>(null);
@@ -123,7 +113,7 @@ export function useLiveVoice({
       onInactivityStop,
       onUserSpeakingChange,
     };
-    sttStatusRef.current = sttStatus;
+    bargeInRef.current = bargeIn;
     ttsEnabledRef.current = ttsEnabled;
     micMutedRef.current = micMuted;
     streamRef.current = stream;
@@ -256,7 +246,7 @@ export function useLiveVoice({
         onInactivityStop: () => callbacksRef.current.onInactivityStop(),
       },
       () => ({
-        interruptTts: boolSetting(sttStatusRef.current, "interrupt_tts", true),
+        bargeIn: bargeInRef.current,
         inactivityMs: CONVERSATION_INACTIVITY_MS,
         // Always yields for now; the per-device toggle lands with the mobile settings pass.
         yieldToUser: true,

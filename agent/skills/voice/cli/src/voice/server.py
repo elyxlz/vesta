@@ -58,6 +58,7 @@ def create_app(data_dir: Path | None = None) -> web.Application:
 
     # TTS
     app.router.add_get("/tts/usage", handlers.tts_usage)
+    app.router.add_get("/tts/reply-hint", handlers.tts_reply_hint)
     app.router.add_post("/tts/set-voice", handlers.tts_set_voice)
     app.router.add_post("/tts/speak", handlers.tts_speak)
     app.router.add_post("/tts/prepare", handlers.tts_prepare)

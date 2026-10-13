@@ -174,6 +174,33 @@ def test_the_sweep_lists_a_file_of_the_box_that_names_a_voice_route_and_no_stock
     assert "notes" not in found
 
 
+def _interrupt_check() -> str:
+    """The bash block of step 4, which says if the user's choice about interruptions must move."""
+    step = MIGRATION.read_text().split("### 4.", 1)[1].split("### 5.", 1)[0]
+    (block,) = re.findall(r"```bash\n(.*?)```", step, flags=re.DOTALL)
+    return block
+
+
+@pytest.mark.parametrize(
+    ("config", "answer"),
+    [
+        ('{"stt": {"provider": "deepgram", "interrupt_tts": false}, "behavior": null}', "move"),
+        ('{"stt": {"provider": "deepgram", "interrupt_tts": false}, "behavior": {"barge_in": true}}', "nothing-to-move"),
+        ('{"stt": {"provider": "deepgram", "interrupt_tts": true}}', "nothing-to-move"),
+        ('{"stt": null, "tts": null}', "nothing-to-move"),
+        ("{not json", "nothing-to-move"),
+    ],
+)
+def test_the_interrupt_check_says_move_only_for_a_choice_that_no_behavior_holds_yet(tmp_path: pl.Path, config: str, answer: str) -> None:
+    _write(tmp_path, ".voice/voice_config.json", config)
+
+    assert _bash(tmp_path, _interrupt_check()).strip() == answer
+
+
+def test_the_interrupt_check_has_nothing_to_move_on_a_box_with_no_voice_config(tmp_path: pl.Path) -> None:
+    assert _bash(tmp_path, _interrupt_check()).strip() == "nothing-to-move"
+
+
 def test_the_migration_is_interruptible_and_marks_itself_by_its_file_name() -> None:
     text = MIGRATION.read_text()
 

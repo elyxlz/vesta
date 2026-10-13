@@ -71,8 +71,6 @@ Tell the user the difference when they ask which one to pick.
 | Languages | English, or many with `voice stt set multi_language on` | more than 90, detected |
 | Tuning | `eot_threshold`, `eot_timeout_ms` | `vad_silence_threshold_secs` (0.5 to 3.0) |
 
-The app's mic and WhatsApp calls hear through Deepgram alone: they need `voice stt connect deepgram`, whichever STT provider is selected.
-
 **Text to speech.**
 
 | | `elevenlabs` | `deepgram` (Aura-2) |
@@ -91,6 +89,8 @@ voice judge on
 ## Text you speak
 
 With ElevenLabs selected, text in square brackets is an instruction to the voice and is not read aloud: `[laughs]`, `[whispering]`, `[sighs]`. Use it only when you mean it, and never put text you want heard in square brackets. With Deepgram selected, write no such tags: they are plain text there.
+
+You do not need to check which provider is selected before each reply. While `tts` is on, the `reply_hint` of each app message carries the rule of the selected provider, and a hint with no such rule means that the voice says each character.
 
 ## Commands
 
@@ -128,7 +128,7 @@ transcribe ~/meeting.mp4 --language it
 
 `--key` is necessary for a provider that needs a key and refused for one that needs none. A setting belongs to one provider and each provider keeps its own, so `voice <role> use` loses nothing: switch back and the voice, the tuning, and the key are as they were.
 
-**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device.
+**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. The Vesta app follows it in dictation; in a conversation the app always stops your reply when the user talks.
 
 **Transcribe a file**: `transcribe <file> [--language <code>]` prints the transcript of any audio or video file on stdout and nothing else. It sends the file to the selected STT provider (language detected unless `--language` pins one such as `it`) and, when STT is unset, off, or the provider fails, runs the whisper skill's local whisper.cpp instead; it prints `{"error": ...}` on stderr and exits non-zero only when both fail. Every skill that needs speech as text calls this one command (the whatsapp daemon runs it on each incoming voice note), so a transcription problem anywhere is fixed here: check `voice status`, then the whisper skill's setup.
 
@@ -178,6 +178,7 @@ Keep your provider in its own file and in `own.py`, and leave the shipped files 
 
 - **An STT provider decides the end of a turn.** It sends `committed` when the turn is over. A model with no turn detection needs a silence detector in its adapter.
 - **A TTS provider makes every format it lists in `formats`.** The engine converts no audio. The app asks for `mp3_22050`, so a model that makes only PCM needs an encoder in its adapter.
+- **A TTS provider states how to write for its voice.** `reply_hint` is one clause that reaches you in the `reply_hint` of each app message while `tts` is on, for example that the voice performs text in square brackets and does not say it. A voice that says each character declares `reply_hint = ""`.
 - **The model runs in its own process.** The adapter is a client of a local service, over HTTP or a socket, so the voice CLI gets no heavy dependency and the model cannot block the engine.
 - **Speed is the provider's job.** The engine waits for nothing: a slow STT model gives late turns and a late barge-in, and a judge slower than about a second has no effect.
 

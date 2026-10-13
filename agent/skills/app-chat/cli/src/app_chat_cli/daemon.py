@@ -37,6 +37,7 @@ NAME = "app-chat"
 DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
 PORTFILE = DAEMONS_DIR / f"{NAME}.port"
+VOICE_PORTFILE = DAEMONS_DIR / "voice.port"
 LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
 # The service answers /health with nothing connected to it, so it doubles as the readiness probe.
 READY_URL_PATH = "health"
@@ -126,7 +127,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         sys.exit(_fail(f"could not register {NAME} with vestad"))
 
     store = Store(store_path(data_dir))
-    service = ServiceState(store, default_notifications_dir(), attachments.attachments_root(data_dir))
+    service = ServiceState(store, default_notifications_dir(), attachments.attachments_root(data_dir), VOICE_PORTFILE)
     state = DaemonState(
         sock_path=_sock_path(data_dir),
         data_dir=data_dir,

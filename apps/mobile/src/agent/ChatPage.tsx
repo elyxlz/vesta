@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentHoldKey,
+  bargeInEnabled,
   TRIM_HISTORY_SETTLE_MS,
   conversationPhase,
+  fetchVoiceBehaviors,
   fetchVoiceStatus,
   type OrbMotion,
 } from "@vesta/core";
@@ -179,6 +181,13 @@ export default function ChatPage() {
     queryFn: () => fetchVoiceStatus(api, name, "stt"),
     enabled: Boolean(name && hasVoiceService),
   });
+  // An agent whose voice service has no behaviors route fails this query, and barge-in then
+  // reads as its default.
+  const voiceBehaviors = useQuery({
+    queryKey: ["voice", name, "behavior"],
+    queryFn: () => fetchVoiceBehaviors(api, name),
+    enabled: Boolean(name && hasVoiceService),
+  });
   const voiceEnabled = Boolean(
     speechToText.data?.configured && speechToText.data.enabled,
   );
@@ -226,7 +235,7 @@ export default function ChatPage() {
   const voice = useLiveVoice({
     name,
     enabled: voiceEnabled,
-    sttStatus: speechToText.data ?? null,
+    bargeIn: bargeInEnabled(voiceBehaviors.data ?? null),
     onTranscript: handleVoiceTranscript,
     // A conversation sends each turn as it ends; dictation sends the composer on confirm
     // (below), so a manual edit made during dictation rides along.

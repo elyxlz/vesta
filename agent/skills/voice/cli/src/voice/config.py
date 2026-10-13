@@ -1,7 +1,7 @@
 """Read/write ~/.voice/voice_config.json atomically.
 
-The file has one entry for each role (`stt`, `tts`, `judge`) and one `behavior` entry. A role
-entry holds `provider` (the selected one), `credentials` (one entry for each connected provider:
+The file has one entry for each role (`stt`, `tts`, `judge`) and one `behavior` entry, and an
+entry with nothing in it is `{}`. A role entry holds `provider` (the selected one), `credentials` (one entry for each connected provider:
 its key, or an empty entry for a provider that needs no key), `enabled`, and the settings of its
 providers. Each provider reads only its own setting keys, so a switch between providers loses
 nothing.
@@ -26,7 +26,7 @@ ROLES_ON_AT_CONNECT: tuple[Role, ...] = ("stt", "tts")
 # The keys of a role entry that are not a provider's settings.
 ROLE_KEYS = ("provider", "credentials", "enabled")
 
-VoiceConfig = dict[Section, Domain | None]
+VoiceConfig = dict[Section, Domain]
 
 
 def data_dir() -> pl.Path:
@@ -43,7 +43,7 @@ def load(data_dir: pl.Path) -> VoiceConfig:
         raw = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         raw = {}
-    return {section: raw[section] if section in raw and isinstance(raw[section], dict) and raw[section] else None for section in SECTIONS}
+    return {section: raw[section] if section in raw and isinstance(raw[section], dict) else {} for section in SECTIONS}
 
 
 def save(data_dir: pl.Path, config: VoiceConfig) -> None:
@@ -62,17 +62,17 @@ def mutate(data_dir: pl.Path, updater: tp.Callable[[VoiceConfig], VoiceConfig]) 
     return new
 
 
-def provider_name(entry: Domain | None) -> str | None:
+def provider_name(entry: Domain) -> str | None:
     """The role's selected provider name, or None when it has none."""
-    if not entry or "provider" not in entry:
+    if "provider" not in entry:
         return None
     name = entry["provider"]
     return name if isinstance(name, str) and name else None
 
 
-def connected(entry: Domain | None) -> list[str]:
+def connected(entry: Domain) -> list[str]:
     """The providers connected to a role, in name order."""
-    return sorted(_credentials(entry)) if entry else []
+    return sorted(_credentials(entry))
 
 
 def provider_creds(entry: Domain, provider: str) -> dict[str, str]:
@@ -87,12 +87,8 @@ def provider_settings(entry: Domain) -> Domain:
     return {key: value for key, value in entry.items() if key not in ROLE_KEYS}
 
 
-def is_enabled(entry: Domain | None) -> bool:
-    return bool(entry and "enabled" in entry and entry["enabled"])
-
-
-def behaviors(config: VoiceConfig) -> Domain:
-    return config["behavior"] or {}
+def is_enabled(entry: Domain) -> bool:
+    return "enabled" in entry and bool(entry["enabled"])
 
 
 def _credentials(entry: Domain) -> dict[str, dict[str, str]]:
@@ -119,7 +115,7 @@ def selected_entry(config: VoiceConfig, role: Role) -> tuple[Domain, str]:
     """The role's entry and its selected provider name. Raises ValueError when it has none."""
     entry = config[role]
     name = provider_name(entry)
-    if not entry or name is None:
+    if name is None:
         raise ValueError(f"{role} has no selected provider; run `voice {role} connect <provider>` first")
     return entry, name
 
@@ -128,7 +124,7 @@ def connect(data_dir: pl.Path, role: Role, provider: str, creds: dict[str, str])
     """Store the provider's entry and select it."""
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        existing = cfg[role] or {}
+        existing = cfg[role]
         stored = _credentials(existing)
         stored[provider] = creds
         enabled = True if role in ROLES_ON_AT_CONNECT else is_enabled(existing)
@@ -145,7 +141,7 @@ def use(data_dir: pl.Path, role: Role, provider: str) -> VoiceConfig:
         entry = cfg[role]
         if provider not in connected(entry):
             raise ValueError(f"{provider} is not connected to {role}; run `voice {role} connect {provider}` first")
-        cfg[role] = {**(entry or {}), "provider": provider}
+        cfg[role] = {**entry, "provider": provider}
         return cfg
 
     return mutate(data_dir, _update)
@@ -177,10 +173,8 @@ def disconnect(data_dir: pl.Path, role: Role, provider: str) -> VoiceConfig:
 def set_enabled(data_dir: pl.Path, role: Role, value: bool) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         if value:
-            entry, _name = selected_entry(cfg, role)
-        else:
-            entry = cfg[role] or {}
-        cfg[role] = {**entry, "enabled": value}
+            selected_entry(cfg, role)
+        cfg[role] = {**cfg[role], "enabled": value}
         return cfg
 
     return mutate(data_dir, _update)
@@ -191,7 +185,7 @@ def set_setting(data_dir: pl.Path, section: Section, key: str, value: SettingVal
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         if section == "behavior":
-            cfg["behavior"] = {**behaviors(cfg), key: value}
+            cfg["behavior"] = {**cfg["behavior"], key: value}
             return cfg
         entry, _name = selected_entry(cfg, section)
         cfg[section] = {**entry, key: value}

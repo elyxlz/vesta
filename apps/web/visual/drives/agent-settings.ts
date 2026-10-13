@@ -97,6 +97,10 @@ interface VoiceStatus {
   settings?: VoiceSetting[];
 }
 
+interface VoiceBehaviors {
+  settings: VoiceSetting[];
+}
+
 const MB = 1024 * 1024;
 
 function agentRoute(
@@ -256,11 +260,16 @@ const STT_STATUS: VoiceStatus = {
       max: 0.9,
       step: 0.05,
     },
+  ],
+};
+
+const VOICE_BEHAVIORS: VoiceBehaviors = {
+  settings: [
     {
-      key: "interrupt_tts",
+      key: "barge_in",
       type: "bool",
-      label: "interrupt speech on talk",
-      description: "stop text-to-speech playback when you start speaking",
+      label: "interrupt by voice",
+      description: "talk over a spoken reply to stop it",
       value: true,
       default: true,
     },
@@ -469,6 +478,7 @@ const HAPPY_ROUTES: RouteFixture[] = [
   agentRoute("/backups", BACKUPS, { method: "GET" }),
   agentRoute("/voice/stt/status", STT_STATUS),
   agentRoute("/voice/tts/status", TTS_STATUS),
+  agentRoute("/voice/behavior/status", VOICE_BEHAVIORS),
   agentRoute("/voice/stt/usage", STT_USAGE),
   agentRoute("/voice/tts/usage", TTS_USAGE),
   agentRoute(

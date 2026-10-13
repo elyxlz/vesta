@@ -48,7 +48,7 @@ def _data_dir() -> pl.Path:
 
 def _role_view(config: vc.VoiceConfig, role: vc.Role) -> dict[str, JsonValue]:
     """One role as `voice status` shows it. A key is never printed."""
-    entry = config[role] or {}
+    entry = config[role]
     view: dict[str, JsonValue] = {
         "providers": providers.names(role),
         "connected": vc.connected(entry),
@@ -93,7 +93,7 @@ def _provider_creds(
 def _check(role: vc.Role, name: str, key: str | None) -> dict[str, str]:
     """Check that the provider can do the role. Returns its credentials entry."""
     provider, creds = _provider_creds(role, name, key)
-    settings = vc.provider_settings(vc.load(_data_dir())[role] or {})
+    settings = vc.provider_settings(vc.load(_data_dir())[role])
     ok, error = asyncio.run(provider.validate(creds, settings))
     if not ok:
         raise CommandError(f"{name} failed the {role} check: {error}")

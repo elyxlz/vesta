@@ -52,7 +52,7 @@ def section_view(config: voice_config.VoiceConfig, section: voice_config.Section
         schema = section_schema(config, section)
     except ValueError:
         return []
-    entry = config[section] or {}
+    entry = config[section]
     return [{**d, "value": entry[d["key"]] if d["key"] in entry else (d["default"] if "default" in d else None)} for d in schema]
 
 

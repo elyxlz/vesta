@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Alert, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  fetchVoiceBehaviors,
   fetchVoiceStatus,
+  setVoiceBehavior,
   setVoiceEnabled,
   setVoiceSetting,
 } from "@vesta/core";
-import type { SettingDef, VoiceStatus } from "@vesta/core";
+import type { SettingDef, VoiceDomain, VoiceStatus } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
@@ -17,7 +19,8 @@ import { Quote, Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-type VoiceDomain = "stt" | "tts";
+// Where a setting lives: a role's selected provider, or the behaviors every session shares.
+type SettingSection = VoiceDomain | "behavior";
 
 function settingValue(setting: SettingDef): string {
   if (typeof setting.value === "string") return setting.value;
@@ -33,8 +36,8 @@ function VoiceSetting({
   busy,
 }: {
   setting: SettingDef;
-  domain: VoiceDomain;
-  onChange: (domain: VoiceDomain, key: string, value: unknown) => void;
+  domain: SettingSection;
+  onChange: (domain: SettingSection, key: string, value: unknown) => void;
   busy: boolean;
 }) {
   const [draft, setDraft] = useState(settingValue(setting));
@@ -101,7 +104,7 @@ function DomainCard({
   domain: VoiceDomain;
   status: VoiceStatus;
   onToggle: (domain: VoiceDomain, value: boolean) => void;
-  onSetting: (domain: VoiceDomain, key: string, value: unknown) => void;
+  onSetting: (domain: SettingSection, key: string, value: unknown) => void;
   busy: boolean;
 }) {
   const { colors } = usePreferences();
@@ -151,6 +154,7 @@ export function VoiceSection() {
   const { api } = useSession();
   const { name, agent } = useAgent();
   const { showError } = useToast();
+  const { colors } = usePreferences();
   // The voice service registers itself once the agent has set voice up; until then the proxy has
   // nothing to serve, so the page explains instead of asking.
   const hasVoiceService = Boolean(agent && "voice" in agent.services);
@@ -158,21 +162,30 @@ export function VoiceSection() {
     queryKey: ["voice", name],
     enabled: hasVoiceService,
     queryFn: async () => {
-      const [stt, tts] = await Promise.all([
+      const [stt, tts, behaviors] = await Promise.all([
         fetchVoiceStatus(api, name, "stt"),
         fetchVoiceStatus(api, name, "tts"),
+        // An agent whose voice service has no behaviors route shows no behavior card.
+        fetchVoiceBehaviors(api, name).catch(() => null),
       ]);
-      return { stt, tts };
+      return { stt, tts, behaviors };
     },
   });
   const change = useMutation({
     mutationFn: async (
       operation:
         | { type: "enabled"; domain: VoiceDomain; value: boolean }
-        | { type: "setting"; domain: VoiceDomain; key: string; value: unknown },
+        | {
+            type: "setting";
+            domain: SettingSection;
+            key: string;
+            value: unknown;
+          },
     ) => {
       if (operation.type === "enabled") {
         await setVoiceEnabled(api, name, operation.domain, operation.value);
+      } else if (operation.domain === "behavior") {
+        await setVoiceBehavior(api, name, operation.key, operation.value);
       } else {
         await setVoiceSetting(
           api,
@@ -252,6 +265,24 @@ export function VoiceSection() {
           change.mutate({ type: "setting", domain, key, value })
         }
       />
+      {status.data.behaviors?.settings.length ? (
+        <Card>
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            Behavior
+          </Text>
+          {status.data.behaviors.settings.map((setting) => (
+            <VoiceSetting
+              key={setting.key}
+              setting={setting}
+              domain="behavior"
+              onChange={(domain, key, value) =>
+                change.mutate({ type: "setting", domain, key, value })
+              }
+              busy={change.isPending}
+            />
+          ))}
+        </Card>
+      ) : null}
     </>
   );
 }

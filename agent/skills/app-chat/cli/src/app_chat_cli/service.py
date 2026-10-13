@@ -17,7 +17,7 @@ import urllib.parse
 
 from aiohttp import web
 
-from . import attachments
+from . import attachments, spoken_reply
 from .store import Store, StoredEvent
 
 logger = logging.getLogger("app-chat.service")
@@ -43,6 +43,8 @@ def _valid_mime(mime: str) -> bool:
     return 0 < len(mime) <= _MIME_MAX_CHARS and "/" in mime and all(" " <= char <= "~" for char in mime)
 
 
+REPLY_HINT = "think about how you can best show your personality"
+
 # Bound on the recently-seen intent_id set: the newest N intents dedup a retried send-message; older
 # ones age out (a retry that far behind is not a real double-send). Moved here from core State.
 _SEEN_INTENT_IDS_CAP = 256
@@ -54,10 +56,12 @@ _WS_QUEUE_MAX = 256
 
 
 class ServiceState:
-    def __init__(self, store: Store, notifications_dir: pl.Path, attachments_root: pl.Path) -> None:
+    def __init__(self, store: Store, notifications_dir: pl.Path, attachments_root: pl.Path, voice_port_file: pl.Path) -> None:
         self.store = store
         self.notifications_dir = notifications_dir
         self.attachments_root = attachments_root
+        # The port record of the voice daemon, which answers how a spoken reply must be written.
+        self.voice_port_file = voice_port_file
         self.seen_intent_ids: collections.OrderedDict[str, None] = collections.OrderedDict()
         self.subscribers: set[asyncio.Queue[StoredEvent]] = set()
         # Connections whose client reported the user talking into a live voice conversation.
@@ -141,13 +145,14 @@ def _emit_notification(state: ServiceState, type_: str, fields: dict[str, object
     tmp.replace(path)
 
 
-def _write_notification(state: ServiceState, text: str, metas: list[attachments.AttachmentMeta]) -> None:
+def _write_notification(state: ServiceState, text: str, metas: list[attachments.AttachmentMeta], spoken_hint: str) -> None:
     """Persist an inbound app message as the source=app-chat notification the monitor loop turns into a
     model turn. The structured reply command and behavioral hint ride along so the model receives the
-    producer-owned response guidance. The client-only intent ID stays on the chat event."""
+    producer-owned response guidance, with the voice service's clause when the reply can be spoken.
+    The client-only intent ID stays on the chat event."""
     fields: dict[str, object] = {
         "message": text,
-        "reply_hint": "think about how you can best show your personality",
+        "reply_hint": f"{REPLY_HINT}; {spoken_hint}" if spoken_hint else REPLY_HINT,
     }
     if metas:
         fields["attachments"] = _attachment_line(state, metas)
@@ -205,6 +210,9 @@ async def message_handler(request: web.Request) -> web.Response:
     if isinstance(built, str):
         return web.json_response({"error": built}, status=400)
     event, ids = built
+    # Asked before the dedup check: from that check to the return nothing awaits, which is what
+    # keeps a retry that arrives during an intake from running it a second time.
+    spoken_hint = await spoken_reply.spoken_reply_hint(state.voice_port_file)
 
     intent_id = event["intent_id"] if "intent_id" in event else None
     if intent_id is not None and intent_id in state.seen_intent_ids:
@@ -228,7 +236,7 @@ async def message_handler(request: web.Request) -> web.Response:
     # client's retry (same intent_id) re-runs the whole intake exactly once. Only a successful write
     # persists + echoes + records the intent, keeping intake at-most-once.
     try:
-        _write_notification(state, text, metas)
+        _write_notification(state, text, metas, spoken_hint)
     except OSError as exc:
         logger.error("failed to write app-chat notification: %s", exc)
         return web.json_response({"error": "intake write failed"}, status=500)

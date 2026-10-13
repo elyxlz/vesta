@@ -71,7 +71,7 @@ function setup(overrides: Partial<VoiceSessionSettings> = {}) {
   };
   const { events, callbacks } = recorder();
   const settings: VoiceSessionSettings = {
-    interruptTts: true,
+    bargeIn: true,
     inactivityMs: 1000,
     yieldToUser: true,
     ...overrides,
@@ -150,8 +150,8 @@ describe("the voice session", () => {
     expect(session.mode()).toBe("conversation");
   });
 
-  it("a conversation cuts a reply on a user turn even when interruptTts is off", async () => {
-    const { socket, session, startAnd } = setup({ interruptTts: false });
+  it("a conversation cuts a reply on a user turn even when barge-in is off", async () => {
+    const { socket, session, startAnd } = setup({ bargeIn: false });
     await startAnd("conversation");
     session.speak("a long reply");
     await vi.waitFor(() => {
@@ -161,8 +161,8 @@ describe("the voice session", () => {
     expect(session.speaking()).toBe(false);
   });
 
-  it("dictation leaves a reply alone on a user turn when interruptTts is off", async () => {
-    const { socket, session, startAnd } = setup({ interruptTts: false });
+  it("dictation leaves a reply alone on a user turn when barge-in is off", async () => {
+    const { socket, session, startAnd } = setup({ bargeIn: false });
     await startAnd("dictation");
     session.speak("a long reply");
     await vi.waitFor(() => {

@@ -8,12 +8,13 @@ import {
 } from "@/components/ui/field";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { bargeInEnabled } from "@vesta/core";
 import {
   fetchSttUsage,
   fetchTtsUsage,
   setSttEnabled,
   setTtsEnabled,
-  setVoiceSetting,
+  setVoiceBehavior,
   type SttUsage,
   type TtsUsage,
 } from "@/lib/voice";
@@ -53,29 +54,24 @@ const ACTIVATION_OPTIONS: { value: VoiceActivationMode; label: string }[] = [
 // How dictation behaves, apart from which provider transcribes it.
 export function DictationCard() {
   const { name: agentName } = useSelectedAgent();
-  const { sttStatus, patchStt, refreshVoiceStatus } = useVoice();
+  const { behaviors, setBehaviors, refreshVoiceStatus } = useVoice();
   const activation = usePreferences((s) => s.voiceActivation);
   const update = usePreferences((s) => s.update);
   const setActivation = (voiceActivation: VoiceActivationMode) => {
     update({ voiceActivation });
   };
 
-  const interruptSetting = sttStatus?.settings?.find(
-    (s) => s.key === "interrupt_tts",
-  );
-  const interruptValue =
-    typeof interruptSetting?.value === "boolean"
-      ? interruptSetting.value
-      : true;
+  // The barge_in behavior of the voice service; the switch shows only when the agent has it.
+  const hasBargeIn = behaviors?.settings.some((s) => s.key === "barge_in");
 
-  const setInterrupt = (value: boolean) => {
-    if (!sttStatus?.settings || !agentName) return;
-    patchStt({
-      settings: sttStatus.settings.map((s) =>
-        s.key === "interrupt_tts" ? { ...s, value } : s,
+  const setBargeIn = (value: boolean) => {
+    if (!behaviors || !agentName) return;
+    setBehaviors({
+      settings: behaviors.settings.map((s) =>
+        s.key === "barge_in" ? { ...s, value } : s,
       ),
     });
-    setVoiceSetting(agentName, "stt", "interrupt_tts", value).catch(() =>
+    setVoiceBehavior(agentName, "barge_in", value).catch(() =>
       refreshVoiceStatus(),
     );
   };
@@ -117,7 +113,7 @@ export function DictationCard() {
               ))}
             </div>
           </Field>
-          {interruptSetting && (
+          {hasBargeIn && (
             <Field
               orientation="horizontal"
               className="items-center justify-between"
@@ -128,7 +124,10 @@ export function DictationCard() {
                   stop text-to-speech playback when you start speaking
                 </FieldDescription>
               </FieldContent>
-              <Switch checked={interruptValue} onCheckedChange={setInterrupt} />
+              <Switch
+                checked={bargeInEnabled(behaviors)}
+                onCheckedChange={setBargeIn}
+              />
             </Field>
           )}
         </Field>
@@ -214,7 +213,7 @@ export function SttCard() {
       provider={sttStatus?.provider ?? null}
       enabled={enabled}
       onToggleEnabled={toggleEnabled}
-      settings={sttStatus?.settings?.filter((s) => s.key !== "interrupt_tts")}
+      settings={sttStatus?.settings}
       domain="stt"
       agentName={agentName}
       onSettingChange={(settings) => patchStt({ settings })}

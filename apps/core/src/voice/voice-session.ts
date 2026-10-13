@@ -16,8 +16,9 @@ import { createTtsQueue, type SpeechPlayer, type TtsQueue } from "./tts-queue";
 export type VoiceMode = "dictation" | "conversation";
 
 export interface VoiceSessionSettings {
-  // Dictation cuts a reply on a user turn only when this is set; a conversation always cuts.
-  interruptTts: boolean;
+  // The user's barge_in behavior. Dictation cuts a reply on a user turn only when this is
+  // set; a conversation always cuts.
+  bargeIn: boolean;
   // A conversation with no user turn for this long ends itself. 0 disables. Dictation
   // ignores it, since the user ends dictation by hand.
   inactivityMs: number;
@@ -146,7 +147,7 @@ export function createVoiceSession(
       {
         onTranscript: callbacks.onTranscript,
         onTurnStart: () => {
-          if (conversation || settings().interruptTts) queue.stop();
+          if (conversation || settings().bargeIn) queue.stop();
           if (conversation && settings().yieldToUser) setUserTurn(true);
         },
         onTurnEnd: (text) => {

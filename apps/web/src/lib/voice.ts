@@ -9,7 +9,12 @@ const SAMPLE_RATE = 16000;
 
 // The voice routes live once in @vesta/core; these bind the app's one HttpClient so call sites
 // keep their names. The status shape is one type for both domains.
-export type { SettingDef, SttUsage, TtsUsage } from "@vesta/core";
+export type {
+  SettingDef,
+  SttUsage,
+  TtsUsage,
+  VoiceBehaviors,
+} from "@vesta/core";
 export type SttStatus = core.VoiceStatus;
 export type TtsStatus = core.VoiceStatus;
 
@@ -20,6 +25,15 @@ export const setVoiceSetting = (
   value: unknown,
 ): Promise<SttStatus> =>
   core.setVoiceSetting(httpClient, n, domain, key, value);
+
+// An agent whose voice service has no behaviors route answers 404, which reads as no behaviors.
+export const fetchVoiceBehaviors = (
+  agentName: string,
+  signal?: AbortSignal,
+): Promise<core.VoiceBehaviors | null> =>
+  core.fetchVoiceBehaviors(httpClient, agentName, signal).catch(() => null);
+export const setVoiceBehavior = (n: string, key: string, value: unknown) =>
+  core.setVoiceBehavior(httpClient, n, key, value);
 
 export const fetchSttStatus = (agentName: string, signal?: AbortSignal) =>
   core.fetchVoiceStatus(httpClient, agentName, "stt", signal);

@@ -24,6 +24,8 @@ class FakeStream:
         self.audio: list[bytes] = []
         self.commits = 0
         self.closed = False
+        # Set when audio arrives, so a test can wait for a frame that gets no answer.
+        self.heard = asyncio.Event()
         # When true, `send` raises an error that is not part of the contract: an adapter bug.
         self.broken = False
 
@@ -31,6 +33,7 @@ class FakeStream:
         if self.broken:
             raise RuntimeError("the adapter broke")
         self.audio.append(pcm)
+        self.heard.set()
 
     async def commit(self) -> None:
         self.commits += 1
@@ -56,6 +59,8 @@ class FakeStt:
     refuse: tp.Literal["failed", "limit"] | None = None
     valid: bool = True
     streams: list[FakeStream] = dc.field(default_factory=list)
+    # When set, an open sets it: the route opened a stream and sends no frame to say so.
+    opened: asyncio.Event | None = None
     opened_with: list[tuple[dict[str, str], Domain]] = dc.field(default_factory=list)
 
     async def open(self, creds: dict[str, str], settings: Domain) -> FakeStream:
@@ -63,6 +68,8 @@ class FakeStt:
             raise SttOpenError(self.refuse, f"refused: {self.refuse}")
         self.opened_with.append((creds, settings))
         self.streams.append(FakeStream())
+        if self.opened is not None:
+            self.opened.set()
         return self.streams[-1]
 
     async def validate(self, creds: dict[str, str], settings: Domain) -> Validation:
@@ -86,6 +93,7 @@ class FakeTts:
     needs_key: bool = False
     voice_setting: str = "fake_voice"
     formats: frozenset[str] = frozenset({"mp3_22050", "pcm_16000"})
+    reply_hint: str = ""
     chunks: tuple[bytes, ...] = (b"au", b"dio")
     fail: bool = False
     valid: bool = True

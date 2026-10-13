@@ -91,6 +91,9 @@ class TtsProvider(tp.Protocol):
     voice_setting: str
     # The play formats (engine/frames.py PLAY_FORMATS) that this provider can make.
     formats: frozenset[str]
+    # What the agent must know to write text for this voice, as one clause of a reply hint.
+    # Empty for a voice that says each character of the text.
+    reply_hint: str
 
     def synthesize(
         self,

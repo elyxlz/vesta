@@ -12,6 +12,7 @@ import type {
   NotificationInterruptRule,
   ProviderCatalog,
   Usage,
+  VoiceBehaviors,
   VoiceStatus,
 } from "@vesta/core";
 import {
@@ -274,6 +275,17 @@ const backups: BackupInfo[] = [
     size: 17_825_792,
   },
 ];
+const voiceBehaviors: VoiceBehaviors = {
+  settings: [
+    {
+      key: "barge_in",
+      type: "bool",
+      label: "interrupt by voice",
+      description: "talk over a spoken reply to stop it",
+      value: true,
+    },
+  ],
+};
 const voiceStatuses: Record<"stt" | "tts", VoiceStatus> = {
   stt: {
     configured: true,
@@ -416,6 +428,7 @@ function fixtureFor(path: string): unknown {
   if (path.includes("/voice/tts/status")) {
     return voiceUnconfigured ? unconfiguredVoice : voiceStatuses.tts;
   }
+  if (path.includes("/voice/behavior/status")) return voiceBehaviors;
   if (path.includes("/history?channel=notifications")) {
     return { events: isNova(path) ? [] : notifications, cursor: null };
   }

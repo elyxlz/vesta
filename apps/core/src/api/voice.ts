@@ -34,6 +34,18 @@ export interface VoiceStatus {
   settings?: SettingDef[];
 }
 
+// The behaviors: values that change how every voice session acts, whichever provider is
+// selected. They use the settings format of the providers.
+export interface VoiceBehaviors {
+  settings: SettingDef[];
+}
+
+// Barge-in (the user's voice stops a spoken reply) is on unless the behavior says off, so an
+// agent whose voice service reports no behaviors gets the default.
+export function bargeInEnabled(behaviors: VoiceBehaviors | null): boolean {
+  return behaviors?.settings.find((s) => s.key === "barge_in")?.value !== false;
+}
+
 export interface SttUsage {
   usage?: { results?: { hours?: number }[] };
   balance?: { balances?: { amount?: number; units?: string }[] };
@@ -45,6 +57,23 @@ export interface TtsUsage {
 
 function voicePath(name: string, suffix: string): string {
   return agentPath(name, `/voice/${suffix}`);
+}
+
+// LEGACY(remove-when: every agent in the fleet has run the 2026-10-voice-engine migration):
+// a voice service from before that migration lists `interrupt_tts` among the STT settings.
+// The barge_in behavior holds that choice, so the setting is dropped here and no client
+// shows a switch that nothing reads.
+async function voiceStatus(
+  http: HttpClient,
+  path: string,
+  init: RequestInit,
+): Promise<VoiceStatus> {
+  const status = await http.json<VoiceStatus>(path, init);
+  if (!status.settings) return status;
+  return {
+    ...status,
+    settings: status.settings.filter((s) => s.key !== "interrupt_tts"),
+  };
 }
 
 // The live transcription socket (GET .../voice/stt/listen); dialed with the token in the query.
@@ -64,9 +93,29 @@ export async function fetchVoiceStatus(
   domain: VoiceDomain,
   signal?: AbortSignal,
 ): Promise<VoiceStatus> {
-  return http.json<VoiceStatus>(voicePath(name, `${domain}/status`), {
+  return voiceStatus(http, voicePath(name, `${domain}/status`), { signal });
+}
+
+export async function fetchVoiceBehaviors(
+  http: HttpClient,
+  name: string,
+  signal?: AbortSignal,
+): Promise<VoiceBehaviors> {
+  return http.json<VoiceBehaviors>(voicePath(name, "behavior/status"), {
     signal,
   });
+}
+
+export async function setVoiceBehavior(
+  http: HttpClient,
+  name: string,
+  key: string,
+  value: unknown,
+): Promise<VoiceBehaviors> {
+  return http.json<VoiceBehaviors>(
+    voicePath(name, "behavior/set"),
+    jsonInit("POST", { key, value }),
+  );
 }
 
 export async function fetchSttUsage(
@@ -89,7 +138,8 @@ export async function setVoiceEnabled(
   domain: VoiceDomain,
   value: boolean,
 ): Promise<VoiceStatus> {
-  return http.json<VoiceStatus>(
+  return voiceStatus(
+    http,
     voicePath(name, `${domain}/set-enabled`),
     jsonInit("POST", { value }),
   );
@@ -102,7 +152,8 @@ export async function setVoiceSetting(
   key: string,
   value: unknown,
 ): Promise<VoiceStatus> {
-  return http.json<VoiceStatus>(
+  return voiceStatus(
+    http,
     voicePath(name, `${domain}/set`),
     jsonInit("POST", { key, value }),
   );

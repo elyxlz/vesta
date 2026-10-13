@@ -144,9 +144,14 @@ export function createSttSession(
         callbacks.onTranscript(displayText());
       }
       if (event.event === "EndOfTurn") {
-        const text = current.trim();
+        // The frame's transcript is the final text of the turn, also when it is empty: live
+        // text that ends in no words is no turn. A frame with no transcript ends the turn on
+        // the last live text.
+        const text = (event.transcript ?? current).trim();
+        const retracted = !text && current !== "";
         current = "";
         if (!text) {
+          if (retracted) callbacks.onTranscript(displayText());
           callbacks.onTurnEnd("");
           return;
         }

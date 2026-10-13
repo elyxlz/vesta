@@ -32,7 +32,7 @@ async def _provider_transcript(path: pl.Path, language: str | None) -> str:
     """The configured STT provider's transcript. Raises on any config or provider fault."""
     entry = vc.load(vc.data_dir())["stt"]
     name = vc.provider_name(entry)
-    if not entry or name is None:
+    if name is None:
         raise RuntimeError("STT not configured")
     if not vc.is_enabled(entry):
         raise RuntimeError("STT disabled")

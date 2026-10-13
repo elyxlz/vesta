@@ -85,7 +85,7 @@ def test_connect_checks_the_provider_stores_it_and_selects_it(home: pl.Path, cap
     assert code == 0
     assert status["tts"]["selected"] == "keyed"
     assert status["tts"]["on"] is True
-    assert vc.provider_creds(vc.load(home)["tts"] or {}, "keyed") == {"api_key": "k"}
+    assert vc.provider_creds(vc.load(home)["tts"], "keyed") == {"api_key": "k"}
 
 
 def test_connect_turns_stt_and_tts_on_and_leaves_the_judge_off(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -102,14 +102,14 @@ def test_connect_refuses_a_provider_that_fails_its_check_and_stores_nothing(
     monkeypatch.setitem(providers.STT, "keyed", FakeStt(needs_key=True, valid=False))
 
     assert failure(capsys, "stt", "connect", "keyed", "--key", "bad") == "keyed failed the stt check: the fake says no"
-    assert vc.load(home)["stt"] is None
+    assert vc.load(home)["stt"] == {}
 
 
 def test_check_tests_a_provider_and_stores_nothing(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
     code, answer, _err = run(capsys, "stt", "check", "keyed", "--key", "k")
 
     assert (code, answer) == (0, {"role": "stt", "provider": "keyed", "ok": True})
-    assert vc.load(home)["stt"] is None
+    assert vc.load(home)["stt"] == {}
 
 
 def test_a_provider_with_no_key_connects_with_no_key(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -117,14 +117,14 @@ def test_a_provider_with_no_key_connects_with_no_key(home: pl.Path, capsys: pyte
 
     assert code == 0
     assert status["stt"]["connected"] == ["local"]
-    assert vc.provider_creds(vc.load(home)["stt"] or {}, "local") == {}
+    assert vc.provider_creds(vc.load(home)["stt"], "local") == {}
 
 
 def test_a_key_is_necessary_exactly_when_the_provider_needs_one(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert failure(capsys, "stt", "connect", "keyed") == "keyed needs a key: add --key <key>"
     assert failure(capsys, "stt", "connect", "local", "--key", "k") == "local takes no key: run the command with no --key"
     assert failure(capsys, "stt", "check", "keyed") == "keyed needs a key: add --key <key>"
-    assert vc.load(home)["stt"] is None
+    assert vc.load(home)["stt"] == {}
 
 
 def test_a_provider_the_skill_does_not_know_is_refused_with_the_known_names(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -200,7 +200,7 @@ def test_voice_sets_the_voice_of_the_selected_provider_only(
     run(capsys, "tts", "connect", "keyed", "--key", "k")
 
     _code, status, _err = run(capsys, "tts", "voice", "v-other")
-    entry = vc.load(home)["tts"] or {}
+    entry = vc.load(home)["tts"]
 
     assert status["tts"]["settings"] == {"keyed_voice": "v-other"}
     assert (entry["fake_voice"], entry["keyed_voice"]) == ("v-other", "v-other")

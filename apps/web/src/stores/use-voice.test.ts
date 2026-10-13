@@ -25,7 +25,7 @@ import {
   type VoiceMode,
 } from "@/stores/use-voice";
 import { useToastStore } from "@/stores/use-toast";
-import type { TtsStatus } from "@/lib/voice";
+import type { TtsStatus, VoiceBehaviors } from "@/lib/voice";
 
 const apiJsonMock = vi.mocked(httpClient.json);
 
@@ -67,6 +67,10 @@ class FakeSocket {
   }
 }
 
+const BARGE_IN_OFF: VoiceBehaviors = {
+  settings: [{ key: "barge_in", type: "bool", label: "", value: false }],
+};
+
 const ENABLED_TTS: TtsStatus = {
   configured: true,
   provider: "elevenlabs",
@@ -80,6 +84,7 @@ beforeEach(() => {
   useVoice.getState()._setAgentContext("test-agent", {}, undefined);
   useVoice.getState()._setSttStatus(null);
   useVoice.getState()._setTtsStatus(null);
+  useVoice.getState().setBehaviors(null);
   useVoice.setState({ muted: false });
   FakeAudio.created = [];
   FakeSocket.urls = [];
@@ -351,14 +356,19 @@ describe("recording modes", () => {
     expect(useVoice.getState().listening).toBe(false);
   });
 
-  it("a user turn always cuts playback in a conversation, whatever interrupt_tts says", async () => {
-    useVoice.getState()._setSttStatus({
-      ...ENABLED_STT,
-      settings: [
-        { key: "interrupt_tts", type: "bool", label: "", value: false },
-      ],
+  it("a user turn leaves playback alone in dictation when the barge_in behavior is off", async () => {
+    useVoice.getState().setBehaviors(BARGE_IN_OFF);
+    const socket = await startRecording("dictation");
+    useVoice.getState().speak("a long reply");
+    await vi.waitFor(() => {
+      expect(useVoice.getState().isSpeaking).toBe(true);
     });
-    useVoice.getState()._setTtsStatus(ENABLED_TTS);
+    socket.emit("StartOfTurn", "");
+    expect(useVoice.getState().isSpeaking).toBe(true);
+  });
+
+  it("a user turn always cuts playback in a conversation, whatever barge_in says", async () => {
+    useVoice.getState().setBehaviors(BARGE_IN_OFF);
     const socket = await startRecording("conversation");
     useVoice.getState().speak("a long reply");
     await vi.waitFor(() => {

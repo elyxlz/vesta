@@ -134,6 +134,30 @@ describe("the STT session", () => {
     expect(cbs.turns).toEqual([""]);
   });
 
+  it("ends a turn on the last live text when the end frame carries no transcript", async () => {
+    const { socket, cbs, session } = setup(false);
+    const starting = session.start();
+    await tick();
+    socket.onopen?.();
+    await starting;
+    socket.emit("StartOfTurn");
+    socket.emit("Update", "hello");
+    socket.emit("EndOfTurn");
+    expect(cbs.turns).toEqual(["hello"]);
+  });
+
+  it("ends a turn with nothing when the end frame says the live text had no words", async () => {
+    const { socket, cbs, session } = setup(false);
+    const starting = session.start();
+    await tick();
+    socket.onopen?.();
+    await starting;
+    socket.emit("StartOfTurn", "uh");
+    socket.emit("EndOfTurn", "");
+    expect(cbs.turns).toEqual([""]);
+    expect(cbs.transcripts.at(-1)).toBe("");
+  });
+
   it("accumulates turns and returns the whole display, partial included, on stop", async () => {
     const { socket, cbs, session } = setup(true);
     const starting = session.start();

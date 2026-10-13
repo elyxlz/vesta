@@ -156,6 +156,7 @@ class DeepgramTts:
     needs_key = True
     voice_setting = "aura_voice"
     formats = frozenset(FORMAT_PARAMS)
+    reply_hint = ""
 
     def settings_schema(self) -> list[SettingDef]:
         return [

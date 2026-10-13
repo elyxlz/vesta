@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { usePreferences } from "@/stores/use-preferences";
 import {
+  bargeInEnabled,
   createVoiceSession,
   type InputMethod,
   type ServiceInfo,
@@ -13,8 +14,10 @@ import {
   voiceWsUrl,
   fetchSttStatus,
   fetchTtsStatus,
+  fetchVoiceBehaviors,
   type SttStatus,
   type TtsStatus,
+  type VoiceBehaviors,
 } from "@/lib/voice";
 import { useToastStore } from "@/stores/use-toast";
 
@@ -35,6 +38,9 @@ interface VoiceState {
   // Status
   sttStatus: SttStatus | null;
   ttsStatus: TtsStatus | null;
+  // What every voice session of this agent does, whichever provider is selected; null until
+  // loaded, and for an agent whose voice service reports none.
+  behaviors: VoiceBehaviors | null;
   sttAvailable: boolean;
   speechEnabled: boolean;
   // Voice has been set up at all (either service configured), the gate for showing the
@@ -86,6 +92,7 @@ interface VoiceState {
   // Status management
   patchStt: (patch: Partial<SttStatus>) => void;
   patchTts: (patch: Partial<TtsStatus>) => void;
+  setBehaviors: (behaviors: VoiceBehaviors | null) => void;
   refreshVoiceStatus: () => void;
 
   // Internal (used by VoiceStoreEffects)
@@ -106,15 +113,6 @@ let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
   null;
 let clearInputCallback: (() => void) | null = null;
 let reportSpeakingCallback: ((speaking: boolean) => void) | null = null;
-
-function boolSetting(
-  status: SttStatus | null,
-  key: string,
-  fallback: boolean,
-): boolean {
-  const value = status?.settings?.find((s) => s.key === key)?.value;
-  return typeof value === "boolean" ? value : fallback;
-}
 
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
   const sttAvailable = (stt?.configured && stt.enabled) ?? false;
@@ -165,7 +163,7 @@ export const useVoice = create<VoiceState>((set, get) => {
           ),
     },
     () => ({
-      interruptTts: boolSetting(get().sttStatus, "interrupt_tts", true),
+      bargeIn: bargeInEnabled(get().behaviors),
       inactivityMs: get().conversationAutoEnd ? CONVERSATION_INACTIVITY_MS : 0,
       yieldToUser: get().conversationYield,
     }),
@@ -178,6 +176,7 @@ export const useVoice = create<VoiceState>((set, get) => {
 
     sttStatus: null,
     ttsStatus: null,
+    behaviors: null,
     sttAvailable: false,
     speechEnabled: false,
     voiceConfigured: false,
@@ -287,12 +286,25 @@ export const useVoice = create<VoiceState>((set, get) => {
       });
     },
 
+    setBehaviors: (behaviors) => {
+      set({ behaviors });
+    },
+
     refreshVoiceStatus: () => {
       const { agentName } = get();
       if (!agentName) return;
-      Promise.all([fetchSttStatus(agentName), fetchTtsStatus(agentName)])
-        .then(([stt, tts]) => {
-          set({ sttStatus: stt, ttsStatus: tts, ...deriveStatus(stt, tts) });
+      Promise.all([
+        fetchSttStatus(agentName),
+        fetchTtsStatus(agentName),
+        fetchVoiceBehaviors(agentName),
+      ])
+        .then(([stt, tts, behaviors]) => {
+          set({
+            sttStatus: stt,
+            ttsStatus: tts,
+            behaviors,
+            ...deriveStatus(stt, tts),
+          });
         })
         .catch(() => {
           /* ignore */
