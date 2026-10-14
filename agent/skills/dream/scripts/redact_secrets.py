@@ -41,6 +41,7 @@ READ_ONLY_REF_PREFIXES = ("file:", "transcript:")
 # The tables FTS5 creates behind a virtual table: binary index shards, never scanned directly.
 _FTS_SHADOW_SUFFIXES = ("_data", "_idx", "_content", "_docsize", "_config")
 REDACTED = "[REDACTED]"
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 # The shortest value --scrub-literal accepts: the rewrite is DB-wide, so a tiny literal ("a", "key")
 # would splice the placeholder through unrelated text across the entire history.
 MIN_LITERAL_LEN = 6
@@ -327,7 +328,8 @@ def _decoded(data: str) -> JsonValue | None:
 def _mask_context(window: str) -> str:
     """Mask both pattern hits and payment cards in a scan snippet, so reviewing a candidate never
     re-leaks the value back into a new event (the old redaction loop's self-reseeding)."""
-    return _redact_text(window).replace("\n", " ")
+    # Control bytes from binary files (.pages, .pdf) make grep treat the report as binary.
+    return CONTROL_CHARS.sub(" ", _redact_text(window))
 
 
 def _hit_spans(text: str) -> list[tuple[int, int]]:

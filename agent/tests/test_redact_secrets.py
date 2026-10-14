@@ -1341,3 +1341,10 @@ def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monk
 
     assert _file_hits(out) == []
     assert "No secrets found." in out
+
+
+def test_snippet_has_no_control_bytes_so_the_report_stays_text():
+    text = "\x00\x01binary\x0f token=ghp_" + "A" * 36 + " tail\n"
+    (snippet,) = redact.find_matches(text)
+    assert not any(ord(c) < 32 or ord(c) == 127 for c in snippet)
+    assert "[REDACTED]" in snippet and "binary" in snippet
