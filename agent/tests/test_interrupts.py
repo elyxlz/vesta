@@ -645,6 +645,27 @@ def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
     assert client._read_compaction_summary("sess-xyz") == "the latest summary"
 
 
+def test_read_compaction_summary_streams_transcript(tmp_path, monkeypatch):
+    """The transcript is read line by line, never loaded whole: a long session runs to gigabytes."""
+    import json
+    import pathlib as pl
+
+    from core import client
+
+    proj = tmp_path / ".claude" / "projects" / "-root-agent"
+    proj.mkdir(parents=True)
+    filler = [{"type": "user", "message": {"content": "x" * 200}} for _ in range(500)]
+    summary = {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "streamed summary"}]}}
+    (proj / "sess-big.jsonl").write_text("\n".join(json.dumps(line) for line in [*filler, summary, *filler]))
+    monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
+
+    def no_whole_read(*_args, **_kwargs):
+        raise AssertionError("transcript loaded whole")
+
+    monkeypatch.setattr(pl.Path, "read_text", no_whole_read)
+    assert client._read_compaction_summary("sess-big") == "streamed summary"
+
+
 def test_read_compaction_summary_returns_none_when_absent(tmp_path, monkeypatch):
     import pathlib as pl
 

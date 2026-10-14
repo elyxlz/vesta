@@ -480,18 +480,22 @@ def _read_compaction_summary(session_id: str) -> str | None:
         if not matches:
             return None
         text: str | None = None
-        for line in matches[-1].read_text().splitlines():
-            entry = json.loads(line)
-            if not (entry.get("isCompactSummary")):
-                continue
-            if "message" not in entry or "content" not in entry["message"]:
-                continue
-            content = entry["message"]["content"]
-            if isinstance(content, str):
-                text = content
-            elif isinstance(content, list):
-                parts = [block["text"] for block in content if isinstance(block, dict) and "text" in block]
-                text = "\n".join(parts) if parts else text
+        # Stream: a long-lived session transcript runs to gigabytes, and loading it whole spikes memory.
+        with matches[-1].open(encoding="utf-8", errors="replace") as transcript:
+            for line in transcript:
+                if "isCompactSummary" not in line:
+                    continue
+                entry = json.loads(line)
+                if not (entry.get("isCompactSummary")):
+                    continue
+                if "message" not in entry or "content" not in entry["message"]:
+                    continue
+                content = entry["message"]["content"]
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    parts = [block["text"] for block in content if isinstance(block, dict) and "text" in block]
+                    text = "\n".join(parts) if parts else text
         return text
     except (OSError, ValueError, KeyError, TypeError):
         return None
