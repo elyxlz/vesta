@@ -9,7 +9,6 @@ import {
   numberRange,
   numberValue,
   selectedOptionLabel,
-  settingValue,
   type SettingSection,
 } from "@/agent/settings/voice-settings-model";
 import { Button } from "@/components/ui/Button";
@@ -107,14 +106,20 @@ function TextSetting({
   onSave,
   busy,
 }: SettingProps & { busy: boolean }) {
-  const [draft, setDraft] = useState(settingValue(setting));
+  const saved = typeof setting.value === "string" ? setting.value : "";
+  // The text in the user's hand, keyed by the saved value it started from, so a saved value
+  // that changes shows through.
+  const [edit, setEdit] = useState<{ base: string; value: string } | null>(
+    null,
+  );
+  const draft = edit !== null && edit.base === saved ? edit.value : saved;
   return (
     <View style={styles.textSetting}>
       <Field
         label={setting.label}
         description={setting.description}
         value={draft}
-        onChangeText={setDraft}
+        onChangeText={(value) => setEdit({ base: saved, value })}
         autoCapitalize="none"
         autoCorrect={false}
       />

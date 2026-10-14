@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SettingDef } from "@vesta/core";
+import type { SettingDef, VoiceSettingsData } from "@vesta/core";
 import {
   filterOptions,
   findSetting,
@@ -8,7 +8,6 @@ import {
   numberValue,
   parseSettingSection,
   selectedOptionLabel,
-  type VoiceSettingsData,
 } from "./voice-settings-model";
 
 const VOICES = [

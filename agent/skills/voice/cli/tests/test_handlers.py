@@ -13,14 +13,6 @@ from voice import providers
 from .fakes import FRAME_TIMEOUT_SECS, FakeJudge, FakeStt, FakeTts, next_frame, voice_service
 
 
-@pytest.fixture
-def tts(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeTts:
-    fake = FakeTts()
-    monkeypatch.setitem(providers.TTS, "fake", fake)
-    vc.connect(tmp_path, "tts", "fake", {})
-    return fake
-
-
 def serve(tmp_path: pl.Path, scenario: tp.Callable[[TestClient], tp.Awaitable[None]]) -> None:
     async def run() -> None:
         async with voice_service(tmp_path) as client:
@@ -230,14 +222,6 @@ def test_the_reply_hint_is_empty_when_tts_has_no_provider(tmp_path: pl.Path) -> 
     serve(tmp_path, scenario)
 
 
-@pytest.fixture
-def stt(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeStt:
-    fake = FakeStt()
-    monkeypatch.setitem(providers.STT, "fake", fake)
-    vc.connect(tmp_path, "stt", "fake", {})
-    return fake
-
-
 def turn_info(event: str, transcript: str) -> dict[str, str]:
     return {"type": "TurnInfo", "event": event, "transcript": transcript}
 
@@ -289,6 +273,18 @@ def test_the_listen_socket_closes_with_the_reason_when_the_provider_refuses(tmp_
             assert (closing.data, closing.extra) == (1011, "refused: limit")
 
     serve(tmp_path, scenario)
+
+
+def test_the_listen_socket_closes_and_opens_no_provider_while_stt_is_off(tmp_path: pl.Path, stt: FakeStt) -> None:
+    vc.set_enabled(tmp_path, "stt", False)
+
+    async def scenario(client: TestClient) -> None:
+        async with client.ws_connect("/stt/listen") as ws:
+            closing = await ws.receive(timeout=FRAME_TIMEOUT_SECS)
+            assert (closing.data, closing.extra) == (1011, "STT not configured")
+
+    serve(tmp_path, scenario)
+    assert stt.streams == []
 
 
 def test_the_listen_socket_closes_when_stt_has_no_provider(tmp_path: pl.Path) -> None:

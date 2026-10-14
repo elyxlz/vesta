@@ -16,6 +16,7 @@ export type EngineFrame =
   | { type: "pause_playback" }
   | { type: "resume_playback" }
   | { type: "stop_playback" }
+  | { type: "error"; message: string }
   | { type: "ended"; reason: string };
 
 function parsed(data: string): Record<string, unknown> | null {
@@ -29,7 +30,7 @@ function parsed(data: string): Record<string, unknown> | null {
 export function parseEngineFrame(data: string): EngineFrame | null {
   const body = parsed(data);
   if (!body) return null;
-  const { type, text, id, url, reason } = body;
+  const { type, text, id, url, reason, message } = body;
   switch (type) {
     case "state":
     case "turn_start":
@@ -47,6 +48,8 @@ export function parseEngineFrame(data: string): EngineFrame | null {
       return typeof id === "string" && typeof url === "string"
         ? { type, id, url }
         : null;
+    case "error":
+      return typeof message === "string" ? { type, message } : null;
     case "ended":
       return { type, reason: typeof reason === "string" ? reason : "" };
     default:

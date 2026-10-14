@@ -234,7 +234,7 @@ export {
   bargeInEnabled,
   fetchSttUsage,
   fetchTtsUsage,
-  fetchVoiceBehaviors,
+  fetchVoiceSettings,
   fetchVoiceStatus,
   prepareSpeech,
   selectVoiceProvider,
@@ -251,6 +251,7 @@ export type {
   TtsUsage,
   VoiceBehaviors,
   VoiceDomain,
+  VoiceSettingsData,
   VoiceStatus,
 } from "./api/voice";
 export { agentLogsPath, gatewayLogsPath } from "./api/logs";

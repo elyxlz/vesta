@@ -5,6 +5,7 @@ adds the answer to the hint as it is. With no voice daemon, or one that does not
 the hint has no such clause.
 """
 
+import asyncio
 import pathlib as pl
 
 import aiohttp
@@ -14,6 +15,11 @@ import aiohttp
 VOICE_TIMEOUT_SECS = 0.3
 
 
+def voice_http() -> aiohttp.ClientSession:
+    """The session the service keeps open to ask the voice daemon."""
+    return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=VOICE_TIMEOUT_SECS))
+
+
 def _voice_port(port_file: pl.Path) -> int | None:
     try:
         return int(port_file.read_text())
@@ -21,16 +27,13 @@ def _voice_port(port_file: pl.Path) -> int | None:
         return None
 
 
-async def spoken_reply_hint(voice_port_file: pl.Path) -> str:
+async def spoken_reply_hint(http: aiohttp.ClientSession, voice_port_file: pl.Path) -> str:
     """What the agent must know to write a reply that the voice can speak, or empty text."""
-    port = _voice_port(voice_port_file)
+    port = await asyncio.to_thread(_voice_port, voice_port_file)
     if port is None:
         return ""
     try:
-        async with (
-            aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=VOICE_TIMEOUT_SECS)) as http,
-            http.get(f"http://127.0.0.1:{port}/tts/reply-hint") as resp,
-        ):
+        async with http.get(f"http://127.0.0.1:{port}/tts/reply-hint") as resp:
             if resp.status != 200:
                 return ""
             body = await resp.json()

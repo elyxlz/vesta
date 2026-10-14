@@ -13,9 +13,8 @@ import aiohttp
 from voice.settings import Domain, JsonValue, SettingDef
 
 from .base import TtsError, Validation, api_key
-from .deepgram import account_balance
+from .deepgram import DEEPGRAM_API, account_balance
 
-DEEPGRAM_API = "https://api.deepgram.com"
 DEFAULT_VOICE = "aura-2-thalia-en"
 AURA_MAX_CHARS = 2000
 SYNTHESIS_TIMEOUT_SECS = 120

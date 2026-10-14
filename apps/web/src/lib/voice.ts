@@ -26,12 +26,6 @@ export const setVoiceSetting = (
 ): Promise<SttStatus> =>
   core.setVoiceSetting(httpClient, n, domain, key, value);
 
-// An agent whose voice service has no behaviors route answers 404, which reads as no behaviors.
-export const fetchVoiceBehaviors = (
-  agentName: string,
-  signal?: AbortSignal,
-): Promise<core.VoiceBehaviors | null> =>
-  core.fetchVoiceBehaviors(httpClient, agentName, signal).catch(() => null);
 export const setVoiceBehavior = (n: string, key: string, value: unknown) =>
   core.setVoiceBehavior(httpClient, n, key, value);
 
@@ -42,27 +36,17 @@ export const selectVoiceProvider = (
 ): Promise<SttStatus> =>
   core.selectVoiceProvider(httpClient, n, domain, provider);
 
-export const fetchSttStatus = (agentName: string, signal?: AbortSignal) =>
-  core.fetchVoiceStatus(httpClient, agentName, "stt", signal);
+export const fetchVoiceSettings = (agentName: string, signal?: AbortSignal) =>
+  core.fetchVoiceSettings(httpClient, agentName, signal);
+
 export const fetchSttUsage = (agentName: string) =>
   core.fetchSttUsage(httpClient, agentName);
 export const setSttEnabled = (n: string, value: boolean) =>
   core.setVoiceEnabled(httpClient, n, "stt", value);
 
-export const fetchTtsStatus = (agentName: string, signal?: AbortSignal) =>
-  core.fetchVoiceStatus(httpClient, agentName, "tts", signal);
 export const fetchTtsUsage = (agentName: string) =>
   core.fetchTtsUsage(httpClient, agentName);
 
-// The judge role. An agent whose voice service has no judge routes answers 404, which reads
-// as no judge.
-export const fetchJudgeStatus = (
-  agentName: string,
-  signal?: AbortSignal,
-): Promise<SttStatus | null> =>
-  core
-    .fetchVoiceStatus(httpClient, agentName, "judge", signal)
-    .catch(() => null);
 export const setJudgeEnabled = (n: string, value: boolean) =>
   core.setVoiceEnabled(httpClient, n, "judge", value);
 export const setTtsEnabled = (n: string, value: boolean) =>

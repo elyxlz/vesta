@@ -1,4 +1,4 @@
-import { jsonInit, type HttpClient } from "../transport/http";
+import { ApiError, jsonInit, type HttpClient } from "../transport/http";
 import { agentPath } from "./agents";
 
 // A role of the voice service: the mic, the voice, and the judge that decides who the user's
@@ -112,14 +112,44 @@ export async function fetchVoiceStatus(
   return voiceStatus(http, voicePath(name, `${domain}/status`), { signal });
 }
 
-export async function fetchVoiceBehaviors(
+const NOT_FOUND = 404;
+
+// A voice service with no judge or behavior routes answers 404, which reads as none. Every
+// other failure throws, so a transient error never hides a card.
+async function noneWhenMissing<T>(request: Promise<T>): Promise<T | null> {
+  try {
+    return await request;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === NOT_FOUND) return null;
+    throw error;
+  }
+}
+
+// What the voice settings show. The judge and the behaviors are null for an agent whose voice
+// service has no such route.
+export interface VoiceSettingsData {
+  stt: VoiceStatus;
+  tts: VoiceStatus;
+  judge: VoiceStatus | null;
+  behaviors: VoiceBehaviors | null;
+}
+
+export async function fetchVoiceSettings(
   http: HttpClient,
   name: string,
   signal?: AbortSignal,
-): Promise<VoiceBehaviors> {
-  return http.json<VoiceBehaviors>(voicePath(name, "behavior/status"), {
-    signal,
-  });
+): Promise<VoiceSettingsData> {
+  const [stt, tts, judge, behaviors] = await Promise.all([
+    fetchVoiceStatus(http, name, "stt", signal),
+    fetchVoiceStatus(http, name, "tts", signal),
+    noneWhenMissing(fetchVoiceStatus(http, name, "judge", signal)),
+    noneWhenMissing(
+      http.json<VoiceBehaviors>(voicePath(name, "behavior/status"), {
+        signal,
+      }),
+    ),
+  ]);
+  return { stt, tts, judge, behaviors };
 }
 
 export async function setVoiceBehavior(

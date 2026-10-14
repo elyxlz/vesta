@@ -147,8 +147,22 @@ export function useLiveVoice({
     };
   }, [enabled]);
 
-  const playUrl = useCallback(
-    async (url: string, signal: AbortSignal, onStarted: () => void) => {
+  // Created in an effect rather than during render: the session's ports close over refs, and
+  // only post-render code may read them.
+  useEffect(() => {
+    const releaseCapture = () => {
+      frameSinkRef.current = null;
+      streamRef.current.stop();
+      void setRecordingHapticsEnabled(false).catch(() => undefined);
+      void setHandsFreeSessionActive(false).catch(() => undefined);
+      void stopVoiceForegroundService().catch(() => undefined);
+      void setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => undefined);
+    };
+    const play = async (
+      url: string,
+      signal: AbortSignal,
+      onStarted: () => void,
+    ) => {
       if (signal.aborted) return;
       const target = playerRef.current;
       await new Promise<void>((resolve) => {
@@ -187,21 +201,8 @@ export function useLiveVoice({
         target.replace(url);
         target.play();
       });
-    },
-    [],
-  );
-
-  // Created in an effect rather than during render: the session's ports close over refs, and
-  // only post-render code may read them.
-  useEffect(() => {
-    const releaseCapture = () => {
-      frameSinkRef.current = null;
-      streamRef.current.stop();
-      void setRecordingHapticsEnabled(false).catch(() => undefined);
-      void setHandsFreeSessionActive(false).catch(() => undefined);
-      void stopVoiceForegroundService().catch(() => undefined);
-      void setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => undefined);
     };
+
     const session = createVoiceSession(
       {
         buildUrl: () => api.websocketUrl(voiceSessionPath(name)),
@@ -253,7 +254,7 @@ export function useLiveVoice({
           },
         },
         speaker: {
-          play: playUrl,
+          play,
           pause: () => {
             playerRef.current.pause();
           },
@@ -291,7 +292,7 @@ export function useLiveVoice({
       session.cancel();
       session.stopSpeech();
     };
-  }, [api, name, playUrl]);
+  }, [api, name]);
 
   const start = useCallback(
     (mode: VoiceMode) => sessionRef.current?.start(mode) ?? Promise.resolve(),

@@ -2,39 +2,28 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchSttUsage,
   fetchTtsUsage,
-  fetchVoiceBehaviors,
-  fetchVoiceStatus,
+  fetchVoiceSettings,
   selectVoiceProvider,
   setVoiceBehavior,
   setVoiceEnabled,
   setVoiceSetting,
   type VoiceDomain,
+  type VoiceSettingsData,
   type VoiceStatus,
 } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
-import { ApiError } from "@/api/client";
-import type {
-  SettingSection,
-  VoiceSettingsData,
-} from "@/agent/settings/voice-settings-model";
+import type { SettingSection } from "@/agent/settings/voice-settings-model";
 import { useToast } from "@/components/native-toast";
 import { useSession } from "@/session/SessionProvider";
 
 // The usage routes ask the provider's own API, so an answer serves this long before a refetch
 // and a failed call is not tried again.
 const USAGE_STALE_MS = 5 * 60 * 1000;
-const NOT_FOUND = 404;
 
 export type VoiceChange =
   | { type: "enabled"; domain: VoiceDomain; value: boolean }
   | { type: "provider"; domain: VoiceDomain; provider: string }
   | { type: "setting"; domain: SettingSection; key: string; value: unknown };
-
-// A voice service with no judge route answers 404, which reads as no judge.
-function judgeOrNone(error: unknown): VoiceStatus | null {
-  if (error instanceof ApiError && error.status === NOT_FOUND) return null;
-  throw error;
-}
 
 // The voice page and the option list read one query, so the list opens on what the page loaded.
 export function useVoiceSettings() {
@@ -46,48 +35,71 @@ export function useVoiceSettings() {
   const settings = useQuery({
     queryKey: ["voice", name],
     enabled: hasVoiceService,
-    queryFn: async (): Promise<VoiceSettingsData> => {
-      const [stt, tts, judge, behaviors] = await Promise.all([
-        fetchVoiceStatus(api, name, "stt"),
-        fetchVoiceStatus(api, name, "tts"),
-        fetchVoiceStatus(api, name, "judge").catch(judgeOrNone),
-        // An agent whose voice service has no behaviors route shows no behavior card.
-        fetchVoiceBehaviors(api, name).catch(() => null),
-      ]);
-      return { stt, tts, judge, behaviors };
-    },
+    queryFn: () => fetchVoiceSettings(api, name),
   });
   return { settings, hasVoiceService };
 }
 
-// One change to the voice service. It stays pending until the page holds the new state, so a
-// caller that leaves on success returns to what it saved.
+// The answer of a change to one role, as the part of the page data it replaces.
+function rolePatch(
+  domain: VoiceDomain,
+  status: VoiceStatus,
+): Partial<VoiceSettingsData> {
+  if (domain === "stt") return { stt: status };
+  if (domain === "tts") return { tts: status };
+  return { judge: status };
+}
+
+// One change to the voice service. Each route answers with the new state of what it changed,
+// which the page takes as it is; a failed change reloads the page data.
 export function useVoiceChange() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
   const { showError } = useToast();
   return useMutation({
-    mutationFn: async (change: VoiceChange) => {
-      if (change.type === "enabled") {
-        await setVoiceEnabled(api, name, change.domain, change.value);
-      } else if (change.type === "provider") {
-        await selectVoiceProvider(api, name, change.domain, change.provider);
-      } else if (change.domain === "behavior") {
-        await setVoiceBehavior(api, name, change.key, change.value);
-      } else {
+    mutationFn: async (
+      change: VoiceChange,
+    ): Promise<Partial<VoiceSettingsData>> => {
+      if (change.type === "enabled")
+        return rolePatch(
+          change.domain,
+          await setVoiceEnabled(api, name, change.domain, change.value),
+        );
+      if (change.type === "provider")
+        return rolePatch(
+          change.domain,
+          await selectVoiceProvider(api, name, change.domain, change.provider),
+        );
+      if (change.domain === "behavior")
+        return {
+          behaviors: await setVoiceBehavior(
+            api,
+            name,
+            change.key,
+            change.value,
+          ),
+        };
+      return rolePatch(
+        change.domain,
         await setVoiceSetting(
           api,
           name,
           change.domain,
           change.key,
           change.value,
-        );
-      }
+        ),
+      );
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["voice", name] }),
-    onError: (error) => showError(error, "Could not save the voice setting"),
+    onSuccess: (patch) => {
+      queryClient.setQueryData<VoiceSettingsData>(["voice", name], (data) =>
+        data ? { ...data, ...patch } : data,
+      );
+    },
+    onError: (error) => {
+      showError(error, "Could not save the voice setting");
+      void queryClient.invalidateQueries({ queryKey: ["voice", name] });
+    },
   });
 }
 

@@ -349,6 +349,14 @@ func (s *voiceSession) engineError(message string) {
 	}
 }
 
+// settled is what `say` reports for the result of its waiter.
+func settled(result error) (spoken, error) {
+	if result != nil {
+		return spoken{}, result
+	}
+	return spoken{status: "speaking"}, nil
+}
+
 // say asks the engine to speak text and waits to learn what became of the line: its audio
 // arrived, it will not play, or nothing arrived within audioWait. The engine decides when the
 // line plays.
@@ -365,10 +373,7 @@ func (s *voiceSession) say(text string) (spoken, error) {
 	defer timer.Stop()
 	select {
 	case err := <-waiter.result:
-		if err != nil {
-			return spoken{}, err
-		}
-		return spoken{status: "speaking"}, nil
+		return settled(err)
 	case <-timer.C:
 	case <-s.done:
 	}
@@ -376,6 +381,12 @@ func (s *voiceSession) say(text string) (spoken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.waiting, id)
+	// A result can land between the wait's end and the lock; it still decides the line.
+	select {
+	case err := <-waiter.result:
+		return settled(err)
+	default:
+	}
 	select {
 	case <-s.done:
 		return spoken{}, fmt.Errorf("the voice session of this call is over (%v), so the call cannot hear or speak; end it with `whatsapp hangup`", s.over)

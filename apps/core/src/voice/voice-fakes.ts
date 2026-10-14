@@ -2,10 +2,11 @@
 // whose plays the test starts and ends by hand.
 
 import { record } from "../protocol/parse";
-import type { AudioCapture, VoiceSocketLike } from "./engine-session";
+import type { SocketLike } from "../transport/websocket";
+import type { AudioCapture } from "./engine-session";
 import type { Speaker } from "./play-queue";
 
-export class FakeEngineSocket implements VoiceSocketLike {
+export class FakeEngineSocket implements SocketLike {
   onopen: (() => void) | null = null;
   onmessage: ((data: string) => void) | null = null;
   onclose: ((reason: string) => void) | null = null;

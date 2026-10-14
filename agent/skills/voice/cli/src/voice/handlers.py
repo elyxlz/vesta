@@ -190,7 +190,7 @@ async def stt_listen(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     resolved = _selected(request, "stt", providers.STT)
-    if isinstance(resolved, web.Response):
+    if isinstance(resolved, web.Response) or not voice_config.is_enabled(resolved[0]):
         await ws.close(code=1011, message=b"STT not configured")
         return ws
     entry, name, provider = resolved

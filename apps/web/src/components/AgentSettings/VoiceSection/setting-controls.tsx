@@ -15,6 +15,8 @@ import { CollapsibleChevronButton } from "./collapsible-chevron-button";
 import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { VoicePicker } from "./voice-picker";
 
+const DEBOUNCE_MS = 400;
+
 export function DynamicSettings({
   settings,
   domain,
@@ -315,7 +317,3 @@ export function OptionList({
     </Collapsible>
   );
 }
-
-const DEBOUNCE_MS = 400;
-
-// --- Shared usage collapsible ---

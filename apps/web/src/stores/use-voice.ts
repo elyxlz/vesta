@@ -6,17 +6,16 @@ import {
   type ServiceInfo,
   type VoiceMode,
   type VoiceSession,
+  type VoiceSettingsData,
+  type VoiceStatus,
 } from "@vesta/core";
 import {
   browserCapture,
   browserSpeaker,
-  fetchJudgeStatus,
+  fetchVoiceSettings,
   prepareSpeechUrl,
   voicePlayUrl,
   voiceWsUrl,
-  fetchSttStatus,
-  fetchTtsStatus,
-  fetchVoiceBehaviors,
   type SttStatus,
   type TtsStatus,
   type VoiceBehaviors,
@@ -41,7 +40,7 @@ interface VoiceState {
   sttStatus: SttStatus | null;
   ttsStatus: TtsStatus | null;
   // The judge role; null until loaded, and for an agent whose voice service has none.
-  judgeStatus: SttStatus | null;
+  judgeStatus: VoiceStatus | null;
   // What every voice session of this agent does, whichever provider is selected; null until
   // loaded, and for an agent whose voice service reports none.
   behaviors: VoiceBehaviors | null;
@@ -93,7 +92,7 @@ interface VoiceState {
   patchStt: (patch: Partial<SttStatus>) => void;
   patchTts: (patch: Partial<TtsStatus>) => void;
   setBehaviors: (behaviors: VoiceBehaviors | null) => void;
-  setJudgeStatus: (status: SttStatus | null) => void;
+  setJudgeStatus: (status: VoiceStatus | null) => void;
   refreshVoiceStatus: () => void;
 
   // Internal (used by VoiceStoreEffects)
@@ -102,6 +101,8 @@ interface VoiceState {
     services: Record<string, ServiceInfo>,
     voiceRev: number | undefined,
   ) => void;
+  // Every status at once, as one fetch of the voice settings answers; null clears them.
+  _setVoiceSettings: (data: VoiceSettingsData | null) => void;
   _setSttStatus: (status: SttStatus | null) => void;
   _setTtsStatus: (status: TtsStatus | null) => void;
   _setVoiceError: (error: string | null) => void;
@@ -299,21 +300,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     refreshVoiceStatus: () => {
       const { agentName } = get();
       if (!agentName) return;
-      Promise.all([
-        fetchSttStatus(agentName),
-        fetchTtsStatus(agentName),
-        fetchVoiceBehaviors(agentName),
-        fetchJudgeStatus(agentName),
-      ])
-        .then(([stt, tts, behaviors, judgeStatus]) => {
-          set({
-            sttStatus: stt,
-            ttsStatus: tts,
-            behaviors,
-            judgeStatus,
-            ...deriveStatus(stt, tts),
-          });
-        })
+      fetchVoiceSettings(agentName)
+        .then((data) => get()._setVoiceSettings(data))
         .catch(() => {
           /* ignore */
         });
@@ -325,6 +313,18 @@ export const useVoice = create<VoiceState>((set, get) => {
       // and speaking reports to the wrong daemon. The switch ends the session instead.
       if (name !== get().agentName && session.mode() !== null) session.cancel();
       set({ agentName: name, services, voiceRev });
+    },
+
+    _setVoiceSettings: (data) => {
+      const stt = data?.stt ?? null;
+      const tts = data?.tts ?? null;
+      set({
+        sttStatus: stt,
+        ttsStatus: tts,
+        judgeStatus: data?.judge ?? null,
+        behaviors: data?.behaviors ?? null,
+        ...deriveStatus(stt, tts),
+      });
     },
 
     _setSttStatus: (status) => {

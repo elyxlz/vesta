@@ -43,8 +43,8 @@ export interface PlayQueue {
 
 export function createPlayQueue(deps: PlayQueueDeps): PlayQueue {
   let queue: { id: string; path: string }[] = [];
+  // True while a drain loop runs, which is the time the queue counts as speaking.
   let draining = false;
-  let isSpeaking = false;
   let abort: AbortController | null = null;
   // Bumped by stop to end an in-flight drain loop, so a stop followed by a new play never
   // leaves two loops on the speaker.
@@ -63,10 +63,10 @@ export function createPlayQueue(deps: PlayQueueDeps): PlayQueue {
         })
       : Promise.resolve();
 
-  const setSpeaking = (speaking: boolean): void => {
-    if (isSpeaking === speaking) return;
-    isSpeaking = speaking;
-    deps.onSpeakingChange(speaking);
+  const setDraining = (value: boolean): void => {
+    if (draining === value) return;
+    draining = value;
+    deps.onSpeakingChange(value);
   };
 
   const playOne = async (
@@ -109,9 +109,8 @@ export function createPlayQueue(deps: PlayQueueDeps): PlayQueue {
 
   const drain = async (): Promise<void> => {
     if (draining) return;
-    draining = true;
+    setDraining(true);
     const myEpoch = epoch;
-    setSpeaking(true);
     // The epoch is checked before each shift, so a loop that a stop ended takes no play of
     // the loop after it.
     while (epoch === myEpoch) {
@@ -121,8 +120,7 @@ export function createPlayQueue(deps: PlayQueueDeps): PlayQueue {
     }
     // A stop took the queue over and already reset the flags.
     if (epoch !== myEpoch) return;
-    draining = false;
-    setSpeaking(false);
+    setDraining(false);
   };
 
   return {
@@ -150,9 +148,8 @@ export function createPlayQueue(deps: PlayQueueDeps): PlayQueue {
       paused = false;
       onResume?.();
       onResume = null;
-      draining = false;
-      setSpeaking(false);
+      setDraining(false);
     },
-    speaking: () => isSpeaking,
+    speaking: () => draining,
   };
 }

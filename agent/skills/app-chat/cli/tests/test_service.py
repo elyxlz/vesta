@@ -167,6 +167,48 @@ def test_duplicate_intent_id_is_dropped_whole(tmp_path):
     state.store.close()
 
 
+def test_a_retry_during_the_voice_ask_and_a_retry_after_the_intake_are_dropped_whole(tmp_path):
+    state, notif_dir = _service_state(tmp_path)
+    asked = 0
+    first_asked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def voice(_request):
+        nonlocal asked
+        asked += 1
+        if asked == 1:
+            first_asked.set()
+            await release.wait()
+        return web.json_response({"reply_hint": ""})
+
+    async def scenario(client):
+        voice_app = web.Application()
+        voice_app.router.add_get("/tts/reply-hint", voice)
+        voice_server = TestServer(voice_app)
+        await voice_server.start_server()
+        (tmp_path / "voice.port").write_text(str(voice_server.port))
+        try:
+            payload = {"text": "hi", "intent_id": "abc"}
+            first = asyncio.ensure_future(client.post("/message", json=payload))
+            await first_asked.wait()
+            during = await (await client.post("/message", json=payload)).json()
+            release.set()
+            first_body = await (await first).json()
+            after = await (await client.post("/message", json=payload)).json()
+            return sorted([first_body, during], key=str), after
+        finally:
+            await voice_server.close()
+
+    bodies, after = asyncio.run(_with_client(state, scenario))
+
+    assert bodies == [{"ok": True, "deduped": True}, {"ok": True, "id": 1}]
+    assert after == {"ok": True, "deduped": True}
+    assert asked == 2
+    assert len(state.store.page()[0]) == 1
+    assert len(list(notif_dir.glob("*-app-chat-message.json"))) == 1
+    state.store.close()
+
+
 def test_intent_id_stays_on_event_and_out_of_model_notification(tmp_path):
     state, notif_dir = _service_state(tmp_path)
     queue = _subscribe(state)

@@ -1,9 +1,4 @@
-import type {
-  SettingDef,
-  VoiceBehaviors,
-  VoiceDomain,
-  VoiceStatus,
-} from "@vesta/core";
+import type { SettingDef, VoiceDomain, VoiceSettingsData } from "@vesta/core";
 import type { SliderRange } from "@/components/ui/slider-math";
 
 // Where a setting lives: a role's selected provider, or the behaviors every session shares.
@@ -15,15 +10,6 @@ const SETTING_SECTIONS: readonly SettingSection[] = [
   "judge",
   "behavior",
 ];
-
-// What the voice page reads. The judge and the behaviors are null for an agent whose voice
-// service has no such route.
-export interface VoiceSettingsData {
-  stt: VoiceStatus;
-  tts: VoiceStatus;
-  judge: VoiceStatus | null;
-  behaviors: VoiceBehaviors | null;
-}
 
 // A select with more options than this opens the list screen; the system alert holds the rest.
 export const ALERT_MAX_OPTIONS = 8;

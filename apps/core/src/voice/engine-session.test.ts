@@ -208,6 +208,15 @@ describe("the engine session", () => {
     expect(errors).toEqual([]);
   });
 
+  it("reports a reply the engine could not say and keeps the session", async () => {
+    const { socket, session, events, errors, started } = setup();
+    await started();
+    socket.emit({ type: "error", message: "tts is off" });
+    expect(events).toEqual(["play_failed:tts is off"]);
+    expect(errors).toEqual([]);
+    expect(session.active()).toBe(true);
+  });
+
   it("asks the engine to speak, and holds a reply asked for during the start", async () => {
     const { socket, session, dial } = setup();
     const starting = dial();

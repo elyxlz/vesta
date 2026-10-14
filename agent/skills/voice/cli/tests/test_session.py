@@ -25,31 +25,6 @@ def start(delivery: str = "url", formats: tuple[str, ...] = ("mp3_44100", "mp3_2
     return {"type": "start_session", "client": "test", "audio": MIC, "playback": {"delivery": delivery, "formats": list(formats)}, **extra}
 
 
-@pytest.fixture
-def stt(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeStt:
-    fake = FakeStt()
-    monkeypatch.setitem(providers.STT, "fake", fake)
-    vc.connect(tmp_path, "stt", "fake", {})
-    return fake
-
-
-@pytest.fixture
-def tts(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeTts:
-    fake = FakeTts()
-    monkeypatch.setitem(providers.TTS, "fake", fake)
-    vc.connect(tmp_path, "tts", "fake", {})
-    return fake
-
-
-@pytest.fixture
-def judge(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeJudge:
-    fake = FakeJudge()
-    monkeypatch.setitem(providers.JUDGES, "fake", fake)
-    vc.connect(tmp_path, "judge", "fake", {})
-    vc.set_enabled(tmp_path, "judge", True)
-    return fake
-
-
 @contextlib.asynccontextmanager
 async def session(
     client: TestClient, stt: FakeStt, first: dict[str, JsonValue] | None = None

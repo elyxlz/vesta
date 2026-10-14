@@ -159,12 +159,7 @@ class DeepgramStt:
         return await _get_json(url, {"Authorization": f"Token {key}"})
 
     async def balance(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        key = api_key(creds)
-        project_id = await self._cached_project_id(key)
-        if not project_id:
-            return {"error": "no project"}
-        url = f"{DEEPGRAM_API}/v1/projects/{project_id}/balances"
-        return await _get_json(url, {"Authorization": f"Token {key}"})
+        return await account_balance(api_key(creds))
 
 
 async def account_balance(key: str) -> dict[str, JsonValue]:

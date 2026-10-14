@@ -15,6 +15,7 @@ import time
 import typing as tp
 import urllib.parse
 
+import aiohttp
 from aiohttp import web
 
 from . import attachments, spoken_reply
@@ -113,6 +114,8 @@ class ServiceState:
 
 
 _STATE_KEY: web.AppKey[ServiceState] = web.AppKey("state", ServiceState)
+# One keep-alive session to the voice daemon on this box, for the whole life of the service.
+_VOICE_HTTP_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("voice_http", aiohttp.ClientSession)
 
 
 def _attachment_line(state: ServiceState, metas: list[attachments.AttachmentMeta]) -> str:
@@ -210,11 +213,11 @@ async def message_handler(request: web.Request) -> web.Response:
     if isinstance(built, str):
         return web.json_response({"error": built}, status=400)
     event, ids = built
-    # Asked before the dedup check: from that check to the return nothing awaits, which is what
-    # keeps a retry that arrives during an intake from running it a second time.
-    spoken_hint = await spoken_reply.spoken_reply_hint(state.voice_port_file)
-
     intent_id = event["intent_id"] if "intent_id" in event else None
+    seen = intent_id is not None and intent_id in state.seen_intent_ids
+    spoken_hint = "" if seen else await spoken_reply.spoken_reply_hint(request.app[_VOICE_HTTP_KEY], state.voice_port_file)
+    # Checked after the one await: from this check to the return nothing awaits, which is what
+    # keeps a retry that arrived during the ask from running the intake a second time.
     if intent_id is not None and intent_id in state.seen_intent_ids:
         logger.debug("dropping duplicate app-chat message intent_id=%s", intent_id)
         return web.json_response({"ok": True, "deduped": True})
@@ -440,9 +443,16 @@ async def attachment_serve_handler(request: web.Request) -> web.StreamResponse:
     )
 
 
+async def _voice_http(app: web.Application) -> tp.AsyncIterator[None]:
+    async with spoken_reply.voice_http() as http:
+        app[_VOICE_HTTP_KEY] = http
+        yield
+
+
 def create_app(state: ServiceState) -> web.Application:
     app = web.Application(client_max_size=_CLIENT_MAX_SIZE)
     app[_STATE_KEY] = state
+    app.cleanup_ctx.append(_voice_http)
     app.router.add_post("/message", message_handler)
     app.router.add_get("/history", history_handler)
     app.router.add_get("/ws", ws_handler)

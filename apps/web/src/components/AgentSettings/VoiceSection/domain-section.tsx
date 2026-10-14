@@ -130,5 +130,3 @@ export function DomainSection({
     </Card>
   );
 }
-
-// --- Dynamic settings renderer ---

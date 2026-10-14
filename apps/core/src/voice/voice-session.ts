@@ -9,11 +9,9 @@
 
 import {
   createEngineSession,
-  type AudioCapture,
   type EngineSession,
-  type VoiceSocketLike,
+  type EngineSessionDeps,
 } from "./engine-session";
-import type { Speaker } from "./play-queue";
 import { createTtsQueue, type TtsQueue } from "./tts-queue";
 
 export type VoiceMode = "dictation" | "conversation";
@@ -24,19 +22,10 @@ export interface VoiceSessionSettings {
   inactivityMs: number;
 }
 
-export interface VoiceSessionDeps {
-  // The url of the engine socket, asked on each start.
-  buildUrl: () => Promise<string>;
-  createSocket?: (url: string) => VoiceSocketLike;
-  capture: AudioCapture;
-  speaker: Speaker;
-  // The url a speaker can fetch for a play of the engine.
-  playUrl: (path: string) => Promise<string>;
+export interface VoiceSessionDeps extends EngineSessionDeps {
   // Registers the text of a reply to read aloud outside a session, and resolves the url that
   // streams its audio.
   prepareSpeech: (text: string) => Promise<string>;
-  // The name the engine logs this client under.
-  client: string;
 }
 
 export interface VoiceSessionCallbacks {
@@ -169,14 +158,7 @@ export function createVoiceSession(
     };
 
     const session = createEngineSession(
-      {
-        buildUrl: deps.buildUrl,
-        createSocket: deps.createSocket,
-        capture: deps.capture,
-        speaker: deps.speaker,
-        playUrl: deps.playUrl,
-        client: deps.client,
-      },
+      deps,
       {
         onTranscript: (text) => {
           live = text;

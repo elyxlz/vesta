@@ -12,8 +12,6 @@ import { createPlayQueue, type PlayQueue, type Speaker } from "./play-queue";
 // are kept up to this, oldest dropped first.
 export const MAX_PENDING_AUDIO_BYTES = 16_000 * 2 * 2;
 
-export type VoiceSocketLike = SocketLike;
-
 export interface AudioCapture {
   // Starts the microphone and resolves once frames can flow; frames are raw 16 kHz 16-bit
   // mono PCM. Rejecting is the permission or hardware failure path.
@@ -26,7 +24,7 @@ export interface EngineSessionDeps {
   // than captured at construction.
   buildUrl: () => Promise<string>;
   // Defaults to the platform WebSocket; tests inject a fake.
-  createSocket?: (url: string) => VoiceSocketLike;
+  createSocket?: (url: string) => SocketLike;
   capture: AudioCapture;
   speaker: Speaker;
   // The url a speaker can fetch for a play; the engine names a play as a path on its service.
@@ -88,7 +86,7 @@ export function createEngineSession(
   // Bumped by stop; a start still in flight compares its own generation and abandons
   // quietly instead of throwing at the caller that asked to stop.
   let generation = 0;
-  let socket: VoiceSocketLike | null = null;
+  let socket: SocketLike | null = null;
   let socketOpen = false;
   // Settle the start: the engine's first state accepts the session, and an `ended` or a
   // close before it refuses.
@@ -170,10 +168,9 @@ export function createEngineSession(
     send({ type: "speak", id: `reply-${String(replies)}`, text });
   };
 
-  const onEnded = (reason: string): void => {
-    // The answer to this client's own end_session needs nothing.
-    if (reason === "client_ended") return;
-    const message = ENDED_MESSAGES[reason] ?? CLOSED;
+  // The session ended without this client's stop: a start in flight is refused with the
+  // reason, and a running session fails with it.
+  const endUnasked = (message: string, startMessage: string): void => {
     if (!refuse) {
       fail(message);
       return;
@@ -181,7 +178,14 @@ export function createEngineSession(
     const refuseStart = refuse;
     refuse = null;
     accept = null;
-    refuseStart(new Error(message));
+    refuseStart(new Error(startMessage));
+  };
+
+  const onEnded = (reason: string): void => {
+    // The answer to this client's own end_session needs nothing.
+    if (reason === "client_ended") return;
+    const message = ENDED_MESSAGES[reason] ?? CLOSED;
+    endUnasked(message, message);
   };
 
   const handleFrame = (frame: EngineFrame): void => {
@@ -220,6 +224,11 @@ export function createEngineSession(
       case "stop_playback":
         plays.stop();
         break;
+      case "error":
+        // A reply the engine could not say: TTS is off for this session, or its synthesis
+        // failed while the reply was held, so no play of it ever comes.
+        callbacks.onPlayFailed(frame.message);
+        break;
       case "ended":
         onEnded(frame.reason);
         break;
@@ -252,15 +261,7 @@ export function createEngineSession(
       if (frame) handleFrame(frame);
     };
     dialed.onclose = () => {
-      if (socket !== dialed) return;
-      if (!refuse) {
-        fail(CLOSED);
-        return;
-      }
-      const refuseStart = refuse;
-      refuse = null;
-      accept = null;
-      refuseStart(new Error(CONNECT_FAILED));
+      if (socket === dialed) endUnasked(CLOSED, CONNECT_FAILED);
     };
     return accepted;
   };

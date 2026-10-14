@@ -3,6 +3,8 @@ import type {
   AgentNode,
   NotificationEvent,
   ProviderCatalog,
+  VoiceBehaviors,
+  VoiceStatus,
 } from "@vesta/core";
 import { chatRoutes } from "../harness/chat-fixtures";
 import {
@@ -75,31 +77,6 @@ interface FileTreeEntry {
   path: string;
   is_dir: boolean;
   mode: number;
-}
-
-interface VoiceSetting {
-  key: string;
-  type: "bool" | "number" | "select";
-  label: string;
-  description?: string;
-  value: unknown;
-  default?: unknown;
-  min?: number;
-  max?: number;
-  step?: number;
-  options?: { value: string; label: string; description?: string }[];
-}
-
-interface VoiceStatus {
-  configured: boolean;
-  provider: string | null;
-  connected?: string[];
-  enabled?: boolean;
-  settings?: VoiceSetting[];
-}
-
-interface VoiceBehaviors {
-  settings: VoiceSetting[];
 }
 
 const MB = 1024 * 1024;
