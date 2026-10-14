@@ -101,7 +101,12 @@ for log_file in "$HOME"/agent/logs/vesta.log*; do
             ts_epoch = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]"
             marks = 0
             for (i = 1; i <= FNR; i++) {
-                if (line[i] ~ /compaction/ && line[i] ~ /\[(SHUTDOWN|STARTUP)\]/) {
+                is_mark = 0
+                if (line[i] ~ /compaction/ && line[i] ~ /\[(SHUTDOWN|STARTUP)\]/) is_mark = 1
+                # A preempted turn (dreamer/highest-priority trigger cutting a running
+                # check) logs in=0 out=0 exactly like a refusal; exclude it too.
+                if (line[i] ~ /Preempt sent/) is_mark = 1
+                if (is_mark) {
                     s = line[i]; gsub(/\033\[[0-9;]*m/, "", s)
                     if (match(s, ts_epoch)) {
                         t = substr(s, RSTART, RLENGTH); gsub(/[-:]/, " ", t)
