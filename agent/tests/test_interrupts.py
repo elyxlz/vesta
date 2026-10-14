@@ -645,8 +645,8 @@ def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
     assert client._read_compaction_summary("sess-xyz") == "the latest summary"
 
 
-def test_read_compaction_summary_streams_transcript(tmp_path, monkeypatch):
-    """The transcript is read line by line, never loaded whole: a long session runs to gigabytes."""
+def test_read_compaction_summary_never_loads_transcript_whole(tmp_path, monkeypatch):
+    """The transcript is never loaded whole: a long session runs to gigabytes."""
     import json
     import pathlib as pl
 
@@ -664,6 +664,35 @@ def test_read_compaction_summary_streams_transcript(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pl.Path, "read_text", no_whole_read)
     assert client._read_compaction_summary("sess-big") == "streamed summary"
+
+
+def test_reverse_lines_crosses_block_boundaries(tmp_path):
+    """Lines come back last-first and intact even when a block boundary splits them."""
+    from core import client
+
+    path = tmp_path / "t.jsonl"
+    lines = [f"line-{i}-" + "y" * i for i in range(40)]
+    path.write_text("\n".join(lines) + "\n\n")
+    assert list(client._reverse_lines(path, chunk_size=7)) == list(reversed(lines))
+
+
+def test_read_compaction_summary_skips_latest_without_text(tmp_path, monkeypatch):
+    """A latest summary with no text blocks falls back to the previous one, as before."""
+    import json
+    import pathlib as pl
+
+    from core import client
+
+    proj = tmp_path / ".claude" / "projects" / "-root-agent"
+    proj.mkdir(parents=True)
+    lines = [
+        {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "usable summary"}]}},
+        {"isCompactSummary": True, "message": {"content": [{"type": "image"}]}},
+        {"type": "assistant", "message": {"content": "after"}},
+    ]
+    (proj / "sess-fb.jsonl").write_text("\n".join(json.dumps(line) for line in lines))
+    monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
+    assert client._read_compaction_summary("sess-fb") == "usable summary"
 
 
 def test_read_compaction_summary_returns_none_when_absent(tmp_path, monkeypatch):

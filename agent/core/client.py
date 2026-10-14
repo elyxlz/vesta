@@ -470,33 +470,51 @@ _STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
 _COMPACT_TIMEOUT_S = 600.0  # day-sized contexts can take minutes to summarize
 
 
+def _reverse_lines(path: pl.Path, chunk_size: int = 1 << 20) -> tp.Iterator[str]:
+    """Yield the non-empty lines of a file last-first, reading fixed-size blocks from the end."""
+    with path.open("rb") as fh:
+        pos = fh.seek(0, os.SEEK_END)
+        tail = b""
+        while pos > 0:
+            step = min(chunk_size, pos)
+            pos -= step
+            fh.seek(pos)
+            lines = (fh.read(step) + tail).split(b"\n")
+            tail = lines.pop(0)
+            for raw in reversed(lines):
+                if raw.strip():
+                    yield raw.decode("utf-8", errors="replace")
+        if tail.strip():
+            yield tail.decode("utf-8", errors="replace")
+
+
 def _read_compaction_summary(session_id: str) -> str | None:
     """Best-effort: pull the latest /compact summary text from the CLI's session transcript, for
     logging. The summary is written to ~/.claude/projects/<encoded-cwd>/<session_id>.jsonl (tagged
     isCompactSummary), not streamed, so we glob by session_id to avoid reconstructing the cwd
-    encoding. The transcript format is undocumented, so any failure just returns None."""
+    encoding. The transcript runs to gigabytes and the latest summary sits near its end, so it is
+    read backwards and the scan stops at the first summary with text. The transcript format is
+    undocumented, so any failure just returns None."""
     try:
         matches = sorted(pl.Path.home().glob(f".claude/projects/*/{session_id}.jsonl"))
         if not matches:
             return None
-        text: str | None = None
-        # Stream: a long-lived session transcript runs to gigabytes, and loading it whole spikes memory.
-        with matches[-1].open(encoding="utf-8", errors="replace") as transcript:
-            for line in transcript:
-                if "isCompactSummary" not in line:
-                    continue
-                entry = json.loads(line)
-                if not (entry.get("isCompactSummary")):
-                    continue
-                if "message" not in entry or "content" not in entry["message"]:
-                    continue
-                content = entry["message"]["content"]
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    parts = [block["text"] for block in content if isinstance(block, dict) and "text" in block]
-                    text = "\n".join(parts) if parts else text
-        return text
+        for line in _reverse_lines(matches[-1]):
+            if "isCompactSummary" not in line:
+                continue
+            entry = json.loads(line)
+            if not (entry.get("isCompactSummary")):
+                continue
+            if "message" not in entry or "content" not in entry["message"]:
+                continue
+            content = entry["message"]["content"]
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = [block["text"] for block in content if isinstance(block, dict) and "text" in block]
+                if parts:
+                    return "\n".join(parts)
+        return None
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
