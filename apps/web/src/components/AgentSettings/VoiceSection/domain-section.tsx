@@ -119,7 +119,7 @@ export function DomainSection({
             {settings && hasSettings && (
               <DynamicSettings
                 settings={settings}
-                domain={domain}
+                section={domain}
                 agentName={agentName}
                 onSettingChange={onSettingChange}
               />

@@ -1,33 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, type HttpClient } from "../transport/http";
 import {
-  bargeInEnabled,
   fetchVoiceSettings,
   fetchVoiceStatus,
   type SettingDef,
-  type VoiceBehaviors,
   type VoiceStatus,
 } from "./voice";
 
 function setting(key: string, value: unknown): SettingDef {
   return { key, type: "bool", label: "", value };
 }
-
-function behaviors(value: unknown): VoiceBehaviors {
-  return { settings: [setting("barge_in", value)] };
-}
-
-describe("bargeInEnabled", () => {
-  it("is off only when the behavior says off", () => {
-    expect(bargeInEnabled(behaviors(false))).toBe(false);
-    expect(bargeInEnabled(behaviors(true))).toBe(true);
-  });
-
-  it("is on for an agent that reports no behaviors", () => {
-    expect(bargeInEnabled(null)).toBe(true);
-    expect(bargeInEnabled({ settings: [] })).toBe(true);
-  });
-});
 
 describe("fetchVoiceStatus", () => {
   it("drops the interrupt_tts setting that an older voice service still lists", async () => {

@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/field";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { bargeInEnabled, sttUsageSummary, ttsUsage } from "@vesta/core";
+import { sttUsageSummary, ttsUsage } from "@vesta/core";
 import {
   fetchSttUsage,
   fetchTtsUsage,
@@ -16,10 +16,10 @@ import {
   setJudgeEnabled,
   setSttEnabled,
   setTtsEnabled,
-  setVoiceBehavior,
   type SttUsage,
   type TtsUsage,
 } from "@/lib/voice";
+import { DynamicSettings } from "./setting-controls";
 import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
@@ -95,21 +95,6 @@ export function ConversationCard() {
   const setAutoEnd = useVoice((s) => s.setConversationAutoEnd);
   const behaviors = useVoice((s) => s.behaviors);
   const setBehaviors = useVoice((s) => s.setBehaviors);
-  const refreshVoiceStatus = useVoice((s) => s.refreshVoiceStatus);
-  // The barge_in behavior of the voice service; the switch shows only when the agent has it.
-  const bargeIn = behaviors?.settings.find((s) => s.key === "barge_in");
-
-  const setBargeIn = (value: boolean) => {
-    if (!behaviors || !agentName) return;
-    setBehaviors({
-      settings: behaviors.settings.map((s) =>
-        s.key === "barge_in" ? { ...s, value } : s,
-      ),
-    });
-    setVoiceBehavior(agentName, "barge_in", value).catch(() =>
-      refreshVoiceStatus(),
-    );
-  };
 
   return (
     <Card size="sm">
@@ -121,27 +106,20 @@ export function ConversationCard() {
       </CardHeader>
       <CardContent>
         <Field orientation="vertical" className="gap-3">
-          {bargeIn && (
-            <Field
-              orientation="horizontal"
-              className="items-center justify-between"
-            >
-              <FieldContent>
-                <FieldLabel>{bargeIn.label}</FieldLabel>
-                <FieldDescription>{bargeIn.description}</FieldDescription>
-              </FieldContent>
-              <Switch
-                checked={bargeInEnabled(behaviors)}
-                onCheckedChange={setBargeIn}
-              />
-            </Field>
+          {behaviors && (
+            <DynamicSettings
+              settings={behaviors.settings}
+              section="behavior"
+              agentName={agentName}
+              onSettingChange={(settings) => setBehaviors({ settings })}
+            />
           )}
           <Field
             orientation="horizontal"
             className="items-center justify-between"
           >
             <FieldContent>
-              <FieldLabel>end after silence</FieldLabel>
+              <FieldLabel className="text-base">end after silence</FieldLabel>
               <FieldDescription>
                 end a conversation on its own after fifteen minutes without you
                 speaking

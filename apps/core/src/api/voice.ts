@@ -44,12 +44,6 @@ export interface VoiceBehaviors {
   settings: SettingDef[];
 }
 
-// Barge-in (the user's voice stops a spoken reply) is on unless the behavior says off, so an
-// agent whose voice service reports no behaviors gets the default.
-export function bargeInEnabled(behaviors: VoiceBehaviors | null): boolean {
-  return behaviors?.settings.find((s) => s.key === "barge_in")?.value !== false;
-}
-
 export interface SttUsage {
   usage?: { results?: { hours?: number }[] };
   balance?: { balances?: { amount?: number; units?: string }[] };

@@ -231,7 +231,6 @@ export {
 } from "./api/catalogs";
 export type { Personality, PersonalityCatalog } from "./api/catalogs";
 export {
-  bargeInEnabled,
   fetchSttUsage,
   fetchTtsUsage,
   fetchVoiceSettings,

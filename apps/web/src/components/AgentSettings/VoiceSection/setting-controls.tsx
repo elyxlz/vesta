@@ -10,31 +10,46 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import type { VoiceDomain } from "@vesta/core";
-import { setVoiceSetting, type SettingDef } from "@/lib/voice";
+import {
+  setVoiceBehavior,
+  setVoiceSetting,
+  type SettingDef,
+} from "@/lib/voice";
 import { CollapsibleChevronButton } from "./collapsible-chevron-button";
-import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { VoicePicker } from "./voice-picker";
 
 const DEBOUNCE_MS = 400;
 
+// Where a setting lives: a role's selected provider, or the behaviors every session shares.
+type SettingSection = VoiceDomain | "behavior";
+
+// Saves one value and answers whether it saved. On a failed save a control drops the edit it
+// holds, so it shows the stored value again.
+type UpdateSetting = (key: string, value: unknown) => Promise<boolean>;
+
 export function DynamicSettings({
   settings,
-  domain,
+  section,
   agentName,
   onSettingChange,
 }: {
   settings: SettingDef[];
-  domain: VoiceDomain;
+  section: SettingSection;
   agentName: string | null;
   onSettingChange: (settings: SettingDef[]) => void;
 }) {
-  const updateSetting = (key: string, value: unknown) => {
-    if (agentName) {
-      setVoiceSetting(agentName, domain, key, value)
-        .then((status) => {
-          if (status.settings) onSettingChange(status.settings);
-        })
-        .catch(console.warn);
+  const updateSetting: UpdateSetting = async (key, value) => {
+    if (!agentName) return false;
+    try {
+      const saved =
+        section === "behavior"
+          ? await setVoiceBehavior(agentName, key, value)
+          : await setVoiceSetting(agentName, section, key, value);
+      if (saved.settings) onSettingChange(saved.settings);
+      return true;
+    } catch (error) {
+      console.warn(error);
+      return false;
     }
   };
 
@@ -52,7 +67,7 @@ function SettingByType({
   updateSetting,
 }: {
   setting: SettingDef;
-  updateSetting: (key: string, value: unknown) => void;
+  updateSetting: UpdateSetting;
 }) {
   const control = (() => {
     switch (setting.type) {
@@ -86,7 +101,7 @@ function SubSettingsCollapsible({
   updateSetting,
 }: {
   setting: SettingDef;
-  updateSetting: (key: string, value: unknown) => void;
+  updateSetting: UpdateSetting;
 }) {
   const items = setting.config;
   if (!items?.length) return null;
@@ -116,13 +131,25 @@ function BoolSetting({
   updateSetting,
 }: {
   setting: SettingDef;
-  updateSetting: (key: string, value: unknown) => void;
+  updateSetting: UpdateSetting;
 }) {
-  const [value, toggle] = useOptimisticToggle(
-    typeof setting.value === "boolean" ? setting.value : undefined,
-    typeof setting.default === "boolean" ? setting.default : false,
-    (v) => updateSetting(setting.key, v),
+  const serverValue =
+    typeof setting.value === "boolean"
+      ? setting.value
+      : setting.default === true;
+  // The pending flip, keyed by the server value it was made against, so a server change
+  // shows through.
+  const [edit, setEdit] = useState<{ base: boolean; value: boolean } | null>(
+    null,
   );
+  const value =
+    edit !== null && edit.base === serverValue ? edit.value : serverValue;
+  const toggle = (v: boolean) => {
+    setEdit({ base: serverValue, value: v });
+    void updateSetting(setting.key, v).then((saved) => {
+      if (!saved) setEdit(null);
+    });
+  };
   return (
     <Field orientation="horizontal" className="items-center justify-between">
       <FieldContent>
@@ -141,7 +168,7 @@ function NumberSetting({
   updateSetting,
 }: {
   setting: SettingDef;
-  updateSetting: (key: string, value: unknown) => void;
+  updateSetting: UpdateSetting;
 }) {
   const serverValue =
     typeof setting.value === "number"
@@ -170,10 +197,11 @@ function NumberSetting({
   const handleChange = (v: number) => {
     setLocalValue(v);
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(
-      () => updateSetting(setting.key, v),
-      DEBOUNCE_MS,
-    );
+    timerRef.current = setTimeout(() => {
+      void updateSetting(setting.key, v).then((saved) => {
+        if (!saved) setEdit(null);
+      });
+    }, DEBOUNCE_MS);
   };
 
   const formatValue = (v: number) => {
@@ -212,7 +240,7 @@ function TextSetting({
   updateSetting,
 }: {
   setting: SettingDef;
-  updateSetting: (key: string, value: unknown) => void;
+  updateSetting: UpdateSetting;
 }) {
   const serverValue =
     typeof setting.value === "string"
@@ -229,7 +257,10 @@ function TextSetting({
     edit !== null && edit.base === serverValue ? edit.value : serverValue;
   const save = () => {
     const next = value.trim();
-    if (next && next !== serverValue) updateSetting(setting.key, next);
+    if (!next || next === serverValue) return;
+    void updateSetting(setting.key, next).then((saved) => {
+      if (!saved) setEdit(null);
+    });
   };
   return (
     <Field orientation="vertical" className="gap-1.5">
@@ -261,11 +292,13 @@ function SelectSetting({
   updateSetting,
 }: {
   setting: SettingDef;
-  updateSetting: (key: string, value: unknown) => void;
+  updateSetting: UpdateSetting;
 }) {
   const options = setting.options ?? [];
   const hasPreview = options.some((o) => o.preview);
-  const onChange = (v: string) => updateSetting(setting.key, v);
+  const onChange = (v: string) => {
+    void updateSetting(setting.key, v);
+  };
 
   if (hasPreview) return <VoicePicker setting={setting} onChange={onChange} />;
 
