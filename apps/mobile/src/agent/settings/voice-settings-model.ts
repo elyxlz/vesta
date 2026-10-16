@@ -74,9 +74,3 @@ export function numberValue(setting: SettingDef): number {
   if (typeof setting.default === "number") return setting.default;
   return numberRange(setting).min;
 }
-
-// A duration in milliseconds reads in seconds; every other number shows two decimals.
-export function formatNumber(setting: SettingDef, value: number): string {
-  if (setting.unit === "ms") return `${(value / 1000).toFixed(1)}s`;
-  return value.toFixed(2);
-}

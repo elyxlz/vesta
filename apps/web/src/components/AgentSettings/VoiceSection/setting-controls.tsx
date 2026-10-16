@@ -9,7 +9,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import type { VoiceDomain } from "@vesta/core";
+import { formatSettingNumber, type VoiceDomain } from "@vesta/core";
 import {
   setVoiceBehavior,
   setVoiceSetting,
@@ -204,17 +204,12 @@ function NumberSetting({
     }, DEBOUNCE_MS);
   };
 
-  const formatValue = (v: number) => {
-    if (setting.unit === "ms") return `${(v / 1000).toFixed(1)}s`;
-    return v.toFixed(2);
-  };
-
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <span className="text-base text-foreground">{setting.label}</span>
         <span className="text-xs text-muted-foreground/70 tabular-nums">
-          {formatValue(localValue)}
+          {formatSettingNumber(setting, localValue)}
         </span>
       </div>
       <Slider

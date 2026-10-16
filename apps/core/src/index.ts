@@ -135,6 +135,7 @@ export type { VoiceMode, VoiceSession } from "./voice/voice-session";
 export type { AudioCapture } from "./voice/engine-session";
 export type { Speaker } from "./voice/play-queue";
 export { voiceUsageSummary } from "./voice/usage";
+export { formatSettingNumber } from "./voice/setting-format";
 
 export { sendMessage } from "./intents/send-message";
 

@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { Alert, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
-import type { SettingDef } from "@vesta/core";
+import { formatSettingNumber, type SettingDef } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   ALERT_MAX_OPTIONS,
-  formatNumber,
   numberRange,
   numberValue,
   selectedOptionLabel,
@@ -72,7 +71,7 @@ function NumberSetting({ setting, section, onSave }: SettingProps) {
     null,
   );
   const value = edit !== null && edit.base === saved ? edit.value : saved;
-  const shown = formatNumber(setting, value);
+  const shown = formatSettingNumber(setting, value);
   return (
     <View>
       <FormRow

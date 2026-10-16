@@ -3,7 +3,6 @@ import type { SettingDef, VoiceSettingsData } from "@vesta/core";
 import {
   filterOptions,
   findSetting,
-  formatNumber,
   numberRange,
   numberValue,
   parseSettingSection,
@@ -96,16 +95,6 @@ describe("number settings", () => {
     expect(numberValue(setting({ value: 0.4, default: 0.7 }))).toBe(0.4);
     expect(numberValue(setting({ default: 0.7 }))).toBe(0.7);
     expect(numberValue(setting({ min: 0.2 }))).toBe(0.2);
-  });
-
-  it("shows milliseconds as seconds with one decimal", () => {
-    expect(formatNumber(setting({ unit: "ms" }), 5000)).toBe("5.0s");
-    expect(formatNumber(setting({ unit: "ms" }), 1500)).toBe("1.5s");
-  });
-
-  it("shows every other number with two decimals", () => {
-    expect(formatNumber(setting({}), 0.7)).toBe("0.70");
-    expect(formatNumber(setting({ unit: "s" }), 1.25)).toBe("1.25");
   });
 });
 
