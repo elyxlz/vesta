@@ -5,6 +5,7 @@ import {
   type VoiceMode,
   type VoiceSessionCallbacks,
 } from "./voice-session";
+import type { AudioCapture } from "./engine-session";
 import { FakeEngineSocket, fakeCapture, fakeSpeaker } from "./voice-fakes";
 
 function recorder() {
@@ -31,7 +32,7 @@ function recorder() {
   return { events, callbacks };
 }
 
-function setup() {
+function setup(capture: AudioCapture = fakeCapture().capture) {
   // Each session dials a socket of its own.
   const sockets: FakeEngineSocket[] = [];
   const out = fakeSpeaker();
@@ -45,7 +46,7 @@ function setup() {
         sockets.push(socket);
         return socket;
       },
-      capture: fakeCapture().capture,
+      capture,
       speaker: out.speaker,
       playUrl: (path) => Promise.resolve(`https://host${path}`),
       prepareSpeech: (text) => {
@@ -86,6 +87,33 @@ afterEach(() => {
 });
 
 describe("the voice session", () => {
+  it("leaves the microphone off when the user stops while it starts", async () => {
+    let on = false;
+    let open: () => void = () => undefined;
+    const { session } = setup({
+      start: () =>
+        new Promise((resolve) => {
+          open = () => {
+            on = true;
+            resolve();
+          };
+        }),
+      stop: () => {
+        on = false;
+      },
+    });
+
+    const started = session.start("conversation");
+    await vi.advanceTimersByTimeAsync(0);
+    session.stop();
+    // The user grants the microphone after the stop has settled.
+    await vi.advanceTimersByTimeAsync(0);
+    open();
+    await started;
+
+    expect(on).toBe(false);
+  });
+
   it("marks the mode before the microphone opens and clears it on stop", async () => {
     const { session, events } = setup();
     const p = session.start("dictation");

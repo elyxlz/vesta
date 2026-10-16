@@ -14,8 +14,10 @@ export const MAX_PENDING_AUDIO_BYTES = 16_000 * 2 * 2;
 
 export interface AudioCapture {
   // Starts the microphone and resolves once frames can flow; frames are raw 16 kHz 16-bit
-  // mono PCM. Rejecting is the permission or hardware failure path.
+  // mono PCM. Rejecting is the permission or hardware failure path. The voice session never
+  // starts it twice at once, and stops it again after a start that a stop overtook.
   start: (onFrame: (pcm: ArrayBuffer) => void) => Promise<void>;
+  // Turns off what the microphone holds now.
   stop: () => void;
 }
 

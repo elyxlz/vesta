@@ -184,12 +184,8 @@ export function microphoneDeniedMessage(
 export function browserCapture(muted?: () => boolean): AudioCapture {
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
-  // Bumped by every teardown, so a start still awaiting the microphone learns it was stopped
-  // and releases what it acquires instead of leaving the mic live.
-  let attempt = 0;
 
   const teardown = (): void => {
-    attempt += 1;
     if (audioCtx) {
       audioCtx.close().catch(() => {
         /* already closed */
@@ -206,11 +202,11 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
     start: async (onFrame) => {
       if (!("mediaDevices" in navigator))
         throw new Error("Microphone requires a secure connection");
-      teardown();
-      const mine = attempt;
-      let acquired: MediaStream;
+      // Locals, because a stop can run during each await. The voice session stops the port
+      // again once this start settles, which releases what it opened after that stop.
+      let mic: MediaStream;
       try {
-        acquired = await navigator.mediaDevices.getUserMedia({
+        mic = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
@@ -232,22 +228,17 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
         }
         throw new Error("Could not access microphone", { cause: err });
       }
-      if (mine !== attempt) {
-        acquired.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      stream = acquired;
+      stream = mic;
+      let ctx: AudioContext;
       try {
-        audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-        await audioCtx.audioWorklet.addModule(WORKLET_URL);
+        ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        audioCtx = ctx;
+        await ctx.audioWorklet.addModule(WORKLET_URL);
       } catch (err) {
-        if (mine !== attempt) return;
-        teardown();
         throw new Error("Could not initialize audio capture", { cause: err });
       }
-      if (mine !== attempt) return;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const workletNode = new AudioWorkletNode(audioCtx, "pcm-processor", {
+      const source = ctx.createMediaStreamSource(mic);
+      const workletNode = new AudioWorkletNode(ctx, "pcm-processor", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         channelCount: 1,
@@ -257,7 +248,7 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
         onFrame(floatTo16BitPCM(e.data));
       };
       source.connect(workletNode);
-      workletNode.connect(audioCtx.destination);
+      workletNode.connect(ctx.destination);
     },
     stop: teardown,
   };

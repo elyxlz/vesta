@@ -12,6 +12,7 @@ import {
   type EngineSession,
   type EngineSessionDeps,
 } from "./engine-session";
+import { serializeCapture } from "./microphone";
 import { createTtsQueue, type TtsQueue } from "./tts-queue";
 
 export type VoiceMode = "dictation" | "conversation";
@@ -65,6 +66,11 @@ export function createVoiceSession(
   callbacks: VoiceSessionCallbacks,
   settings: () => VoiceSessionSettings,
 ): VoiceSession {
+  // Every engine session of this model shares the one microphone.
+  const engineDeps: EngineSessionDeps = {
+    ...deps,
+    capture: serializeCapture(deps.capture),
+  };
   let engine: EngineSession | null = null;
   let mode: VoiceMode | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -158,7 +164,7 @@ export function createVoiceSession(
     };
 
     const session = createEngineSession(
-      deps,
+      engineDeps,
       {
         onTranscript: (text) => {
           live = text;

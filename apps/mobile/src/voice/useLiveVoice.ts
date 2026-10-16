@@ -84,10 +84,6 @@ export function useLiveVoice({
   const ttsEnabledRef = useRef(false);
 
   const frameSinkRef = useRef<((pcm: ArrayBuffer) => void) | null>(null);
-  // The capture port owns one microphone for the whole app. Each start and each stop is a
-  // new attempt, so a start still in one of its awaits learns that it is no longer the
-  // newest, and `wanted` says if the newest one was a start.
-  const captureRef = useRef({ attempt: 0, wanted: false });
   const permissionGrantedRef = useRef(false);
   const sessionRef = useRef<VoiceSession | null>(null);
 
@@ -206,13 +202,10 @@ export function useLiveVoice({
     const session = createVoiceSession(
       {
         buildUrl: () => api.websocketUrl(voiceSessionPath(name)),
+        // The voice session stops the port again once a start that a stop overtook settles,
+        // so a stop during these awaits needs no guard here.
         capture: {
           start: async (onFrame) => {
-            captureRef.current = {
-              attempt: captureRef.current.attempt + 1,
-              wanted: true,
-            };
-            const { attempt } = captureRef.current;
             if (!permissionGrantedRef.current) {
               const permission = await requestRecordingPermissionsAsync();
               if (!permission.granted)
@@ -232,26 +225,11 @@ export function useLiveVoice({
                 `${name} is listening`,
               );
             }
-            if (captureRef.current.attempt === attempt) {
-              frameSinkRef.current = onFrame;
-              await streamRef.current.start();
-              await setRecordingHapticsEnabled(true).catch(() => undefined);
-            }
-            // A stop ran during the awaits above and no later start took the microphone
-            // over, so that stop turned off less than this start turned on.
-            if (
-              captureRef.current.attempt !== attempt &&
-              !captureRef.current.wanted
-            )
-              releaseCapture();
+            frameSinkRef.current = onFrame;
+            await streamRef.current.start();
+            await setRecordingHapticsEnabled(true).catch(() => undefined);
           },
-          stop: () => {
-            captureRef.current = {
-              attempt: captureRef.current.attempt + 1,
-              wanted: false,
-            };
-            releaseCapture();
-          },
+          stop: releaseCapture,
         },
         speaker: {
           play,
