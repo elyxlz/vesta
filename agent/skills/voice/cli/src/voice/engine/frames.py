@@ -130,6 +130,8 @@ class StopPlayback(tp.TypedDict):
 
 class Error(tp.TypedDict):
     type: tp.Literal["error"]
+    # The `speak` id of the play that this error is about. Absent for an error of the session.
+    id: tp.NotRequired[str]
     message: str
 
 

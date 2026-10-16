@@ -154,9 +154,8 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
   so you answer live by **speaking** with `whatsapp say '<one short line>'` (one spoken thought at a
   time, not a monologue). Your lines play in the order you say them.
 - `say` answers with what became of the line. `speaking`: the line plays. `queued`: the other
-  person has the floor and the line plays when their turn ends, so do not say it again. A
-  `voice_error` beside `queued` is an error the voice skill reported in the meantime: the line
-  may never play. An error: the line will not play, and the message says why.
+  person has the floor and the line plays when their turn ends, so do not say it again. An
+  error: the line will not play, and the message says why.
 - When the other person talks over you, the voice skill can stop your line and drop the lines
   that wait behind it. Their words arrive as the next `call_utterance`: answer that.
 - `whatsapp call --to <name>` places a call and returns once answered; greet them with `say`.

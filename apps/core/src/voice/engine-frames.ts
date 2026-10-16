@@ -15,7 +15,8 @@ export type EngineFrame =
   | { type: "pause_playback" }
   | { type: "resume_playback" }
   | { type: "stop_playback" }
-  | { type: "error"; message: string }
+  // `id` names the reply that cannot play; null for an error of the session.
+  | { type: "error"; id: string | null; message: string }
   | { type: "ended"; reason: string };
 
 function parsed(data: string): Record<string, unknown> | null {
@@ -47,7 +48,9 @@ export function parseEngineFrame(data: string): EngineFrame | null {
         ? { type, id, url }
         : null;
     case "error":
-      return typeof message === "string" ? { type, message } : null;
+      return typeof message === "string"
+        ? { type, id: typeof id === "string" ? id : null, message }
+        : null;
     case "ended":
       return { type, reason: typeof reason === "string" ? reason : "" };
     default:

@@ -68,6 +68,7 @@ export interface EngineSession {
 
 const CONNECT_FAILED = "Could not connect to live voice";
 const CLOSED = "Voice connection closed unexpectedly";
+const PLAYBACK_FAILED = "Voice playback failed";
 // Why the engine ended a session that the client did not end.
 const ENDED_MESSAGES: Record<string, string> = {
   not_configured: "Speech-to-text is off or not set up",
@@ -97,6 +98,13 @@ export function createEngineSession(
   // Replies asked for while the session starts; sent when the engine accepts it.
   let waitingReplies: string[] = [];
   let replies = 0;
+  // The engine's error and the speaker can both report one failed reply; the user hears of it once.
+  const failedReplies = new Set<string>();
+  const replyFailed = (id: string, message: string): void => {
+    if (failedReplies.has(id)) return;
+    failedReplies.add(id);
+    callbacks.onPlayFailed(message);
+  };
 
   // Read through a call, because the frames and the close change the state during an await.
   const phase = (): typeof state => state;
@@ -112,7 +120,9 @@ export function createEngineSession(
       send({ type: "playback", id, state: report });
     },
     onSpeakingChange: callbacks.onSpeakingChange,
-    onError: callbacks.onPlayFailed,
+    onFailed: (id) => {
+      replyFailed(id, PLAYBACK_FAILED);
+    },
   });
 
   const cleanup = (): void => {
@@ -122,6 +132,7 @@ export function createEngineSession(
     pending = [];
     pendingBytes = 0;
     waitingReplies = [];
+    failedReplies.clear();
     plays.stop();
     if (socket) {
       socket.onopen = null;
@@ -220,9 +231,9 @@ export function createEngineSession(
         plays.stop();
         break;
       case "error":
-        // A reply the engine could not say: TTS is off for this session, or its synthesis
-        // failed while the reply was held, so no play of it ever comes.
-        callbacks.onPlayFailed(frame.message);
+        // With an id, a reply the engine could not say: TTS is off, or its synthesis failed.
+        if (frame.id === null) callbacks.onPlayFailed(frame.message);
+        else replyFailed(frame.id, frame.message);
         break;
       case "ended":
         onEnded(frame.reason);

@@ -276,12 +276,12 @@ func TestSayFailsWithTheEngineMessageWhenItsPlayHasNoAudio(t *testing.T) {
 			said := session.sayAsync("Hello there.")
 			id := side.speakID("Hello there.")
 			if errorFirst {
-				side.send(map[string]any{"type": "error", "message": message})
+				side.send(map[string]any{"type": "error", "id": id, "message": message})
 			}
 			side.send(map[string]any{"type": "play", "id": id, "format": "pcm_16000"})
 			side.send(map[string]any{"type": "play_done", "id": id})
 			if !errorFirst {
-				side.send(map[string]any{"type": "error", "message": message})
+				side.send(map[string]any{"type": "error", "id": id, "message": message})
 			}
 
 			got := await(t, said, "say to return")
@@ -368,20 +368,26 @@ func TestSayReportsQueuedWhenNoAudioArrivesInTime(t *testing.T) {
 	}
 }
 
-func TestQueuedSayCarriesAnEngineErrorThatArrivedAfterItsLine(t *testing.T) {
+func TestAnEngineErrorFailsOnlyTheLineThatItNames(t *testing.T) {
 	const message = "tts is off or has no provider; this session cannot speak"
 	engine := startFakeEngine(t)
 	session := runSession(t, engine.url)
-	session.audioWait = time.Second
+	session.audioWait = 200 * time.Millisecond
 	side := engine.session(t)
 
-	said := session.sayAsync("Hello there.")
+	first := session.sayAsync("Hello there.")
 	side.speakID("Hello there.")
-	side.send(map[string]any{"type": "error", "message": message})
+	second := session.sayAsync("How are you?")
+	id := side.speakID("How are you?")
+	side.send(map[string]any{"type": "error", "id": id, "message": message})
+	side.send(map[string]any{"type": "error", "message": "an error of the session"})
 
-	want := sayResult{line: spoken{status: "queued", engineError: message}}
-	if got := await(t, said, "say to return"); got != want {
-		t.Fatalf("say = %+v, want queued with the engine's message", got)
+	if got := await(t, second, "the named say to return"); got.err == nil || !strings.Contains(got.err.Error(), message) {
+		t.Fatalf("say = %+v, want an error with the engine's message", got)
+	}
+	want := sayResult{line: spoken{status: "queued"}}
+	if got := await(t, first, "the other say to return"); got != want {
+		t.Fatalf("say = %+v, want queued", got)
 	}
 }
 

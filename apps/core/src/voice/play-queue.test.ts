@@ -11,20 +11,20 @@ function setup() {
   const { speaker, plays, urls, calls } = fakeSpeaker();
   const reports: [string, PlayReport][] = [];
   const speaking: boolean[] = [];
-  const errors: string[] = [];
+  const failed: string[] = [];
   const queue = createPlayQueue({
     speaker,
     resolveUrl: (path) => Promise.resolve(`https://host${path}`),
     report: (id, state) => reports.push([id, state]),
     onSpeakingChange: (value) => speaking.push(value),
-    onError: (message) => errors.push(message),
+    onFailed: (id) => failed.push(id),
   });
   const playing = async (count: number) => {
     await vi.waitFor(() => {
       expect(plays).toHaveLength(count);
     });
   };
-  return { queue, plays, urls, calls, reports, speaking, errors, playing };
+  return { queue, plays, urls, calls, reports, speaking, failed, playing };
 }
 
 describe("the play queue", () => {
@@ -55,7 +55,7 @@ describe("the play queue", () => {
   });
 
   it("reports a play the speaker cannot play as failed and continues", async () => {
-    const { queue, plays, reports, errors, playing } = setup();
+    const { queue, plays, reports, failed, playing } = setup();
     queue.enqueue("a", "/voice/play/ta");
     queue.enqueue("b", "/voice/play/tb");
     await playing(1);
@@ -63,7 +63,7 @@ describe("the play queue", () => {
     await playing(2);
 
     expect(reports).toEqual([["a", "failed"]]);
-    expect(errors).toEqual(["Voice playback failed"]);
+    expect(failed).toEqual(["a"]);
   });
 
   it("a stop ends the audio, drops the queue, and reports nothing", async () => {
@@ -151,7 +151,7 @@ describe("the play queue", () => {
   it("gives up a play whose sound never starts, and plays the next one", async () => {
     vi.useFakeTimers();
     try {
-      const { queue, plays, reports, errors } = setup();
+      const { queue, plays, reports, failed } = setup();
       queue.enqueue("a", "/voice/play/ta");
       queue.enqueue("b", "/voice/play/tb");
       await vi.advanceTimersByTimeAsync(0);
@@ -160,7 +160,7 @@ describe("the play queue", () => {
       await vi.advanceTimersByTimeAsync(PLAY_START_TIMEOUT_MS);
 
       expect(reports).toEqual([["a", "failed"]]);
-      expect(errors).toEqual(["Voice playback failed"]);
+      expect(failed).toEqual(["a"]);
       expect(plays).toHaveLength(2);
     } finally {
       vi.useRealTimers();

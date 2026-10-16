@@ -73,7 +73,7 @@ A frame before `start_session`, and a second `start_session`, gets `error` and c
 | `pause_playback` | Pause the audio now and keep the queue. | Pause. |
 | `resume_playback` | Continue the paused audio. | Continue. |
 | `stop_playback {id, dropped}` | Stop the audio and clear the queue. `id` is the play that was cut, or null. `dropped` lists the plays that never started. | Stop, clear, and discard buffered bytes. |
-| `error {message}` | Something failed. The session continues. | Show or log it. |
+| `error {id?, message}` | Something failed. The session continues. With `id`, it is the `speak` of that id that cannot play: TTS is off, or its synthesis failed. | Show or log it. With `id`, give up that reply. |
 | `ended {reason}` | The session is over. | Close. |
 
 `kind` is `backchannel` (a short sound while the agent speaks, such as "mhm"), `echo` (the agent's own voice in the mic), `other_person`, or `not_speech`.

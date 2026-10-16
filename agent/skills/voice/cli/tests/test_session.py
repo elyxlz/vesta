@@ -357,7 +357,7 @@ def test_in_bytes_delivery_a_stop_ends_the_bytes_of_the_play(tmp_path: pl.Path, 
     asyncio.run(scenario())
 
 
-def test_speak_with_tts_off_gives_an_error_and_no_play(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+def test_speak_with_tts_off_gives_an_error_about_that_speak_and_no_play(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
     vc.set_enabled(tmp_path, "tts", False)
 
     async def scenario() -> None:
@@ -366,7 +366,10 @@ def test_speak_with_tts_off_gives_an_error_and_no_play(tmp_path: pl.Path, stt: F
             await ws.send_json({"type": "end_session"})
 
             frames = await frames_until(ws, "ended")
-            assert [frame["type"] for frame in frames] == ["error", "ended"]
+            assert frames == [
+                {"type": "error", "id": "r1", "message": "tts is off or has no provider; this session cannot speak"},
+                {"type": "ended", "reason": "client_ended"},
+            ]
 
     asyncio.run(scenario())
     assert tts.spoken == []
@@ -381,9 +384,25 @@ def test_a_failed_synthesis_gives_an_error_and_its_url_answers_502(tmp_path: pl.
             frames = await frames_until(ws, "error")
             play = next(frame for frame in frames if frame["type"] == "play")
 
-            assert frames[-1] == {"type": "error", "message": "the fake refused the synthesis"}
+            assert frames[-1] == {"type": "error", "id": "r1", "message": "the fake refused the synthesis"}
             async with client.get(str(play["url"])) as audio:
                 assert audio.status == 502
+
+    asyncio.run(scenario())
+
+
+def test_a_held_reply_whose_synthesis_fails_gives_an_error_with_its_id_and_never_a_play(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+    tts.fail = True
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
+            await stream.emit("transcription", "and also")
+            await frames_until(ws, "state")
+            await ws.send_json({"type": "speak", "id": "r1", "text": "Done."})
+            assert await next_frame(ws) == {"type": "error", "id": "r1", "message": "the fake refused the synthesis"}
+
+            await stream.emit("committed", "And also the dentist.")
+            assert [frame["type"] for frame in await frames_until(ws, "state")] == ["transcript", "turn_end", "state"]
 
     asyncio.run(scenario())
 

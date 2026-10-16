@@ -28,7 +28,8 @@ export interface PlayQueueDeps {
   resolveUrl: (path: string) => Promise<string>;
   report: (id: string, state: PlayReport) => void;
   onSpeakingChange: (speaking: boolean) => void;
-  onError: (message: string) => void;
+  // The speaker could not play this play, after its `failed` report.
+  onFailed: (id: string) => void;
 }
 
 export interface PlayQueue {
@@ -97,7 +98,7 @@ export function createPlayQueue(deps: PlayQueueDeps): PlayQueue {
     } catch {
       if (controller.signal.aborted && !outcome.gaveUp) return;
       deps.report(play.id, "failed");
-      deps.onError("Voice playback failed");
+      deps.onFailed(play.id);
     } finally {
       if (watchdog !== null) clearTimeout(watchdog);
       if (abort === controller) {

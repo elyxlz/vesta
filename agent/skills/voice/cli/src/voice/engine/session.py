@@ -57,6 +57,7 @@ class JudgedItem(tp.TypedDict):
 
 class SynthFailedItem(tp.TypedDict):
     kind: tp.Literal["synth_failed"]
+    id: str
     token: str
     message: str
 
@@ -259,7 +260,7 @@ async def _synthesize(session: Session, tts: TtsLink, play: playback.Play, buffe
     try:
         await buffers.fill(buffer, audio)
     except TtsError as e:
-        await session.inbox.put({"kind": "synth_failed", "token": play.token, "message": str(e)})
+        await session.inbox.put({"kind": "synth_failed", "id": play.id, "token": play.token, "message": str(e)})
 
 
 async def _send_bytes(session: Session, audio_format: str) -> None:
@@ -287,7 +288,7 @@ async def _send_plays(session: Session, tts: TtsLink, plays: tuple[playback.Play
 async def _on_speak(session: Session, frame: frames.Speak) -> None:
     tts = session.tts
     if tts is None:
-        await _send(session.ws, {"type": "error", "message": "tts is off or has no provider; this session cannot speak"})
+        await _send(session.ws, {"type": "error", "id": frame["id"], "message": "tts is off or has no provider; this session cannot speak"})
         return
     play = playback.Play(id=frame["id"], text=frame["text"], token=secrets.token_urlsafe(PLAY_TOKEN_BYTES))
     buffer = buffers.PlayBuffer(tts.audio_format)
@@ -480,7 +481,7 @@ async def _on_stt(session: Session, event: SttEvent) -> Outcome:
 async def _on_synth_failed(session: Session, item: SynthFailedItem) -> None:
     """The play stays with the client, which reports `failed` for it. A play that was still
     held never reaches the client, so it goes now."""
-    await _send(session.ws, {"type": "error", "message": item["message"]})
+    await _send(session.ws, {"type": "error", "id": item["id"], "message": item["message"]})
     session.speaker, was_held = playback.drop_held(session.speaker, item["token"])
     if was_held:
         await _forget(session, item["token"])

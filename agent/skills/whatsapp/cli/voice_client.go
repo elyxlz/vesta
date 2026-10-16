@@ -132,16 +132,12 @@ type spoken struct {
 	// "speaking": audio of the line arrived, so it plays after the lines before it. "queued": no
 	// audio arrived in time, which is what a line held for the other person's turn looks like.
 	status string
-	// The engine's newest error since the line was sent. Set only with "queued".
-	engineError string
 }
 
 // sayWaiter is one `say` that waits to learn what became of its line.
 type sayWaiter struct {
 	// nil: audio of the line arrived. An error: the line will not play.
 	result chan error
-	// How many error frames the engine had sent when the line went out.
-	errorsBefore int
 	// The play ended with no audio, and the error frame that says why did not arrive yet.
 	empty bool
 }
@@ -160,9 +156,6 @@ type voiceSession struct {
 	mu      sync.Mutex
 	outbox  [][]byte
 	waiting map[string]*sayWaiter
-	// The count of the engine's error frames, and the newest message.
-	errors    int
-	lastError string
 	// Why the session is over.
 	over error
 }
@@ -297,7 +290,10 @@ func (s *voiceSession) read(ctx context.Context, conn *websocket.Conn) error {
 			}
 		case "error":
 			s.logf("call voice session: the voice engine reported: %s", frame.Message)
-			s.engineError(frame.Message)
+			// An error with an id is about that line alone: it will not play.
+			if frame.ID != "" {
+				s.settle(frame.ID, noAudioError(frame.Message))
+			}
 		case "ended":
 			return fmt.Errorf("the voice engine ended the session: %s", frame.Reason)
 		}
@@ -318,34 +314,14 @@ func noAudioError(message string) error {
 	return fmt.Errorf("the voice service made no audio for this line: %s", message)
 }
 
-// madeNoAudio fails the `say` of a play that ended with no audio (a failed synthesis). The
-// engine says why in an error frame, which can arrive before the play or right after it, so a
-// waiter with no error yet stays until the next error frame.
+// madeNoAudio marks the `say` of a play that ended with no audio (a failed synthesis). The
+// engine's error frame with this id says why and settles the line; a line whose error frame
+// came first is settled already.
 func (s *voiceSession) madeNoAudio(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	waiter, waits := s.waiting[id]
-	if !waits {
-		return
-	}
-	if s.errors == waiter.errorsBefore {
+	if waiter, waits := s.waiting[id]; waits {
 		waiter.empty = true
-		return
-	}
-	delete(s.waiting, id)
-	waiter.result <- noAudioError(s.lastError)
-}
-
-func (s *voiceSession) engineError(message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.errors++
-	s.lastError = message
-	for id, waiter := range s.waiting {
-		if waiter.empty {
-			delete(s.waiting, id)
-			waiter.result <- noAudioError(message)
-		}
 	}
 }
 
@@ -364,7 +340,6 @@ func (s *voiceSession) say(text string) (spoken, error) {
 	id := uuid.NewString()
 	waiter := &sayWaiter{result: make(chan error, 1)}
 	s.mu.Lock()
-	waiter.errorsBefore = s.errors
 	s.waiting[id] = waiter
 	s.mu.Unlock()
 	s.send(clientFrame{Type: "speak", ID: id, Text: text})
@@ -395,9 +370,5 @@ func (s *voiceSession) say(text string) (spoken, error) {
 	if waiter.empty {
 		return spoken{}, errors.New("the voice service made no audio for this line")
 	}
-	line := spoken{status: "queued"}
-	if s.errors > waiter.errorsBefore {
-		line.engineError = s.lastError
-	}
-	return line, nil
+	return spoken{status: "queued"}, nil
 }

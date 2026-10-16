@@ -214,10 +214,38 @@ describe("the engine session", () => {
   it("reports a reply the engine could not say and keeps the session", async () => {
     const { socket, session, events, errors, started } = setup();
     await started();
-    socket.emit({ type: "error", message: "tts is off" });
+    socket.emit({ type: "error", id: "reply-1", message: "tts is off" });
     expect(events).toEqual(["play_failed:tts is off"]);
     expect(errors).toEqual([]);
     expect(session.active()).toBe(true);
+  });
+
+  it("tells the user once about a reply that the engine and the speaker both report", async () => {
+    const { socket, out, events, started } = setup();
+    await started();
+    const failures = () => events.filter((e) => e.startsWith("play_failed"));
+    socket.emit({ type: "play", id: "reply-1", url: "/voice/play/t1" });
+    socket.emit({ type: "play", id: "reply-2", url: "/voice/play/t2" });
+    // The engine reports the first reply before the speaker does.
+    socket.emit({ type: "error", id: "reply-1", message: "synthesis failed" });
+    await vi.waitFor(() => {
+      expect(out.plays).toHaveLength(1);
+    });
+    out.plays[0]?.fail();
+    await vi.waitFor(() => {
+      expect(out.plays).toHaveLength(2);
+    });
+    // The speaker reports the second reply before the engine does.
+    out.plays[1]?.fail();
+    await vi.waitFor(() => {
+      expect(failures()).toHaveLength(2);
+    });
+    socket.emit({ type: "error", id: "reply-2", message: "synthesis failed" });
+
+    expect(failures()).toEqual([
+      "play_failed:synthesis failed",
+      "play_failed:Voice playback failed",
+    ]);
   });
 
   it("asks the engine to speak, and holds a reply asked for during the start", async () => {

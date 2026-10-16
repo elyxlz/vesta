@@ -232,11 +232,7 @@ func (cm *CallManager) Say(text string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := map[string]any{"status": line.status, "contact_name": ac.contactName}
-	if line.engineError != "" {
-		result["voice_error"] = line.engineError
-	}
-	return result, nil
+	return map[string]any{"status": line.status, "contact_name": ac.contactName}, nil
 }
 
 // Hangup ends the active call.
