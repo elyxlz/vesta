@@ -10,9 +10,9 @@ import typing as tp
 
 import aiohttp
 
-from voice.settings import Domain, JsonValue, SettingDef
+from voice.settings import Domain, SettingDef
 
-from .base import TtsError, Validation, api_key
+from .base import TtsError, Usage, Validation, api_key
 from .deepgram import DEEPGRAM_API, account_balance
 
 DEFAULT_VOICE = "aura-2-thalia-en"
@@ -197,9 +197,9 @@ class DeepgramTts:
             except (TimeoutError, aiohttp.ClientError) as e:
                 raise TtsError(f"deepgram request failed: {e}") from e
 
-    async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
+    async def usage(self, creds: dict[str, str]) -> Usage:
         """Deepgram has no character quota: the number an account has is its balance."""
-        return await account_balance(api_key(creds))
+        return {"used": None, "left": await account_balance(api_key(creds))}
 
     async def validate(self, creds: dict[str, str], _settings: Domain) -> Validation:
         """Synthesize two characters, which tests the one permission that the role needs."""

@@ -11,12 +11,11 @@ import type {
   HostMount,
   NotificationInterruptRule,
   ProviderCatalog,
-  SttUsage,
-  TtsUsage,
   Usage,
   VoiceBehaviors,
   VoiceDomain,
   VoiceStatus,
+  VoiceUsage,
 } from "@vesta/core";
 import {
   SessionProvider as ProductionSessionProvider,
@@ -366,12 +365,13 @@ const voiceStatuses: Record<VoiceDomain, VoiceStatus> = {
     settings: [],
   },
 };
-const sttUsage: SttUsage = {
-  usage: { results: [{ hours: 3.25 }, { hours: 1.5 }] },
-  balance: { balances: [{ amount: 187.42, units: "usd" }] },
+const sttUsage: VoiceUsage = {
+  used: { amount: 4.75, unit: "hours" },
+  left: { amount: 187.42, unit: "usd" },
 };
-const ttsUsage: TtsUsage = {
-  usage: { character_count: 12480, character_limit: 100000 },
+const ttsUsage: VoiceUsage = {
+  used: { amount: 12480, unit: "credits" },
+  left: { amount: 87520, unit: "credits" },
 };
 const memoryFile: FileReadResponse = {
   path: "/root/agent/MEMORY.md",

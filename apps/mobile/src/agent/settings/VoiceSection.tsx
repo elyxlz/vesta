@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 import { Alert, StyleSheet, View } from "react-native";
-import { sttUsageSummary, ttsUsage } from "@vesta/core";
+import { voiceUsageSummary } from "@vesta/core";
 import type { VoiceDomain, VoiceStatus } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import {
-  useSttUsage,
-  useTtsUsage,
   useVoiceChange,
+  useVoiceUsage,
   useVoiceSettings,
   type VoiceChange,
 } from "@/agent/settings/voice-actions";
@@ -29,22 +28,17 @@ const ENABLED_DETAILS: Record<VoiceDomain, string> = {
   judge: "Let the judge read your words while a reply plays.",
 };
 
-// The usage rows mount only for a role that is configured and on, so no other role asks its
+// The usage row mounts only for a role that is configured and on, so no other role asks its
 // provider.
-function SttUsageRow({ provider }: { provider: string | null }) {
-  const usage = useSttUsage(provider);
-  return <FormRow label="Usage" value={sttUsageSummary(usage.data)} />;
-}
-
-function TtsUsageRow({ provider }: { provider: string | null }) {
-  const usage = useTtsUsage(provider);
-  const line = ttsUsage(usage.data);
-  return (
-    <FormRow
-      label={line.kind === "balance" ? "Balance" : "Characters this month"}
-      value={line.value}
-    />
-  );
+function UsageRow({
+  domain,
+  provider,
+}: {
+  domain: "stt" | "tts";
+  provider: string | null;
+}) {
+  const usage = useVoiceUsage(domain, provider);
+  return <FormRow label="Usage" value={voiceUsageSummary(usage.data)} />;
 }
 
 function DomainCard({
@@ -108,11 +102,8 @@ function DomainCard({
           onPress={chooseProvider}
         />
       ) : null}
-      {live && domain === "stt" ? (
-        <SttUsageRow provider={status.provider} />
-      ) : null}
-      {live && domain === "tts" ? (
-        <TtsUsageRow provider={status.provider} />
+      {live && domain !== "judge" ? (
+        <UsageRow domain={domain} provider={status.provider} />
       ) : null}
       {live
         ? (status.settings ?? []).map((setting) => (

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { AudioLines, Mic, Scale, Volume2 } from "lucide-react";
 import {
   Field,
@@ -8,16 +7,11 @@ import {
 } from "@/components/ui/field";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { sttUsageSummary, ttsUsage } from "@vesta/core";
 import {
-  fetchSttUsage,
-  fetchTtsUsage,
   selectVoiceProvider,
   setJudgeEnabled,
   setSttEnabled,
   setTtsEnabled,
-  type SttUsage,
-  type TtsUsage,
 } from "@/lib/voice";
 import { DynamicSettings } from "./setting-controls";
 import { useOptimisticToggle } from "./use-optimistic-toggle";
@@ -148,11 +142,6 @@ export function SttCard() {
     },
   );
 
-  const [usageData, setUsageData] = useState<SttUsage | null>(null);
-  const loadUsage = () => {
-    if (agentName)
-      fetchSttUsage(agentName).then(setUsageData).catch(console.warn);
-  };
   return (
     <DomainSection
       icon={<Mic className="size-4 text-muted-foreground" />}
@@ -163,10 +152,7 @@ export function SttCard() {
       onUseProvider={(provider) => {
         if (!agentName) return;
         selectVoiceProvider(agentName, "stt", provider)
-          .then((status) => {
-            patchStt(status);
-            setUsageData(null);
-          })
+          .then(patchStt)
           .catch(() => refreshVoiceStatus());
       }}
       enabled={enabled}
@@ -176,14 +162,11 @@ export function SttCard() {
       agentName={agentName}
       onSettingChange={(settings) => patchStt({ settings })}
       usageContent={
-        <UsageCollapsible onOpen={loadUsage}>
-          <div className="flex items-center justify-between text-sm px-6 pt-2">
-            <span className="text-muted-foreground">hours this month</span>
-            <span className="text-foreground tabular-nums">
-              {sttUsageSummary(usageData)}
-            </span>
-          </div>
-        </UsageCollapsible>
+        <UsageCollapsible
+          key={sttStatus?.provider}
+          agentName={agentName}
+          domain="stt"
+        />
       }
     />
   );
@@ -204,13 +187,6 @@ export function TtsCard() {
     },
   );
 
-  const [usageData, setUsageData] = useState<TtsUsage | null>(null);
-  const loadUsage = () => {
-    if (agentName)
-      fetchTtsUsage(agentName).then(setUsageData).catch(console.warn);
-  };
-  const usage = ttsUsage(usageData);
-
   return (
     <DomainSection
       icon={<Volume2 className="size-4 text-muted-foreground" />}
@@ -221,10 +197,7 @@ export function TtsCard() {
       onUseProvider={(provider) => {
         if (!agentName) return;
         selectVoiceProvider(agentName, "tts", provider)
-          .then((status) => {
-            patchTts(status);
-            setUsageData(null);
-          })
+          .then(patchTts)
           .catch(() => refreshVoiceStatus());
       }}
       enabled={enabled}
@@ -234,14 +207,11 @@ export function TtsCard() {
       agentName={agentName}
       onSettingChange={(settings) => patchTts({ settings })}
       usageContent={
-        <UsageCollapsible onOpen={loadUsage}>
-          <div className="flex items-center justify-between text-sm px-6 pt-2">
-            <span className="text-muted-foreground">
-              {usage.kind === "balance" ? "balance" : "characters this month"}
-            </span>
-            <span className="text-foreground tabular-nums">{usage.value}</span>
-          </div>
-        </UsageCollapsible>
+        <UsageCollapsible
+          key={ttsStatus?.provider}
+          agentName={agentName}
+          domain="tts"
+        />
       }
     />
   );

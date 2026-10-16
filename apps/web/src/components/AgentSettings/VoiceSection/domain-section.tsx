@@ -9,26 +9,35 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import type { VoiceDomain } from "@vesta/core";
-import type { SettingDef } from "@/lib/voice";
+import { useState } from "react";
+import { voiceUsageSummary, type VoiceDomain } from "@vesta/core";
+import { fetchVoiceUsage, type SettingDef, type VoiceUsage } from "@/lib/voice";
 import { CollapsibleChevronButton } from "./collapsible-chevron-button";
 import { DynamicSettings, OptionList } from "./setting-controls";
 
+// The account of a role's provider, asked when the user opens it. Key it by the provider, so a
+// switch to another one asks again.
 export function UsageCollapsible({
-  onOpen,
-  children,
+  agentName,
+  domain,
 }: {
-  onOpen: () => void;
-  children: React.ReactNode;
+  agentName: string | null;
+  domain: "stt" | "tts";
 }) {
+  const [usage, setUsage] = useState<VoiceUsage | null>(null);
   return (
     <Collapsible
       onOpenChange={(isOpen) => {
-        if (isOpen) onOpen();
+        if (isOpen && agentName)
+          fetchVoiceUsage(agentName, domain).then(setUsage).catch(console.warn);
       }}
     >
       <CollapsibleChevronButton>usage</CollapsibleChevronButton>
-      <CollapsibleContent>{children}</CollapsibleContent>
+      <CollapsibleContent>
+        <p className="text-sm text-foreground tabular-nums px-6 pt-2">
+          {voiceUsageSummary(usage)}
+        </p>
+      </CollapsibleContent>
     </Collapsible>
   );
 }

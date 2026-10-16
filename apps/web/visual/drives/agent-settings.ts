@@ -293,12 +293,13 @@ const UNCONFIGURED_VOICE_ROUTES: RouteFixture[] = [
 ];
 
 const STT_USAGE = {
-  usage: { results: [{ hours: 0.75 }, { hours: 0.5 }] },
-  balance: { balances: [{ amount: 12.5, units: "usd" }] },
+  used: { amount: 1.25, unit: "hours" },
+  left: { amount: 12.5, unit: "usd" },
 };
 
 const TTS_USAGE = {
-  usage: { character_count: 12450, character_limit: 100000 },
+  used: { amount: 12450, unit: "credits" },
+  left: { amount: 87550, unit: "credits" },
 };
 
 let nextNotificationId = 500;

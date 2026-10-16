@@ -44,18 +44,18 @@ export interface VoiceBehaviors {
   settings: SettingDef[];
 }
 
-export interface SttUsage {
-  usage?: { results?: { hours?: number }[] };
-  balance?: { balances?: { amount?: number; units?: string }[] };
+// An amount of a provider's account. The unit is "usd", "hours", "credits", or one the
+// provider names.
+export interface VoiceAmount {
+  amount: number;
+  unit: string;
 }
 
-// A provider with a character quota reports the count; one with none reports its balance.
-export interface TtsUsage {
-  usage?: {
-    character_count?: number;
-    character_limit?: number;
-    balances?: { amount?: number; units?: string }[];
-  };
+// What the account of a role's provider used this month and has left, in one shape for every
+// provider. Null where the provider does not say.
+export interface VoiceUsage {
+  used: VoiceAmount | null;
+  left: VoiceAmount | null;
 }
 
 function voicePath(name: string, suffix: string): string {
@@ -158,18 +158,13 @@ export async function setVoiceBehavior(
   );
 }
 
-export async function fetchSttUsage(
+// The judge has no account to show.
+export async function fetchVoiceUsage(
   http: HttpClient,
   name: string,
-): Promise<SttUsage> {
-  return http.json<SttUsage>(voicePath(name, "stt/usage"));
-}
-
-export async function fetchTtsUsage(
-  http: HttpClient,
-  name: string,
-): Promise<TtsUsage> {
-  return http.json<TtsUsage>(voicePath(name, "tts/usage"));
+  domain: "stt" | "tts",
+): Promise<VoiceUsage> {
+  return http.json<VoiceUsage>(voicePath(name, `${domain}/usage`));
 }
 
 export async function setVoiceEnabled(

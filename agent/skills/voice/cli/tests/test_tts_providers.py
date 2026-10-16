@@ -9,7 +9,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from voice.providers import deepgram, deepgram_tts, elevenlabs
-from voice.providers.base import TtsError, TtsProvider
+from voice.providers.base import TtsError, TtsProvider, Usage
 from voice.settings import JsonValue
 
 from .fakes import serving
@@ -273,20 +273,47 @@ def test_every_aura_voice_is_an_option_of_the_deepgram_voice_setting() -> None:
     assert {"value": "aura-2-melia-it", "label": "Melia", "description": "Italian, feminine: clear, comfortable, engaging"} in options
 
 
-def test_the_deepgram_subscription_is_the_balance_of_the_account(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_deepgram_usage_is_what_is_left_on_the_account(monkeypatch: pytest.MonkeyPatch) -> None:
     async def projects(_request: web.Request) -> web.Response:
         return web.json_response({"projects": [{"project_id": "p1"}]})
 
     async def balances(request: web.Request) -> web.Response:
         assert request.headers["Authorization"] == "Token dg-key"
-        return web.json_response({"balances": [{"amount": 12.5, "units": "usd"}]})
+        return web.json_response({"balances": [{"amount": 12.5, "units": "USD"}]})
 
-    async def scenario() -> dict[str, JsonValue]:
+    async def scenario() -> Usage:
         app = web.Application()
         app.router.add_get("/v1/projects", projects)
         app.router.add_get("/v1/projects/p1/balances", balances)
         async with serving(app) as client:
             monkeypatch.setattr(deepgram, "DEEPGRAM_API", str(client.make_url("")).rstrip("/"))
-            return await deepgram_tts.DeepgramTts().subscription({"api_key": "dg-key"})
+            return await deepgram_tts.DeepgramTts().usage({"api_key": "dg-key"})
 
-    assert asyncio.run(scenario()) == {"balances": [{"amount": 12.5, "units": "usd"}]}
+    assert asyncio.run(scenario()) == {"used": None, "left": {"amount": 12.5, "unit": "usd"}}
+
+
+@pytest.mark.parametrize(
+    ("subscription", "expected"),
+    [
+        (
+            {"character_count": 1200, "character_limit": 10000, "tier": "starter"},
+            {"used": {"amount": 1200.0, "unit": "credits"}, "left": {"amount": 8800.0, "unit": "credits"}},
+        ),
+        ({"detail": {"status": "missing_permissions"}}, {"used": None, "left": None}),
+    ],
+)
+def test_the_elevenlabs_usage_is_the_credits_of_the_subscription(
+    monkeypatch: pytest.MonkeyPatch, subscription: dict[str, JsonValue], expected: Usage
+) -> None:
+    async def answer(request: web.Request) -> web.Response:
+        assert request.headers["xi-api-key"] == "el-key"
+        return web.json_response(subscription)
+
+    async def scenario() -> Usage:
+        app = web.Application()
+        app.router.add_get("/v1/user/subscription", answer)
+        async with serving(app) as client:
+            monkeypatch.setattr(elevenlabs, "ELEVENLABS_API", str(client.make_url("")).rstrip("/"))
+            return await elevenlabs.ElevenLabsTts().usage({"api_key": "el-key"})
+
+    assert asyncio.run(scenario()) == expected

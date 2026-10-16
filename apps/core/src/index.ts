@@ -134,7 +134,7 @@ export { createVoiceSession } from "./voice/voice-session";
 export type { VoiceMode, VoiceSession } from "./voice/voice-session";
 export type { AudioCapture } from "./voice/engine-session";
 export type { Speaker } from "./voice/play-queue";
-export { sttUsageSummary, ttsUsage } from "./voice/usage";
+export { voiceUsageSummary } from "./voice/usage";
 
 export { sendMessage } from "./intents/send-message";
 
@@ -231,10 +231,9 @@ export {
 } from "./api/catalogs";
 export type { Personality, PersonalityCatalog } from "./api/catalogs";
 export {
-  fetchSttUsage,
-  fetchTtsUsage,
   fetchVoiceSettings,
   fetchVoiceStatus,
+  fetchVoiceUsage,
   prepareSpeech,
   selectVoiceProvider,
   setVoiceBehavior,
@@ -246,12 +245,11 @@ export {
 } from "./api/voice";
 export type {
   SettingDef,
-  SttUsage,
-  TtsUsage,
   VoiceBehaviors,
   VoiceDomain,
   VoiceSettingsData,
   VoiceStatus,
+  VoiceUsage,
 } from "./api/voice";
 export { agentLogsPath, gatewayLogsPath } from "./api/logs";
 export {

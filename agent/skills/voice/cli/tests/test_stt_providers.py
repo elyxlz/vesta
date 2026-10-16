@@ -15,7 +15,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from voice.providers import deepgram, elevenlabs_stt
-from voice.providers.base import SttEvent, SttOpenError, SttProvider, SttStream
+from voice.providers.base import SttEvent, SttOpenError, SttProvider, SttStream, Usage
 from voice.settings import Domain
 
 from .fakes import serving
@@ -424,3 +424,26 @@ def test_scribe_sends_its_two_constants_its_silence_threshold_and_the_key_terms_
         }
 
     asyncio.run(scenario())
+
+
+def test_the_deepgram_usage_adds_the_hours_of_the_month_and_reads_the_balance(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def projects(_request: web.Request) -> web.Response:
+        return web.json_response({"projects": [{"project_id": "p1"}]})
+
+    async def breakdown(request: web.Request) -> web.Response:
+        assert request.query["endpoint"] == "listen"
+        return web.json_response({"results": [{"hours": 3.25}, {"hours": 1.5}, {"requests": 2}]})
+
+    async def balances(_request: web.Request) -> web.Response:
+        return web.json_response({"balances": [{"amount": 187.42, "units": "usd"}]})
+
+    async def scenario() -> Usage:
+        app = web.Application()
+        app.router.add_get("/v1/projects", projects)
+        app.router.add_get("/v1/projects/p1/usage/breakdown", breakdown)
+        app.router.add_get("/v1/projects/p1/balances", balances)
+        async with serving(app) as client:
+            monkeypatch.setattr(deepgram, "DEEPGRAM_API", str(client.make_url("")).rstrip("/"))
+            return await deepgram.DeepgramStt().usage({"api_key": "dg-key"})
+
+    assert asyncio.run(scenario()) == {"used": {"amount": 4.75, "unit": "hours"}, "left": {"amount": 187.42, "unit": "usd"}}

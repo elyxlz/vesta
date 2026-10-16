@@ -14,7 +14,7 @@ from aiohttp import web
 from . import appkeys, invalidation, listen, providers, sections, tts_pending
 from . import config as voice_config
 from .engine import frames
-from .providers.base import SttOpenError, TtsError
+from .providers.base import SttOpenError, TtsError, Usage
 from .settings import Domain, JsonValue
 
 logger = logging.getLogger("voice")
@@ -160,19 +160,35 @@ async def set_setting(request: web.Request) -> web.Response:
 
 
 async def stt_usage(request: web.Request) -> web.Response:
-    """STT provider usage/balance (hits external API)."""
+    """What the account of the STT provider used and has left (asks the provider's API)."""
     resolved = _selected(request, "stt", providers.STT)
     if isinstance(resolved, web.Response):
         return resolved
     entry, name, provider = resolved
-    creds = voice_config.provider_creds(entry, name)
-    out: dict[str, JsonValue] = {}
-    usage, balance = await asyncio.gather(provider.usage(creds), provider.balance(creds), return_exceptions=True)
-    if not isinstance(usage, BaseException):
-        out["usage"] = usage
-    if not isinstance(balance, BaseException):
-        out["balance"] = balance
-    return web.json_response(out)
+    usage = await provider.usage(voice_config.provider_creds(entry, name))
+    return web.json_response({**usage, **_legacy_stt_usage(usage)})
+
+
+# LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION in vestad is 0.3.18 or higher): app builds
+# older than 0.3.18 read the usage of each role in the shape of its first vendor, so both
+# routes add that shape beside `used` and `left`.
+def _legacy_stt_usage(usage: Usage) -> dict[str, JsonValue]:
+    used, left = usage["used"], usage["left"]
+    if used is None or left is None or used["unit"] != "hours":
+        return {}
+    return {
+        "usage": {"results": [{"hours": used["amount"]}]},
+        "balance": {"balances": [{"amount": left["amount"], "units": left["unit"]}]},
+    }
+
+
+def _legacy_tts_usage(usage: Usage) -> dict[str, JsonValue]:
+    used, left = usage["used"], usage["left"]
+    if left is None:
+        return {}
+    if used is not None and used["unit"] == left["unit"] == "credits":
+        return {"usage": {"character_count": used["amount"], "character_limit": used["amount"] + left["amount"]}}
+    return {"usage": {"balances": [{"amount": left["amount"], "units": left["unit"]}]}}
 
 
 async def stt_set_eot(request: web.Request) -> web.Response:
@@ -208,12 +224,13 @@ async def stt_listen(request: web.Request) -> web.WebSocketResponse:
 
 
 async def tts_usage(request: web.Request) -> web.Response:
-    """TTS provider usage (hits external API)."""
+    """What the account of the TTS provider used and has left (asks the provider's API)."""
     resolved = _selected(request, "tts", providers.TTS)
     if isinstance(resolved, web.Response):
         return resolved
     entry, name, provider = resolved
-    return web.json_response({"usage": await provider.subscription(voice_config.provider_creds(entry, name))})
+    usage = await provider.usage(voice_config.provider_creds(entry, name))
+    return web.json_response({**usage, **_legacy_tts_usage(usage)})
 
 
 async def tts_reply_hint(request: web.Request) -> web.Response:

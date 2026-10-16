@@ -22,6 +22,34 @@ def api_key(creds: dict[str, str]) -> str:
     return creds["api_key"] if "api_key" in creds else ""
 
 
+class Amount(tp.TypedDict):
+    amount: float
+    # "usd", "hours", "credits", or the unit that the provider names.
+    unit: str
+
+
+class Usage(tp.TypedDict):
+    """The account of a provider, as the app settings show it. None where the provider does not
+    say: a provider with no account answers None for both."""
+
+    used: Amount | None  # used this month
+    left: Amount | None  # left on the account
+
+
+def no_usage() -> Usage:
+    return {"used": None, "left": None}
+
+
+def number_in(body: JsonValue, key: str) -> float | None:
+    """The number under `key` of a JSON object that a provider sent, or None."""
+    if not isinstance(body, dict) or key not in body:
+        return None
+    value = body[key]
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
 class SttEvent(tp.TypedDict):
     # transcription: the live text of the open segment.
     # committed: the final text of the segment, sent when the turn is over.
@@ -70,12 +98,8 @@ class SttProvider(tp.Protocol):
         Returns the trimmed transcript, empty when nothing was said."""
         ...
 
-    async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        """Usage summary for the account, or an empty object for a provider with no account."""
-        ...
-
-    async def balance(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        """Remaining balance for the account, or an empty object for a provider with no account."""
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        """What the account used this month and what it has left."""
         ...
 
     def settings_schema(self) -> list[SettingDef]: ...
@@ -108,8 +132,8 @@ class TtsProvider(tp.Protocol):
         `formats`; the caller checks that first. Raises TtsError."""
         ...
 
-    async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        """Subscription and usage info, or an empty object for a provider with no quota."""
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        """What the account used this month and what it has left."""
         ...
 
     async def validate(self, creds: dict[str, str], settings: Domain) -> Validation: ...

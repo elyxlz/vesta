@@ -10,7 +10,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from voice import server
-from voice.providers.base import Question, SttEvent, SttOpenError, TtsError, Validation, Verdict
+from voice.providers.base import Question, SttEvent, SttOpenError, TtsError, Usage, Validation, Verdict, no_usage
 from voice.settings import Domain, JsonValue, SettingDef, SettingOption
 
 FRAME_TIMEOUT_SECS = 5
@@ -58,6 +58,7 @@ class FakeStt:
     needs_key: bool = False
     refuse: tp.Literal["failed", "limit"] | None = None
     valid: bool = True
+    account: Usage = dc.field(default_factory=no_usage)
     streams: list[FakeStream] = dc.field(default_factory=list)
     # When set, an open sets it: the route opened a stream and sends no frame to say so.
     opened: asyncio.Event | None = None
@@ -78,11 +79,8 @@ class FakeStt:
     async def transcribe_file(self, audio_path: pl.Path, creds: dict[str, str], language: str | None) -> str:
         return ""
 
-    async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return {}
-
-    async def balance(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return {}
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        return self.account
 
     def settings_schema(self) -> list[SettingDef]:
         return [{"key": "address", "type": "text", "default": "http://127.0.0.1:9000"}]
@@ -94,6 +92,7 @@ class FakeTts:
     voice_setting: str = "fake_voice"
     formats: frozenset[str] = frozenset({"mp3_22050", "pcm_16000"})
     reply_hint: str = ""
+    account: Usage = dc.field(default_factory=no_usage)
     chunks: tuple[bytes, ...] = (b"au", b"dio")
     fail: bool = False
     valid: bool = True
@@ -116,8 +115,8 @@ class FakeTts:
                 await self.gate.wait()
             yield chunk + text.encode()
 
-    async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return {}
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        return self.account
 
     async def validate(self, creds: dict[str, str], settings: Domain) -> Validation:
         return (True, None) if self.valid else (False, "the fake says no")

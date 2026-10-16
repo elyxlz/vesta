@@ -10,7 +10,7 @@ import aiohttp
 
 from voice.settings import Domain, JsonValue, SettingDef
 
-from .base import TtsError, Validation, api_key
+from .base import TtsError, Usage, Validation, api_key, no_usage, number_in
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
 MODEL_ID = "eleven_v4_turbo"
@@ -197,8 +197,8 @@ class ElevenLabsTts:
         except (TimeoutError, aiohttp.ClientError) as e:
             raise TtsError(f"elevenlabs request failed: {e}") from e
 
-    async def subscription(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return await fetch_subscription(api_key(creds))
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        return await account_usage(api_key(creds))
 
     async def validate(self, creds: dict[str, str], _settings: Domain) -> Validation:
         return subscription_validation(await fetch_subscription(api_key(creds)))
@@ -218,6 +218,15 @@ def subscription_validation(result: dict[str, JsonValue]) -> Validation:
     if status == "invalid_api_key":
         return False, "invalid api key"
     return False, str(result["error"])
+
+
+async def account_usage(key: str) -> Usage:
+    """The credits of the subscription that both ElevenLabs roles use."""
+    body = await fetch_subscription(key)
+    count, limit = number_in(body, "character_count"), number_in(body, "character_limit")
+    if count is None or limit is None:
+        return no_usage()
+    return {"used": {"amount": count, "unit": "credits"}, "left": {"amount": max(limit - count, 0.0), "unit": "credits"}}
 
 
 async def fetch_subscription(api_key: str) -> dict[str, JsonValue]:

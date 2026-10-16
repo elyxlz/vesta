@@ -14,7 +14,7 @@ import aiohttp
 from voice.config import keyterms
 from voice.settings import Domain, JsonValue, SettingDef, clamped
 
-from .base import SttEvent, SttOpenError, SttStream, Validation, api_key
+from .base import Amount, SttEvent, SttOpenError, SttStream, Usage, Validation, api_key, no_usage, number_in
 from .stream import SocketStream, check_open
 
 DEEPGRAM_API = "https://api.deepgram.com"
@@ -150,24 +150,41 @@ class DeepgramStt:
             self._project_id_cache[key] = project_id
         return project_id
 
-    async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
+    async def usage(self, creds: dict[str, str]) -> Usage:
         key = api_key(creds)
         project_id = await self._cached_project_id(key)
         if not project_id:
-            return {"error": "no project"}
+            return no_usage()
         url = f"{DEEPGRAM_API}/v1/projects/{project_id}/usage/breakdown?endpoint=listen"
-        return await _get_json(url, {"Authorization": f"Token {key}"})
-
-    async def balance(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return await account_balance(api_key(creds))
+        breakdown, left = await asyncio.gather(_get_json(url, {"Authorization": f"Token {key}"}), _balance_left(key, project_id))
+        return {"used": _hours_used(breakdown), "left": left}
 
 
-async def account_balance(key: str) -> dict[str, JsonValue]:
-    """The balances of the project that owns this key, as Deepgram reports them."""
+async def account_balance(key: str) -> Amount | None:
+    """What is left on the project that owns this key."""
     project = await _project_id(key)
-    if not project:
-        return {"error": "no project"}
-    return await _get_json(f"{DEEPGRAM_API}/v1/projects/{project}/balances", {"Authorization": f"Token {key}"})
+    return await _balance_left(key, project) if project else None
+
+
+async def _balance_left(key: str, project: str) -> Amount | None:
+    body = await _get_json(f"{DEEPGRAM_API}/v1/projects/{project}/balances", {"Authorization": f"Token {key}"})
+    balances = body["balances"] if "balances" in body else None
+    if not isinstance(balances, list) or not balances or not isinstance(balance := balances[0], dict):
+        return None
+    amount = number_in(balance, "amount")
+    units = balance["units"] if "units" in balance else None
+    if amount is None or not isinstance(units, str):
+        return None
+    return {"amount": amount, "unit": units.lower()}
+
+
+def _hours_used(breakdown: dict[str, JsonValue]) -> Amount | None:
+    """The hours of all the results of a usage breakdown."""
+    results = breakdown["results"] if "results" in breakdown else None
+    if not isinstance(results, list):
+        return None
+    hours = [number_in(result, "hours") for result in results]
+    return {"amount": sum(h for h in hours if h is not None), "unit": "hours"}
 
 
 def _eot_params(settings: Domain) -> tuple[float, int]:

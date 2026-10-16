@@ -1,8 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchSttUsage,
-  fetchTtsUsage,
   fetchVoiceSettings,
+  fetchVoiceUsage,
   selectVoiceProvider,
   setVoiceBehavior,
   setVoiceEnabled,
@@ -105,23 +104,12 @@ export function useVoiceChange() {
 
 // The usage of a role's provider. The key names the provider, so a switch to another one asks
 // again, and it stays outside the ["voice", name] key that every saved change invalidates.
-export function useSttUsage(provider: string | null) {
+export function useVoiceUsage(domain: "stt" | "tts", provider: string | null) {
   const { api } = useSession();
   const { name } = useAgent();
   return useQuery({
-    queryKey: ["voice-usage", name, "stt", provider],
-    queryFn: () => fetchSttUsage(api, name),
-    staleTime: USAGE_STALE_MS,
-    retry: false,
-  });
-}
-
-export function useTtsUsage(provider: string | null) {
-  const { api } = useSession();
-  const { name } = useAgent();
-  return useQuery({
-    queryKey: ["voice-usage", name, "tts", provider],
-    queryFn: () => fetchTtsUsage(api, name),
+    queryKey: ["voice-usage", name, domain, provider],
+    queryFn: () => fetchVoiceUsage(api, name, domain),
     staleTime: USAGE_STALE_MS,
     retry: false,
   });

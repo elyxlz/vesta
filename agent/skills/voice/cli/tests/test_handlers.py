@@ -9,6 +9,8 @@ import pytest
 import voice.config as vc
 from aiohttp.test_utils import TestClient
 from voice import providers
+from voice.providers.base import Usage
+from voice.settings import JsonValue
 
 from .fakes import FRAME_TIMEOUT_SECS, FakeJudge, FakeStt, FakeTts, next_frame, voice_service
 
@@ -218,6 +220,49 @@ def test_the_reply_hint_is_empty_when_tts_has_no_provider(tmp_path: pl.Path) -> 
     async def scenario(client: TestClient) -> None:
         async with client.get("/tts/reply-hint") as resp:
             assert await resp.json() == {"reply_hint": ""}
+
+    serve(tmp_path, scenario)
+
+
+async def usage_of(client: TestClient, role: str) -> dict[str, JsonValue]:
+    async with client.get(f"/{role}/usage") as resp:
+        assert resp.status == 200
+        answer: dict[str, JsonValue] = await resp.json()
+        return answer
+
+
+def test_the_stt_usage_is_the_shape_of_every_provider_with_the_older_app_shape_beside_it(tmp_path: pl.Path, stt: FakeStt) -> None:
+    stt.account = {"used": {"amount": 4.75, "unit": "hours"}, "left": {"amount": 187.42, "unit": "usd"}}
+
+    async def scenario(client: TestClient) -> None:
+        assert await usage_of(client, "stt") == {
+            "used": {"amount": 4.75, "unit": "hours"},
+            "left": {"amount": 187.42, "unit": "usd"},
+            "usage": {"results": [{"hours": 4.75}]},
+            "balance": {"balances": [{"amount": 187.42, "units": "usd"}]},
+        }
+
+    serve(tmp_path, scenario)
+
+
+@pytest.mark.parametrize(
+    ("account", "older_app_shape"),
+    [
+        (
+            {"used": {"amount": 1200.0, "unit": "credits"}, "left": {"amount": 8800.0, "unit": "credits"}},
+            {"usage": {"character_count": 1200.0, "character_limit": 10000.0}},
+        ),
+        ({"used": None, "left": {"amount": 8.5, "unit": "usd"}}, {"usage": {"balances": [{"amount": 8.5, "units": "usd"}]}}),
+        ({"used": None, "left": None}, {}),
+    ],
+)
+def test_the_tts_usage_is_the_shape_of_every_provider_with_the_older_app_shape_beside_it(
+    tmp_path: pl.Path, tts: FakeTts, account: Usage, older_app_shape: dict[str, JsonValue]
+) -> None:
+    tts.account = account
+
+    async def scenario(client: TestClient) -> None:
+        assert await usage_of(client, "tts") == {**account, **older_app_shape}
 
     serve(tmp_path, scenario)
 

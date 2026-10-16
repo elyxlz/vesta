@@ -17,8 +17,8 @@ import aiohttp
 from voice.config import keyterms
 from voice.settings import Domain, JsonValue, SettingDef, clamped
 
-from .base import SttEvent, SttOpenError, SttStream, Validation, api_key
-from .elevenlabs import ELEVENLABS_API, fetch_subscription
+from .base import SttEvent, SttOpenError, SttStream, Usage, Validation, api_key
+from .elevenlabs import ELEVENLABS_API, account_usage
 from .stream import SocketStream, check_open
 
 logger = logging.getLogger("voice.elevenlabs_stt")
@@ -121,11 +121,8 @@ class ElevenLabsStt:
             body = await resp.json()
             return body["text"].strip() if "text" in body and isinstance(body["text"], str) else ""
 
-    async def usage(self, creds: dict[str, str]) -> dict[str, JsonValue]:
-        return await fetch_subscription(api_key(creds))
-
-    async def balance(self, _creds: dict[str, str]) -> dict[str, JsonValue]:
-        return {}
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        return await account_usage(api_key(creds))
 
 
 def _query(settings: Domain) -> list[tuple[str, str]]:
