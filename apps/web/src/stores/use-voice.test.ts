@@ -256,6 +256,7 @@ class RecordingSocket extends FakeSocket {
   turn(text: string) {
     this.emit({ type: "turn_start" });
     this.emit({ type: "transcript", text });
+    this.emit({ type: "transcript", text: "" });
     this.emit({ type: "turn_end", text });
   }
   // The text frames the client sent, parsed.

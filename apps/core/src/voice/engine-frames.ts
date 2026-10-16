@@ -11,7 +11,6 @@ export type EngineFrame =
   | { type: "turn_start" }
   | { type: "turn_end"; text: string }
   | { type: "turn_dropped" }
-  | { type: "ignored" }
   | { type: "play"; id: string; url: string }
   | { type: "pause_playback" }
   | { type: "resume_playback" }
@@ -35,7 +34,6 @@ export function parseEngineFrame(data: string): EngineFrame | null {
     case "state":
     case "turn_start":
     case "turn_dropped":
-    case "ignored":
     case "pause_playback":
     case "resume_playback":
     case "stop_playback":

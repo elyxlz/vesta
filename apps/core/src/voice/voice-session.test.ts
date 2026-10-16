@@ -68,6 +68,7 @@ function setup() {
   };
   const turn = (socket: FakeEngineSocket, text: string): void => {
     socket.emit({ type: "turn_start" });
+    socket.emit({ type: "transcript", text: "" });
     socket.emit({ type: "turn_end", text });
   };
   const fireTimers = () => {
@@ -120,6 +121,7 @@ describe("the voice session", () => {
     const socket = await startAnd("dictation");
     turn(socket, "buy milk");
     socket.emit({ type: "transcript", text: "uh" });
+    socket.emit({ type: "transcript", text: "" });
     socket.emit({ type: "turn_dropped", text: "", kind: null });
     expect(events.transcripts.at(-1)).toBe("buy milk");
     session.stop();

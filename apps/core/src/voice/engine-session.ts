@@ -202,15 +202,10 @@ export function createEngineSession(
         callbacks.onTurnStart();
         break;
       case "turn_end":
-        callbacks.onTranscript("");
         callbacks.onTurnEnd(frame.text);
         break;
       case "turn_dropped":
-        callbacks.onTranscript("");
         callbacks.onTurnDropped();
-        break;
-      case "ignored":
-        callbacks.onTranscript("");
         break;
       case "play":
         plays.enqueue(frame.id, frame.url);

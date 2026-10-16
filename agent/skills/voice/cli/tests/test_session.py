@@ -72,6 +72,7 @@ def test_a_turn_goes_from_live_text_to_turn_end(tmp_path: pl.Path, stt: FakeStt)
             ]
             assert await frames_until(ws, "state") == [
                 {"type": "transcript", "text": "what is the weather"},
+                {"type": "transcript", "text": ""},
                 {"type": "turn_end", "text": "What is the weather?"},
                 {"type": "state", "value": "listening"},
             ]
@@ -158,6 +159,7 @@ def test_with_no_judge_a_short_backchannel_pauses_and_then_resumes_the_reply(tmp
 
             await stream.emit("committed", "Mhm.")
             assert await frames_until(ws, "state") == [
+                {"type": "transcript", "text": ""},
                 {"type": "resume_playback"},
                 {"type": "ignored", "text": "Mhm.", "kind": "backchannel"},
                 {"type": "state", "value": "agent_speaking"},
@@ -215,7 +217,11 @@ def test_the_judge_decides_a_barge_in_and_sees_what_the_agent_is_saying(
             assert judge.asked[0] == {"agent_name": "agent", "recent": [], "agent_saying": "It will be sunny.", "user_saying": "stop"}
 
             await stream.emit("committed", "Stop.")
-            assert await frames_until(ws, "state") == [{"type": "turn_end", "text": "Stop."}, {"type": "state", "value": "listening"}]
+            assert await frames_until(ws, "state") == [
+                {"type": "transcript", "text": ""},
+                {"type": "turn_end", "text": "Stop."},
+                {"type": "state", "value": "listening"},
+            ]
             # The cut reply and the delivered turn are the lines the judge sees next.
             await stream.emit("transcription", "thanks")
             await frames_until(ws, "transcript")
@@ -236,6 +242,7 @@ def test_the_judge_keeps_words_for_another_person_out_of_the_conversation(tmp_pa
 
             assert await frames_until(ws, "ignored") == [
                 {"type": "transcript", "text": "honey did you"},
+                {"type": "transcript", "text": ""},
                 {"type": "ignored", "text": "Honey, did you take the trash out?", "kind": "other_person"},
             ]
 
@@ -266,8 +273,8 @@ def test_a_reply_that_arrives_during_the_users_turn_waits_for_the_end_of_the_tur
             await stream.emit("committed", "And also the dentist.")
 
             after = await frames_until(ws, "state")
-            assert [frame["type"] for frame in after] == ["turn_end", "play", "state"]
-            assert after[1]["id"] == "r1"
+            assert [frame["type"] for frame in after] == ["transcript", "turn_end", "play", "state"]
+            assert after[2]["id"] == "r1"
 
     asyncio.run(scenario())
 
@@ -283,6 +290,7 @@ def test_a_session_that_cannot_do_barge_in_never_pauses_and_still_has_turns(tmp_
                 {"type": "transcript", "text": "note to self"},
                 {"type": "turn_start"},
                 {"type": "state", "value": "user_turn"},
+                {"type": "transcript", "text": ""},
                 {"type": "turn_end", "text": "Note to self."},
             ]
 
@@ -567,7 +575,7 @@ def test_the_url_of_a_play_answers_404_after_its_session_ends(tmp_path: pl.Path,
     asyncio.run(scenario())
 
 
-def test_live_text_that_ends_with_no_other_frame_tells_the_client_that_it_is_over(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+def test_a_segment_with_no_words_and_no_other_frame_still_ends_its_live_text(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
             await speak_and_start(ws)
@@ -575,10 +583,10 @@ def test_live_text_that_ends_with_no_other_frame_tells_the_client_that_it_is_ove
             await frames_until(ws, "state")
 
             await stream.emit("committed", "")
-            assert await frames_until(ws, "transcript") == [
+            assert await frames_until(ws, "state") == [
+                {"type": "transcript", "text": ""},
                 {"type": "resume_playback"},
                 {"type": "state", "value": "agent_speaking"},
-                {"type": "transcript", "text": ""},
             ]
 
     asyncio.run(scenario())

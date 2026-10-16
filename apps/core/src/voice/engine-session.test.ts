@@ -165,12 +165,13 @@ describe("the engine session", () => {
     await expect(starting).rejects.toThrow("Could not connect to live voice");
   });
 
-  it("delivers a turn: its live text, its start, then its end with the live text cleared", async () => {
+  it("delivers a turn: its live text, its start, the end of its live text, then its end", async () => {
     const { socket, events, started } = setup();
     await started();
     socket.emit({ type: "transcript", text: "what is" });
     socket.emit({ type: "turn_start" });
     socket.emit({ type: "transcript", text: "what is the weather" });
+    socket.emit({ type: "transcript", text: "" });
     socket.emit({ type: "turn_end", text: "What is the weather?" });
 
     expect(events).toEqual([
@@ -182,12 +183,14 @@ describe("the engine session", () => {
     ]);
   });
 
-  it("clears the live text of a turn that was dropped and of text that was ignored", async () => {
+  it("delivers a dropped turn, and does nothing for text that was ignored", async () => {
     const { socket, events, started } = setup();
     await started();
     socket.emit({ type: "transcript", text: "uh" });
+    socket.emit({ type: "transcript", text: "" });
     socket.emit({ type: "turn_dropped", text: "", kind: null });
     socket.emit({ type: "transcript", text: "mhm" });
+    socket.emit({ type: "transcript", text: "" });
     socket.emit({ type: "ignored", text: "mhm", kind: "backchannel" });
 
     expect(events).toEqual([

@@ -16,6 +16,7 @@ client                                engine
                                 ←     transcript {"what is the"}
                                 ←     turn_start
                                 ←     state {user_turn}
+                                ←     transcript {""}
                                 ←     turn_end {"What is the weather?"}
                                 ←     state {listening}
   speak {id, text}              →
@@ -62,7 +63,7 @@ A frame before `start_session`, and a second `start_session`, gets `error` and c
 | Frame | Meaning | What you do |
 | --- | --- | --- |
 | `state {value}` | `listening`, `user_turn`, `agent_speaking`, or `agent_paused`. Sent on each change. | Show it. |
-| `transcript {text}` | The live text of what the mic hears now. Empty text means that the text before it is over and no other frame says what became of it. | Show it. |
+| `transcript {text}` | The live text of what the mic hears now. Each time the STT ends a stretch of speech, empty text follows, before any frame that says what became of that speech. | Show it. |
 | `turn_start` | A turn said to the agent started. The user holds the floor. | Hold replies back. |
 | `turn_end {text}` | The turn is over. `text` goes to the agent and is never empty. | Deliver it. |
 | `turn_dropped {text, kind}` | A started turn is over and does not go to the agent. `kind` is null when the text is empty. | Deliver nothing. |
