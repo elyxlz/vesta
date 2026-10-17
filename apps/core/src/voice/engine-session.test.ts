@@ -103,17 +103,12 @@ describe("the engine session", () => {
     });
   });
 
-  it("probes an audio element for ogg opus, and says no without one", () => {
+  it("probes an audio element for ogg opus, and says no without a dom", () => {
     expect(canPlayOggOpusInDom()).toBe(false);
     const canPlayType = vi.fn((type: string) =>
       type === 'audio/ogg; codecs="opus"' ? "probably" : "",
     );
-    vi.stubGlobal(
-      "Audio",
-      class {
-        canPlayType = canPlayType;
-      },
-    );
+    vi.stubGlobal("document", { createElement: () => ({ canPlayType }) });
     try {
       expect(canPlayOggOpusInDom()).toBe(true);
       canPlayType.mockReturnValue("");

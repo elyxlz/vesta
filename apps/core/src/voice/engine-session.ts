@@ -34,7 +34,7 @@ export interface EngineSessionDeps {
   // The name the engine logs this client under.
   client: string;
   // Whether the speaker decodes Ogg Opus. Defaults to asking an HTML audio element, and to
-  // false where the runtime has none; tests inject the answer.
+  // false where the runtime has no DOM; tests inject the answer.
   canPlayOggOpus?: () => boolean;
 }
 
@@ -72,9 +72,10 @@ export interface EngineSession {
 }
 
 export function canPlayOggOpusInDom(): boolean {
-  if (typeof Audio === "undefined") return false;
+  if (typeof document === "undefined") return false;
   try {
-    return new Audio().canPlayType('audio/ogg; codecs="opus"') !== "";
+    const probe = document.createElement("audio");
+    return probe.canPlayType('audio/ogg; codecs="opus"') !== "";
   } catch {
     return false;
   }
