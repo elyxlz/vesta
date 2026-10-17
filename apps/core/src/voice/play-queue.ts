@@ -14,6 +14,8 @@ export interface Speaker {
   // Pause and continue the audio that plays now. Both do nothing when none plays.
   pause: () => void;
   resume: () => void;
+  // Whether the speaker decodes Ogg Opus, the best format a provider streams.
+  playsOggOpus: boolean;
 }
 
 export type PlayReport = "started" | "finished" | "failed";

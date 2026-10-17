@@ -66,7 +66,18 @@ export async function prepareSpeechUrl(
   text: string,
 ): Promise<string> {
   const id = await core.prepareSpeech(httpClient, agentName, text);
-  return authedUrl(core.ttsStreamPath(agentName, id));
+  return authedUrl(
+    core.ttsStreamPath(agentName, id),
+    core.ttsStreamQuery(playsOggOpus()),
+  );
+}
+
+// Chromium and Firefox decode Ogg Opus in an <audio> element; Safari answers for itself.
+function playsOggOpus(): boolean {
+  return (
+    document.createElement("audio").canPlayType('audio/ogg; codecs="opus"') !==
+    ""
+  );
 }
 
 // The speaker port: one <audio> element for each url, with the pause and resume the voice
@@ -74,6 +85,10 @@ export async function prepareSpeechUrl(
 export function browserSpeaker(): Speaker {
   let current: HTMLAudioElement | null = null;
   return {
+    // Probed when a session asks, so building the speaker reads no DOM.
+    get playsOggOpus() {
+      return playsOggOpus();
+    },
     play: (url, signal, onStarted) => {
       if (signal.aborted) return Promise.resolve();
       const audio = new Audio(url);

@@ -4,6 +4,7 @@
 // session does what its frames say and reports what the speaker did. Platforms inject only how
 // audio is captured, how the socket is dialed, and how a url is played.
 
+import { playbackFormats } from "../api/voice";
 import { adaptWebSocket, type SocketLike } from "../transport/websocket";
 import { parseEngineFrame, type EngineFrame } from "./engine-frames";
 import { createPlayQueue, type PlayQueue, type Speaker } from "./play-queue";
@@ -33,9 +34,6 @@ export interface EngineSessionDeps {
   playUrl: (path: string) => Promise<string>;
   // The name the engine logs this client under.
   client: string;
-  // Whether the speaker decodes Ogg Opus. Defaults to asking an HTML audio element, and to
-  // false where the runtime has no DOM; tests inject the answer.
-  canPlayOggOpus?: () => boolean;
 }
 
 export interface EngineSessionCallbacks {
@@ -69,23 +67,6 @@ export interface EngineSession {
   // The user stopped the speech on the device.
   stopSpeech: () => void;
   speaking: () => boolean;
-}
-
-export function canPlayOggOpusInDom(): boolean {
-  if (typeof document === "undefined") return false;
-  try {
-    const probe = document.createElement("audio");
-    return probe.canPlayType('audio/ogg; codecs="opus"') !== "";
-  } catch {
-    return false;
-  }
-}
-
-// The play formats asked of the engine, first preferred; it takes the first its TTS provider
-// makes. Opus leads only where the speaker decodes it, and mp3_22050 is the one every
-// shipped provider makes.
-function playbackFormats(canPlayOggOpus: boolean): string[] {
-  return [...(canPlayOggOpus ? ["opus_48000"] : []), "mp3_44100", "mp3_22050"];
 }
 
 const CONNECT_FAILED = "Could not connect to live voice";
@@ -278,9 +259,7 @@ export function createEngineSession(
         audio: { encoding: "pcm_s16le", sample_rate: 16000, channels: 1 },
         playback: {
           delivery: "url",
-          formats: playbackFormats(
-            (deps.canPlayOggOpus ?? canPlayOggOpusInDom)(),
-          ),
+          formats: playbackFormats(deps.speaker.playsOggOpus),
         },
         barge_in: options.bargeIn,
       });

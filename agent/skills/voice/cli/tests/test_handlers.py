@@ -101,6 +101,28 @@ def test_a_prepared_id_streams_its_text_and_an_unknown_id_is_404(tmp_path: pl.Pa
     serve(tmp_path, scenario)
 
 
+@pytest.mark.parametrize(
+    ("made", "expected"),
+    [
+        (frozenset({"opus_48000", "mp3_44100", "mp3_22050"}), ("opus_48000", "audio/ogg")),
+        (frozenset({"mp3_22050"}), ("mp3_22050", "audio/mpeg")),
+    ],
+)
+def test_a_stream_plays_the_first_format_the_client_names_that_the_provider_makes(
+    tmp_path: pl.Path, tts: FakeTts, made: frozenset[str], expected: tuple[str, str]
+) -> None:
+    tts.formats = made
+
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/tts/prepare", json={"text": "Later"}) as resp:
+            prepared = await resp.json()
+        async with client.get(f"/tts/stream/{prepared['id']}", params={"formats": "opus_48000,mp3_44100,mp3_22050"}) as resp:
+            assert resp.headers["Content-Type"] == expected[1]
+
+    serve(tmp_path, scenario)
+    assert tts.spoken == [("Later", "v-default", expected[0])]
+
+
 def test_prepare_rejects_empty_text(tmp_path: pl.Path, tts: FakeTts) -> None:
     async def scenario(client: TestClient) -> None:
         async with client.post("/tts/prepare", json={"text": "   "}) as resp:

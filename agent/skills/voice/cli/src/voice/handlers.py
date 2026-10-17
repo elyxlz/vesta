@@ -257,15 +257,14 @@ async def tts_set_voice(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _speak_response(request: web.Request, text: str, speak_format: str) -> web.StreamResponse:
+async def _speak_response(request: web.Request, text: str, candidates: tuple[str, ...]) -> web.StreamResponse:
     resolved = _selected(request, "tts", providers.TTS)
     if isinstance(resolved, web.Response):
         return resolved
     entry, name, provider = resolved
-    candidates = SPEAK_FORMATS[speak_format] if speak_format in SPEAK_FORMATS else ()
     play_format = next((f for f in candidates if f in provider.formats), None)
     if play_format is None:
-        return _error(f"unsupported audio format: {speak_format}", 400)
+        return _error(f"unsupported audio format: {', '.join(candidates)}", 400)
     audio = provider.synthesize(
         text,
         providers.selected_voice(provider, entry),
@@ -306,7 +305,9 @@ async def tts_speak(request: web.Request) -> web.StreamResponse:
     # "format" selects the audio encoding: "mp3" (default, the app's <audio> element) or "pcm"
     # (raw signed 16-bit LE mono at 16 kHz, which a phone-call consumer plays into a live call).
     speak_format = body["format"] if "format" in body and isinstance(body["format"], str) else "mp3"
-    return await _speak_response(request, text, speak_format)
+    if speak_format not in SPEAK_FORMATS:
+        return _error(f"unsupported audio format: {speak_format}", 400)
+    return await _speak_response(request, text, SPEAK_FORMATS[speak_format])
 
 
 async def tts_prepare(request: web.Request) -> web.Response:
@@ -329,4 +330,7 @@ async def tts_stream(request: web.Request) -> web.StreamResponse:
     text = tts_pending.resolve(_PENDING_TTS, request.match_info["id"], time.monotonic())
     if text is None:
         return _error("unknown or expired tts id", 404)
-    return await _speak_response(request, text, "mp3")
+    # `formats` names the play formats the client's player decodes, first preferred, as in
+    # `start_session`; with none named, the clip is mp3.
+    formats = tuple(f for f in request.query["formats"].split(",") if f) if "formats" in request.query else SPEAK_FORMATS["mp3"]
+    return await _speak_response(request, text, formats)

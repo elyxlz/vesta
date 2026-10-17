@@ -10,9 +10,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // decides whether audio ever reaches the voice endpoint at all.
 vi.mock("@/api/client", () => ({
   httpClient: { json: vi.fn() },
-  authedUrl: vi.fn((path: string) =>
-    Promise.resolve(`https://host:8443${path}?token=tok`),
-  ),
+  authedUrl: vi.fn((path: string, query?: URLSearchParams) => {
+    const params = new URLSearchParams(query);
+    params.set("token", "tok");
+    return Promise.resolve(`https://host:8443${path}?${params.toString()}`);
+  }),
   websocketUrl: vi.fn((path: string) =>
     Promise.resolve(`wss://host:8443${path}?token=tok`),
   ),
@@ -86,6 +88,10 @@ beforeEach(() => {
   FakeSocket.urls = [];
   vi.stubGlobal("Audio", FakeAudio);
   vi.stubGlobal("WebSocket", FakeSocket);
+  // An <audio> element that decodes Ogg Opus, as Chromium's does.
+  vi.stubGlobal("document", {
+    createElement: () => ({ canPlayType: () => "probably" }),
+  });
   vi.stubGlobal("navigator", {
     mediaDevices: {
       getUserMedia: () => Promise.resolve({ getTracks: () => [] }),
@@ -120,7 +126,7 @@ describe("speak() — the assistant-message TTS trigger", () => {
     // ... and the returned id was played from the streamed GET url.
     await vi.waitFor(() => expect(FakeAudio.created).toHaveLength(1));
     expect(FakeAudio.created[0]?.src).toBe(
-      "https://host:8443/agents/test-agent/voice/tts/stream/tts-1?token=tok",
+      "https://host:8443/agents/test-agent/voice/tts/stream/tts-1?formats=opus_48000%2Cmp3_44100%2Cmp3_22050&token=tok",
     );
   });
 
@@ -181,8 +187,8 @@ describe("speak() — the assistant-message TTS trigger", () => {
 
     await vi.waitFor(() => expect(FakeAudio.created).toHaveLength(2));
     expect(FakeAudio.created.map((a) => a.src)).toEqual([
-      "https://host:8443/agents/test-agent/voice/tts/stream/a?token=tok",
-      "https://host:8443/agents/test-agent/voice/tts/stream/b?token=tok",
+      "https://host:8443/agents/test-agent/voice/tts/stream/a?formats=opus_48000%2Cmp3_44100%2Cmp3_22050&token=tok",
+      "https://host:8443/agents/test-agent/voice/tts/stream/b?formats=opus_48000%2Cmp3_44100%2Cmp3_22050&token=tok",
     ]);
   });
 
