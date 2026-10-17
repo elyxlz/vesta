@@ -47,10 +47,12 @@ NativeChatScrollView.displayName = "NativeChatScrollView";
 // `keyboardOffset` is the composer dock's own opened offset, so the list and
 // the dock agree on how much of the keyboard's height the content must yield.
 // While `freeze` holds, the keyboard moving leaves the list where it is.
+// `scrollOffset` mirrors the raw offset for UI-thread readers.
 export function useInvertedChatScroll<Row>(
   extraContentPadding: SharedValue<number>,
   keyboardOffset: number,
   freeze: SharedValue<boolean>,
+  scrollOffset: SharedValue<number>,
 ) {
   const listRef = useRef<FlatList<Row>>(null);
   const isAtLatestRef = useRef(true);
@@ -115,6 +117,7 @@ export function useInvertedChatScroll<Row>(
 
   const handleScroll = useCallback(
     ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollOffset.set(nativeEvent.contentOffset.y);
       const isAtLatest = isNearLatestMessage(
         nativeEvent.contentOffset.y,
         latestOffsetRef.current,
@@ -124,7 +127,7 @@ export function useInvertedChatScroll<Row>(
       isAtLatestRef.current = isAtLatest;
       setIsAwayFromLatest(!isAtLatest);
     },
-    [],
+    [scrollOffset],
   );
 
   const scrollToLatest = useCallback(() => {

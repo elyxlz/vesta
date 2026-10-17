@@ -6,12 +6,7 @@ import {
   fetchVoiceStatus,
   type OrbMotion,
 } from "@vesta/core";
-import {
-  StyleSheet,
-  View,
-  useWindowDimensions,
-  type LayoutChangeEvent,
-} from "react-native";
+import { StyleSheet, View, useWindowDimensions } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
   KeyboardStickyView,
@@ -43,8 +38,9 @@ import { GlassSurface } from "@/components/ui/glass-surface";
 import {
   AttachButton,
   ComposerActions,
-  ReplyPreview,
+  ReplySlot,
 } from "@/agent/chat/chat-composer";
+import { useComposerInset } from "@/agent/chat/use-composer-inset";
 import { AttachmentChips } from "@/agent/chat/attachment-chips";
 import { AttachmentViewer } from "@/agent/chat/attachment-viewer";
 import type { OpenViewerRequest } from "@/agent/chat/attachment-content";
@@ -57,7 +53,6 @@ import { useTranscriptWordHaptics } from "@/agent/chat/use-transcript-word-hapti
 import { agentHolds } from "@/holds/agent-holds";
 import { connectionKeyOf } from "@/session/session-model";
 
-const CHAT_COMPOSER_GAP = 6;
 const COMPOSER_SURFACE_PADDING = 8;
 // Space kept below the composer: above the home indicator while the keyboard
 // is closed, and above the keyboard once it is open.
@@ -121,8 +116,6 @@ export default function ChatPage() {
   );
   const inputRef = useRef<ChatComposerInputRef>(null);
   const lockPagerScroll = usePagerScrollLock();
-  const measuredComposerHeight = useRef<number | null>(null);
-  const composerInset = useSharedValue(0);
   // How far the dock drops back toward an open keyboard, so that of its
   // closed bottom padding only the keyboard gap stays above the keys.
   const composerKeyboardOffset =
@@ -132,6 +125,14 @@ export default function ChatPage() {
   // and the keyboard it closed comes back when the menu does.
   const menuOpen = useSharedValue(false);
   const keyboardOpenAtMenuRef = useRef(false);
+  const {
+    composerInset,
+    scrollOffset,
+    replyHeight,
+    transcriptShift,
+    handleComposerLayout,
+    slideReplyTo,
+  } = useComposerInset(menuOpen);
   const {
     attachList,
     handleScroll,
@@ -143,6 +144,7 @@ export default function ChatPage() {
     composerInset,
     composerKeyboardOffset,
     menuOpen,
+    scrollOffset,
   );
   const rows = useMemo(
     () => createInvertedChatRows(socket.events, socket.isTyping),
@@ -158,21 +160,6 @@ export default function ChatPage() {
     return () => clearTimeout(timer);
   }, [isAwayFromLatest, trimHistory]);
 
-  const handleComposerLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const height = Math.max(event.nativeEvent.layout.height, 0);
-      const previousHeight = measuredComposerHeight.current;
-      if (previousHeight !== null && Math.abs(previousHeight - height) < 0.5) {
-        return;
-      }
-
-      measuredComposerHeight.current = height;
-      // Set, never tweened: the list compensates each inset delta against its last known scroll
-      // position, which lags an animated inset by a frame and loses a sliver per step.
-      composerInset.set(height + CHAT_COMPOSER_GAP);
-    },
-    [composerInset],
-  );
   const hasVoiceService = Boolean(agent && "voice" in agent.services);
   const speechToText = useQuery({
     queryKey: ["voice", name, "stt"],
@@ -383,6 +370,7 @@ export default function ChatPage() {
         historyLoaded={socket.historyLoaded}
         loadingMore={socket.loadingMore}
         composerInset={composerInset}
+        shift={transcriptShift}
         keyboardOffset={composerKeyboardOffset}
         attachList={attachList}
         onScroll={handleScroll}
@@ -441,9 +429,12 @@ export default function ChatPage() {
                 />
               ) : (
                 <>
-                  {replyTarget ? (
-                    <ReplyPreview target={replyTarget} onCancel={cancelReply} />
-                  ) : null}
+                  <ReplySlot
+                    target={replyTarget}
+                    height={replyHeight}
+                    onCancel={cancelReply}
+                    onHeight={slideReplyTo}
+                  />
                   <AttachmentChips
                     drafts={attachments.drafts}
                     previewUri={attachments.previewUri}

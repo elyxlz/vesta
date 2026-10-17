@@ -42,6 +42,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   historyLoaded,
   loadingMore,
   composerInset,
+  shift,
   keyboardOffset,
   attachList,
   onScroll,
@@ -61,6 +62,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   historyLoaded: boolean;
   loadingMore: boolean;
   composerInset: SharedValue<number>;
+  shift: SharedValue<number>;
   keyboardOffset: number;
   attachList: (list: FlatList<ChatRow> | null) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -96,6 +98,9 @@ export const ChatTranscript = memo(function ChatTranscript({
   );
   const loadingOverlayInsetStyle = useAnimatedStyle(() => ({
     paddingBottom: composerInset.value,
+  }));
+  const shiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: shift.get() }],
   }));
   const renderChatEvent = useCallback<ListRenderItem<ChatRow>>(
     ({ item }) =>
@@ -135,29 +140,31 @@ export const ChatTranscript = memo(function ChatTranscript({
 
   return (
     <>
-      <FlatList
-        ref={attachList}
-        data={rows}
-        inverted
-        keyExtractor={keyExtractor}
-        renderItem={renderChatEvent}
-        contentContainerStyle={contentContainerStyle}
-        keyboardShouldPersistTaps="handled"
-        scrollEnabled={historyLoaded || rows.length > 0}
-        renderScrollComponent={renderScrollComponent}
-        onScroll={onScroll}
-        onContentSizeChange={onContentSizeChange}
-        scrollEventThrottle={16}
-        onEndReached={onLoadEarlier}
-        onEndReachedThreshold={0.1}
-        ListFooterComponent={
-          loadingMore ? (
-            <View style={styles.loadingMore}>
-              <LoadingSpinner color={colors.interactive} />
-            </View>
-          ) : null
-        }
-      />
+      <Reanimated.View style={[styles.list, shiftStyle]}>
+        <FlatList
+          ref={attachList}
+          data={rows}
+          inverted
+          keyExtractor={keyExtractor}
+          renderItem={renderChatEvent}
+          contentContainerStyle={contentContainerStyle}
+          keyboardShouldPersistTaps="handled"
+          scrollEnabled={historyLoaded || rows.length > 0}
+          renderScrollComponent={renderScrollComponent}
+          onScroll={onScroll}
+          onContentSizeChange={onContentSizeChange}
+          scrollEventThrottle={16}
+          onEndReached={onLoadEarlier}
+          onEndReachedThreshold={0.1}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.loadingMore}>
+                <LoadingSpinner color={colors.interactive} />
+              </View>
+            ) : null
+          }
+        />
+      </Reanimated.View>
       {historyLoaded && empty ? (
         <ChatEmptyState
           agentName={agentName}
@@ -197,6 +204,7 @@ export const ChatTranscript = memo(function ChatTranscript({
 });
 
 const styles = StyleSheet.create({
+  list: { flex: 1 },
   listContent: { paddingHorizontal: 12 },
   navBarVeil: {
     position: "absolute",
