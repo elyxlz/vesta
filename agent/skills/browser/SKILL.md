@@ -96,7 +96,11 @@ a site the user signed into before answers signed in until that site itself expi
 Open the page first and read it: ask for a handover only when the page shows a sign-in wall, and
 say to the user that the earlier sign-in expired. Hand the browser to the user when the wall is
 account trust: a sign-in the user must complete, a locked tenant, a code that only their own device
-holds. Rule out the cheap causes first ([interaction-skills/forms.md](interaction-skills/forms.md)),
+holds. Before clicking anything that sends a one-time code (a "sign in" that texts or emails a code, a
+"resend"), read where it will go: the page usually shows a masked number or address. If that
+destination is not one you know is the user's, stop and report it instead of triggering the send,
+because the code then lands on a stranger's phone and the user cannot fix it from their side.
+Rule out the cheap causes first ([interaction-skills/forms.md](interaction-skills/forms.md)),
 because a handover spends the user's time. A cold stealth session can spend most of the handover's start budget on the browser start:
 run one `browser exec` on the session first, then hand it over.
 
