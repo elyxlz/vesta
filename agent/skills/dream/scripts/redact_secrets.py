@@ -32,14 +32,16 @@ FILE_SCAN_MAX_BYTES = 256 * 1024
 # Directories the file walk never enters, by name (package caches, the git object store, test
 # fixtures and their fake credentials) and by path (the two upstream source trees, whose code spells
 # credential shapes such as `password=` on hundreds of lines; `core` is a read-only mount, and every
-# edit the agent makes under `skills` passes through the transcript, which is scanned).
+# edit the agent makes under `skills` passes through the transcript, which is scanned; and the Go
+# module cache, whose crypto test vectors and keys are third-party fixtures).
 FILE_SCAN_PRUNE = frozenset({".git", ".cache", ".npm", "node_modules", "site-packages", "__pycache__", "tests"})
-FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"))
+FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"), Path("~/go/pkg/mod"))
 # Refs the scan prints for sources it can only read: a file is fixed by hand, a transcript by rotation.
 READ_ONLY_REF_PREFIXES = ("file:", "transcript:")
 # The tables FTS5 creates behind a virtual table: binary index shards, never scanned directly.
 _FTS_SHADOW_SUFFIXES = ("_data", "_idx", "_content", "_docsize", "_config")
 REDACTED = "[REDACTED]"
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 # The shortest value --scrub-literal accepts: the rewrite is DB-wide, so a tiny literal ("a", "key")
 # would splice the placeholder through unrelated text across the entire history.
 MIN_LITERAL_LEN = 6
@@ -326,7 +328,8 @@ def _decoded(data: str) -> JsonValue | None:
 def _mask_context(window: str) -> str:
     """Mask both pattern hits and payment cards in a scan snippet, so reviewing a candidate never
     re-leaks the value back into a new event (the old redaction loop's self-reseeding)."""
-    return _redact_text(window).replace("\n", " ")
+    # Control bytes from binary files (.pages, .pdf) make grep treat the report as binary.
+    return CONTROL_CHARS.sub(" ", _redact_text(window))
 
 
 def _hit_spans(text: str) -> list[tuple[int, int]]:
