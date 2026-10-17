@@ -33,6 +33,18 @@ tags:
       SCREENSHOT: agent-voice-select.png
 - stopApp
 - openLink:
+    link: "vesta-dev://agent/aria/voice/select?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualServices=voice&section=tts&setting=voice"
+- runFlow: wait-for-launch.yml
+- extendedWaitUntil:
+    visible: '.*Andromeda.*'
+    timeout: 30000
+- takeScreenshot: agent-voice-options
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-voice-options.png
+- stopApp
+- openLink:
     link: "vesta-dev://agent/aria/details/notifications?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - runFlow: wait-for-launch.yml
 - extendedWaitUntil:

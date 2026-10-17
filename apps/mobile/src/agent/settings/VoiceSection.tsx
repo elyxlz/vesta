@@ -1,143 +1,122 @@
-import { useState } from "react";
+import type { ReactNode } from "react";
 import { Alert, StyleSheet, View } from "react-native";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  fetchVoiceStatus,
-  setVoiceEnabled,
-  setVoiceSetting,
-} from "@vesta/core";
-import type { SettingDef, VoiceStatus } from "@vesta/core";
+import { voiceUsageSummary } from "@vesta/core";
+import type { VoiceDomain, VoiceStatus } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
-import { useToast } from "@/components/native-toast";
-import { Button } from "@/components/ui/Button";
+import {
+  useVoiceChange,
+  useVoiceUsage,
+  useVoiceSettings,
+  type VoiceChange,
+} from "@/agent/settings/voice-actions";
+import { VoiceSetting } from "@/agent/settings/voice-setting";
 import { Card } from "@/components/ui/Card";
-import { Field, FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
+import { FormRow, SwitchRow } from "@/components/ui/Form";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
 import { Quote, Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-import { useSession } from "@/session/SessionProvider";
 
-type VoiceDomain = "stt" | "tts";
+const DOMAIN_TITLES: Record<VoiceDomain, string> = {
+  stt: "Speech to text",
+  tts: "Text to speech",
+  judge: "Judge",
+};
 
-function settingValue(setting: SettingDef): string {
-  if (typeof setting.value === "string") return setting.value;
-  if (typeof setting.value === "number") return String(setting.value);
-  if (typeof setting.value === "boolean") return setting.value ? "on" : "off";
-  return "default";
-}
+const ENABLED_DETAILS: Record<VoiceDomain, string> = {
+  stt: "Use live transcription in chat.",
+  tts: "Speak new replies when available.",
+  judge: "Let the judge read your words while a reply plays.",
+};
 
-function VoiceSetting({
-  setting,
+// The usage row mounts only for a role that is configured and on, so no other role asks its
+// provider.
+function UsageRow({
   domain,
-  onChange,
-  busy,
+  provider,
 }: {
-  setting: SettingDef;
-  domain: VoiceDomain;
-  onChange: (domain: VoiceDomain, key: string, value: unknown) => void;
-  busy: boolean;
+  domain: "stt" | "tts";
+  provider: string | null;
 }) {
-  const [draft, setDraft] = useState(settingValue(setting));
-
-  if (setting.type === "bool") {
-    return (
-      <SwitchRow
-        label={setting.label}
-        detail={setting.description}
-        value={Boolean(setting.value)}
-        onValueChange={(value) => onChange(domain, setting.key, value)}
-      />
-    );
-  }
-
-  if (setting.type === "select") {
-    const choose = () => {
-      const choices = (setting.options ?? []).map((option) => ({
-        text: option.label,
-        onPress: () => onChange(domain, setting.key, option.value),
-      }));
-      Alert.alert(setting.label, setting.description, [
-        ...choices,
-        { text: "Cancel", style: "cancel" },
-      ]);
-    };
-    return (
-      <FormRow
-        label={setting.label}
-        detail={setting.description}
-        value={settingValue(setting)}
-        onPress={choose}
-      />
-    );
-  }
-
-  return (
-    <View style={styles.numberSetting}>
-      <Field
-        label={setting.label}
-        description={setting.description}
-        value={draft}
-        onChangeText={setDraft}
-        keyboardType="decimal-pad"
-      />
-      <Button
-        variant="secondary"
-        disabled={busy || !Number.isFinite(Number(draft))}
-        onPress={() => onChange(domain, setting.key, Number(draft))}
-      >
-        Apply
-      </Button>
-    </View>
-  );
+  const usage = useVoiceUsage(domain, provider);
+  return <FormRow label="Usage" value={voiceUsageSummary(usage.data)} />;
 }
 
 function DomainCard({
   domain,
   status,
-  onToggle,
-  onSetting,
+  about,
+  onChange,
   busy,
 }: {
   domain: VoiceDomain;
   status: VoiceStatus;
-  onToggle: (domain: VoiceDomain, value: boolean) => void;
-  onSetting: (domain: VoiceDomain, key: string, value: unknown) => void;
+  // What the role does, for a role the user must choose with care.
+  about?: ReactNode;
+  onChange: (change: VoiceChange, onSettled?: () => void) => void;
   busy: boolean;
 }) {
   const { colors } = usePreferences();
-  const title = domain === "stt" ? "Speech to text" : "Text to speech";
+  const title = DOMAIN_TITLES[domain];
+  const connected = status.connected ?? [];
+  const live = status.configured && status.enabled !== false;
+  // With two or more providers connected to the role, the card offers the switch.
+  const chooseProvider = () => {
+    Alert.alert("Provider", `Choose who does ${title.toLowerCase()}.`, [
+      ...connected.map((provider) => ({
+        text: provider,
+        onPress: () => onChange({ type: "provider", domain, provider }),
+      })),
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
   return (
     <Card>
-      <View style={styles.domainHeader}>
-        <View style={styles.domainTitle}>
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>
-            {title}
-          </Text>
-          <Text style={[styles.provider, { color: colors.secondaryText }]}>
-            {status.provider ?? "not configured"}
-          </Text>
-        </View>
+      <View>
+        <Text family="heading" style={[styles.title, { color: colors.text }]}>
+          {title}
+        </Text>
+        <Text style={[styles.provider, { color: colors.secondaryText }]}>
+          {status.provider ?? "not configured"}
+        </Text>
       </View>
+      {about ? (
+        <Text style={[styles.about, { color: colors.secondaryText }]}>
+          {about}
+        </Text>
+      ) : null}
       <SwitchRow
         label={status.configured ? "Enabled" : "Needs configuration"}
         detail={
           status.configured
-            ? domain === "stt"
-              ? "Use live transcription in chat."
-              : "Speak new replies when available."
+            ? ENABLED_DETAILS[domain]
             : "Ask the agent to configure this voice service."
         }
-        value={status.configured && status.enabled !== false}
+        value={live}
         disabled={!status.configured || busy}
-        onValueChange={(value) => onToggle(domain, value)}
+        onValueChange={(value) => onChange({ type: "enabled", domain, value })}
       />
-      {status.configured && status.enabled !== false
+      {live && connected.length > 1 ? (
+        <FormRow
+          label="Provider"
+          value={status.provider ?? undefined}
+          onPress={chooseProvider}
+        />
+      ) : null}
+      {live && domain !== "judge" ? (
+        <UsageRow domain={domain} provider={status.provider} />
+      ) : null}
+      {live
         ? (status.settings ?? []).map((setting) => (
             <VoiceSetting
               key={setting.key}
               setting={setting}
-              domain={domain}
-              onChange={onSetting}
+              section={domain}
+              onSave={(section, key, value, onSettled) =>
+                onChange(
+                  { type: "setting", domain: section, key, value },
+                  onSettled,
+                )
+              }
               busy={busy}
             />
           ))
@@ -147,47 +126,12 @@ function DomainCard({
 }
 
 export function VoiceSection() {
-  const queryClient = useQueryClient();
-  const { api } = useSession();
-  const { name, agent } = useAgent();
-  const { showError } = useToast();
-  // The voice service registers itself once the agent has set voice up; until then the proxy has
-  // nothing to serve, so the page explains instead of asking.
-  const hasVoiceService = Boolean(agent && "voice" in agent.services);
-  const status = useQuery({
-    queryKey: ["voice", name],
-    enabled: hasVoiceService,
-    queryFn: async () => {
-      const [stt, tts] = await Promise.all([
-        fetchVoiceStatus(api, name, "stt"),
-        fetchVoiceStatus(api, name, "tts"),
-      ]);
-      return { stt, tts };
-    },
-  });
-  const change = useMutation({
-    mutationFn: async (
-      operation:
-        | { type: "enabled"; domain: VoiceDomain; value: boolean }
-        | { type: "setting"; domain: VoiceDomain; key: string; value: unknown },
-    ) => {
-      if (operation.type === "enabled") {
-        await setVoiceEnabled(api, name, operation.domain, operation.value);
-      } else {
-        await setVoiceSetting(
-          api,
-          name,
-          operation.domain,
-          operation.key,
-          operation.value,
-        );
-      }
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["voice", name] });
-    },
-    onError: (error) => showError(error, "Could not save the voice setting"),
-  });
+  const { name } = useAgent();
+  const { settings, hasVoiceService } = useVoiceSettings();
+  const change = useVoiceChange();
+  const { colors } = usePreferences();
+  const apply = (next: VoiceChange, onSettled?: () => void) =>
+    change.mutate(next, { onSettled });
 
   if (!hasVoiceService) {
     return (
@@ -204,62 +148,82 @@ export function VoiceSection() {
     );
   }
 
-  if (status.isLoading) return <LoadingState label="Loading voice services…" />;
-  if (!status.data) {
+  if (settings.isLoading) {
+    return <LoadingState label="Loading voice services…" />;
+  }
+  if (!settings.data) {
     return (
       <ErrorState
         message={
-          status.error instanceof Error
-            ? status.error.message
+          settings.error instanceof Error
+            ? settings.error.message
             : "Voice settings are unavailable."
         }
-        retry={() => void status.refetch()}
+        retry={() => void settings.refetch()}
       />
     );
   }
 
+  const { stt, tts, judge, behaviors } = settings.data;
   return (
     <>
-      <FormSection
-        title="Live voice"
-        footer="Voice processing uses the services configured by this agent. Microphone access is requested only when you start listening."
-      >
-        <FormRow
-          label="Conversation mode"
-          detail="Tap the microphone in Chat to stream speech and send completed turns."
-          icon="mic-outline"
-        />
-      </FormSection>
       <DomainCard
         domain="stt"
-        status={status.data.stt}
+        status={stt}
         busy={change.isPending}
-        onToggle={(domain, value) =>
-          change.mutate({ type: "enabled", domain, value })
-        }
-        onSetting={(domain, key, value) =>
-          change.mutate({ type: "setting", domain, key, value })
-        }
+        onChange={apply}
       />
       <DomainCard
         domain="tts"
-        status={status.data.tts}
+        status={tts}
         busy={change.isPending}
-        onToggle={(domain, value) =>
-          change.mutate({ type: "enabled", domain, value })
-        }
-        onSetting={(domain, key, value) =>
-          change.mutate({ type: "setting", domain, key, value })
-        }
+        onChange={apply}
       />
+      {judge ? (
+        <DomainCard
+          domain="judge"
+          status={judge}
+          about={
+            <>
+              While a reply plays, the judge decides who your words are for: a
+              short <Quote>“stop”</Quote> cuts the reply, an{" "}
+              <Quote>“mhm”</Quote> does not, and talk to another person in the
+              room stays out of the conversation. While it is on, your live
+              words and the line {name} is saying go to{" "}
+              {judge.provider ?? "its provider"}.
+            </>
+          }
+          busy={change.isPending}
+          onChange={apply}
+        />
+      ) : null}
+      {behaviors?.settings.length ? (
+        <Card>
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            Behavior
+          </Text>
+          {behaviors.settings.map((setting) => (
+            <VoiceSetting
+              key={setting.key}
+              setting={setting}
+              section="behavior"
+              onSave={(section, key, value, onSettled) =>
+                apply(
+                  { type: "setting", domain: section, key, value },
+                  onSettled,
+                )
+              }
+              busy={change.isPending}
+            />
+          ))}
+        </Card>
+      ) : null}
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  domainHeader: { flexDirection: "row", alignItems: "center" },
-  domainTitle: { flex: 1 },
   title: { fontSize: 19, fontWeight: "500" },
   provider: { fontSize: 13, marginTop: 2 },
-  numberSetting: { gap: 8 },
+  about: { fontSize: 14, lineHeight: 20 },
 });

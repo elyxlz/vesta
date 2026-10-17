@@ -1,5 +1,5 @@
 import * as core from "@vesta/core";
-import type { AudioCapture, SpeechPlayer } from "@vesta/core";
+import type { AudioCapture, Speaker } from "@vesta/core";
 import { authedUrl, httpClient, websocketUrl } from "@/api/client";
 import { runtimeInfo, type RuntimeInfo } from "@/lib/native";
 // no-inline: an inlined data: worklet is refused by the desktop CSP (script-src 'self').
@@ -9,7 +9,7 @@ const SAMPLE_RATE = 16000;
 
 // The voice routes live once in @vesta/core; these bind the app's one HttpClient so call sites
 // keep their names. The status shape is one type for both domains.
-export type { SettingDef, SttUsage, TtsUsage } from "@vesta/core";
+export type { SettingDef, VoiceBehaviors, VoiceUsage } from "@vesta/core";
 export type SttStatus = core.VoiceStatus;
 export type TtsStatus = core.VoiceStatus;
 
@@ -21,78 +21,108 @@ export const setVoiceSetting = (
 ): Promise<SttStatus> =>
   core.setVoiceSetting(httpClient, n, domain, key, value);
 
-export const fetchSttStatus = (agentName: string, signal?: AbortSignal) =>
-  core.fetchVoiceStatus(httpClient, agentName, "stt", signal);
-export const fetchSttUsage = (agentName: string) =>
-  core.fetchSttUsage(httpClient, agentName);
+export const setVoiceBehavior = (n: string, key: string, value: unknown) =>
+  core.setVoiceBehavior(httpClient, n, key, value);
+
+export const selectVoiceProvider = (
+  n: string,
+  domain: core.VoiceDomain,
+  provider: string,
+): Promise<SttStatus> =>
+  core.selectVoiceProvider(httpClient, n, domain, provider);
+
+export const fetchVoiceSettings = (agentName: string, signal?: AbortSignal) =>
+  core.fetchVoiceSettings(httpClient, agentName, signal);
+
+export const fetchVoiceUsage = (agentName: string, domain: "stt" | "tts") =>
+  core.fetchVoiceUsage(httpClient, agentName, domain);
+
 export const setSttEnabled = (n: string, value: boolean) =>
   core.setVoiceEnabled(httpClient, n, "stt", value);
 
-export const fetchTtsStatus = (agentName: string, signal?: AbortSignal) =>
-  core.fetchVoiceStatus(httpClient, agentName, "tts", signal);
-export const fetchTtsUsage = (agentName: string) =>
-  core.fetchTtsUsage(httpClient, agentName);
+export const setJudgeEnabled = (n: string, value: boolean) =>
+  core.setVoiceEnabled(httpClient, n, "judge", value);
 export const setTtsEnabled = (n: string, value: boolean) =>
   core.setVoiceEnabled(httpClient, n, "tts", value);
 
-// TTS playback runs through a native <audio> element pointed at a streamed GET,
-// not JS-fetched bytes fed to MediaSource: the native media stack streams from
-// the first byte on every webview (Android's System WebView has no reliable
-// MSE for raw audio/mpeg) and owns audio routing including Bluetooth A2DP
-// cold-start (issue #466). A media-element request can't carry an Authorization
-// header and uses GET (no body), so the text is first registered via POST
-// /tts/prepare; the element then streams GET /tts/stream/{id}?token=...
+// Speech plays through a native <audio> element pointed at a streamed GET, not JS-fetched
+// bytes fed to MediaSource: the native media stack streams from the first byte on every
+// webview (Android's System WebView has no reliable MSE for raw audio/mpeg) and owns audio
+// routing including Bluetooth A2DP cold-start (issue #466). A media-element request can't
+// carry an Authorization header, so each url carries the access token in its query.
 
-function prepareSpeech(
-  text: string,
+// The url of one play of a voice session, from the path the engine named.
+export function voicePlayUrl(
   agentName: string,
-  signal?: AbortSignal,
+  enginePath: string,
 ): Promise<string> {
-  return core.prepareSpeech(httpClient, agentName, text, signal);
+  return authedUrl(core.voicePlayPath(agentName, enginePath));
 }
 
-function ttsStreamUrl(agentName: string, id: string): Promise<string> {
+// A reply read aloud outside a session: a media element uses GET (no body), so the text is
+// first registered via POST /tts/prepare, and the element streams GET /tts/stream/{id}.
+export async function prepareSpeechUrl(
+  agentName: string,
+  text: string,
+): Promise<string> {
+  const id = await core.prepareSpeech(httpClient, agentName, text);
   return authedUrl(core.ttsStreamPath(agentName, id));
 }
 
-// The SpeechPlayer port the TTS queue drives: prepare registers the text, play streams one
-// prepared utterance through a native <audio> element (the media stack streams from the first
-// byte on every webview and owns Bluetooth routing).
-export function browserPlayer(agentName: () => string | null): SpeechPlayer {
+// The speaker port: one <audio> element for each url, with the pause and resume the voice
+// engine asks for during a barge-in.
+export function browserSpeaker(): Speaker {
+  let current: HTMLAudioElement | null = null;
   return {
-    prepare: (text) => {
-      const name = agentName();
-      if (!name) return Promise.reject(new Error("no agent selected"));
-      return prepareSpeech(text, name);
-    },
-    play: async (id, signal) => {
-      const name = agentName();
-      if (!name || signal.aborted) return;
-      const src = await ttsStreamUrl(name, id);
-      const audio = new Audio(src);
+    play: (url, signal, onStarted) => {
+      if (signal.aborted) return Promise.resolve();
+      const audio = new Audio(url);
       audio.preload = "auto";
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => {
+      current = audio;
+      return new Promise<void>((resolve, reject) => {
+        const release = () => {
+          audio.onplaying = null;
           audio.onended = null;
           audio.onerror = null;
+          if (current === audio) current = null;
         };
         // Resolve (not reject) on abort so the queue's await completes instead of hanging
         // when playback is cancelled mid-stream.
         signal.addEventListener("abort", () => {
-          cleanup();
+          release();
           audio.pause();
           audio.src = "";
           resolve();
         });
+        // A resume after a pause fires this event again; only the first one is the start.
+        audio.onplaying = () => {
+          audio.onplaying = null;
+          onStarted();
+        };
         audio.onended = () => {
-          cleanup();
+          release();
           resolve();
         };
         audio.onerror = () => {
-          cleanup();
+          release();
           reject(new Error("Audio playback failed"));
         };
-        audio.play().catch(reject);
+        // A pause or an abort before the first sound rejects this promise with AbortError,
+        // which is no failure: the resume plays the element again.
+        audio.play().catch((cause: unknown) => {
+          if (cause instanceof DOMException && cause.name === "AbortError")
+            return;
+          release();
+          reject(cause instanceof Error ? cause : new Error(String(cause)));
+        });
+      });
+    },
+    pause: () => {
+      current?.pause();
+    },
+    resume: () => {
+      current?.play().catch(() => {
+        /* the play ended or was stopped while paused */
       });
     },
   };
@@ -121,10 +151,10 @@ export function preloadAudio(): Promise<void> {
   return preloadPromise;
 }
 
-// --- STT capture and socket (the ports the shared STT session drives) ---
+// --- Capture and the engine socket (the ports the shared voice session drives) ---
 
 export function voiceWsUrl(agentName: string): Promise<string> {
-  return websocketUrl(core.sttListenPath(agentName));
+  return websocketUrl(core.voiceSessionPath(agentName));
 }
 
 // Where the user turns a denied microphone back on. In the desktop app the OS gates it (and the
@@ -141,18 +171,52 @@ export function microphoneDeniedMessage(
   return "Microphone access was denied.";
 }
 
+export interface Microphone {
+  id: string;
+  label: string;
+}
+
+// The browser's own names for its default device, which repeat a device the list already holds.
+const DEVICE_ALIASES = new Set(["default", "communications"]);
+
+// The microphones this device has. A browser gives their names only after the user has allowed
+// the microphone once, so `named` is false until then.
+export async function listMicrophones(): Promise<{
+  microphones: Microphone[];
+  named: boolean;
+}> {
+  if (!("mediaDevices" in navigator)) return { microphones: [], named: false };
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const inputs = devices.filter(
+    (d) => d.kind === "audioinput" && !DEVICE_ALIASES.has(d.deviceId),
+  );
+  return {
+    microphones: inputs.map((d, i) => ({
+      id: d.deviceId,
+      label: d.label || `microphone ${String(i + 1)}`,
+    })),
+    named: inputs.some((d) => d.label !== ""),
+  };
+}
+
+// Asks for the microphone and lets it go at once, so the browser gives the names of its devices.
+export async function allowMicrophone(): Promise<void> {
+  const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mic.getTracks().forEach((t) => t.stop());
+}
+
 // The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped. `muted` is read
-// per frame; a muted mic streams silence rather than nothing, so the STT stream stays alive
-// and a turn caught mid-sentence still gets its end (which releases the yield-to-user gate).
-export function browserCapture(muted?: () => boolean): AudioCapture {
+// per frame; a muted mic streams silence rather than nothing, so the session stays up and a
+// turn caught mid-sentence still gets its end (which returns the floor to the agent). `input`
+// is read at each start; a device that is gone falls back to the system default.
+export function browserCapture(
+  muted: () => boolean,
+  input: () => string | null,
+): AudioCapture {
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
-  // Bumped by every teardown, so a start still awaiting the microphone learns it was stopped
-  // and releases what it acquires instead of leaving the mic live.
-  let attempt = 0;
 
   const teardown = (): void => {
-    attempt += 1;
     if (audioCtx) {
       audioCtx.close().catch(() => {
         /* already closed */
@@ -169,12 +233,15 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
     start: async (onFrame) => {
       if (!("mediaDevices" in navigator))
         throw new Error("Microphone requires a secure connection");
-      teardown();
-      const mine = attempt;
-      let acquired: MediaStream;
+      // Locals, because a stop can run during each await. The voice session stops the port
+      // again once this start settles, which releases what it opened after that stop.
+      let mic: MediaStream;
+      const deviceId = input();
       try {
-        acquired = await navigator.mediaDevices.getUserMedia({
+        mic = await navigator.mediaDevices.getUserMedia({
           audio: {
+            // An ideal device, not an exact one, so a microphone that is gone is no failure.
+            ...(deviceId === null ? {} : { deviceId }),
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
@@ -195,32 +262,27 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
         }
         throw new Error("Could not access microphone", { cause: err });
       }
-      if (mine !== attempt) {
-        acquired.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      stream = acquired;
+      stream = mic;
+      let ctx: AudioContext;
       try {
-        audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-        await audioCtx.audioWorklet.addModule(WORKLET_URL);
+        ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        audioCtx = ctx;
+        await ctx.audioWorklet.addModule(WORKLET_URL);
       } catch (err) {
-        if (mine !== attempt) return;
-        teardown();
         throw new Error("Could not initialize audio capture", { cause: err });
       }
-      if (mine !== attempt) return;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const workletNode = new AudioWorkletNode(audioCtx, "pcm-processor", {
+      const source = ctx.createMediaStreamSource(mic);
+      const workletNode = new AudioWorkletNode(ctx, "pcm-processor", {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         channelCount: 1,
       });
       workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        if (muted?.()) e.data.fill(0);
+        if (muted()) e.data.fill(0);
         onFrame(floatTo16BitPCM(e.data));
       };
       source.connect(workletNode);
-      workletNode.connect(audioCtx.destination);
+      workletNode.connect(ctx.destination);
     },
     stop: teardown,
   };

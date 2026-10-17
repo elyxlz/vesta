@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { AudioLines, Mic, Volume2 } from "lucide-react";
+import { AudioLines, Mic, Scale, Volume2 } from "lucide-react";
 import {
   Field,
   FieldContent,
@@ -9,14 +8,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
-  fetchSttUsage,
-  fetchTtsUsage,
+  selectVoiceProvider,
+  setJudgeEnabled,
   setSttEnabled,
   setTtsEnabled,
-  setVoiceSetting,
-  type SttUsage,
-  type TtsUsage,
 } from "@/lib/voice";
+import { DynamicSettings } from "./setting-controls";
 import { useOptimisticToggle } from "./use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
@@ -26,22 +23,7 @@ import {
 } from "@/stores/use-preferences";
 import { UsageCollapsible, DomainSection } from "./domain-section";
 
-function formatBalance(b: { amount?: number; units?: string }): string {
-  const amount = b.amount ?? 0;
-  const units = (b.units ?? "").toLowerCase();
-  if (units === "usd") return `$${amount.toFixed(2)}`;
-  if (units === "hour" || units === "hours") return `${amount.toFixed(2)} h`;
-  return `${amount.toFixed(2)} ${b.units ?? ""}`;
-}
-
-// Combined hours + balance line, or a placeholder dash until both halves have loaded.
-function sttUsageSummary(usageData: SttUsage | null): string {
-  const results = usageData?.usage?.results;
-  const balance = usageData?.balance?.balances?.[0];
-  if (!results || !balance) return "—";
-  const hours = results.reduce((acc, r) => acc + (r.hours ?? 0), 0);
-  return `${hours.toFixed(2)} h used · ${formatBalance(balance)} left`;
-}
+export { MicrophoneCard } from "./microphone-card";
 
 // --- Exported cards ---
 
@@ -52,32 +34,10 @@ const ACTIVATION_OPTIONS: { value: VoiceActivationMode; label: string }[] = [
 
 // How dictation behaves, apart from which provider transcribes it.
 export function DictationCard() {
-  const { name: agentName } = useSelectedAgent();
-  const { sttStatus, patchStt, refreshVoiceStatus } = useVoice();
   const activation = usePreferences((s) => s.voiceActivation);
   const update = usePreferences((s) => s.update);
   const setActivation = (voiceActivation: VoiceActivationMode) => {
     update({ voiceActivation });
-  };
-
-  const interruptSetting = sttStatus?.settings?.find(
-    (s) => s.key === "interrupt_tts",
-  );
-  const interruptValue =
-    typeof interruptSetting?.value === "boolean"
-      ? interruptSetting.value
-      : true;
-
-  const setInterrupt = (value: boolean) => {
-    if (!sttStatus?.settings || !agentName) return;
-    patchStt({
-      settings: sttStatus.settings.map((s) =>
-        s.key === "interrupt_tts" ? { ...s, value } : s,
-      ),
-    });
-    setVoiceSetting(agentName, "stt", "interrupt_tts", value).catch(() =>
-      refreshVoiceStatus(),
-    );
   };
 
   return (
@@ -117,32 +77,20 @@ export function DictationCard() {
               ))}
             </div>
           </Field>
-          {interruptSetting && (
-            <Field
-              orientation="horizontal"
-              className="items-center justify-between"
-            >
-              <FieldContent>
-                <FieldLabel>interrupt speech on talk</FieldLabel>
-                <FieldDescription>
-                  stop text-to-speech playback when you start speaking
-                </FieldDescription>
-              </FieldContent>
-              <Switch checked={interruptValue} onCheckedChange={setInterrupt} />
-            </Field>
-          )}
         </Field>
       </CardContent>
     </Card>
   );
 }
 
-// How a conversation behaves; a conversation always speaks back and always barges in.
+// How a conversation behaves. A conversation always speaks back, and the voice engine holds
+// a reply while the user has the floor.
 export function ConversationCard() {
+  const { name: agentName } = useSelectedAgent();
   const autoEnd = useVoice((s) => s.conversationAutoEnd);
   const setAutoEnd = useVoice((s) => s.setConversationAutoEnd);
-  const yieldToUser = useVoice((s) => s.conversationYield);
-  const setYieldToUser = useVoice((s) => s.setConversationYield);
+  const behaviors = useVoice((s) => s.behaviors);
+  const setBehaviors = useVoice((s) => s.setBehaviors);
 
   return (
     <Card size="sm">
@@ -154,25 +102,20 @@ export function ConversationCard() {
       </CardHeader>
       <CardContent>
         <Field orientation="vertical" className="gap-3">
+          {behaviors && (
+            <DynamicSettings
+              settings={behaviors.settings}
+              section="behavior"
+              agentName={agentName}
+              onSettingChange={(settings) => setBehaviors({ settings })}
+            />
+          )}
           <Field
             orientation="horizontal"
             className="items-center justify-between"
           >
             <FieldContent>
-              <FieldLabel>never interrupt you</FieldLabel>
-              <FieldDescription>
-                hold replies while you are talking, so Vesta waits for your
-                whole thought
-              </FieldDescription>
-            </FieldContent>
-            <Switch checked={yieldToUser} onCheckedChange={setYieldToUser} />
-          </Field>
-          <Field
-            orientation="horizontal"
-            className="items-center justify-between"
-          >
-            <FieldContent>
-              <FieldLabel>end after silence</FieldLabel>
+              <FieldLabel className="text-base">end after silence</FieldLabel>
               <FieldDescription>
                 end a conversation on its own after fifteen minutes without you
                 speaking
@@ -201,32 +144,31 @@ export function SttCard() {
     },
   );
 
-  const [usageData, setUsageData] = useState<SttUsage | null>(null);
-  const loadUsage = () => {
-    if (agentName)
-      fetchSttUsage(agentName).then(setUsageData).catch(console.warn);
-  };
   return (
     <DomainSection
       icon={<Mic className="size-4 text-muted-foreground" />}
       title="speech to text"
       configured={configured}
       provider={sttStatus?.provider ?? null}
+      connected={sttStatus?.connected ?? []}
+      onUseProvider={(provider) => {
+        if (!agentName) return;
+        selectVoiceProvider(agentName, "stt", provider)
+          .then(patchStt)
+          .catch(() => refreshVoiceStatus());
+      }}
       enabled={enabled}
       onToggleEnabled={toggleEnabled}
-      settings={sttStatus?.settings?.filter((s) => s.key !== "interrupt_tts")}
+      settings={sttStatus?.settings}
       domain="stt"
       agentName={agentName}
       onSettingChange={(settings) => patchStt({ settings })}
       usageContent={
-        <UsageCollapsible onOpen={loadUsage}>
-          <div className="flex items-center justify-between text-sm px-6 pt-2">
-            <span className="text-muted-foreground">hours this month</span>
-            <span className="text-foreground tabular-nums">
-              {sttUsageSummary(usageData)}
-            </span>
-          </div>
-        </UsageCollapsible>
+        <UsageCollapsible
+          key={sttStatus?.provider}
+          agentName={agentName}
+          domain="stt"
+        />
       }
     />
   );
@@ -247,19 +189,19 @@ export function TtsCard() {
     },
   );
 
-  const [usageData, setUsageData] = useState<TtsUsage | null>(null);
-  const loadUsage = () => {
-    if (agentName)
-      fetchTtsUsage(agentName).then(setUsageData).catch(console.warn);
-  };
-  const chars = usageData?.usage;
-
   return (
     <DomainSection
       icon={<Volume2 className="size-4 text-muted-foreground" />}
       title="text to speech"
       configured={configured}
       provider={ttsStatus?.provider ?? null}
+      connected={ttsStatus?.connected ?? []}
+      onUseProvider={(provider) => {
+        if (!agentName) return;
+        selectVoiceProvider(agentName, "tts", provider)
+          .then(patchTts)
+          .catch(() => refreshVoiceStatus());
+      }}
       enabled={enabled}
       onToggleEnabled={toggleEnabled}
       settings={ttsStatus?.settings}
@@ -267,21 +209,66 @@ export function TtsCard() {
       agentName={agentName}
       onSettingChange={(settings) => patchTts({ settings })}
       usageContent={
-        <UsageCollapsible onOpen={loadUsage}>
-          <div className="flex items-center justify-between text-sm px-6 pt-2">
-            <span className="text-muted-foreground">characters this month</span>
-            <span className="text-foreground tabular-nums">
-              {chars &&
-              typeof chars.character_count === "number" &&
-              typeof chars.character_limit === "number"
-                ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
-                : "—"}
-            </span>
-          </div>
-        </UsageCollapsible>
+        <UsageCollapsible
+          key={ttsStatus?.provider}
+          agentName={agentName}
+          domain="tts"
+        />
       }
     />
   );
 }
 
-// --- Shared collapsible trigger ---
+// The judge is the optional third role. While a reply plays it decides who the user's words are
+// for, which costs the user's live words going to its provider, so the card says so before
+// the switch is turned on. An agent connects one; the app only turns it on and off.
+export function JudgeCard() {
+  const { name: agentName } = useSelectedAgent();
+  const judgeStatus = useVoice((s) => s.judgeStatus);
+  const setJudgeStatus = useVoice((s) => s.setJudgeStatus);
+  const refreshVoiceStatus = useVoice((s) => s.refreshVoiceStatus);
+  const configured = judgeStatus?.configured ?? false;
+
+  const [enabled, toggleEnabled] = useOptimisticToggle(
+    judgeStatus?.enabled,
+    false,
+    (v) => {
+      if (!judgeStatus || !agentName) return;
+      setJudgeStatus({ ...judgeStatus, enabled: v });
+      setJudgeEnabled(agentName, v).catch(() => refreshVoiceStatus());
+    },
+  );
+
+  // An agent whose voice service has no judge role shows no card.
+  if (!judgeStatus) return null;
+  const provider = judgeStatus.provider;
+  return (
+    <DomainSection
+      icon={<Scale className="size-4 text-muted-foreground" />}
+      title="judge"
+      description={
+        configured && provider
+          ? `decides who your words are for while a reply plays: a short stop cuts the reply, and talk to another person stays out. while it is on, your live words go to ${provider}.`
+          : "optional. decides who your words are for while a reply plays, so talk to another person stays out. ask the agent to connect one."
+      }
+      configured={configured}
+      provider={provider}
+      connected={judgeStatus.connected ?? []}
+      onUseProvider={(name) => {
+        if (!agentName) return;
+        selectVoiceProvider(agentName, "judge", name)
+          .then(setJudgeStatus)
+          .catch(() => refreshVoiceStatus());
+      }}
+      enabled={enabled}
+      onToggleEnabled={toggleEnabled}
+      settings={judgeStatus.settings}
+      domain="judge"
+      agentName={agentName}
+      onSettingChange={(settings) =>
+        setJudgeStatus({ ...judgeStatus, settings })
+      }
+      usageContent={null}
+    />
+  );
+}

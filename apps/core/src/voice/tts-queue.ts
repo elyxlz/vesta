@@ -1,10 +1,10 @@
-// The one TTS playback pipeline every client drives: an ordered queue over an injected
+// The read-aloud of replies outside a voice session: an ordered queue over an injected
 // player, so consecutive agent replies play back to back instead of cutting each other
 // off. Prefetch warms the prepare step during the typing-pacing delay, so playback starts
 // the streamed GET the moment a message is revealed.
 
 export interface SpeechPlayer {
-  // Registers the text with the voice service and resolves the utterance id.
+  // Registers the text with the voice service and resolves the handle `play` streams.
   prepare: (text: string) => Promise<string>;
   // Streams one prepared utterance to the speaker. Resolves when playback ends or the
   // signal aborts; rejects only on a real playback failure.

@@ -6,45 +6,81 @@ vi.mock("@/api/client", () => ({
   websocketUrl: vi.fn(),
 }));
 
-const { browserCapture, microphoneDeniedMessage } = await import("./voice");
+const { browserCapture, listMicrophones, microphoneDeniedMessage } =
+  await import("./voice");
 
-interface FakeTrack {
-  stop: ReturnType<typeof vi.fn>;
+function device(kind: MediaDeviceKind, deviceId: string, label: string) {
+  return { kind, deviceId, label, groupId: "", toJSON: () => ({}) };
 }
 
-function pendingMicrophone() {
-  const track: FakeTrack = { stop: vi.fn() };
-  let grant: () => void = () => undefined;
-  const getUserMedia = vi.fn(
-    () =>
-      new Promise((resolve) => {
-        grant = () => {
-          resolve({ getTracks: () => [track] });
-        };
-      }),
-  );
-  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-  const audioContext = vi.fn();
-  vi.stubGlobal("AudioContext", audioContext);
-  return { track, audioContext, grant: () => grant() };
+function stubMediaDevices(media: Partial<MediaDevices>) {
+  vi.stubGlobal("navigator", { mediaDevices: media });
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("listMicrophones", () => {
+  it("lists each input once, without the browser's default aliases", async () => {
+    stubMediaDevices({
+      enumerateDevices: () =>
+        Promise.resolve([
+          device("audioinput", "default", "Default - USB mic"),
+          device("audioinput", "communications", "Communications - USB mic"),
+          device("audioinput", "usb", "USB mic"),
+          device("audioinput", "built-in", "Built-in mic"),
+          device("audiooutput", "speakers", "Speakers"),
+        ]),
+    });
+
+    expect(await listMicrophones()).toEqual({
+      microphones: [
+        { id: "usb", label: "USB mic" },
+        { id: "built-in", label: "Built-in mic" },
+      ],
+      named: true,
+    });
+  });
+
+  it("numbers the inputs while the browser holds back their names", async () => {
+    stubMediaDevices({
+      enumerateDevices: () =>
+        Promise.resolve([
+          device("audioinput", "a", ""),
+          device("audioinput", "b", ""),
+        ]),
+    });
+
+    expect(await listMicrophones()).toEqual({
+      microphones: [
+        { id: "a", label: "microphone 1" },
+        { id: "b", label: "microphone 2" },
+      ],
+      named: false,
+    });
+  });
+});
+
 describe("browserCapture", () => {
-  it("releases a microphone granted after the capture was stopped", async () => {
-    const mic = pendingMicrophone();
-    const capture = browserCapture();
+  it.each([
+    { input: "usb", expected: "usb" },
+    { input: null, expected: undefined },
+  ])("asks for the chosen microphone ($input)", async ({ input, expected }) => {
+    const getUserMedia = vi.fn<MediaDevices["getUserMedia"]>(() =>
+      Promise.reject(new DOMException("none", "NotFoundError")),
+    );
+    stubMediaDevices({ getUserMedia });
 
-    const started = capture.start(() => undefined);
-    capture.stop();
-    mic.grant();
-    await started;
+    await expect(
+      browserCapture(
+        () => false,
+        () => input,
+      ).start(() => undefined),
+    ).rejects.toThrow("No microphone found");
 
-    expect(mic.track.stop).toHaveBeenCalledOnce();
-    expect(mic.audioContext).not.toHaveBeenCalled();
+    const audio = getUserMedia.mock.calls[0]?.[0]?.audio;
+    expect(typeof audio === "object" ? audio.deviceId : null).toBe(expected);
   });
 });
 

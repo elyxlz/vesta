@@ -107,9 +107,9 @@ just wrote runs by its path until you link it.
 A skill's command is its directory name, always. A skill whose name would shadow a system command
 names its directory to dodge the collision instead: the ssh tunnel lives in `ssh-tunnel/`, so its
 command is `ssh-tunnel` and never `ssh`. A CLI installed as a uv console script is a separate
-mechanism and can carry any name its project declares, which is why `voice-keys` (the `voice`
-skill) and `finance` (the `enable-banking` skill) differ from their directory; each skill's own
-docs name the command it installs, so read those rather than assuming.
+mechanism and can carry any name its project declares, which is why `finance` (the
+`enable-banking` skill) differs from its directory; each skill's own docs name the command it
+installs, so read those rather than assuming.
 
 Each verb prints exactly one line of JSON on stdout:
 
@@ -126,7 +126,7 @@ the help forms (`-h`, `--help`, `help`, and `daemon help`) print usage on stdout
 command the agent reaches for blind answers instead of failing.
 
 State lives in the same three places for every skill, under one name the daemon picks for itself
-(normally its command, `voice-keys` calling its daemon `voice`):
+(normally its command):
 
 - pid: `~/agent/data/daemons/<name>.pid`, port: `~/agent/data/daemons/<name>.port`
   The pid record is **`<pid> <starttime>`**, two space-separated fields, where starttime is

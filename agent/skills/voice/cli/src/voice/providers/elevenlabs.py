@@ -1,25 +1,32 @@
-"""ElevenLabs TTS provider — HTTP streaming."""
+"""ElevenLabs TTS provider: `eleven_v4_turbo` on the HTTP streaming call.
 
-import logging
+Text in square brackets is an instruction to this model, not speech: `[laughs]` or `[whispering]`
+changes how the line is said. The provider sends the text as it gets it.
+"""
+
 import typing as tp
 
 import aiohttp
-from aiohttp import web
 
-from .base import SettingDef
+from voice.settings import Domain, JsonValue, SettingDef
 
-logger = logging.getLogger("voice.elevenlabs")
+from .base import TtsError, Usage, Validation, api_key, no_usage, number_in
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
-MODEL_ID = "eleven_flash_v2_5"
+MODEL_ID = "eleven_v4_turbo"
 DEFAULT_VOICE_ID = "FGY2WhTYpPnrIDTdsKH5"  # Laura
+SYNTHESIS_TIMEOUT_SECS = 120
+ERROR_BODY_CHARS = 300
 
-# One entry per audio_format the caller may request: the ElevenLabs output_format and the
-# Content-Type to hand back. "mp3" feeds the app's <audio> element; "pcm" is raw signed
-# 16-bit LE mono at 16 kHz, the frame format a phone-call consumer plays straight into a call.
-AUDIO_FORMATS: dict[str, tuple[str, str]] = {
-    "mp3": ("mp3_22050_32", "audio/mpeg"),
-    "pcm": ("pcm_16000", "audio/l16;rate=16000"),
+# Play format -> the ElevenLabs output_format that makes it.
+OUTPUT_FORMATS: dict[str, str] = {
+    "mp3_22050": "mp3_22050_32",
+    "mp3_44100": "mp3_44100_128",
+    "pcm_16000": "pcm_16000",
+    "pcm_22050": "pcm_22050",
+    "pcm_24000": "pcm_24000",
+    "ulaw_8000": "ulaw_8000",
+    "opus_48000": "opus_48000_64",
 }
 
 PREMADE_VOICES: list[dict[str, str]] = [
@@ -141,7 +148,13 @@ PREMADE_VOICES: list[dict[str, str]] = [
 
 
 class ElevenLabsTts:
-    name = "elevenlabs"
+    needs_key = True
+    voice_setting = "selected_voice_id"
+    formats = frozenset(OUTPUT_FORMATS)
+    reply_hint = (
+        "this reply can be spoken aloud, and the voice performs text in square brackets as a direction and does not say it "
+        "([laughs], [whispers]), so put a word in square brackets only as a direction"
+    )
 
     def settings_schema(self) -> list[SettingDef]:
         return [
@@ -152,77 +165,71 @@ class ElevenLabsTts:
                 "description": "select a voice for speech synthesis",
                 "default": DEFAULT_VOICE_ID,
                 "options": [
-                    {"value": v["id"], "label": v["name"], "description": v.get("description", ""), "preview": v.get("preview", "")}
-                    for v in PREMADE_VOICES
+                    {"value": v["id"], "label": v["name"], "description": v["description"], "preview": v["preview"]} for v in PREMADE_VOICES
                 ],
             },
         ]
 
-    async def speak(
+    async def synthesize(
         self,
         text: str,
-        voice_id: str,
-        creds: dict[str, str],
-        request: web.Request,
+        voice: str,
         audio_format: str,
-    ) -> web.StreamResponse:
-        resolved = AUDIO_FORMATS.get(audio_format)
-        if resolved is None:
-            return web.json_response({"error": f"unsupported audio format: {audio_format}"}, status=400)
-        output_format, content_type = resolved
-
-        api_key = creds.get("api_key", "")
-        url = f"{ELEVENLABS_API}/v1/text-to-speech/{voice_id}/stream"
-        payload = {"text": text, "model_id": MODEL_ID, "output_format": output_format}
-
-        session = aiohttp.ClientSession()
+        creds: dict[str, str],
+        _settings: Domain,
+        http: aiohttp.ClientSession,
+    ) -> tp.AsyncIterator[bytes]:
+        url = f"{ELEVENLABS_API}/v1/text-to-speech/{voice}/stream"
         try:
-            upstream = await session.post(
+            async with http.post(
                 url,
-                headers={"xi-api-key": api_key, "Content-Type": "application/json"},
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120),
-            )
+                # ElevenLabs reads the format from the query only. In the body it has no effect.
+                params={"output_format": OUTPUT_FORMATS[audio_format]},
+                headers={"xi-api-key": api_key(creds)},
+                json={"text": text, "model_id": MODEL_ID},
+                timeout=aiohttp.ClientTimeout(total=SYNTHESIS_TIMEOUT_SECS),
+            ) as upstream:
+                if upstream.status != 200:
+                    body = (await upstream.text())[:ERROR_BODY_CHARS]
+                    raise TtsError(f"elevenlabs returned {upstream.status}: {body}")
+                async for chunk in upstream.content.iter_any():
+                    yield chunk
         except (TimeoutError, aiohttp.ClientError) as e:
-            await session.close()
-            logger.error("elevenlabs request failed: %s", e)
-            return web.json_response({"error": f"elevenlabs request failed: {e}"}, status=502)
+            raise TtsError(f"elevenlabs request failed: {e}") from e
 
-        if upstream.status != 200:
-            body_text = await upstream.text()
-            upstream.release()
-            await session.close()
-            return web.json_response({"error": f"elevenlabs returned {upstream.status}", "body": body_text[:500]}, status=upstream.status)
+    async def usage(self, creds: dict[str, str]) -> Usage:
+        return await account_usage(api_key(creds))
 
-        response = web.StreamResponse(status=200, headers={"Content-Type": content_type})
-        await response.prepare(request)
-        try:
-            async for chunk in upstream.content.iter_any():
-                await response.write(chunk)
-            await response.write_eof()
-        finally:
-            upstream.release()
-            await session.close()
-        return response
+    async def validate(self, creds: dict[str, str], _settings: Domain) -> Validation:
+        return subscription_validation(await fetch_subscription(api_key(creds)))
 
-    def premade_voices(self) -> list[dict]:
-        return list(PREMADE_VOICES)
 
-    async def subscription(self, creds: dict[str, str]) -> dict:
-        api_key = creds.get("api_key", "")
-        return await _fetch_subscription(api_key)
-
-    async def validate(self, api_key: str) -> tuple[bool, str | None]:
-        result = await _fetch_subscription(api_key)
-        if "error" in result:
-            msg = result["error"]
-            if "401" in str(msg):
-                return False, "invalid api key"
-            return False, str(msg)
+def subscription_validation(result: dict[str, JsonValue]) -> Validation:
+    """Read a subscription probe as a key check. A key with limited permissions answers
+    `missing_permissions` here and still works for its role, so only `invalid_api_key` means an
+    invalid key."""
+    if "error" not in result:
         return True, None
+    body = result["body"] if "body" in result else None
+    detail = body["detail"] if isinstance(body, dict) and "detail" in body else None
+    status = detail["status"] if isinstance(detail, dict) and "status" in detail else None
+    if status == "missing_permissions":
+        return True, None
+    if status == "invalid_api_key":
+        return False, "invalid api key"
+    return False, str(result["error"])
 
 
-async def _fetch_subscription(api_key: str) -> dict:
+async def account_usage(key: str) -> Usage:
+    """The credits of the subscription that both ElevenLabs roles use."""
+    body = await fetch_subscription(key)
+    count, limit = number_in(body, "character_count"), number_in(body, "character_limit")
+    if count is None or limit is None:
+        return no_usage()
+    return {"used": {"amount": count, "unit": "credits"}, "left": {"amount": max(limit - count, 0.0), "unit": "credits"}}
+
+
+async def fetch_subscription(api_key: str) -> dict[str, JsonValue]:
     try:
         async with (
             aiohttp.ClientSession() as session,
@@ -232,7 +239,7 @@ async def _fetch_subscription(api_key: str) -> dict:
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp,
         ):
-            body: tp.Any = await resp.json()
+            body: dict[str, JsonValue] = await resp.json()
             if resp.status != 200:
                 return {"error": f"status {resp.status}", "body": body}
             return body

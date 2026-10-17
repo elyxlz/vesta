@@ -1,15 +1,14 @@
 [project]
 name = "voice"
 version = "0.1.0"
-description = "Voice STT/TTS server and key management for the agent"
-requires-python = ">=3.11"
+description = "Voice engine, STT/TTS/judge providers, and the voice command for the agent"
+requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9.0",
 ]
 
 [project.scripts]
-voice-server = "voice.server:main"
-voice-keys = "voice.voice_keys:main"
+voice = "voice.cli:main"
 transcribe = "voice.transcribe:main"
 
 [dependency-groups]

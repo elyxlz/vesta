@@ -1,6 +1,6 @@
 """The voice daemon owns the four verbs itself: it registers a private port with vestad, hands it
 to the server through the environment, holds the start open until /health answers, and stops with a
-SIGTERM the server reads as deliberate. Provider auth is reported by `voice-keys status`, which
+SIGTERM the server reads as deliberate. Provider state is reported by `voice status`, which
 reads the same voice config the server does.
 """
 
@@ -12,7 +12,7 @@ import types
 
 import pytest
 import voice.config as vc
-from voice import daemon, voice_keys
+from voice import cli, daemon
 
 
 @pytest.fixture
@@ -39,26 +39,26 @@ def _record_runs(monkeypatch: pytest.MonkeyPatch, seen: list[list[str]], returnc
 def test_status_reports_no_providers_while_voice_is_unconfigured(
     tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(voice_keys, "_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_data_dir", lambda: tmp_path)
 
-    assert voice_keys.main(["status"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"stt": None, "tts": None}
+    assert cli.main(["status"]) == 0
+    reported = json.loads(capsys.readouterr().out)
+    assert [(reported[role]["selected"], reported[role]["on"]) for role in ("stt", "tts", "judge")] == [(None, False)] * 3
 
 
-def test_status_reports_the_provider_and_enabled_flag_of_each_domain(
+def test_status_reports_the_selected_provider_and_the_on_flag_of_each_role(
     tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(voice_keys, "_data_dir", lambda: tmp_path)
-    vc.set_key(tmp_path, "stt", "deepgram", "k")
-    vc.set_enabled(tmp_path, "tts", True)
-    vc.set_key(tmp_path, "tts", "elevenlabs", "k2")
+    monkeypatch.setattr(cli, "_data_dir", lambda: tmp_path)
+    vc.connect(tmp_path, "stt", "deepgram", {"api_key": "k"})
+    vc.connect(tmp_path, "tts", "elevenlabs", {"api_key": "k2"})
 
-    assert voice_keys.main(["status"]) == 0
+    assert cli.main(["status"]) == 0
     reported = json.loads(capsys.readouterr().out)
-    assert reported["stt"]["provider"] == "deepgram"
-    assert reported["stt"]["enabled"] is True
-    assert reported["tts"]["provider"] == "elevenlabs"
-    assert reported["tts"]["enabled"] is True
+    assert reported["stt"]["selected"] == "deepgram"
+    assert reported["stt"]["on"] is True
+    assert reported["tts"]["selected"] == "elevenlabs"
+    assert reported["tts"]["on"] is True
 
 
 def test_registration_asks_vestad_for_a_private_port(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,7 +90,7 @@ def test_start_refuses_and_claims_nothing_without_the_server_on_path(
     monkeypatch.setattr(daemon.subprocess, "Popen", lambda *a, **k: pytest.fail("must not launch a server that is not installed"))
 
     assert daemon.daemon_cmd("start") == 1
-    assert "voice-server" in json.loads(capsys.readouterr().err)["error"]
+    assert "voice is not on PATH" in json.loads(capsys.readouterr().err)["error"]
     assert not daemon.PIDFILE.exists()
 
 
@@ -131,7 +131,7 @@ def test_start_hands_the_registered_port_to_the_server_through_the_environment(
     assert daemon.daemon_cmd("start") == 0
     assert json.loads(capsys.readouterr().out) == {"status": "started"}
     argv, kwargs = launched[0]
-    assert argv == ["/usr/local/bin/voice-server"]
+    assert argv == ["/usr/local/bin/voice", "serve"]
     assert kwargs["env"]["SKILL_PORT"] == "5150"
     assert kwargs["start_new_session"] is True
     # The record is "<pid> <starttime>": the pid is its first field, and whether the second one is

@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
-import { fetchSttStatus, fetchTtsStatus, preloadAudio } from "@/lib/voice";
+import { fetchVoiceSettings, preloadAudio } from "@/lib/voice";
 
 export function VoiceStoreEffects({ children }: { children: ReactNode }) {
   const { name: agentName, agent } = useSelectedAgent();
@@ -10,8 +10,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
   const hasVoice = "voice" in services;
 
   const _setAgentContext = useVoice((s) => s._setAgentContext);
-  const _setSttStatus = useVoice((s) => s._setSttStatus);
-  const _setTtsStatus = useVoice((s) => s._setTtsStatus);
+  const _setVoiceSettings = useVoice((s) => s._setVoiceSettings);
   const _setVoiceError = useVoice((s) => s._setVoiceError);
   const _cleanup = useVoice((s) => s._cleanup);
   const voiceError = useVoice((s) => s.voiceError);
@@ -23,34 +22,22 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
 
   // Fetch voice status when agent/services change
   useEffect(() => {
-    if (!agentName) {
-      _setSttStatus(null);
-      _setTtsStatus(null);
-      return;
-    }
-
-    if (!hasVoice) {
-      _setSttStatus(null);
-      _setTtsStatus(null);
+    if (!agentName || !hasVoice) {
+      _setVoiceSettings(null);
       return;
     }
 
     const ctrl = new AbortController();
-    Promise.all([
-      fetchSttStatus(agentName, ctrl.signal),
-      fetchTtsStatus(agentName, ctrl.signal),
-    ])
-      .then(([stt, tts]) => {
-        if (ctrl.signal.aborted) return;
-        _setSttStatus(stt);
-        _setTtsStatus(tts);
+    fetchVoiceSettings(agentName, ctrl.signal)
+      .then((data) => {
+        if (!ctrl.signal.aborted) _setVoiceSettings(data);
       })
       .catch(() => {
         /* ignore */
       });
 
     return () => ctrl.abort();
-  }, [agentName, hasVoice, voiceRev, _setSttStatus, _setTtsStatus]);
+  }, [agentName, hasVoice, voiceRev, _setVoiceSettings]);
 
   // Preload worklet module when STT is available
   const sttAvailable = useVoice((s) => s.sttAvailable);

@@ -6,6 +6,8 @@ real websocket) to observe it, standing independent of core's bus (Task 9)."""
 import asyncio
 import json
 
+import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from app_chat_cli.service import ServiceState, create_app
 from app_chat_cli.store import Store, StoredEvent, store_path
@@ -14,7 +16,7 @@ from app_chat_cli.store import Store, StoredEvent, store_path
 def _service_state(tmp_path):
     store = Store(store_path(tmp_path / "data"))
     notif_dir = tmp_path / "notifications"
-    return ServiceState(store, notif_dir, tmp_path / "attachments"), notif_dir
+    return ServiceState(store, notif_dir, tmp_path / "attachments", tmp_path / "voice.port"), notif_dir
 
 
 def _subscribe(state) -> "asyncio.Queue[StoredEvent]":
@@ -82,6 +84,70 @@ def test_message_persists_emits_and_writes_notification(tmp_path):
     state.store.close()
 
 
+def _post_beside_a_voice_service(state, tmp_path, voice_handler) -> dict:
+    """Post one message while a voice service answers /tts/reply-hint, and return the notification."""
+
+    async def scenario(client):
+        voice = web.Application()
+        voice.router.add_get("/tts/reply-hint", voice_handler)
+        voice_server = TestServer(voice)
+        await voice_server.start_server()
+        (tmp_path / "voice.port").write_text(str(voice_server.port))
+        try:
+            await client.post("/message", json={"text": "hello there"})
+        finally:
+            await voice_server.close()
+
+    asyncio.run(_with_client(state, scenario))
+    return json.loads(next(iter((tmp_path / "notifications").glob("*-app-chat-message.json"))).read_text())
+
+
+def test_the_reply_hint_carries_what_the_voice_service_says_about_a_spoken_reply(tmp_path):
+    state, _ = _service_state(tmp_path)
+
+    async def voice(_request):
+        return web.json_response({"reply_hint": "the voice does not say text in square brackets"})
+
+    notif = _post_beside_a_voice_service(state, tmp_path, voice)
+
+    assert notif["reply_hint"] == "think about how you can best show your personality; the voice does not say text in square brackets"
+    state.store.close()
+
+
+async def _empty_hint(_request):
+    return web.json_response({"reply_hint": ""})
+
+
+async def _unknown_route(_request):
+    return web.json_response({"error": "not found"}, status=404)
+
+
+async def _not_json(_request):
+    return web.Response(text="ok")
+
+
+@pytest.mark.parametrize("voice", [_empty_hint, _unknown_route, _not_json])
+def test_a_voice_service_with_nothing_to_say_leaves_the_reply_hint_as_it_is(tmp_path, voice):
+    state, _ = _service_state(tmp_path)
+
+    notif = _post_beside_a_voice_service(state, tmp_path, voice)
+
+    assert notif["reply_hint"] == "think about how you can best show your personality"
+    state.store.close()
+
+
+def test_a_voice_port_record_with_no_daemon_behind_it_leaves_the_reply_hint_as_it_is(tmp_path):
+    state, notif_dir = _service_state(tmp_path)
+    (tmp_path / "voice.port").write_text("1")
+
+    status, _body = _post(state, {"text": "hello there"})
+
+    assert status == 200
+    notif = json.loads(next(iter(notif_dir.glob("*-app-chat-message.json"))).read_text())
+    assert notif["reply_hint"] == "think about how you can best show your personality"
+    state.store.close()
+
+
 def test_duplicate_intent_id_is_dropped_whole(tmp_path):
     state, notif_dir = _service_state(tmp_path)
     queue = _subscribe(state)
@@ -96,6 +162,48 @@ def test_duplicate_intent_id_is_dropped_whole(tmp_path):
     assert first == {"ok": True, "id": 1}
     assert second == {"ok": True, "deduped": True}
     assert len(_drain(queue)) == 1
+    assert len(state.store.page()[0]) == 1
+    assert len(list(notif_dir.glob("*-app-chat-message.json"))) == 1
+    state.store.close()
+
+
+def test_a_retry_during_the_voice_ask_and_a_retry_after_the_intake_are_dropped_whole(tmp_path):
+    state, notif_dir = _service_state(tmp_path)
+    asked = 0
+    first_asked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def voice(_request):
+        nonlocal asked
+        asked += 1
+        if asked == 1:
+            first_asked.set()
+            await release.wait()
+        return web.json_response({"reply_hint": ""})
+
+    async def scenario(client):
+        voice_app = web.Application()
+        voice_app.router.add_get("/tts/reply-hint", voice)
+        voice_server = TestServer(voice_app)
+        await voice_server.start_server()
+        (tmp_path / "voice.port").write_text(str(voice_server.port))
+        try:
+            payload = {"text": "hi", "intent_id": "abc"}
+            first = asyncio.ensure_future(client.post("/message", json=payload))
+            await first_asked.wait()
+            during = await (await client.post("/message", json=payload)).json()
+            release.set()
+            first_body = await (await first).json()
+            after = await (await client.post("/message", json=payload)).json()
+            return sorted([first_body, during], key=str), after
+        finally:
+            await voice_server.close()
+
+    bodies, after = asyncio.run(_with_client(state, scenario))
+
+    assert bodies == [{"ok": True, "deduped": True}, {"ok": True, "id": 1}]
+    assert after == {"ok": True, "deduped": True}
+    assert asked == 2
     assert len(state.store.page()[0]) == 1
     assert len(list(notif_dir.glob("*-app-chat-message.json"))) == 1
     state.store.close()

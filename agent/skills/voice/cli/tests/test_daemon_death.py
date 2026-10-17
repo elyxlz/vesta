@@ -1,4 +1,4 @@
-"""When the voice-server exits, it writes a daemon_died notification the agent restarts from."""
+"""When the voice service exits, it writes a daemon_died notification the agent restarts from."""
 
 import json
 from pathlib import Path

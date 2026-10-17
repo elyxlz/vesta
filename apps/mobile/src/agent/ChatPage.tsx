@@ -226,7 +226,6 @@ export default function ChatPage() {
   const voice = useLiveVoice({
     name,
     enabled: voiceEnabled,
-    sttStatus: speechToText.data ?? null,
     onTranscript: handleVoiceTranscript,
     // A conversation sends each turn as it ends; dictation sends the composer on confirm
     // (below), so a manual edit made during dictation rides along.

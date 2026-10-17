@@ -132,8 +132,10 @@ export type { DraftSource, DraftStore } from "./attachments/draft-store";
 
 export { createVoiceSession } from "./voice/voice-session";
 export type { VoiceMode, VoiceSession } from "./voice/voice-session";
-export type { AudioCapture } from "./voice/stt-session";
-export type { SpeechPlayer } from "./voice/tts-queue";
+export type { AudioCapture } from "./voice/engine-session";
+export type { Speaker } from "./voice/play-queue";
+export { voiceUsageSummary } from "./voice/usage";
+export { formatSettingNumber } from "./voice/setting-format";
 
 export { sendMessage } from "./intents/send-message";
 
@@ -230,21 +232,25 @@ export {
 } from "./api/catalogs";
 export type { Personality, PersonalityCatalog } from "./api/catalogs";
 export {
-  fetchSttUsage,
-  fetchTtsUsage,
+  fetchVoiceSettings,
   fetchVoiceStatus,
+  fetchVoiceUsage,
   prepareSpeech,
+  selectVoiceProvider,
+  setVoiceBehavior,
   setVoiceEnabled,
   setVoiceSetting,
-  sttListenPath,
   ttsStreamPath,
+  voicePlayPath,
+  voiceSessionPath,
 } from "./api/voice";
 export type {
   SettingDef,
-  SttUsage,
-  TtsUsage,
+  VoiceBehaviors,
   VoiceDomain,
+  VoiceSettingsData,
   VoiceStatus,
+  VoiceUsage,
 } from "./api/voice";
 export { agentLogsPath, gatewayLogsPath } from "./api/logs";
 export {

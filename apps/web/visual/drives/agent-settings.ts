@@ -3,6 +3,8 @@ import type {
   AgentNode,
   NotificationEvent,
   ProviderCatalog,
+  VoiceBehaviors,
+  VoiceStatus,
 } from "@vesta/core";
 import { chatRoutes } from "../harness/chat-fixtures";
 import {
@@ -75,26 +77,6 @@ interface FileTreeEntry {
   path: string;
   is_dir: boolean;
   mode: number;
-}
-
-interface VoiceSetting {
-  key: string;
-  type: "bool" | "number" | "select";
-  label: string;
-  description?: string;
-  value: unknown;
-  default?: unknown;
-  min?: number;
-  max?: number;
-  step?: number;
-  options?: { value: string; label: string; description?: string }[];
-}
-
-interface VoiceStatus {
-  configured: boolean;
-  provider: string | null;
-  enabled?: boolean;
-  settings?: VoiceSetting[];
 }
 
 const MB = 1024 * 1024;
@@ -242,6 +224,7 @@ const BACKUPS: BackupInfo[] = [
 const STT_STATUS: VoiceStatus = {
   configured: true,
   provider: "deepgram",
+  connected: ["deepgram", "elevenlabs"],
   enabled: true,
   settings: [
     {
@@ -256,11 +239,16 @@ const STT_STATUS: VoiceStatus = {
       max: 0.9,
       step: 0.05,
     },
+  ],
+};
+
+const VOICE_BEHAVIORS: VoiceBehaviors = {
+  settings: [
     {
-      key: "interrupt_tts",
+      key: "barge_in",
       type: "bool",
-      label: "interrupt speech on talk",
-      description: "stop text-to-speech playback when you start speaking",
+      label: "interrupt by voice",
+      description: "talk over a spoken reply to stop it",
       value: true,
       default: true,
     },
@@ -270,6 +258,7 @@ const STT_STATUS: VoiceStatus = {
 const TTS_STATUS: VoiceStatus = {
   configured: true,
   provider: "elevenlabs",
+  connected: ["elevenlabs"],
   enabled: true,
   settings: [
     {
@@ -288,6 +277,14 @@ const TTS_STATUS: VoiceStatus = {
   ],
 };
 
+const JUDGE_STATUS: VoiceStatus = {
+  configured: true,
+  provider: "typesafe",
+  connected: ["typesafe"],
+  enabled: false,
+  settings: [],
+};
+
 const UNCONFIGURED_VOICE: VoiceStatus = { configured: false, provider: null };
 
 const UNCONFIGURED_VOICE_ROUTES: RouteFixture[] = [
@@ -296,12 +293,13 @@ const UNCONFIGURED_VOICE_ROUTES: RouteFixture[] = [
 ];
 
 const STT_USAGE = {
-  usage: { results: [{ hours: 0.75 }, { hours: 0.5 }] },
-  balance: { balances: [{ amount: 12.5, units: "usd" }] },
+  used: { amount: 1.25, unit: "hours" },
+  left: { amount: 12.5, unit: "usd" },
 };
 
 const TTS_USAGE = {
-  usage: { character_count: 12450, character_limit: 100000 },
+  used: { amount: 12450, unit: "credits" },
+  left: { amount: 87550, unit: "credits" },
 };
 
 let nextNotificationId = 500;
@@ -469,6 +467,8 @@ const HAPPY_ROUTES: RouteFixture[] = [
   agentRoute("/backups", BACKUPS, { method: "GET" }),
   agentRoute("/voice/stt/status", STT_STATUS),
   agentRoute("/voice/tts/status", TTS_STATUS),
+  agentRoute("/voice/behavior/status", VOICE_BEHAVIORS),
+  agentRoute("/voice/judge/status", JUDGE_STATUS),
   agentRoute("/voice/stt/usage", STT_USAGE),
   agentRoute("/voice/tts/usage", TTS_USAGE),
   agentRoute(

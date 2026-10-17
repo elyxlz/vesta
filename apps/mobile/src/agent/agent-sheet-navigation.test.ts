@@ -51,6 +51,7 @@ describe("agent sheet navigation", () => {
       "provider/sign-in",
       "provider/model",
       "provider/context",
+      "voice/select",
     ]);
   });
 

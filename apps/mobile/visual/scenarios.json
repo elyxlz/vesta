@@ -829,6 +829,12 @@
       "group": "Agent settings"
     },
     {
+      "id": "agent-voice-options",
+      "title": "Voice, option list",
+      "description": "The searchable list a voice setting with many options opens.",
+      "group": "Agent settings"
+    },
+    {
       "id": "agent-notification-rules-delete",
       "title": "Interrupt rules, delete",
       "description": "The delete rule confirmation.",

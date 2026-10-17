@@ -15,8 +15,9 @@ export interface Preferences {
   shareLocation: boolean;
   voiceActivation: VoiceActivationMode;
   voiceMuted: boolean;
+  // The microphone both mic modes record from, by its browser device id; null is the system default.
+  voiceInput: string | null;
   conversationAutoEnd: boolean;
-  conversationYield: boolean;
   // Agents whose desktop panel remembers a collapsed chat with the dashboard full-page.
   chatCollapsed: string[];
   // Agents whose desktop view was the full-screen chat when last left, so opening them returns there.
@@ -36,8 +37,8 @@ const DEFAULTS: Preferences = {
   shareLocation: true,
   voiceActivation: "toggle",
   voiceMuted: false,
+  voiceInput: null,
   conversationAutoEnd: true,
-  conversationYield: true,
   chatCollapsed: [],
   chatFullscreen: [],
   lastAgent: null,
@@ -79,8 +80,8 @@ function legacyPreferences(): Preferences {
     voiceActivation:
       localStorage.getItem("voice-activation") === "hold" ? "hold" : "toggle",
     voiceMuted: flag("voice-muted", false),
+    voiceInput: null,
     conversationAutoEnd: flag("voice-conversation-auto-end", true),
-    conversationYield: flag("voice-conversation-yield", true),
     chatCollapsed,
     chatFullscreen: [],
     lastAgent: localStorage.getItem("vesta:last-agent"),

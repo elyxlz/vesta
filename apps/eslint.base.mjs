@@ -81,7 +81,6 @@ export const boundaryCastOverride = {
     "src/protocol/**",
     "src/transport/**",
     "src/chat/chat-socket.ts",
-    "src/voice/stt-session.ts",
     "src/lib/native/**",
     "**/*.test.{ts,tsx}",
   ],

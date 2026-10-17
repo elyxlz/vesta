@@ -9,24 +9,35 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import type { SettingDef } from "@/lib/voice";
-import { DynamicSettings, CollapsibleChevronButton } from "./setting-controls";
+import { useState } from "react";
+import { voiceUsageSummary, type VoiceDomain } from "@vesta/core";
+import { fetchVoiceUsage, type SettingDef, type VoiceUsage } from "@/lib/voice";
+import { CollapsibleChevronButton } from "./collapsible-chevron-button";
+import { DynamicSettings, OptionList } from "./setting-controls";
 
+// The account of a role's provider, asked when the user opens it. Key it by the provider, so a
+// switch to another one asks again.
 export function UsageCollapsible({
-  onOpen,
-  children,
+  agentName,
+  domain,
 }: {
-  onOpen: () => void;
-  children: React.ReactNode;
+  agentName: string | null;
+  domain: "stt" | "tts";
 }) {
+  const [usage, setUsage] = useState<VoiceUsage | null>(null);
   return (
     <Collapsible
       onOpenChange={(isOpen) => {
-        if (isOpen) onOpen();
+        if (isOpen && agentName)
+          fetchVoiceUsage(agentName, domain).then(setUsage).catch(console.warn);
       }}
     >
       <CollapsibleChevronButton>usage</CollapsibleChevronButton>
-      <CollapsibleContent>{children}</CollapsibleContent>
+      <CollapsibleContent>
+        <p className="text-sm text-foreground tabular-nums px-6 pt-2">
+          {voiceUsageSummary(usage)}
+        </p>
+      </CollapsibleContent>
     </Collapsible>
   );
 }
@@ -36,8 +47,11 @@ export function UsageCollapsible({
 export function DomainSection({
   icon,
   title,
+  description,
   configured,
   provider,
+  connected,
+  onUseProvider,
   enabled,
   onToggleEnabled,
   settings,
@@ -48,16 +62,25 @@ export function DomainSection({
 }: {
   icon: React.ReactNode;
   title: string;
+  // What the role does, for a role that is not self-evident. A role with none shows a
+  // warning while it is not configured.
+  description?: string;
   configured: boolean;
   provider: string | null;
+  // The providers connected to this role. With two or more, the card offers the switch.
+  connected: string[];
+  onUseProvider: (provider: string) => void;
   enabled: boolean;
   onToggleEnabled: (v: boolean) => void;
   settings?: SettingDef[];
-  domain: "stt" | "tts";
+  domain: VoiceDomain;
   agentName: string | null;
   onSettingChange: (settings: SettingDef[]) => void;
   usageContent: React.ReactNode;
 }) {
+  const hasSettings = (settings?.length ?? 0) > 0;
+  const hasContent =
+    connected.length > 1 || Boolean(usageContent) || hasSettings;
   return (
     <Card size="sm">
       <CardHeader>
@@ -70,10 +93,14 @@ export function DomainSection({
             </span>
           )}
         </CardTitle>
-        {!configured && (
-          <CardDescription className="text-warning">
-            not configured, ask the agent to set it up
-          </CardDescription>
+        {description ? (
+          <CardDescription>{description}</CardDescription>
+        ) : (
+          !configured && (
+            <CardDescription className="text-warning">
+              not configured, ask the agent to set it up
+            </CardDescription>
+          )
         )}
         <CardAction>
           <Switch
@@ -83,14 +110,25 @@ export function DomainSection({
           />
         </CardAction>
       </CardHeader>
-      {configured && enabled && (
+      {configured && enabled && hasContent && (
         <CardContent>
           <Field orientation="vertical" className="gap-3">
+            {connected.length > 1 && (
+              <OptionList
+                label="provider"
+                selected={provider}
+                options={connected.map((name) => ({
+                  value: name,
+                  label: name,
+                }))}
+                onChange={onUseProvider}
+              />
+            )}
             {usageContent}
-            {settings && settings.length > 0 && (
+            {settings && hasSettings && (
               <DynamicSettings
                 settings={settings}
-                domain={domain}
+                section={domain}
                 agentName={agentName}
                 onSettingChange={onSettingChange}
               />
@@ -101,5 +139,3 @@ export function DomainSection({
     </Card>
   );
 }
-
-// --- Dynamic settings renderer ---

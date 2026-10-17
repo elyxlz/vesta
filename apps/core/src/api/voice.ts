@@ -1,13 +1,15 @@
-import { jsonInit, type HttpClient } from "../transport/http";
+import { ApiError, jsonInit, type HttpClient } from "../transport/http";
 import { agentPath } from "./agents";
 
-export type VoiceDomain = "stt" | "tts";
+// A role of the voice service: the mic, the voice, and the judge that decides who the user's
+// words are for while a reply plays.
+export type VoiceDomain = "stt" | "tts" | "judge";
 
 // A dynamic setting the voice service describes for its settings card; `config` nests the settings
 // of a chosen option (a provider's own knobs).
 export interface SettingDef {
   key: string;
-  type: "bool" | "number" | "select";
+  type: "bool" | "number" | "select" | "text";
   label: string;
   description?: string;
   value: unknown;
@@ -30,26 +32,63 @@ export interface SettingDef {
 export interface VoiceStatus {
   configured: boolean;
   provider: string | null;
+  // Every provider connected to this role, the selected one included.
+  connected?: string[];
   enabled?: boolean;
   settings?: SettingDef[];
 }
 
-export interface SttUsage {
-  usage?: { results?: { hours?: number }[] };
-  balance?: { balances?: { amount?: number; units?: string }[] };
+// The behaviors: values that change how every voice session acts, whichever provider is
+// selected. They use the settings format of the providers.
+export interface VoiceBehaviors {
+  settings: SettingDef[];
 }
 
-export interface TtsUsage {
-  usage?: { character_count?: number; character_limit?: number };
+// An amount of a provider's account. The unit is "usd", "hours", "credits", or one the
+// provider names.
+export interface VoiceAmount {
+  amount: number;
+  unit: string;
+}
+
+// What the account of a role's provider used this month and has left, in one shape for every
+// provider. Null where the provider does not say.
+export interface VoiceUsage {
+  used: VoiceAmount | null;
+  left: VoiceAmount | null;
 }
 
 function voicePath(name: string, suffix: string): string {
   return agentPath(name, `/voice/${suffix}`);
 }
 
-// The live transcription socket (GET .../voice/stt/listen); dialed with the token in the query.
-export function sttListenPath(name: string): string {
-  return voicePath(name, "stt/listen");
+// LEGACY(remove-when: every agent in the fleet has run the 2026-10-voice-engine migration):
+// a voice service from before that migration lists `interrupt_tts` among the STT settings.
+// The barge_in behavior holds that choice, so the setting is dropped here and no client
+// shows a switch that nothing reads.
+async function voiceStatus(
+  http: HttpClient,
+  path: string,
+  init: RequestInit,
+): Promise<VoiceStatus> {
+  const status = await http.json<VoiceStatus>(path, init);
+  if (!status.settings) return status;
+  return {
+    ...status,
+    settings: status.settings.filter((s) => s.key !== "interrupt_tts"),
+  };
+}
+
+// The voice engine socket (GET .../voice/voice/session), one for each voice session; dialed
+// with the token in the query.
+export function voiceSessionPath(name: string): string {
+  return voicePath(name, "voice/session");
+}
+
+// The audio of one play of a session. The engine names it as a path on the voice service
+// (`/voice/play/<token>`), and a media element fetches it with the token in the query.
+export function voicePlayPath(name: string, enginePath: string): string {
+  return voicePath(name, enginePath.replace(/^\//, ""));
 }
 
 // The streamed speech a media element plays (GET .../voice/tts/stream/{id}?token=...). A media
@@ -64,23 +103,68 @@ export async function fetchVoiceStatus(
   domain: VoiceDomain,
   signal?: AbortSignal,
 ): Promise<VoiceStatus> {
-  return http.json<VoiceStatus>(voicePath(name, `${domain}/status`), {
-    signal,
-  });
+  return voiceStatus(http, voicePath(name, `${domain}/status`), { signal });
 }
 
-export async function fetchSttUsage(
-  http: HttpClient,
-  name: string,
-): Promise<SttUsage> {
-  return http.json<SttUsage>(voicePath(name, "stt/usage"));
+const NOT_FOUND = 404;
+
+// A voice service with no judge or behavior routes answers 404, which reads as none. Every
+// other failure throws, so a transient error never hides a card.
+async function noneWhenMissing<T>(request: Promise<T>): Promise<T | null> {
+  try {
+    return await request;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === NOT_FOUND) return null;
+    throw error;
+  }
 }
 
-export async function fetchTtsUsage(
+// What the voice settings show. The judge and the behaviors are null for an agent whose voice
+// service has no such route.
+export interface VoiceSettingsData {
+  stt: VoiceStatus;
+  tts: VoiceStatus;
+  judge: VoiceStatus | null;
+  behaviors: VoiceBehaviors | null;
+}
+
+export async function fetchVoiceSettings(
   http: HttpClient,
   name: string,
-): Promise<TtsUsage> {
-  return http.json<TtsUsage>(voicePath(name, "tts/usage"));
+  signal?: AbortSignal,
+): Promise<VoiceSettingsData> {
+  const [stt, tts, judge, behaviors] = await Promise.all([
+    fetchVoiceStatus(http, name, "stt", signal),
+    fetchVoiceStatus(http, name, "tts", signal),
+    noneWhenMissing(fetchVoiceStatus(http, name, "judge", signal)),
+    noneWhenMissing(
+      http.json<VoiceBehaviors>(voicePath(name, "behavior/status"), {
+        signal,
+      }),
+    ),
+  ]);
+  return { stt, tts, judge, behaviors };
+}
+
+export async function setVoiceBehavior(
+  http: HttpClient,
+  name: string,
+  key: string,
+  value: unknown,
+): Promise<VoiceBehaviors> {
+  return http.json<VoiceBehaviors>(
+    voicePath(name, "behavior/set"),
+    jsonInit("POST", { key, value }),
+  );
+}
+
+// The judge has no account to show.
+export async function fetchVoiceUsage(
+  http: HttpClient,
+  name: string,
+  domain: "stt" | "tts",
+): Promise<VoiceUsage> {
+  return http.json<VoiceUsage>(voicePath(name, `${domain}/usage`));
 }
 
 export async function setVoiceEnabled(
@@ -89,9 +173,25 @@ export async function setVoiceEnabled(
   domain: VoiceDomain,
   value: boolean,
 ): Promise<VoiceStatus> {
-  return http.json<VoiceStatus>(
+  return voiceStatus(
+    http,
     voicePath(name, `${domain}/set-enabled`),
     jsonInit("POST", { value }),
+  );
+}
+
+// Switches a role to one of its connected providers. Each provider keeps its own key and
+// settings, so the answer is the status of the role under the new provider.
+export async function selectVoiceProvider(
+  http: HttpClient,
+  name: string,
+  domain: VoiceDomain,
+  provider: string,
+): Promise<VoiceStatus> {
+  return voiceStatus(
+    http,
+    voicePath(name, `${domain}/use`),
+    jsonInit("POST", { provider }),
   );
 }
 
@@ -102,7 +202,8 @@ export async function setVoiceSetting(
   key: string,
   value: unknown,
 ): Promise<VoiceStatus> {
-  return http.json<VoiceStatus>(
+  return voiceStatus(
+    http,
     voicePath(name, `${domain}/set`),
     jsonInit("POST", { key, value }),
   );

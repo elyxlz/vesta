@@ -1,23 +1,32 @@
-"""Read/write ~/.voice/voice_config.json atomically."""
+"""Read/write ~/.voice/voice_config.json atomically.
+
+The file has one entry for each role (`stt`, `tts`, `judge`) and one `behavior` entry, and an
+entry with nothing in it is `{}`. A role entry holds `provider` (the selected one), `credentials` (one entry for each connected provider:
+its key, or an empty entry for a provider that needs no key), `enabled`, and the settings of its
+providers. Each provider reads only its own setting keys, so a switch between providers loses
+nothing.
+"""
 
 import json
 import pathlib as pl
 import typing as tp
 
+from .settings import Domain, SettingValue
+
 VOICE_CONFIG_FILENAME = "voice_config.json"
 
-DEFAULT_EOT_THRESHOLD = 0.8
-DEFAULT_EOT_TIMEOUT_MS = 5000
-EOT_THRESHOLD_MIN = 0.5
-EOT_THRESHOLD_MAX = 0.9
-EOT_TIMEOUT_MS_MIN = 500
-EOT_TIMEOUT_MS_MAX = 10000
+Role = tp.Literal["stt", "tts", "judge"]
+Section = tp.Literal["stt", "tts", "judge", "behavior"]
+ROLES: tuple[Role, ...] = ("stt", "tts", "judge")
+SECTIONS: tuple[Section, ...] = ("stt", "tts", "judge", "behavior")
+# `connect` turns these roles on. The judge sends live text to its provider, so the user turns
+# it on as a separate step.
+ROLES_ON_AT_CONNECT: tuple[Role, ...] = ("stt", "tts")
 
-# Domain entries are dynamic string-keyed maps: their keys come from each
-# provider's settings schema (eot_threshold, keyterms, custom_voices, ...).
-SettingValue = bool | int | float | str | list[str] | list[dict[str, str]] | dict[str, dict[str, str]]
-Domain = dict[str, SettingValue]
-VoiceConfig = dict[tp.Literal["stt", "tts"], Domain | None]
+# The keys of a role entry that are not a provider's settings.
+ROLE_KEYS = ("provider", "credentials", "enabled")
+
+VoiceConfig = dict[Section, Domain]
 
 
 def data_dir() -> pl.Path:
@@ -32,17 +41,9 @@ def load(data_dir: pl.Path) -> VoiceConfig:
     path = config_path(data_dir)
     try:
         raw = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError, FileNotFoundError):
-        return {"stt": None, "tts": None}
-    cfg: VoiceConfig = {
-        "stt": raw.get("stt") or None,
-        "tts": raw.get("tts") or None,
-    }
-    # Migrate top-level preferences into their domains.
-    tts = cfg["tts"]
-    if "speech_enabled" in raw and tts:
-        tts.setdefault("speech_enabled", raw["speech_enabled"])
-    return cfg
+    except (json.JSONDecodeError, OSError):
+        raw = {}
+    return {section: raw[section] if section in raw and isinstance(raw[section], dict) else {} for section in SECTIONS}
 
 
 def save(data_dir: pl.Path, config: VoiceConfig) -> None:
@@ -61,23 +62,33 @@ def mutate(data_dir: pl.Path, updater: tp.Callable[[VoiceConfig], VoiceConfig]) 
     return new
 
 
-def provider_name(entry: Domain | None) -> str | None:
-    """The domain's configured provider name, or None when unset."""
-    if not entry or "provider" not in entry:
+def provider_name(entry: Domain) -> str | None:
+    """The role's selected provider name, or None when it has none."""
+    if "provider" not in entry:
         return None
     name = entry["provider"]
     return name if isinstance(name, str) and name else None
 
 
+def connected(entry: Domain) -> list[str]:
+    """The providers connected to a role, in name order."""
+    return sorted(_credentials(entry))
+
+
 def provider_creds(entry: Domain, provider: str) -> dict[str, str]:
-    """The credentials stored for one provider under a domain, or an empty dict."""
+    """The credentials stored for one provider under a role: empty for a provider with no key."""
     creds = _credentials(entry)
     value = creds[provider] if provider in creds else {}
     return dict(value) if isinstance(value, dict) else {}
 
 
-def is_enabled(entry: Domain | None) -> bool:
-    return bool(entry and "enabled" in entry and entry["enabled"])
+def provider_settings(entry: Domain) -> Domain:
+    """What a provider sees of its role entry: the settings, and never a key of another provider."""
+    return {key: value for key, value in entry.items() if key not in ROLE_KEYS}
+
+
+def is_enabled(entry: Domain) -> bool:
+    return "enabled" in entry and bool(entry["enabled"])
 
 
 def _credentials(entry: Domain) -> dict[str, dict[str, str]]:
@@ -95,57 +106,104 @@ def custom_voices(entry: Domain) -> list[dict[str, str]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def set_key(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], provider: str, api_key: str) -> VoiceConfig:
+def provider_voices(entry: Domain, provider: str) -> list[dict[str, str]]:
+    """The voices the user added for one provider."""
+    return [v for v in custom_voices(entry) if "provider" in v and v["provider"] == provider and "id" in v]
+
+
+def selected_entry(config: VoiceConfig, role: Role) -> tuple[Domain, str]:
+    """The role's entry and its selected provider name. Raises ValueError when it has none."""
+    entry = config[role]
+    name = provider_name(entry)
+    if name is None:
+        raise ValueError(f"{role} has no selected provider; run `voice {role} connect <provider>` first")
+    return entry, name
+
+
+def connect(data_dir: pl.Path, role: Role, provider: str, creds: dict[str, str]) -> VoiceConfig:
+    """Store the provider's entry and select it."""
+
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        existing = cfg[domain] or {}
-        creds = _credentials(existing)
-        creds[provider] = {"api_key": api_key}
-        cfg[domain] = {**existing, "provider": provider, "credentials": creds, "enabled": True}
+        existing = cfg[role]
+        stored = _credentials(existing)
+        stored[provider] = creds
+        enabled = True if role in ROLES_ON_AT_CONNECT else is_enabled(existing)
+        cfg[role] = {**existing, "provider": provider, "credentials": stored, "enabled": enabled}
         return cfg
 
     return mutate(data_dir, _update)
 
 
-def clear_domain(data_dir: pl.Path, domain: tp.Literal["stt", "tts"]) -> VoiceConfig:
+def use(data_dir: pl.Path, role: Role, provider: str) -> VoiceConfig:
+    """Select a connected provider. The settings and the key of every provider stay."""
+
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        cfg[domain] = None
+        entry = cfg[role]
+        if provider not in connected(entry):
+            raise ValueError(f"{provider} is not connected to {role}; run `voice {role} connect {provider}` first")
+        cfg[role] = {**entry, "provider": provider}
         return cfg
 
     return mutate(data_dir, _update)
 
 
-def set_voice(data_dir: pl.Path, voice_id: str) -> VoiceConfig:
+def disconnect(data_dir: pl.Path, role: Role, provider: str) -> VoiceConfig:
+    """Remove the provider's entry. A selected provider hands over to the next connected one in
+    name order, and a role with none left is off."""
+
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        tts = cfg["tts"]
-        if not tts:
-            raise ValueError("TTS not configured; set a provider key first")
-        cfg["tts"] = {**tts, "selected_voice_id": voice_id}
+        entry = cfg[role]
+        if not entry:
+            return cfg
+        stored = _credentials(entry)
+        stored.pop(provider, None)
+        updated: Domain = {**entry, "credentials": stored}
+        if provider_name(entry) == provider:
+            if stored:
+                updated["provider"] = min(stored)
+            else:
+                del updated["provider"]
+                updated["enabled"] = False
+        cfg[role] = updated
+        return cfg
+
+    return mutate(data_dir, _update)
+
+
+def set_enabled(data_dir: pl.Path, role: Role, value: bool) -> VoiceConfig:
+    def _update(cfg: VoiceConfig) -> VoiceConfig:
+        if value:
+            selected_entry(cfg, role)
+        cfg[role] = {**cfg[role], "enabled": value}
+        return cfg
+
+    return mutate(data_dir, _update)
+
+
+def set_setting(data_dir: pl.Path, section: Section, key: str, value: SettingValue) -> VoiceConfig:
+    """Store one value. The caller checks it against the schema first (settings.check_setting)."""
+
+    def _update(cfg: VoiceConfig) -> VoiceConfig:
+        if section == "behavior":
+            cfg["behavior"] = {**cfg["behavior"], key: value}
+            return cfg
+        entry, _name = selected_entry(cfg, section)
+        cfg[section] = {**entry, key: value}
         return cfg
 
     return mutate(data_dir, _update)
 
 
 def add_custom_voice(data_dir: pl.Path, voice_id: str, name: str, description: str = "") -> VoiceConfig:
+    """Add a voice of the user's own to the selected TTS provider, or rename one that is there."""
+
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        tts = cfg["tts"]
-        if not tts:
-            raise ValueError("TTS not configured; set a provider key first")
-        provider_value = tts["provider"] if "provider" in tts else ""
-        provider = provider_value if isinstance(provider_value, str) and provider_value else "elevenlabs"
-        voices = custom_voices(tts)
-        existing = next((v for v in voices if v.get("id") == voice_id), None)
-        if existing:
-            existing["name"] = name
-            if description:
-                existing["description"] = description
-            elif "description" in existing:
-                del existing["description"]
-        else:
-            entry: dict[str, str] = {"provider": provider, "id": voice_id, "name": name}
-            if description:
-                entry["description"] = description
-            voices.append(entry)
-        cfg["tts"] = {**tts, "custom_voices": voices}
+        tts, provider = selected_entry(cfg, "tts")
+        voice: dict[str, str] = {"provider": provider, "id": voice_id, "name": name}
+        if description:
+            voice["description"] = description
+        others = [v for v in custom_voices(tts) if not ("id" in v and v["id"] == voice_id)]
+        cfg["tts"] = {**tts, "custom_voices": [*others, voice]}
         return cfg
 
     return mutate(data_dir, _update)
@@ -156,18 +214,20 @@ def remove_custom_voice(data_dir: pl.Path, voice_id: str) -> VoiceConfig:
         tts = cfg["tts"]
         if not tts:
             return cfg
-        cfg["tts"] = {**tts, "custom_voices": [v for v in custom_voices(tts) if v.get("id") != voice_id]}
+        cfg["tts"] = {**tts, "custom_voices": [v for v in custom_voices(tts) if not ("id" in v and v["id"] == voice_id)]}
         return cfg
 
     return mutate(data_dir, _update)
 
 
+def keyterms(entry: Domain) -> list[str]:
+    return _str_list(entry, "keyterms")
+
+
 def add_keyterm(data_dir: pl.Path, term: str) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        stt = cfg["stt"]
-        if not stt:
-            raise ValueError("STT not configured; set a provider key first")
-        terms = _str_list(stt, "keyterms")
+        stt, _name = selected_entry(cfg, "stt")
+        terms = keyterms(stt)
         if term not in terms:
             terms.append(term)
         cfg["stt"] = {**stt, "keyterms": terms}
@@ -181,80 +241,7 @@ def remove_keyterm(data_dir: pl.Path, term: str) -> VoiceConfig:
         stt = cfg["stt"]
         if not stt:
             return cfg
-        cfg["stt"] = {**stt, "keyterms": [t for t in _str_list(stt, "keyterms") if t != term]}
-        return cfg
-
-    return mutate(data_dir, _update)
-
-
-def _validated_eot_threshold(value: SettingValue) -> float:
-    if isinstance(value, list | dict):
-        raise ValueError(f"eot_threshold must be a number, got {value!r}")
-    threshold = float(value)
-    if not EOT_THRESHOLD_MIN <= threshold <= EOT_THRESHOLD_MAX:
-        raise ValueError(
-            f"eot_threshold must be in [{EOT_THRESHOLD_MIN}, {EOT_THRESHOLD_MAX}], got {threshold}",
-        )
-    return threshold
-
-
-def _validated_eot_timeout_ms(value: SettingValue) -> int:
-    if isinstance(value, list | dict):
-        raise ValueError(f"eot_timeout_ms must be a number, got {value!r}")
-    timeout_ms = int(value)
-    if not EOT_TIMEOUT_MS_MIN <= timeout_ms <= EOT_TIMEOUT_MS_MAX:
-        raise ValueError(
-            f"eot_timeout_ms must be in [{EOT_TIMEOUT_MS_MIN}, {EOT_TIMEOUT_MS_MAX}], got {timeout_ms}",
-        )
-    return timeout_ms
-
-
-def set_eot_threshold(data_dir: pl.Path, threshold: float) -> VoiceConfig:
-    validated = _validated_eot_threshold(threshold)
-
-    def _update(cfg: VoiceConfig) -> VoiceConfig:
-        stt = cfg["stt"]
-        if not stt:
-            raise ValueError("STT not configured; set a provider key first")
-        cfg["stt"] = {**stt, "eot_threshold": validated}
-        return cfg
-
-    return mutate(data_dir, _update)
-
-
-def set_eot_timeout_ms(data_dir: pl.Path, timeout_ms: int) -> VoiceConfig:
-    validated = _validated_eot_timeout_ms(timeout_ms)
-
-    def _update(cfg: VoiceConfig) -> VoiceConfig:
-        stt = cfg["stt"]
-        if not stt:
-            raise ValueError("STT not configured; set a provider key first")
-        cfg["stt"] = {**stt, "eot_timeout_ms": validated}
-        return cfg
-
-    return mutate(data_dir, _update)
-
-
-def set_setting(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], key: str, value: SettingValue) -> VoiceConfig:
-    """Generic setter — stores value at cfg[domain][key]."""
-    if domain == "stt" and key == "eot_threshold":
-        value = _validated_eot_threshold(value)
-    elif domain == "stt" and key == "eot_timeout_ms":
-        value = _validated_eot_timeout_ms(value)
-
-    def _update(cfg: VoiceConfig) -> VoiceConfig:
-        entry = cfg[domain]
-        if not entry:
-            raise ValueError(f"{domain.upper()} not configured; set a provider key first")
-        cfg[domain] = {**entry, key: value}
-        return cfg
-
-    return mutate(data_dir, _update)
-
-
-def set_enabled(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], value: bool) -> VoiceConfig:
-    def _update(cfg: VoiceConfig) -> VoiceConfig:
-        cfg[domain] = {**(cfg[domain] or {}), "enabled": value}
+        cfg["stt"] = {**stt, "keyterms": [t for t in keyterms(stt) if t != term]}
         return cfg
 
     return mutate(data_dir, _update)
