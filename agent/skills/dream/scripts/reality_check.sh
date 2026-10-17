@@ -87,8 +87,52 @@ done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
-# refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+# refusal leaves, so count those lines rather than the daemon's rate-limit warnings. The nightly
+# dream's own compaction turn logs the same shape when it ends the session, so a usage line within
+# 10 seconds of a compaction STARTUP/SHUTDOWN marker is the dream sealing itself. Proximity is
+# judged in time, not in lines: agent narration and client summaries interleave into the same log,
+# and a line-distance window counts prose that merely mentions compaction.
+refused=0
+for log_file in "$HOME"/agent/logs/vesta.log*; do
+    [ -e "$log_file" ] || continue
+    n=$(awk -v today="$today" '
+        { line[FNR] = $0 }
+        END {
+            ts_epoch = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]"
+            marks = 0
+            for (i = 1; i <= FNR; i++) {
+                is_mark = 0
+                if (line[i] ~ /compaction/ && line[i] ~ /\[(SHUTDOWN|STARTUP)\]/) is_mark = 1
+                # A preempted turn (dreamer/highest-priority trigger cutting a running
+                # check) logs in=0 out=0 exactly like a refusal; exclude it too.
+                if (line[i] ~ /Preempt sent/) is_mark = 1
+                if (is_mark) {
+                    s = line[i]; gsub(/\033\[[0-9;]*m/, "", s)
+                    if (match(s, ts_epoch)) {
+                        t = substr(s, RSTART, RLENGTH); gsub(/[-:]/, " ", t)
+                        marks++; mark[marks] = mktime(t)
+                    }
+                }
+            }
+            count = 0
+            for (i = 1; i <= FNR; i++) {
+                if (line[i] ~ today && line[i] ~ /\[USAGE\] in=0 out=0 cache_read=0 /) {
+                    s = line[i]; gsub(/\033\[[0-9;]*m/, "", s)
+                    t = -1
+                    if (match(s, ts_epoch)) {
+                        u = substr(s, RSTART, RLENGTH); gsub(/[-:]/, " ", u)
+                        t = mktime(u)
+                    }
+                    keep = 1
+                    for (m = 1; m <= marks; m++)
+                        if (t >= 0 && mark[m] - t <= 10 && mark[m] - t >= -10) keep = 0
+                    if (keep) count++
+                }
+            }
+            print count + 0
+        }' "$log_file")
+    refused=$((refused + ${n:-0}))
+done
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
     bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
