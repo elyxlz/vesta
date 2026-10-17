@@ -55,7 +55,7 @@ On a fresh start, reason through your personality for the day. Don't restate the
 `ls` to see what's available. To read the active one:
 
 ```bash
-P=$(cd ~/agent && uv run --project core python - <<'EOF'
+P=$(cd ~/agent && python - <<'EOF'
 import json, pathlib
 from core.personalities import DEFAULT_PERSONALITY
 
@@ -70,6 +70,8 @@ EOF
 )
 cat ~/agent/skills/personality/presets/"$P".md
 ```
+
+`python` here is the engine venv on PATH. `uv run --project core` fails instead: uv tries to create a venv inside the read-only `agent/core` mount.
 
 **Do not reach for `$AGENT_PERSONALITY`.** The config store outranks it: `settings_customise_sources` in `core/config.py` orders the store above `env_settings`, so the store wins whenever it holds a value. The variable is also unset in the environment and in `/run/vestad-env` unless someone exports it, and a path written `presets/$AGENT_PERSONALITY.md` then expands to `presets/.md` and silently resolves to nothing. The store, with the preset catalog's declared default as the fallback for an agent that never chose one, is the only reading that is always right.
 
