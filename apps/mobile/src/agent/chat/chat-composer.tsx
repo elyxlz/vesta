@@ -1,5 +1,15 @@
-import { memo, useMemo } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { memo, useEffect, useMemo, useState } from "react";
+import {
+  Pressable,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  type SharedValue,
+} from "react-native-reanimated";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SymbolView } from "expo-symbols";
 import { Text } from "@/components/ui/Typography";
@@ -13,7 +23,52 @@ const IS_IOS = process.env.EXPO_OS === "ios";
 const GLYPH_BUTTON_WIDTH = 26;
 const GLYPH_HIT_SLOP = (CHAT_COMPOSER_CONTROL_HEIGHT - GLYPH_BUTTON_WIDTH) / 2;
 
-export const ReplyPreview = memo(function ReplyPreview({
+// The reply preview rides the composer's top edge: the slot's height slides to the preview's measured
+// height and back to zero, and the preview stays mounted through the exit so it slides out whole.
+export function ReplySlot({
+  target,
+  height,
+  onCancel,
+  onHeight,
+}: {
+  target: ReplyTarget | null;
+  height: SharedValue<number>;
+  onCancel: () => void;
+  onHeight: (height: number) => void;
+}) {
+  const [shown, setShown] = useState(target);
+  if (target !== null && target !== shown) setShown(target);
+  const measured = useSharedValue(0);
+  useEffect(() => {
+    onHeight(target ? measured.get() : 0);
+  }, [target, measured, onHeight]);
+  const onContentLayout = (event: LayoutChangeEvent) => {
+    measured.set(event.nativeEvent.layout.height);
+    if (target) onHeight(event.nativeEvent.layout.height);
+  };
+  const slotStyle = useAnimatedStyle(() => ({
+    height: height.get(),
+    opacity:
+      measured.get() > 0 ? Math.min(height.get() / measured.get(), 1) : 0,
+  }));
+  return (
+    <Animated.View style={[styles.replySlot, slotStyle]}>
+      {shown ? (
+        <View
+          accessibilityElementsHidden={!target}
+          importantForAccessibility={target ? "auto" : "no-hide-descendants"}
+          pointerEvents={target ? "auto" : "none"}
+          onLayout={onContentLayout}
+          style={styles.replySlotContent}
+        >
+          <ReplyPreview target={shown} onCancel={onCancel} />
+        </View>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+const ReplyPreview = memo(function ReplyPreview({
   target,
   onCancel,
 }: {
@@ -210,6 +265,8 @@ export function ComposerActions({
 }
 
 const styles = StyleSheet.create({
+  replySlot: { overflow: "hidden" },
+  replySlotContent: { position: "absolute", top: 0, right: 0, left: 0 },
   actionCluster: { flexDirection: "row", alignItems: "center", gap: 12 },
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
