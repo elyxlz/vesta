@@ -7,6 +7,13 @@
 # Disk knobs: own usage is RED only while the host is also at the pressure percent, the host alone
 # is RED at the RED percent, and the du walk is bounded so a stuck filesystem cannot hang the dream.
 OWN_USAGE_RED_MB=20000
+# Own-usage alone is a size, not a problem: an agent whose job is a document corpus can sit on tens
+# of GB forever on a disk that is two thirds empty, and then this probe is RED every single night
+# with nothing to clear. A permanent RED is worse than no probe, because it teaches you to skim the
+# one output that exists to stop you skimming. So own usage only turns RED when the filesystem is
+# ALSO under real pressure; below that it prints as context. The v0.3.0 split that idea into two
+# thresholds and this file keeps theirs: PRESSURE is where own usage starts to matter, RED is where
+# the host is about to fail writes and the news goes to the user instead of into a cleanup.
 HOST_DISK_PRESSURE_PERCENT=85
 HOST_DISK_RED_PERCENT=97
 DU_TIMEOUT_SECS=120
@@ -72,23 +79,73 @@ esc=$(printf '\033')
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+    # The recent, non-AGENT, not-a-success-line error lines. Computed ONCE, because the count and
+    # the "most common" summary below MUST read the same population: the first version of this
+    # summary re-derived its own lines with a bare grep, so it skipped both the date window and the
+    # success-line filter, and on a fixture it happily reported "1 error" alongside "most common:
+    # 50 ..." from six days earlier, and on another it reported a SUCCESS line ("sync finished:
+    # 0 errors") as the dominant error, invisibly, because the digit-normalising sed had turned the
+    # 0 into an N. A summary that reads a wider population than the number it annotates is worse
+    # than no summary: it is a confident lead pointing away from the thing you are looking at.
+    righe=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
-        | grep -icE 'error|traceback')
+        | grep -aiE 'error|traceback')
+    # **`-a` non e' decorativo: senza, un log con byte NUL (una scrittura troncata) fa dire a grep
+    # «Binary file matches» invece delle righe, e il conteggio diventa 1 al posto di 300.** Il
+    # codice di prima faceva `grep -c` direttamente sulla pipe, dove un numero esce comunque;
+    # avendolo spezzato in due passaggi ho introdotto la regressione, e l'ha presa il test
+    # `test_error_storm_survives_nul_bytes_in_the_log` di upstream. Spezzare una pipe in una
+    # variabile cambia il comportamento sui dati binari: ricordarlo.
+    errors=$(printf '%s' "$righe" | grep -c . )
+    # A bare count under the threshold reads as OK and tells you nothing about WHAT is failing.
+    # On 5 Sep 2026 chat-mirror.log sat at 153 errors, comfortably under 200, and 148 of them were
+    # one line: a daemon failing 43% of its sends. The count was green while the daemon was mostly
+    # broken. So name the dominant pattern, but ONLY when it actually dominates: "most common: 2"
+    # out of 78 carries the same authority as "148 out of 153" while meaning nothing, and on a
+    # Python traceback the most repeated line is always `Traceback (most recent call last):`, which
+    # names nothing. Both are noise wearing a lead's clothes, so require a third of the total and
+    # drop the useless-by-construction line.
+    top=""
+    if [ "$errors" -gt 2 ]; then
+        cand=$(printf '%s\n' "$righe" \
+              | grep -viE '^traceback \(most recent call last\):' \
+              | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9:.,]+//g; s/[0-9]{2}:[0-9]{2}:[0-9]{2}[.,0-9]*//g; s/[0-9a-f]{8,}/<id>/g; s/[0-9]+/N/g; s/^[^A-Za-z]+//' \
+              | cut -c1-90 | sort | uniq -c | sort -rn | head -1 | sed 's/^ *//')
+        n=${cand%% *}
+        if [ -n "$n" ] && [ "$n" -ge $(( errors / 3 )) ] && [ "$n" -gt 1 ]; then
+            top="$cand"
+        fi
+    fi
     if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
+        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer${top:+ | most common: $top}"
     else
-        ok "$(basename "$log"): $errors error lines in the last 2 days"
+        ok "$(basename "$log"): $errors error lines in the last 2 days${top:+ | most common: $top}"
     fi
 done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
 # refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+
+# But that line alone over-counts badly: a compaction boundary and a preempted turn also bill
+# nothing. Measured here, 13 of 13 reported refusals were innocent (6 compactions, 7 preempts),
+# and any agent that compacts or gets interrupted trips it daily, so it was a permanent RED that
+# teaches you to skim the one output meant to stop you skimming. So the zero-usage line is
+# necessary and not sufficient: a real refusal has NEITHER marker in the preceding lines.
+
+# Beware when testing this: writing a fake usage line as a fixture gets the command echoed into
+# vesta.log by the tool-call logger, so the marker lands in the log this probe reads and the
+# count comes back 1. Build fixture markers from runtime-concatenated pieces.
+refused=$(grep -h -B4 "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null \
+    | awk '
+        /Compaction boundary reached/ { innocente = 1 }
+        /Preempt sent/                { innocente = 1 }
+        /\[USAGE\] in=0 out=0 cache_read=0 / { if (!innocente) n++; innocente = 0 }
+        /^--$/                        { innocente = 0 }
+        END { print n + 0 }')
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
     bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
