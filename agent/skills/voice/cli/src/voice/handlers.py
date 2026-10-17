@@ -169,8 +169,8 @@ async def stt_usage(request: web.Request) -> web.Response:
     return web.json_response({**usage, **_legacy_stt_usage(usage)})
 
 
-# LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION in vestad is 0.3.18 or higher): app builds
-# older than 0.3.18 read the usage of each role in the shape of its first vendor, so both
+# LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION in vestad is 0.3.19 or higher): app builds
+# older than 0.3.19 read the usage of each role in the shape of its first vendor, so both
 # routes add that shape beside `used` and `left`.
 def _legacy_stt_usage(usage: Usage) -> dict[str, JsonValue]:
     used, left = usage["used"], usage["left"]

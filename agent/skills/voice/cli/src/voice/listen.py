@@ -1,6 +1,6 @@
 """The `/stt/listen` socket: live transcription with no engine session.
 
-LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION in vestad is 0.3.18 or higher): an app build
+LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION in vestad is 0.3.19 or higher): an app build
 older than that hears through this route, and each newer stock client uses `/voice/session`.
 
 The client sends mic audio as binary frames (pcm_s16le, 16 kHz, mono) and reads `TurnInfo` text
