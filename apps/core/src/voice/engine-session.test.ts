@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   MAX_PENDING_AUDIO_BYTES,
+  canPlayOggOpusInDom,
   createEngineSession,
   type EngineSessionCallbacks,
 } from "./engine-session";
@@ -24,7 +25,7 @@ function recorder() {
   return { events, errors, active, callbacks };
 }
 
-function setup(bargeIn = true) {
+function setup(bargeIn = true, canPlayOggOpus?: () => boolean) {
   const socket = new FakeEngineSocket();
   const cap = fakeCapture();
   const out = fakeSpeaker();
@@ -37,6 +38,7 @@ function setup(bargeIn = true) {
       speaker: out.speaker,
       playUrl: (path) => Promise.resolve(`https://host${path}`),
       client: "test",
+      canPlayOggOpus,
     },
     rec.callbacks,
     { bargeIn },
@@ -73,13 +75,52 @@ describe("the engine session", () => {
       type: "start_session",
       client: "test",
       audio: { encoding: "pcm_s16le", sample_rate: 16000, channels: 1 },
-      playback: { delivery: "url", formats: ["mp3_22050"] },
+      playback: { delivery: "url", formats: ["mp3_44100", "mp3_22050"] },
       barge_in: false,
     });
     expect(typeof socket.sent[0]).toBe("string");
     expect(socket.audio().map((f) => f.byteLength)).toEqual([10, 20]);
     cap.send(5);
     expect(socket.audio()).toHaveLength(3);
+  });
+
+  it("asks for opus first when the speaker decodes ogg opus", async () => {
+    const { socket, started } = setup(true, () => true);
+    await started();
+    expect(socket.frames()[0]).toMatchObject({
+      playback: {
+        delivery: "url",
+        formats: ["opus_48000", "mp3_44100", "mp3_22050"],
+      },
+    });
+  });
+
+  it("leaves opus out when the speaker cannot decode ogg opus", async () => {
+    const { socket, started } = setup(true, () => false);
+    await started();
+    expect(socket.frames()[0]).toMatchObject({
+      playback: { delivery: "url", formats: ["mp3_44100", "mp3_22050"] },
+    });
+  });
+
+  it("probes an audio element for ogg opus, and says no without one", () => {
+    expect(canPlayOggOpusInDom()).toBe(false);
+    const canPlayType = vi.fn((type: string) =>
+      type === 'audio/ogg; codecs="opus"' ? "probably" : "",
+    );
+    vi.stubGlobal(
+      "Audio",
+      class {
+        canPlayType = canPlayType;
+      },
+    );
+    try {
+      expect(canPlayOggOpusInDom()).toBe(true);
+      canPlayType.mockReturnValue("");
+      expect(canPlayOggOpusInDom()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps only the newest frames up to the pending cap", async () => {

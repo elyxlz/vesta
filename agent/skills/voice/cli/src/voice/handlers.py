@@ -22,8 +22,8 @@ logger = logging.getLogger("voice")
 # Pending TTS clips awaiting a streamed GET (see tts_pending / issue #466).
 _PENDING_TTS: tts_pending.PendingStore = {}
 
-# The audio format names of `/tts/speak`, and the play format each one is.
-SPEAK_FORMATS: dict[str, str] = {"mp3": "mp3_22050", "pcm": "pcm_16000"}
+# The audio format names of `/tts/speak`, and the play formats each one may be, first preferred.
+SPEAK_FORMATS: dict[str, tuple[str, ...]] = {"mp3": ("mp3_44100", "mp3_22050"), "pcm": ("pcm_16000",)}
 # A WebSocket close reason holds 123 bytes at most.
 CLOSE_REASON_MAX_BYTES = 123
 
@@ -262,9 +262,10 @@ async def _speak_response(request: web.Request, text: str, speak_format: str) ->
     if isinstance(resolved, web.Response):
         return resolved
     entry, name, provider = resolved
-    if speak_format not in SPEAK_FORMATS or SPEAK_FORMATS[speak_format] not in provider.formats:
+    candidates = SPEAK_FORMATS[speak_format] if speak_format in SPEAK_FORMATS else ()
+    play_format = next((f for f in candidates if f in provider.formats), None)
+    if play_format is None:
         return _error(f"unsupported audio format: {speak_format}", 400)
-    play_format = SPEAK_FORMATS[speak_format]
     audio = provider.synthesize(
         text,
         providers.selected_voice(provider, entry),

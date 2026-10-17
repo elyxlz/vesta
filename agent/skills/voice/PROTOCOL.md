@@ -45,7 +45,7 @@ client                                engine
   "type": "start_session",
   "client": "voice-home",
   "audio": {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1},
-  "playback": {"delivery": "url", "formats": ["mp3_22050"]},
+  "playback": {"delivery": "url", "formats": ["opus_48000", "mp3_44100", "mp3_22050"]},
   "barge_in": true
 }
 ```
