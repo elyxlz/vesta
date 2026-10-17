@@ -139,7 +139,10 @@ export const useVoice = create<VoiceState>((set, get) => {
   const session: VoiceSession = createVoiceSession(
     {
       buildUrl: () => voiceWsUrl(get().agentName ?? ""),
-      capture: browserCapture(() => get().micMuted),
+      capture: browserCapture(
+        () => get().micMuted,
+        () => usePreferences.getState().voiceInput,
+      ),
       speaker: browserSpeaker(),
       playUrl: (path) => voicePlayUrl(get().agentName ?? "", path),
       prepareSpeech: (text) => {

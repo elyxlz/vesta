@@ -29,6 +29,7 @@ import {
   ConversationCard,
   DictationCard,
   JudgeCard,
+  MicrophoneCard,
   SttCard,
   TtsCard,
 } from "./VoiceSection";
@@ -88,6 +89,7 @@ export function AgentSettings() {
         forceMount={keepAlive("voice")}
         className="flex flex-col gap-6 data-[state=inactive]:hidden max-md:pb-28"
       >
+        <MicrophoneCard />
         <DictationCard />
         <ConversationCard />
         <SttCard />

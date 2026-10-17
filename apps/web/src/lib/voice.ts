@@ -171,10 +171,48 @@ export function microphoneDeniedMessage(
   return "Microphone access was denied.";
 }
 
+export interface Microphone {
+  id: string;
+  label: string;
+}
+
+// The browser's own names for its default device, which repeat a device the list already holds.
+const DEVICE_ALIASES = new Set(["default", "communications"]);
+
+// The microphones this device has. A browser gives their names only after the user has allowed
+// the microphone once, so `named` is false until then.
+export async function listMicrophones(): Promise<{
+  microphones: Microphone[];
+  named: boolean;
+}> {
+  if (!("mediaDevices" in navigator)) return { microphones: [], named: false };
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const inputs = devices.filter(
+    (d) => d.kind === "audioinput" && !DEVICE_ALIASES.has(d.deviceId),
+  );
+  return {
+    microphones: inputs.map((d, i) => ({
+      id: d.deviceId,
+      label: d.label || `microphone ${String(i + 1)}`,
+    })),
+    named: inputs.some((d) => d.label !== ""),
+  };
+}
+
+// Asks for the microphone and lets it go at once, so the browser gives the names of its devices.
+export async function allowMicrophone(): Promise<void> {
+  const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mic.getTracks().forEach((t) => t.stop());
+}
+
 // The microphone port: raw 16 kHz mono PCM frames to onFrame until stopped. `muted` is read
 // per frame; a muted mic streams silence rather than nothing, so the session stays up and a
-// turn caught mid-sentence still gets its end (which returns the floor to the agent).
-export function browserCapture(muted?: () => boolean): AudioCapture {
+// turn caught mid-sentence still gets its end (which returns the floor to the agent). `input`
+// is read at each start; a device that is gone falls back to the system default.
+export function browserCapture(
+  muted: () => boolean,
+  input: () => string | null,
+): AudioCapture {
   let stream: MediaStream | null = null;
   let audioCtx: AudioContext | null = null;
 
@@ -198,9 +236,12 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
       // Locals, because a stop can run during each await. The voice session stops the port
       // again once this start settles, which releases what it opened after that stop.
       let mic: MediaStream;
+      const deviceId = input();
       try {
         mic = await navigator.mediaDevices.getUserMedia({
           audio: {
+            // An ideal device, not an exact one, so a microphone that is gone is no failure.
+            ...(deviceId === null ? {} : { deviceId }),
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
@@ -237,7 +278,7 @@ export function browserCapture(muted?: () => boolean): AudioCapture {
         channelCount: 1,
       });
       workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        if (muted?.()) e.data.fill(0);
+        if (muted()) e.data.fill(0);
         onFrame(floatTo16BitPCM(e.data));
       };
       source.connect(workletNode);

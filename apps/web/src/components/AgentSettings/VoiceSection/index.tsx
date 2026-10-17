@@ -23,6 +23,8 @@ import {
 } from "@/stores/use-preferences";
 import { UsageCollapsible, DomainSection } from "./domain-section";
 
+export { MicrophoneCard } from "./microphone-card";
+
 // --- Exported cards ---
 
 const ACTIVATION_OPTIONS: { value: VoiceActivationMode; label: string }[] = [
