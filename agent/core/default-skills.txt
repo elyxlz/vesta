@@ -3,7 +3,6 @@ birth
 browser
 claude-code
 contacts
-dashboard
 dream
 email-client
 emergency
