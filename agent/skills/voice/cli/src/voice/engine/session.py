@@ -177,7 +177,7 @@ def _tts_link(entry: Domain, wanted_formats: list[str]) -> TtsLink | None:
     provider = providers.get_tts(name)
     if provider is None:
         return None
-    audio_format = next((f for f in wanted_formats if f in provider.formats and f in frames.PLAY_FORMATS), None)
+    audio_format = frames.best_play_format(wanted_formats, provider.formats)
     if audio_format is None:
         raise _UnsupportedFormatError
     settings = voice_config.provider_settings(entry)

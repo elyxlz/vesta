@@ -53,7 +53,7 @@ client                                engine
 - `client`: the name of your client. The engine uses it only in logs.
 - `audio`: the engine accepts exactly `pcm_s16le`, 16000 Hz, 1 channel. Any other value ends the session with `unsupported_format`.
 - `playback.delivery`: `"url"` means you fetch each play. `"bytes"` means the engine sends the audio on this socket.
-- `playback.formats`: an ordered list, first preferred, from `mp3_22050`, `mp3_44100`, `pcm_16000`, `pcm_22050`, `pcm_24000`, `ulaw_8000`, `opus_48000`. The engine takes the first one the selected TTS provider can make. `mp3_22050`, `pcm_16000`, `pcm_24000`, and `ulaw_8000` work with every shipped provider, so list one of them. With no TTS provider the list is not checked.
+- `playback.formats`: every format the client can play, from `opus_48000`, `mp3_44100`, `pcm_24000`, `pcm_22050`, `mp3_22050`, `pcm_16000`, `ulaw_8000`. The order of the list does not matter: the engine takes the best one the selected TTS provider makes, in the order of that list of names (the highest sample rate first). `mp3_22050`, `pcm_16000`, `pcm_24000`, and `ulaw_8000` work with every shipped provider, so list one of them. With no TTS provider the list is not checked.
 - `barge_in`: optional. `false` says that this session cannot do barge-in: dictation, or a device whose mic hears its own speaker. An absent field counts as `true`. Barge-in happens only when this is not `false` and the user's `barge_in` behavior is on.
 
 A frame before `start_session`, and a second `start_session`, gets `error` and changes nothing.

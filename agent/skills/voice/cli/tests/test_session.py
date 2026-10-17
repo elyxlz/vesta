@@ -110,6 +110,21 @@ def test_url_delivery_gives_a_url_that_serves_the_audio_of_the_play(tmp_path: pl
     asyncio.run(scenario())
 
 
+def test_the_engine_picks_the_best_format_whatever_order_the_client_lists(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+    tts.formats = frozenset({"opus_48000", "mp3_44100", "mp3_22050"})
+
+    async def scenario() -> None:
+        async with (
+            voice_service(tmp_path) as client,
+            session(client, stt, start(formats=("mp3_22050", "mp3_44100", "opus_48000"))) as (ws, _stream),
+        ):
+            await ws.send_json({"type": "speak", "id": "r1", "text": "Hi"})
+            play = await next_frame(ws)
+            assert play["format"] == "opus_48000"
+
+    asyncio.run(scenario())
+
+
 def test_the_agent_is_speaking_from_the_started_report_to_the_finished_report(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):

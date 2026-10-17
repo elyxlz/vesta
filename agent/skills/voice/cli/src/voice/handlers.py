@@ -22,7 +22,7 @@ logger = logging.getLogger("voice")
 # Pending TTS clips awaiting a streamed GET (see tts_pending / issue #466).
 _PENDING_TTS: tts_pending.PendingStore = {}
 
-# The audio format names of `/tts/speak`, and the play formats each one may be, first preferred.
+# The audio format names of `/tts/speak`, and the play formats each one may be.
 SPEAK_FORMATS: dict[str, tuple[str, ...]] = {"mp3": ("mp3_44100", "mp3_22050"), "pcm": ("pcm_16000",)}
 # A WebSocket close reason holds 123 bytes at most.
 CLOSE_REASON_MAX_BYTES = 123
@@ -257,14 +257,14 @@ async def tts_set_voice(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _speak_response(request: web.Request, text: str, candidates: tuple[str, ...]) -> web.StreamResponse:
+async def _speak_response(request: web.Request, text: str, playable: tuple[str, ...]) -> web.StreamResponse:
     resolved = _selected(request, "tts", providers.TTS)
     if isinstance(resolved, web.Response):
         return resolved
     entry, name, provider = resolved
-    play_format = next((f for f in candidates if f in provider.formats), None)
+    play_format = frames.best_play_format(playable, provider.formats)
     if play_format is None:
-        return _error(f"unsupported audio format: {', '.join(candidates)}", 400)
+        return _error(f"unsupported audio format: {', '.join(playable)}", 400)
     audio = provider.synthesize(
         text,
         providers.selected_voice(provider, entry),
@@ -330,7 +330,7 @@ async def tts_stream(request: web.Request) -> web.StreamResponse:
     text = tts_pending.resolve(_PENDING_TTS, request.match_info["id"], time.monotonic())
     if text is None:
         return _error("unknown or expired tts id", 404)
-    # `formats` names the play formats the client's player decodes, first preferred, as in
-    # `start_session`; with none named, the clip is mp3.
+    # `formats` names the play formats the client's player decodes, as in `start_session`, and
+    # the best one the provider makes plays; with none named, the clip is mp3.
     formats = tuple(f for f in request.query["formats"].split(",") if f) if "formats" in request.query else SPEAK_FORMATS["mp3"]
     return await _speak_response(request, text, formats)

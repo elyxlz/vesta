@@ -13,16 +13,24 @@ from voice.settings import JsonValue
 # The one mic format the engine accepts.
 MIC_AUDIO = {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1}
 
-# Play format -> the Content-Type of its audio on the `/voice/play/<token>` route.
+# Play format -> the Content-Type of its audio on the `/voice/play/<token>` route, best sound
+# first: the highest sample rate first, and at one rate the format that loses nothing first.
 PLAY_FORMATS: dict[str, str] = {
-    "mp3_22050": "audio/mpeg",
-    "mp3_44100": "audio/mpeg",
-    "pcm_16000": "audio/l16;rate=16000",
-    "pcm_22050": "audio/l16;rate=22050",
-    "pcm_24000": "audio/l16;rate=24000",
-    "ulaw_8000": "audio/basic",
     "opus_48000": "audio/ogg",
+    "mp3_44100": "audio/mpeg",
+    "pcm_24000": "audio/l16;rate=24000",
+    "pcm_22050": "audio/l16;rate=22050",
+    "mp3_22050": "audio/mpeg",
+    "pcm_16000": "audio/l16;rate=16000",
+    "ulaw_8000": "audio/basic",
 }
+
+
+def best_play_format(playable: tp.Iterable[str], made: tp.Iterable[str]) -> str | None:
+    """The best play format that the client can play and the provider makes, or None."""
+    both = set(playable) & set(made)
+    return next((name for name in PLAY_FORMATS if name in both), None)
+
 
 Delivery = tp.Literal["url", "bytes"]
 StateValue = tp.Literal["listening", "user_turn", "agent_speaking", "agent_paused"]
