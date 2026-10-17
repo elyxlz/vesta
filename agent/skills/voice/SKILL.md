@@ -179,7 +179,7 @@ Keep your provider in its own file and in `own.py`, and leave the shipped files 
 **What your provider must do:**
 
 - **An STT provider decides the end of a turn.** It sends `committed` when the turn is over. A model with no turn detection needs a silence detector in its adapter.
-- **A TTS provider makes every format it lists in `formats`.** The engine converts no audio. The app asks for `mp3_22050`, so a model that makes only PCM needs an encoder in its adapter.
+- **A TTS provider makes every format it lists in `formats`.** The engine converts no audio. The app plays `mp3_44100` and `mp3_22050`, and `opus_48000` where its player decodes Ogg Opus, so a model that makes only PCM needs an encoder in its adapter.
 - **A TTS provider states how to write for its voice.** `reply_hint` is one clause that reaches you in the `reply_hint` of each app message while `tts` is on, for example that the voice performs text in square brackets and does not say it. A voice that says each character declares `reply_hint = ""`.
 - **The model runs in its own process.** The adapter is a client of a local service, over HTTP or a socket, so the voice CLI gets no heavy dependency and the model cannot block the engine.
 - **Speed is the provider's job.** The engine waits for nothing: a slow STT model gives late turns and a late barge-in, and a judge slower than about a second has no effect.
@@ -190,4 +190,4 @@ A judge that runs on this box keeps the live transcript on the box.
 
 A device, a room speaker, or a phone bridge that you build is a client of the engine socket, `GET /voice/session` on the voice service. It sends mic audio and the text to speak, and the engine decides turns, barge-in, and playback. [PROTOCOL.md](PROTOCOL.md) has every frame. The Vesta app (dictation and conversation) and a WhatsApp call are clients of the same socket.
 
-Two more routes make audio with no session. `POST /tts/speak` with `{"text": ..., "format": "mp3" | "pcm"}` answers with the audio of one text, and the app reads a reply aloud through `/tts/prepare` and `/tts/stream/{id}` when no session is open. `/stt/listen` serves older builds of the app only: do not build on it.
+Two more routes make audio with no session. `POST /tts/speak` with `{"text": ..., "format": "mp3" | "pcm"}` answers with the audio of one text (`mp3` is `mp3_44100` when the provider makes it, else `mp3_22050`), and the app reads a reply aloud through `/tts/prepare` and `/tts/stream/{id}?formats=...` when no session is open (`formats` names the play formats the player decodes, as in `start_session`, and the best one the provider makes plays; with none, the clip is `mp3`). `/stt/listen` serves older builds of the app only: do not build on it.

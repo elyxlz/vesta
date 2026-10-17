@@ -67,7 +67,7 @@ interface FakePlay {
 
 // A speaker that records each play and lets the test say when its sound starts, ends, or
 // fails. An aborted play resolves, as a real speaker's does.
-export function fakeSpeaker(): {
+export function fakeSpeaker(playsOggOpus = false): {
   speaker: Speaker;
   plays: FakePlay[];
   urls: () => string[];
@@ -76,6 +76,7 @@ export function fakeSpeaker(): {
   const plays: FakePlay[] = [];
   const calls: string[] = [];
   const speaker: Speaker = {
+    playsOggOpus,
     play: (url, signal, onStarted) =>
       new Promise<void>((resolve, reject) => {
         plays.push({

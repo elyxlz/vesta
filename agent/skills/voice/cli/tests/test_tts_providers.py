@@ -81,7 +81,7 @@ ROWS = [
             "pcm_22050": {"output_format": "pcm_22050", "model_id": "eleven_v4_turbo"},
             "pcm_24000": {"output_format": "pcm_24000", "model_id": "eleven_v4_turbo"},
             "ulaw_8000": {"output_format": "ulaw_8000", "model_id": "eleven_v4_turbo"},
-            "opus_48000": {"output_format": "opus_48000_64", "model_id": "eleven_v4_turbo"},
+            "opus_48000": {"output_format": "opus_48000_96", "model_id": "eleven_v4_turbo"},
         },
         request_format=_elevenlabs_format,
         bad_key_status=401,

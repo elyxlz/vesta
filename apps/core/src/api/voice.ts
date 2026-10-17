@@ -97,6 +97,19 @@ export function ttsStreamPath(name: string, id: string): string {
   return voicePath(name, `tts/stream/${encodeURIComponent(id)}`);
 }
 
+// The play formats the speaker decodes. The voice service picks the best one its TTS provider
+// makes and owns the bitrate, so a change of quality needs no app release.
+export function playbackFormats(playsOggOpus: boolean): string[] {
+  return [...(playsOggOpus ? ["opus_48000"] : []), "mp3_44100", "mp3_22050"];
+}
+
+// The query of a streamed speech url: the formats its player decodes.
+export function ttsStreamQuery(playsOggOpus: boolean): URLSearchParams {
+  return new URLSearchParams({
+    formats: playbackFormats(playsOggOpus).join(","),
+  });
+}
+
 export async function fetchVoiceStatus(
   http: HttpClient,
   name: string,

@@ -26,7 +26,7 @@ OUTPUT_FORMATS: dict[str, str] = {
     "pcm_22050": "pcm_22050",
     "pcm_24000": "pcm_24000",
     "ulaw_8000": "ulaw_8000",
-    "opus_48000": "opus_48000_64",
+    "opus_48000": "opus_48000_96",
 }
 
 PREMADE_VOICES: list[dict[str, str]] = [

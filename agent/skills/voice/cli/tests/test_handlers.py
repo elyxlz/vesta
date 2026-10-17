@@ -36,6 +36,29 @@ def test_speak_streams_the_audio_of_the_selected_provider(tmp_path: pl.Path, tts
     assert tts.spoken == [("Hi", "v-default", "mp3_22050"), ("Hi", "v-default", "pcm_16000")]
 
 
+def test_speak_mp3_prefers_44100_when_the_provider_makes_it(tmp_path: pl.Path, tts: FakeTts) -> None:
+    tts.formats = frozenset({"mp3_22050", "mp3_44100", "pcm_16000"})
+
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/tts/speak", json={"text": "Hi"}) as resp:
+            assert resp.status == 200
+            assert resp.headers["Content-Type"] == "audio/mpeg"
+
+    serve(tmp_path, scenario)
+    assert tts.spoken == [("Hi", "v-default", "mp3_44100")]
+
+
+def test_speak_mp3_falls_back_to_22050_when_the_provider_lacks_44100(tmp_path: pl.Path, tts: FakeTts) -> None:
+    tts.formats = frozenset({"mp3_22050"})
+
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/tts/speak", json={"text": "Hi"}) as resp:
+            assert resp.status == 200
+
+    serve(tmp_path, scenario)
+    assert tts.spoken == [("Hi", "v-default", "mp3_22050")]
+
+
 def test_speak_rejects_an_unknown_format_before_any_synthesis(tmp_path: pl.Path, tts: FakeTts) -> None:
     async def scenario(client: TestClient) -> None:
         async with client.post("/tts/speak", json={"text": "Hi", "format": "flac"}) as resp:
@@ -76,6 +99,28 @@ def test_a_prepared_id_streams_its_text_and_an_unknown_id_is_404(tmp_path: pl.Pa
             assert resp.status == 404
 
     serve(tmp_path, scenario)
+
+
+@pytest.mark.parametrize(
+    ("made", "expected"),
+    [
+        (frozenset({"opus_48000", "mp3_44100", "mp3_22050"}), ("opus_48000", "audio/ogg")),
+        (frozenset({"mp3_22050"}), ("mp3_22050", "audio/mpeg")),
+    ],
+)
+def test_a_stream_plays_the_first_format_the_client_names_that_the_provider_makes(
+    tmp_path: pl.Path, tts: FakeTts, made: frozenset[str], expected: tuple[str, str]
+) -> None:
+    tts.formats = made
+
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/tts/prepare", json={"text": "Later"}) as resp:
+            prepared = await resp.json()
+        async with client.get(f"/tts/stream/{prepared['id']}", params={"formats": "opus_48000,mp3_44100,mp3_22050"}) as resp:
+            assert resp.headers["Content-Type"] == expected[1]
+
+    serve(tmp_path, scenario)
+    assert tts.spoken == [("Later", "v-default", expected[0])]
 
 
 def test_prepare_rejects_empty_text(tmp_path: pl.Path, tts: FakeTts) -> None:

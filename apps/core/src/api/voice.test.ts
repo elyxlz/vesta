@@ -3,6 +3,7 @@ import { ApiError, type HttpClient } from "../transport/http";
 import {
   fetchVoiceSettings,
   fetchVoiceStatus,
+  ttsStreamQuery,
   type SettingDef,
   type VoiceStatus,
 } from "./voice";
@@ -10,6 +11,18 @@ import {
 function setting(key: string, value: unknown): SettingDef {
   return { key, type: "bool", label: "", value };
 }
+
+describe("ttsStreamQuery", () => {
+  it.each([
+    { playsOggOpus: true, expected: "opus_48000,mp3_44100,mp3_22050" },
+    { playsOggOpus: false, expected: "mp3_44100,mp3_22050" },
+  ])(
+    "names the formats the player decodes (opus: $playsOggOpus)",
+    ({ playsOggOpus, expected }) => {
+      expect(ttsStreamQuery(playsOggOpus).get("formats")).toBe(expected);
+    },
+  );
+});
 
 describe("fetchVoiceStatus", () => {
   it("drops the interrupt_tts setting that an older voice service still lists", async () => {

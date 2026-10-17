@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 import {
   getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
@@ -11,6 +12,7 @@ import {
   type VoiceMode,
   type VoiceSession,
   ttsStreamPath,
+  ttsStreamQuery,
   voicePlayPath,
   voiceSessionPath,
 } from "@vesta/core";
@@ -37,6 +39,9 @@ interface LiveVoiceOptions {
 // A conversation with no user turn for this long ends itself, bounding the battery and
 // transcription spend of a session the user forgot.
 const CONVERSATION_INACTIVITY_MS = 15 * 60_000;
+
+// Android's player decodes Ogg Opus; the iOS player decodes no Ogg, so iOS plays MP3.
+const PLAYS_OGG_OPUS = Platform.OS === "android";
 
 const RECORDING_AUDIO_MODE = {
   allowsRecording: true,
@@ -232,6 +237,7 @@ export function useLiveVoice({
           stop: releaseCapture,
         },
         speaker: {
+          playsOggOpus: PLAYS_OGG_OPUS,
           play,
           pause: () => {
             playerRef.current.pause();
@@ -245,6 +251,7 @@ export function useLiveVoice({
         prepareSpeech: async (text) =>
           api.authedUrl(
             ttsStreamPath(name, await prepareSpeech(api, name, text)),
+            ttsStreamQuery(PLAYS_OGG_OPUS),
           ),
         client: "mobile",
       },

@@ -24,10 +24,10 @@ function recorder() {
   return { events, errors, active, callbacks };
 }
 
-function setup(bargeIn = true) {
+function setup(bargeIn = true, playsOggOpus = false) {
   const socket = new FakeEngineSocket();
   const cap = fakeCapture();
-  const out = fakeSpeaker();
+  const out = fakeSpeaker(playsOggOpus);
   const rec = recorder();
   const session = createEngineSession(
     {
@@ -73,13 +73,32 @@ describe("the engine session", () => {
       type: "start_session",
       client: "test",
       audio: { encoding: "pcm_s16le", sample_rate: 16000, channels: 1 },
-      playback: { delivery: "url", formats: ["mp3_22050"] },
+      playback: { delivery: "url", formats: ["mp3_44100", "mp3_22050"] },
       barge_in: false,
     });
     expect(typeof socket.sent[0]).toBe("string");
     expect(socket.audio().map((f) => f.byteLength)).toEqual([10, 20]);
     cap.send(5);
     expect(socket.audio()).toHaveLength(3);
+  });
+
+  it("asks for opus first when the speaker decodes ogg opus", async () => {
+    const { socket, started } = setup(true, true);
+    await started();
+    expect(socket.frames()[0]).toMatchObject({
+      playback: {
+        delivery: "url",
+        formats: ["opus_48000", "mp3_44100", "mp3_22050"],
+      },
+    });
+  });
+
+  it("leaves opus out when the speaker cannot decode ogg opus", async () => {
+    const { socket, started } = setup(true, false);
+    await started();
+    expect(socket.frames()[0]).toMatchObject({
+      playback: { delivery: "url", formats: ["mp3_44100", "mp3_22050"] },
+    });
   });
 
   it("keeps only the newest frames up to the pending cap", async () => {

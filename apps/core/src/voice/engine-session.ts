@@ -4,6 +4,7 @@
 // session does what its frames say and reports what the speaker did. Platforms inject only how
 // audio is captured, how the socket is dialed, and how a url is played.
 
+import { playbackFormats } from "../api/voice";
 import { adaptWebSocket, type SocketLike } from "../transport/websocket";
 import { parseEngineFrame, type EngineFrame } from "./engine-frames";
 import { createPlayQueue, type PlayQueue, type Speaker } from "./play-queue";
@@ -256,7 +257,10 @@ export function createEngineSession(
         type: "start_session",
         client: deps.client,
         audio: { encoding: "pcm_s16le", sample_rate: 16000, channels: 1 },
-        playback: { delivery: "url", formats: ["mp3_22050"] },
+        playback: {
+          delivery: "url",
+          formats: playbackFormats(deps.speaker.playsOggOpus),
+        },
         barge_in: options.bargeIn,
       });
       const buffered = pending;

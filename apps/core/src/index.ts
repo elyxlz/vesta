@@ -241,6 +241,7 @@ export {
   setVoiceEnabled,
   setVoiceSetting,
   ttsStreamPath,
+  ttsStreamQuery,
   voicePlayPath,
   voiceSessionPath,
 } from "./api/voice";

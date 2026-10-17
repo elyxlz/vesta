@@ -22,8 +22,8 @@ logger = logging.getLogger("voice")
 # Pending TTS clips awaiting a streamed GET (see tts_pending / issue #466).
 _PENDING_TTS: tts_pending.PendingStore = {}
 
-# The audio format names of `/tts/speak`, and the play format each one is.
-SPEAK_FORMATS: dict[str, str] = {"mp3": "mp3_22050", "pcm": "pcm_16000"}
+# The audio format names of `/tts/speak`, and the play formats each one may be.
+SPEAK_FORMATS: dict[str, tuple[str, ...]] = {"mp3": ("mp3_44100", "mp3_22050"), "pcm": ("pcm_16000",)}
 # A WebSocket close reason holds 123 bytes at most.
 CLOSE_REASON_MAX_BYTES = 123
 
@@ -257,14 +257,14 @@ async def tts_set_voice(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _speak_response(request: web.Request, text: str, speak_format: str) -> web.StreamResponse:
+async def _speak_response(request: web.Request, text: str, playable: tuple[str, ...]) -> web.StreamResponse:
     resolved = _selected(request, "tts", providers.TTS)
     if isinstance(resolved, web.Response):
         return resolved
     entry, name, provider = resolved
-    if speak_format not in SPEAK_FORMATS or SPEAK_FORMATS[speak_format] not in provider.formats:
-        return _error(f"unsupported audio format: {speak_format}", 400)
-    play_format = SPEAK_FORMATS[speak_format]
+    play_format = frames.best_play_format(playable, provider.formats)
+    if play_format is None:
+        return _error(f"unsupported audio format: {', '.join(playable)}", 400)
     audio = provider.synthesize(
         text,
         providers.selected_voice(provider, entry),
@@ -305,7 +305,9 @@ async def tts_speak(request: web.Request) -> web.StreamResponse:
     # "format" selects the audio encoding: "mp3" (default, the app's <audio> element) or "pcm"
     # (raw signed 16-bit LE mono at 16 kHz, which a phone-call consumer plays into a live call).
     speak_format = body["format"] if "format" in body and isinstance(body["format"], str) else "mp3"
-    return await _speak_response(request, text, speak_format)
+    if speak_format not in SPEAK_FORMATS:
+        return _error(f"unsupported audio format: {speak_format}", 400)
+    return await _speak_response(request, text, SPEAK_FORMATS[speak_format])
 
 
 async def tts_prepare(request: web.Request) -> web.Response:
@@ -328,4 +330,7 @@ async def tts_stream(request: web.Request) -> web.StreamResponse:
     text = tts_pending.resolve(_PENDING_TTS, request.match_info["id"], time.monotonic())
     if text is None:
         return _error("unknown or expired tts id", 404)
-    return await _speak_response(request, text, "mp3")
+    # `formats` names the play formats the client's player decodes, as in `start_session`, and
+    # the best one the provider makes plays; with none named, the clip is mp3.
+    formats = tuple(f for f in request.query["formats"].split(",") if f) if "formats" in request.query else SPEAK_FORMATS["mp3"]
+    return await _speak_response(request, text, formats)
