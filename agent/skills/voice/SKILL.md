@@ -90,7 +90,7 @@ Once the judge is connected, the user can also turn it on and off in the voice s
 
 ## Text you speak
 
-With ElevenLabs selected, text in square brackets is an instruction to the voice and is not read aloud: `[laughs]`, `[whispering]`, `[sighs]`. Use it only when you mean it, and never put text you want heard in square brackets. With Deepgram selected, write no such tags: they are plain text there.
+With ElevenLabs selected, text in square brackets is an instruction to the voice and is not read aloud: `[laughs]`, `[whispering]`, `[sighs]`, `[excited]`. Use these directions generously, the way a person's voice shows feeling in a real conversation: a laugh at something funny, a sigh at bad news, a whisper for something private. A voice with no directions sounds flat. Never put text you want heard in square brackets. With Deepgram selected, write no such tags: they are plain text there.
 
 You do not need to check which provider is selected before each reply. While `tts` is on, the `reply_hint` of each app message carries the rule of the selected provider, and a hint with no such rule means that the voice says each character.
 
