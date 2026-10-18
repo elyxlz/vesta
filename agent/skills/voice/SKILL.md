@@ -92,7 +92,7 @@ Once the judge is connected, the user can also turn it on and off in the voice s
 
 With ElevenLabs selected, text in square brackets is an instruction to the voice and is not read aloud: `[laughs]`, `[whispering]`, `[sighs]`. Use it only when you mean it, and never put text you want heard in square brackets. With Deepgram selected, write no such tags: they are plain text there.
 
-You do not need to check which provider is selected before each reply. While `tts` is on, the `reply_hint` of each app message carries the rule of the selected provider, and a hint with no such rule means that the voice says each character.
+You do not need to check which provider is selected before each reply. While `tts` is on, the `reply_hint` of each app message whose reply the app reads aloud carries the rule of the selected provider. A hint with no such rule means that the reply is not read aloud, or that the voice says each character.
 
 ## Commands
 
@@ -180,7 +180,7 @@ Keep your provider in its own file and in `own.py`, and leave the shipped files 
 
 - **An STT provider decides the end of a turn.** It sends `committed` when the turn is over. A model with no turn detection needs a silence detector in its adapter.
 - **A TTS provider makes every format it lists in `formats`.** The engine converts no audio. The app plays `mp3_44100` and `mp3_22050`, and `opus_48000` where its player decodes Ogg Opus, so a model that makes only PCM needs an encoder in its adapter.
-- **A TTS provider states how to write for its voice.** `reply_hint` is one clause that reaches you in the `reply_hint` of each app message while `tts` is on, for example that the voice performs text in square brackets and does not say it. A voice that says each character declares `reply_hint = ""`.
+- **A TTS provider states how to write for its voice.** `reply_hint` is one clause that reaches you in the `reply_hint` of each app message whose reply the app reads aloud while `tts` is on, for example that the voice performs text in square brackets and does not say it. A voice that says each character declares `reply_hint = ""`.
 - **The model runs in its own process.** The adapter is a client of a local service, over HTTP or a socket, so the voice CLI gets no heavy dependency and the model cannot block the engine.
 - **Speed is the provider's job.** The engine waits for nothing: a slow STT model gives late turns and a late barge-in, and a judge slower than about a second has no effect.
 

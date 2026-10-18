@@ -33,6 +33,7 @@ export function createChatSender(deps: {
   commit: (fold: (current: ChatState) => ChatState) => void;
   current: () => ChatState;
   makeId: () => string;
+  repliesSpoken: () => boolean;
 }): ChatSender {
   const applyOutcome = (
     intentId: string,
@@ -53,6 +54,7 @@ export function createChatSender(deps: {
       text,
       input_method: inputMethod,
       attachments: ids && ids.length > 0 ? ids : undefined,
+      spoken: deps.repliesSpoken(),
     };
   };
 

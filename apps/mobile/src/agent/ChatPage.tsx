@@ -255,6 +255,14 @@ export default function ChatPage() {
       speakLatest(latest);
     }
   }, [socket.latestLiveChat, speakLatest]);
+  // This page reads each reply aloud while TTS is on, so each send tells the agent so.
+  const setRepliesSpoken = socket.setRepliesSpoken;
+  useEffect(() => {
+    setRepliesSpoken(speechEnabled);
+    return () => {
+      setRepliesSpoken(false);
+    };
+  }, [speechEnabled, setRepliesSpoken]);
 
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);

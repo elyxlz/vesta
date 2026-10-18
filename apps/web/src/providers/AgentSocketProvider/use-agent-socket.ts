@@ -15,7 +15,7 @@ import { chatSocketPath, createChatSession } from "@vesta/core";
 import { useChatSession, useReplica, useSyncState } from "@vesta/core/react";
 import { useController } from "@/providers/ControllerProvider/context";
 import { naturalPacingFor } from "@/stores/use-preferences";
-import { useVoice } from "@/stores/use-voice";
+import { repliesSpoken, useVoice } from "@/stores/use-voice";
 
 function idsEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i]);
@@ -74,6 +74,7 @@ export function useAgentSocketState({
         naturalPacing: () =>
           naturalPacingFor(agent) &&
           useVoice.getState().recordingMode !== "conversation",
+        repliesSpoken,
       },
       { onReply, onPrefetch: prefetch },
     );

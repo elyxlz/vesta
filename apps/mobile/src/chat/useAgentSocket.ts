@@ -73,6 +73,9 @@ export function useAgentSocket(
     naturalPacingRef.current = naturalPacing;
   }, [naturalPacing]);
 
+  // Whether the chat page reads replies aloud, written by that page and read at each send.
+  const repliesSpokenRef = useRef(false);
+
   const connected = useSyncState(controller) === "open";
   const [slot] = useState(createSessionSlot);
   const session = useSyncExternalStore(slot.subscribe, slot.get);
@@ -86,6 +89,7 @@ export function useAgentSocket(
       buildUrl: () => controller.session.websocketUrl(chatSocketPath(agent)),
       makeId: () => Crypto.randomUUID(),
       naturalPacing: () => naturalPacingRef.current,
+      repliesSpoken: () => repliesSpokenRef.current,
       initialState: agentHolds.chat.read(key) ?? undefined,
     });
     // The key is captured here, so a commit from a previous agent/gateway epoch can only ever
@@ -173,6 +177,9 @@ export function useAgentSocket(
     },
     [slot],
   );
+  const setRepliesSpoken = useCallback((spoken: boolean) => {
+    repliesSpokenRef.current = spoken;
+  }, []);
 
   // Memoized so the AgentContext value built on top of it only changes identity when a consumed
   // field does; otherwise every provider render would re-render all four agent pages.
@@ -193,6 +200,7 @@ export function useAgentSocket(
       send,
       retry,
       reportSpeaking,
+      setRepliesSpoken,
       reseedRevision: state.reseedRevision,
     }),
     [
@@ -206,6 +214,7 @@ export function useAgentSocket(
       send,
       retry,
       reportSpeaking,
+      setRepliesSpoken,
     ],
   );
 }

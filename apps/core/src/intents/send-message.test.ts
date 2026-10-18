@@ -12,7 +12,7 @@ describe("sendMessage", () => {
     const { id, outcome } = sendMessage(
       httpWith(json),
       "scout",
-      { text: "hi", input_method: "typed" },
+      { text: "hi", input_method: "typed", spoken: true },
       () => "i-1",
     );
 
@@ -24,6 +24,7 @@ describe("sendMessage", () => {
     expect(body).toEqual({
       text: "hi",
       input_method: "typed",
+      spoken: true,
       intent_id: "i-1",
     });
     expect(await outcome).toBeNull();

@@ -354,3 +354,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     },
   };
 });
+
+// Whether a reply that lands now is read aloud, which each chat send tells the agent.
+export function repliesSpoken(): boolean {
+  return speakable(useVoice.getState());
+}

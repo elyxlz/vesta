@@ -12,6 +12,8 @@ export interface SendMessageBody {
   input_method?: InputMethod;
   // Finalized attachment ids (uploaded ahead of the send; the service embeds their metadata).
   attachments?: string[];
+  // Whether this client reads the reply aloud, so the agent writes for a voice only then.
+  spoken?: boolean;
 }
 
 // The send POST's disposition once it settles. `null` means accepted (persisted by the service;
@@ -43,6 +45,7 @@ export function sendMessage(
         text: body.text,
         input_method: body.input_method,
         attachments: body.attachments,
+        spoken: body.spoken,
         intent_id: id,
       }),
     })

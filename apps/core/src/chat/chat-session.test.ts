@@ -106,6 +106,7 @@ function harness(): Harness {
             return `intent-${String(nextId)}`;
           },
           naturalPacing: () => pacing.natural,
+          repliesSpoken: () => false,
           initialState,
         },
         callbacks,

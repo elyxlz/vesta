@@ -84,7 +84,7 @@ def test_message_persists_emits_and_writes_notification(tmp_path):
     state.store.close()
 
 
-def _post_beside_a_voice_service(state, tmp_path, voice_handler) -> dict:
+def _post_beside_a_voice_service(state, tmp_path, voice_handler, body: dict | None = None) -> dict:
     """Post one message while a voice service answers /tts/reply-hint, and return the notification."""
 
     async def scenario(client):
@@ -94,7 +94,7 @@ def _post_beside_a_voice_service(state, tmp_path, voice_handler) -> dict:
         await voice_server.start_server()
         (tmp_path / "voice.port").write_text(str(voice_server.port))
         try:
-            await client.post("/message", json={"text": "hello there"})
+            await client.post("/message", json=body or {"text": "hello there"})
         finally:
             await voice_server.close()
 
@@ -111,6 +111,26 @@ def test_the_reply_hint_carries_what_the_voice_service_says_about_a_spoken_reply
     notif = _post_beside_a_voice_service(state, tmp_path, voice)
 
     assert notif["reply_hint"] == "think about how you can best show your personality; the voice does not say text in square brackets"
+    state.store.close()
+
+
+@pytest.mark.parametrize(
+    ("body", "hint"),
+    [
+        ({"text": "hello there", "spoken": True}, "think about how you can best show your personality; the voice performs brackets"),
+        ({"text": "hello there"}, "think about how you can best show your personality; the voice performs brackets"),
+        ({"text": "hello there", "spoken": False}, "think about how you can best show your personality"),
+    ],
+)
+def test_only_a_reply_the_app_reads_aloud_gets_the_voice_clause(tmp_path, body, hint):
+    state, _ = _service_state(tmp_path)
+
+    async def voice(_request):
+        return web.json_response({"reply_hint": "the voice performs brackets"})
+
+    notif = _post_beside_a_voice_service(state, tmp_path, voice, body)
+
+    assert notif["reply_hint"] == hint
     state.store.close()
 
 
