@@ -19,9 +19,6 @@ Role = tp.Literal["stt", "tts", "judge"]
 Section = tp.Literal["stt", "tts", "judge", "behavior"]
 ROLES: tuple[Role, ...] = ("stt", "tts", "judge")
 SECTIONS: tuple[Section, ...] = ("stt", "tts", "judge", "behavior")
-# `connect` turns these roles on. The judge sends live text to its provider, so the user turns
-# it on as a separate step.
-ROLES_ON_AT_CONNECT: tuple[Role, ...] = ("stt", "tts")
 
 # The keys of a role entry that are not a provider's settings.
 ROLE_KEYS = ("provider", "credentials", "enabled")
@@ -121,14 +118,13 @@ def selected_entry(config: VoiceConfig, role: Role) -> tuple[Domain, str]:
 
 
 def connect(data_dir: pl.Path, role: Role, provider: str, creds: dict[str, str]) -> VoiceConfig:
-    """Store the provider's entry and select it."""
+    """Store the provider's entry, select it, and turn the role on."""
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         existing = cfg[role]
         stored = _credentials(existing)
         stored[provider] = creds
-        enabled = True if role in ROLES_ON_AT_CONNECT else is_enabled(existing)
-        cfg[role] = {**existing, "provider": provider, "credentials": stored, "enabled": enabled}
+        cfg[role] = {**existing, "provider": provider, "credentials": stored, "enabled": True}
         return cfg
 
     return mutate(data_dir, _update)

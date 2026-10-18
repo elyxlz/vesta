@@ -67,7 +67,7 @@ A key with fewer permissions still connects: each role checks only what it needs
 TypeSafe makes Jev, the model that answers the judge's questions (its API is `api.typesafe.ai`).
 
 1. The user creates an API key in their TypeSafe account.
-2. They paste it into chat for the agent to check and connect (`voice judge connect typesafe --key <key>`), then turn the judge on (`voice judge on`).
+2. They paste it into chat for the agent to check and connect (`voice judge connect typesafe --key <key>`), which turns the judge on.
 
 With the judge on, the live transcript goes to TypeSafe. SKILL.md says what the judge does.
 

@@ -228,12 +228,12 @@ def test_the_judge_has_a_status_and_a_switch_like_the_two_other_roles(tmp_path: 
             assert await resp.json() == {"configured": False, "provider": None, "connected": []}
         vc.connect(tmp_path, "judge", "fake", {})
         async with client.get("/judge/status") as resp:
-            assert await resp.json() == {"configured": True, "provider": "fake", "enabled": False, "connected": ["fake"], "settings": []}
-        async with client.post("/judge/set-enabled", json={"value": True}) as resp:
+            assert await resp.json() == {"configured": True, "provider": "fake", "enabled": True, "connected": ["fake"], "settings": []}
+        async with client.post("/judge/set-enabled", json={"value": False}) as resp:
             assert await resp.json() == {"ok": True}
 
     serve(tmp_path, scenario)
-    assert vc.is_enabled(vc.load(tmp_path)["judge"]) is True
+    assert vc.is_enabled(vc.load(tmp_path)["judge"]) is False
 
 
 def test_turning_a_role_on_needs_a_selected_provider(tmp_path: pl.Path) -> None:
