@@ -16,11 +16,11 @@ def test_connect_stores_the_entry_selects_the_provider_and_turns_stt_and_tts_on(
     assert vc.is_enabled(config["tts"]) is True
 
 
-def test_connect_leaves_the_judge_off(tmp_path: pl.Path) -> None:
+def test_connect_turns_the_judge_on(tmp_path: pl.Path) -> None:
     config = vc.connect(tmp_path, "judge", "typesafe", {"api_key": "k"})
 
     assert vc.provider_name(config["judge"]) == "typesafe"
-    assert vc.is_enabled(config["judge"]) is False
+    assert vc.is_enabled(config["judge"]) is True
 
 
 def test_a_provider_with_no_key_is_connected_by_an_empty_entry(tmp_path: pl.Path) -> None:

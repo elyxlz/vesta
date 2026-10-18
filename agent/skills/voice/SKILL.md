@@ -60,7 +60,7 @@ A **role** is one job a provider does. A provider is **connected** to a role onc
 
 Tell the user the difference when they ask which one to pick.
 
-**Speech to text.** Flux predicts the end of a turn from the words, and Scribe waits for silence, so Flux answers about half a second sooner at every step of a conversation.
+**Speech to text.** Flux predicts the end of a turn from the words. Scribe (`scribe_v3_live`) predicts it too and falls back to the silence setting, which stays its upper bound.
 
 | | `deepgram` (Flux) | `elevenlabs` (Scribe) |
 | --- | --- | --- |
@@ -79,11 +79,11 @@ Tell the user the difference when they ask which one to pick.
 | Voices | 19, plus voice IDs from the user's ElevenLabs account | 90 |
 | Text in square brackets | an instruction, not speech (see below) | plain text |
 
-**The judge** is off until the user turns it on. With it on, your live transcript and the line you are saying go to TypeSafe on every word the user says, so say that when you offer it. What it buys: a short "stop" cuts you off at once, an "mhm" does not, and words meant for someone else in the room stay out of the conversation. With it off, a user who talks over you for a second takes the floor, and a shorter sound lets you continue.
+**The judge** turns on when its key is connected. With it on, your live transcript and the line you are saying go to TypeSafe on every word the user says, so say that before you connect it. What it buys: a short "stop" cuts you off at once, an "mhm" does not, and words meant for someone else in the room stay out of the conversation. With it off, a user who talks over you for a second takes the floor, and a shorter sound lets you continue.
 
 ```bash
 voice judge connect typesafe --key <key>
-voice judge on
+voice judge off   # to stop sending text to TypeSafe and keep the key
 ```
 
 Once the judge is connected, the user can also turn it on and off in the voice settings of the app, where its card says what it sends to its provider.

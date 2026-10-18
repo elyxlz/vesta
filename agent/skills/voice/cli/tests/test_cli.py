@@ -88,12 +88,12 @@ def test_connect_checks_the_provider_stores_it_and_selects_it(home: pl.Path, cap
     assert vc.provider_creds(vc.load(home)["tts"], "keyed") == {"api_key": "k"}
 
 
-def test_connect_turns_stt_and_tts_on_and_leaves_the_judge_off(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_connect_turns_every_role_on(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(capsys, "stt", "connect", "local")
     run(capsys, "tts", "connect", "local")
     _code, status, _err = run(capsys, "judge", "connect", "local")
 
-    assert (status["stt"]["on"], status["tts"]["on"], status["judge"]["on"]) == (True, True, False)
+    assert (status["stt"]["on"], status["tts"]["on"], status["judge"]["on"]) == (True, True, True)
 
 
 def test_connect_refuses_a_provider_that_fails_its_check_and_stores_nothing(
