@@ -6,6 +6,7 @@ session is open. `/stt/listen` (listen.py) serves older builds of the app.
 """
 
 import asyncio
+import collections.abc as cabc
 import logging
 import time
 
@@ -14,6 +15,7 @@ from aiohttp import web
 from . import appkeys, invalidation, listen, providers, sections, tts_pending
 from . import config as voice_config
 from .engine import frames
+from .providers import limit
 from .providers.base import SttOpenError, TtsError, Usage
 from .settings import Domain, JsonValue
 
@@ -265,6 +267,18 @@ async def _speak_response(request: web.Request, text: str, playable: tuple[str, 
     play_format = frames.best_play_format(playable, provider.formats)
     if play_format is None:
         return _error(f"unsupported audio format: {', '.join(playable)}", 400)
+    # One-off speech shares the provider's cap with live sessions: the limit is per account.
+    limiter = limit.for_provider(provider)
+    await limiter.acquire()
+    try:
+        return await _stream_speech(request, text, play_format, entry, name, provider)
+    finally:
+        limiter.release()
+
+
+async def _stream_speech(
+    request: web.Request, text: str, play_format: str, entry: Domain, name: str, provider: providers.TtsProvider
+) -> web.StreamResponse:
     audio = provider.synthesize(
         text,
         providers.selected_voice(provider, entry),
@@ -287,6 +301,9 @@ async def _speak_response(request: web.Request, text: str, playable: tuple[str, 
             await response.write(chunk)
     except TtsError as e:
         logger.error("tts synthesis failed mid-stream: %s", e)
+    finally:
+        if isinstance(audio, cabc.AsyncGenerator):
+            await audio.aclose()
     await response.write_eof()
     return response
 

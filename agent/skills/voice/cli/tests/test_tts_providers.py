@@ -8,7 +8,7 @@ import typing as tp
 import aiohttp
 import pytest
 from aiohttp import web
-from voice.providers import deepgram, deepgram_tts, elevenlabs
+from voice.providers import deepgram, deepgram_tts, elevenlabs, limit
 from voice.providers.base import TtsError, TtsProvider, Usage
 from voice.settings import JsonValue
 
@@ -24,10 +24,16 @@ class FakeApi:
     status: int = 200
     error_body: dict[str, JsonValue] = dc.field(default_factory=dict)
     requests: list[dict[str, JsonValue]] = dc.field(default_factory=list)
+    # The first `refusals` requests get a 429 with `refusal_body`, whatever `status` says.
+    refusals: int = 0
+    refusal_body: dict[str, JsonValue] = dc.field(default_factory=dict)
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         body = await request.json()
         self.requests.append({"path": request.path, "query": dict(request.query), "body": body, "headers": dict(request.headers)})
+        if self.refusals > 0:
+            self.refusals -= 1
+            return web.json_response(self.refusal_body, status=429)
         if self.status != 200:
             return web.json_response(self.error_body, status=self.status)
         response = web.StreamResponse()
@@ -167,6 +173,62 @@ def test_too_many_requests_at_the_same_time_raises_a_tts_error(row: Row, monkeyp
                 await _audio(row, http, "Hello.")
 
     asyncio.run(scenario())
+
+
+CONCURRENCY_429: dict[str, JsonValue] = {
+    "detail": {
+        "type": "rate_limit_error",
+        "code": "concurrent_limit_exceeded",
+        "message": "Too many concurrent requests. Your current subscription is associated with a maximum of 3 concurrent requests.",
+    }
+}
+
+
+@pytest.mark.parametrize("key", ["code", "status"])
+def test_elevenlabs_tries_again_after_a_concurrency_429_and_lowers_the_cap(key: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    row = BY_NAME["elevenlabs"]
+    monkeypatch.setattr(elevenlabs, "CONCURRENCY_RETRY_SECS", (0.0, 0.0, 0.0))
+    body: dict[str, JsonValue] = {"detail": {key: "concurrent_limit_exceeded", "message": "Too many concurrent requests."}}
+
+    async def scenario() -> None:
+        api = FakeApi(refusals=2, refusal_body=body)
+        async with provider_api(row, monkeypatch, api) as http:
+            assert await _audio(row, http, "Hello.") == b"<Hello.>"
+        assert len(api.requests) == 3
+
+    asyncio.run(scenario())
+    # Lowered once for the one synthesis, however many tries it took.
+    assert limit.for_provider(row.provider).cap == limit.DEFAULT_TTS_CONCURRENCY - 1
+
+
+def test_elevenlabs_gives_up_after_its_last_try_at_a_concurrency_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = BY_NAME["elevenlabs"]
+    monkeypatch.setattr(elevenlabs, "CONCURRENCY_RETRY_SECS", (0.0, 0.0, 0.0))
+
+    async def scenario() -> None:
+        api = FakeApi(refusals=10, refusal_body=CONCURRENCY_429)
+        async with provider_api(row, monkeypatch, api) as http:
+            with pytest.raises(TtsError, match=r"429.*concurrent_limit_exceeded"):
+                await _audio(row, http, "Hello.")
+        assert len(api.requests) == 4
+
+    asyncio.run(scenario())
+
+
+def test_elevenlabs_does_not_try_again_after_a_quota_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = BY_NAME["elevenlabs"]
+    monkeypatch.setattr(elevenlabs, "CONCURRENCY_RETRY_SECS", (0.0, 0.0, 0.0))
+    quota: dict[str, JsonValue] = {"detail": {"status": "quota_exceeded", "message": "This request exceeds your quota."}}
+
+    async def scenario() -> None:
+        api = FakeApi(status=429, error_body=quota)
+        async with provider_api(row, monkeypatch, api) as http:
+            with pytest.raises(TtsError, match=r"429.*quota_exceeded"):
+                await _audio(row, http, "Hello.")
+        assert len(api.requests) == 1
+
+    asyncio.run(scenario())
+    assert limit.for_provider(row.provider).cap == limit.DEFAULT_TTS_CONCURRENCY
 
 
 def test_the_voice_of_each_provider_goes_where_that_provider_reads_it(monkeypatch: pytest.MonkeyPatch) -> None:

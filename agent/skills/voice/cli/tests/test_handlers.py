@@ -9,6 +9,7 @@ import pytest
 import voice.config as vc
 from aiohttp.test_utils import TestClient
 from voice import providers
+from voice.providers import limit
 from voice.providers.base import Usage
 from voice.settings import JsonValue
 
@@ -382,5 +383,23 @@ def test_the_listen_socket_closes_when_stt_has_no_provider(tmp_path: pl.Path) ->
         async with client.ws_connect("/stt/listen") as ws:
             closing = await ws.receive(timeout=FRAME_TIMEOUT_SECS)
             assert (closing.data, closing.extra) == (1011, "STT not configured")
+
+    serve(tmp_path, scenario)
+
+
+def test_one_off_speech_waits_for_a_slot_in_the_shared_tts_cap(tmp_path: pl.Path, tts: FakeTts) -> None:
+    async def scenario(client: TestClient) -> None:
+        limiter = limit.for_provider(tts)
+        for _ in range(limiter.cap):
+            await limiter.acquire()
+        request = asyncio.ensure_future(client.post("/tts/speak", json={"text": "Hi"}))
+        await asyncio.sleep(0.2)
+        assert not request.done()
+        assert tts.spoken == []
+        limiter.release()
+        async with await request as resp:
+            assert resp.status == 200
+            assert await resp.read() == b"auHidioHi"
+        assert limiter.active == limiter.cap - 1
 
     serve(tmp_path, scenario)

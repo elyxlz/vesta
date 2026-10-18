@@ -101,19 +101,27 @@ class FakeTts:
     # When set, a synthesis that starts sets it: the engine handled a `speak` that sends no frame.
     heard: asyncio.Event | None = None
     spoken: list[tuple[str, str, str]] = dc.field(default_factory=list)
+    # How many syntheses run now, and the most that ever ran at the same time.
+    running: int = 0
+    peak: int = 0
 
     async def synthesize(
         self, text: str, voice: str, audio_format: str, creds: dict[str, str], settings: Domain, http: aiohttp.ClientSession
     ) -> tp.AsyncIterator[bytes]:
         self.spoken.append((text, voice, audio_format))
-        if self.heard is not None:
-            self.heard.set()
-        if self.fail:
-            raise TtsError("the fake refused the synthesis")
-        for index, chunk in enumerate(self.chunks):
-            if index == 1 and self.gate is not None:
-                await self.gate.wait()
-            yield chunk + text.encode()
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        try:
+            if self.heard is not None:
+                self.heard.set()
+            if self.fail:
+                raise TtsError("the fake refused the synthesis")
+            for index, chunk in enumerate(self.chunks):
+                if index == 1 and self.gate is not None:
+                    await self.gate.wait()
+                yield chunk + text.encode()
+        finally:
+            self.running -= 1
 
     async def usage(self, creds: dict[str, str]) -> Usage:
         return self.account

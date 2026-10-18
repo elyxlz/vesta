@@ -11,6 +11,7 @@ hands it straight to the STT stream.
 """
 
 import asyncio
+import collections.abc as cabc
 import contextlib
 import dataclasses as dc
 import json
@@ -25,6 +26,7 @@ from aiohttp import web
 
 from voice import appkeys, providers
 from voice import config as voice_config
+from voice.providers import limit
 from voice.providers.base import Judge, Line, Question, SttEvent, SttOpenError, SttStream, TtsError, TtsProvider, Verdict
 from voice.settings import Domain
 
@@ -256,11 +258,28 @@ def _remember(session: Session, by: str, text: str) -> None:
 
 
 async def _synthesize(session: Session, tts: TtsLink, play: playback.Play, buffer: buffers.PlayBuffer) -> None:
-    audio = tts.provider.synthesize(play.text, tts.voice, tts.audio_format, tts.creds, tts.settings, session.http)
+    """One play's synthesis, inside the provider's cap on syntheses at the same time. Plays ask
+    for a slot in the order they were spoken, so they start in that order."""
+    limiter = limit.for_provider(tts.provider)
     try:
-        await buffers.fill(buffer, audio)
+        await limiter.acquire()
+    except asyncio.CancelledError:
+        # Stopped before it could start: a reader waiting for its audio must not wait forever.
+        await buffers.end(buffer)
+        raise
+    try:
+        audio = tts.provider.synthesize(play.text, tts.voice, tts.audio_format, tts.creds, tts.settings, session.http)
+        try:
+            await buffers.fill(buffer, audio)
+        finally:
+            # Close the provider's request before the slot goes to the next play.
+            if isinstance(audio, cabc.AsyncGenerator):
+                await audio.aclose()
     except TtsError as e:
+        logger.warning("tts synthesis failed for play %s: %s", play.id, e)
         await session.inbox.put({"kind": "synth_failed", "id": play.id, "token": play.token, "message": str(e)})
+    finally:
+        limiter.release()
 
 
 async def _send_bytes(session: Session, audio_format: str) -> None:

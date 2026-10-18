@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import pathlib as pl
 import typing as tp
 
@@ -624,3 +625,48 @@ def test_a_segment_with_no_words_and_no_other_frame_still_ends_its_live_text(tmp
             ]
 
     asyncio.run(scenario())
+
+
+async def _until(check: tp.Callable[[], bool]) -> None:
+    for _ in range(500):
+        if check():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the condition never held")
+
+
+def test_a_burst_of_speaks_runs_at_most_two_syntheses_at_once_and_starts_them_in_order(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+    tts.gate = asyncio.Event()
+    texts = [f"Bubble {n}." for n in range(1, 6)]
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
+            for n, text in enumerate(texts, start=1):
+                await ws.send_json({"type": "speak", "id": f"r{n}", "text": text})
+            await _until(lambda: len(tts.spoken) == 2)
+            # The rest wait for a slot while the first two hold theirs.
+            await asyncio.sleep(0.1)
+            assert [spoken[0] for spoken in tts.spoken] == texts[:2]
+
+            tts.gate.set()
+            await _until(lambda: len(tts.spoken) == len(texts) and tts.running == 0)
+
+            assert [spoken[0] for spoken in tts.spoken] == texts
+            assert tts.peak == 2
+
+    asyncio.run(scenario())
+
+
+def test_a_failed_synthesis_is_logged_with_the_provider_message(
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, caplog: pytest.LogCaptureFixture
+) -> None:
+    tts.fail = True
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
+            await ws.send_json({"type": "speak", "id": "r1", "text": "Hi"})
+            await frames_until(ws, "error")
+
+    with caplog.at_level(logging.WARNING, logger="voice.session"):
+        asyncio.run(scenario())
+    assert any(record.levelno == logging.WARNING and "the fake refused the synthesis" in record.getMessage() for record in caplog.records)

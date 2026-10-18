@@ -5,8 +5,10 @@
 
 import datetime as dt
 import json
+import logging
 import os
 import signal
+import sys
 import time
 import typing as tp
 from pathlib import Path
@@ -23,6 +25,7 @@ from .engine import session
 # a new handshake before its first audio (80 ms to 240 ms, measured).
 PROVIDER_KEEPALIVE_SECS = 90
 PROVIDER_DNS_CACHE_SECS = 300
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
 async def _provider_http(app: web.Application) -> tp.AsyncIterator[None]:
@@ -85,7 +88,15 @@ def write_daemon_died(notifications_dir: Path) -> None:
     tmp.replace(notifications_dir / fname)
 
 
+def configure_logging() -> None:
+    """INFO and up on stderr, which `voice daemon start` sends to ~/agent/logs/voice.log. The
+    access log stays quiet: it would write a line for every health check and play."""
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=LOG_FORMAT, force=True)
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+
+
 def main() -> None:
+    configure_logging()
     port = int(os.environ["SKILL_PORT"])
     asked_to_stop = False
 

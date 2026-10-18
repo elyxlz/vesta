@@ -1,12 +1,22 @@
 """A fake provider for each role, connected in the test's own data directory."""
 
 import pathlib as pl
+import typing as tp
 
 import pytest
 import voice.config as vc
 from voice import providers
+from voice.providers import limit
 
 from .fakes import FakeJudge, FakeStt, FakeTts
+
+
+@pytest.fixture(autouse=True)
+def fresh_limiters() -> tp.Iterator[None]:
+    """Each test starts with the default TTS caps: a lowered cap must not leak into the next test."""
+    limit.reset()
+    yield
+    limit.reset()
 
 
 @pytest.fixture
