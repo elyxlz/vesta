@@ -77,7 +77,7 @@ Tell the user the difference when they ask which one to pick.
 | --- | --- | --- |
 | Language | one voice speaks many languages | each voice speaks one: English, Spanish, German, French, Dutch, Italian, or Japanese |
 | Voices | 19, plus voice IDs from the user's ElevenLabs account | 90 |
-| Text in square brackets | an instruction, not speech (see below) | plain text |
+| Text in square brackets | a direction, not speech (see below) | plain text |
 
 **The judge** turns on when its key is connected. With it on, your live transcript and the line you are saying go to TypeSafe on every word the user says, so say that before you connect it. What it buys: a short "stop" cuts you off at once, an "mhm" does not, and words meant for someone else in the room stay out of the conversation. With it off, a user who talks over you for a second takes the floor, and a shorter sound lets you continue.
 
@@ -96,10 +96,10 @@ With ElevenLabs selected, text in square brackets is a direction to the voice an
 - `[sighs] That meeting moved again, to Friday.`
 - `[excited] They said yes!`
 - `[whispers] Don't tell anyone, but I booked the table already.`
-- `Hmm, [hesitates] I'm not sure that's a good idea.`
-- `[warmly] Good morning. You slept in today.`
+- `[thoughtful] Hmm, I'm not sure that's a good idea.`
+- `[curious] Wait, how did the interview go?`
 
-Never put text you want heard in square brackets. With Deepgram selected, write no such tags: they are plain text there.
+Never put text you want heard in square brackets. A markdown link is such text: the voice does not say the label of `[label](url)`. With Deepgram selected, write no such tags: they are plain text there.
 
 You do not need to check which provider is selected before each reply. While `tts` is on, the `reply_hint` of each app message carries the rule of the selected provider, and a hint with no such rule means that the voice says each character.
 
