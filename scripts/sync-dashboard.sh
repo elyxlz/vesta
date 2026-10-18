@@ -16,6 +16,10 @@
 # and CI's dashboard-sync-check catches any drift in either direction.
 set -euo pipefail
 
+# Fail before the first write: a missing rsync aborting mid-script leaves
+# half-synced tracked files behind that look like a real change.
+command -v rsync >/dev/null || { echo "error: rsync is required by $0" >&2; exit 1; }
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DASHBOARD="$REPO_ROOT/agent/skills/dashboard/app"
 DASHBOARD_SRC="$DASHBOARD/src"
