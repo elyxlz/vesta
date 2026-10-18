@@ -152,7 +152,7 @@ class ElevenLabsTts:
     voice_setting = "selected_voice_id"
     formats = frozenset(OUTPUT_FORMATS)
     reply_hint = (
-        "this reply can be spoken aloud, so let your voice show feeling with directions in square brackets, which it performs and does not say"
+        "this reply will be spoken aloud, so let your voice show feeling with directions in square brackets, which it performs and does not say"
     )
 
     def settings_schema(self) -> list[SettingDef]:
