@@ -60,7 +60,7 @@ A **role** is one job a provider does. A provider is **connected** to a role onc
 
 Tell the user the difference when they ask which one to pick.
 
-**Speech to text.** Flux predicts the end of a turn from the words, and Scribe waits for silence, so Flux answers about half a second sooner at every step of a conversation.
+**Speech to text.** Flux predicts the end of a turn from the words. Scribe (`scribe_v3_live`) predicts it too and falls back to the silence setting, which stays its upper bound.
 
 | | `deepgram` (Flux) | `elevenlabs` (Scribe) |
 | --- | --- | --- |

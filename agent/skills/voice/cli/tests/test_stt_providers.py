@@ -416,8 +416,8 @@ def test_scribe_sends_its_two_constants_its_silence_threshold_and_the_key_terms_
             pass
 
         assert socket.queries[0] == {
-            "model_id": ["scribe_v2_realtime"],
-            "commit_strategy": ["vad"],
+            "model_id": ["scribe_v3_live"],
+            "commit_strategy": ["turn_prediction"],
             "audio_format": ["pcm_16000"],
             "vad_silence_threshold_secs": ["0.5"],
             "keyterms": ["Roscioli"],

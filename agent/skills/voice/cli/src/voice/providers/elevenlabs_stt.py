@@ -1,8 +1,9 @@
 """ElevenLabs STT provider: Scribe on the realtime socket.
 
-Scribe ends a turn on silence: the server commits the segment after `vad_silence_threshold_secs`
-with no speech. SCRIBE_MODEL and SCRIBE_COMMIT_STRATEGY are the two values to change for a
-Scribe model that predicts the end of a turn.
+Scribe ends a turn with `turn_prediction`: the server commits as soon as it predicts the speaker
+has finished, and otherwise after `vad_silence_threshold_secs` with no speech, so the silence
+setting stays the upper bound. SCRIBE_MODEL and SCRIBE_COMMIT_STRATEGY choose the model and how
+it ends a turn; `scribe_v2_realtime` refuses `turn_prediction`.
 """
 
 import asyncio
@@ -24,8 +25,8 @@ from .stream import SocketStream, check_open
 logger = logging.getLogger("voice.elevenlabs_stt")
 
 ELEVENLABS_WS = "wss://api.elevenlabs.io"
-SCRIBE_MODEL = "scribe_v2_realtime"
-SCRIBE_COMMIT_STRATEGY = "vad"
+SCRIBE_MODEL = "scribe_v3_live"
+SCRIBE_COMMIT_STRATEGY = "turn_prediction"
 SCRIBE_FILE_MODEL = "scribe_v2"
 SAMPLE_RATE = 16000
 CONNECT_TIMEOUT_SECS = 10
