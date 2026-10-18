@@ -4,12 +4,15 @@ Text in square brackets is an instruction to this model, not speech: `[laughs]` 
 changes how the line is said. The provider sends the text as it gets it.
 """
 
+import asyncio
+import json
 import typing as tp
 
 import aiohttp
 
 from voice.settings import Domain, JsonValue, SettingDef
 
+from . import limit
 from .base import TtsError, Usage, Validation, api_key, no_usage, number_in
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
@@ -17,6 +20,10 @@ MODEL_ID = "eleven_v4_turbo"
 DEFAULT_VOICE_ID = "FGY2WhTYpPnrIDTdsKH5"  # Laura
 SYNTHESIS_TIMEOUT_SECS = 120
 ERROR_BODY_CHARS = 300
+# The waits before each new try of a request that ElevenLabs refused for too many requests at
+# once. A 429 for any other reason (the quota) is not tried again.
+CONCURRENCY_RETRY_SECS: tuple[float, ...] = (0.25, 0.5, 1.0)
+CONCURRENCY_LIMIT_CODE = "concurrent_limit_exceeded"
 
 # Play format -> the ElevenLabs output_format that makes it.
 OUTPUT_FORMATS: dict[str, str] = {
@@ -180,28 +187,50 @@ class ElevenLabsTts:
         http: aiohttp.ClientSession,
     ) -> tp.AsyncIterator[bytes]:
         url = f"{ELEVENLABS_API}/v1/text-to-speech/{voice}/stream"
-        try:
-            async with http.post(
-                url,
-                # ElevenLabs reads the format from the query only. In the body it has no effect.
-                params={"output_format": OUTPUT_FORMATS[audio_format]},
-                headers={"xi-api-key": api_key(creds)},
-                json={"text": text, "model_id": MODEL_ID},
-                timeout=aiohttp.ClientTimeout(total=SYNTHESIS_TIMEOUT_SECS),
-            ) as upstream:
-                if upstream.status != 200:
-                    body = (await upstream.text())[:ERROR_BODY_CHARS]
-                    raise TtsError(f"elevenlabs returned {upstream.status}: {body}")
-                async for chunk in upstream.content.iter_any():
-                    yield chunk
-        except (TimeoutError, aiohttp.ClientError) as e:
-            raise TtsError(f"elevenlabs request failed: {e}") from e
+        lowered = False
+        for attempt in range(len(CONCURRENCY_RETRY_SECS) + 1):
+            try:
+                async with http.post(
+                    url,
+                    # ElevenLabs reads the format from the query only. In the body it has no effect.
+                    params={"output_format": OUTPUT_FORMATS[audio_format]},
+                    headers={"xi-api-key": api_key(creds)},
+                    json={"text": text, "model_id": MODEL_ID},
+                    timeout=aiohttp.ClientTimeout(total=SYNTHESIS_TIMEOUT_SECS),
+                ) as upstream:
+                    if upstream.status != 200:
+                        body = await upstream.text()
+                        # No audio has gone out yet, so a new try is safe.
+                        if upstream.status == 429 and is_concurrency_limit(body) and attempt < len(CONCURRENCY_RETRY_SECS):
+                            if not lowered:
+                                limit.for_provider(self).lower()
+                                lowered = True
+                            await asyncio.sleep(CONCURRENCY_RETRY_SECS[attempt])
+                            continue
+                        raise TtsError(f"elevenlabs returned {upstream.status}: {body[:ERROR_BODY_CHARS]}")
+                    async for chunk in upstream.content.iter_any():
+                        yield chunk
+                    return
+            except (TimeoutError, aiohttp.ClientError) as e:
+                raise TtsError(f"elevenlabs request failed: {e}") from e
 
     async def usage(self, creds: dict[str, str]) -> Usage:
         return await account_usage(api_key(creds))
 
     async def validate(self, creds: dict[str, str], _settings: Domain) -> Validation:
         return subscription_validation(await fetch_subscription(api_key(creds)))
+
+
+def is_concurrency_limit(body: str) -> bool:
+    """True for the 429 that means too many requests at once, not an empty quota."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return False
+    detail = parsed["detail"] if isinstance(parsed, dict) and "detail" in parsed else None
+    if not isinstance(detail, dict):
+        return False
+    return any(key in detail and detail[key] == CONCURRENCY_LIMIT_CODE for key in ("code", "status"))
 
 
 def subscription_validation(result: dict[str, JsonValue]) -> Validation:

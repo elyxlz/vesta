@@ -30,9 +30,14 @@ async def fill(buffer: PlayBuffer, audio: tp.AsyncIterator[bytes]) -> None:
         buffer.error = str(e)
         raise
     finally:
-        async with buffer.changed:
-            buffer.done = True
-            buffer.changed.notify_all()
+        await end(buffer)
+
+
+async def end(buffer: PlayBuffer) -> None:
+    """Mark the buffer over, so every reader stops waiting for more audio."""
+    async with buffer.changed:
+        buffer.done = True
+        buffer.changed.notify_all()
 
 
 async def first_chunk(buffer: PlayBuffer) -> bool:
