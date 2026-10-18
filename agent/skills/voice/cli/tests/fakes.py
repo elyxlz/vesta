@@ -27,6 +27,8 @@ class FakeStream:
         self.closed = False
         # Set when audio arrives, so a test can wait for a frame that gets no answer.
         self.heard = asyncio.Event()
+        # Set when a commit arrives.
+        self.committing = asyncio.Event()
         # When true, `send` raises an error that is not part of the contract: an adapter bug.
         self.broken = False
         # Set when the session starts to read the events: the stream is the session's own.
@@ -40,6 +42,7 @@ class FakeStream:
 
     async def commit(self) -> None:
         self.commits += 1
+        self.committing.set()
 
     async def close(self) -> None:
         self.closed = True
@@ -104,6 +107,7 @@ class FakeTts:
     # When set, a synthesis that starts sets it: the engine handled a `speak` that sends no frame.
     heard: asyncio.Event | None = None
     spoken: list[tuple[str, str, str]] = dc.field(default_factory=list)
+    prewarms: int = 0
 
     async def synthesize(
         self, text: str, voice: str, audio_format: str, creds: dict[str, str], settings: Domain, http: aiohttp.ClientSession
@@ -117,6 +121,9 @@ class FakeTts:
             if index == 1 and self.gate is not None:
                 await self.gate.wait()
             yield chunk + text.encode()
+
+    async def prewarm(self, creds: dict[str, str], http: aiohttp.ClientSession) -> None:
+        self.prewarms += 1
 
     async def usage(self, creds: dict[str, str]) -> Usage:
         return self.account

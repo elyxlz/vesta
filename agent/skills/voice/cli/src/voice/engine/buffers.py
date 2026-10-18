@@ -8,6 +8,8 @@ import asyncio
 import dataclasses as dc
 import typing as tp
 
+from . import timing
+
 
 @dc.dataclass
 class PlayBuffer:
@@ -17,6 +19,8 @@ class PlayBuffer:
     done: bool = False
     error: str | None = None
     changed: asyncio.Condition = dc.field(default_factory=asyncio.Condition)
+    # The turn this play answers, for the timing log.
+    clock: timing.TurnClock | None = None
 
 
 async def fill(buffer: PlayBuffer, audio: tp.AsyncIterator[bytes]) -> None:
@@ -25,6 +29,8 @@ async def fill(buffer: PlayBuffer, audio: tp.AsyncIterator[bytes]) -> None:
         async for chunk in audio:
             async with buffer.changed:
                 buffer.chunks.append(chunk)
+                if len(buffer.chunks) == 1:
+                    timing.mark(buffer.clock, "tts_first_chunk")
                 buffer.changed.notify_all()
     except Exception as e:
         buffer.error = str(e)

@@ -16,7 +16,7 @@ from aiohttp import web
 
 from . import appkeys, handlers
 from . import config as voice_config
-from .engine import session
+from .engine import session, timing
 
 # A provider connection stays open this long with no request on it. The gap between two
 # replies is longer than aiohttp's 15 s default, and a closed connection costs the next reply
@@ -88,6 +88,7 @@ def write_daemon_died(notifications_dir: Path) -> None:
 
 def main() -> None:
     port = int(os.environ["SKILL_PORT"])
+    timing.enable()
     asked_to_stop = False
 
     def handle_signal(signum: int, _frame: object) -> None:

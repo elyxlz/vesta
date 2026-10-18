@@ -141,6 +141,16 @@ class TtsProvider(tp.Protocol):
     def settings_schema(self) -> list[SettingDef]: ...
 
 
+@tp.runtime_checkable
+class TtsPrewarm(tp.Protocol):
+    """A TTS provider that can open its connection ahead of a synthesis. Optional: the session
+    calls it when a user turn starts, on the shared session that synthesis uses."""
+
+    async def prewarm(self, creds: dict[str, str], http: aiohttp.ClientSession) -> None:
+        """A cheap request that bills nothing, skipped when the connection is likely warm."""
+        ...
+
+
 class Line(tp.TypedDict):
     by: str
     text: str
