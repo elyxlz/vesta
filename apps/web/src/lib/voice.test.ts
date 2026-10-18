@@ -6,8 +6,12 @@ vi.mock("@/api/client", () => ({
   websocketUrl: vi.fn(),
 }));
 
-const { browserCapture, listMicrophones, microphoneDeniedMessage } =
-  await import("./voice");
+const {
+  browserCapture,
+  listMicrophones,
+  microphoneDeniedMessage,
+  microphoneUnavailableMessage,
+} = await import("./voice");
 
 function device(kind: MediaDeviceKind, deviceId: string, label: string) {
   return { kind, deviceId, label, groupId: "", toJSON: () => ({}) };
@@ -96,6 +100,25 @@ describe("microphoneDeniedMessage", () => {
       expect(microphoneDeniedMessage({ isDesktopApp, platform })).toContain(
         expected,
       );
+    },
+  );
+});
+
+describe("microphoneUnavailableMessage", () => {
+  it.each([
+    {
+      isDesktopApp: true,
+      platform: "windows",
+      expected: "Let desktop apps access your microphone",
+    },
+    { isDesktopApp: true, platform: "macos", expected: "sound settings" },
+    { isDesktopApp: false, platform: "windows", expected: "sound settings" },
+  ] as const)(
+    "names what to check, not another app ($platform, desktop app: $isDesktopApp)",
+    ({ isDesktopApp, platform, expected }) => {
+      const message = microphoneUnavailableMessage({ isDesktopApp, platform });
+      expect(message).toContain(expected);
+      expect(message).not.toContain("another app");
     },
   );
 });
