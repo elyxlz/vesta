@@ -115,22 +115,25 @@ def test_the_reply_hint_carries_what_the_voice_service_says_about_a_spoken_reply
 
 
 @pytest.mark.parametrize(
-    ("body", "hint"),
+    ("body", "hint", "asks"),
     [
-        ({"text": "hello there", "spoken": True}, "think about how you can best show your personality; the voice performs brackets"),
-        ({"text": "hello there"}, "think about how you can best show your personality; the voice performs brackets"),
-        ({"text": "hello there", "spoken": False}, "think about how you can best show your personality"),
+        ({"text": "hello there", "spoken": True}, "think about how you can best show your personality; the voice performs brackets", 1),
+        ({"text": "hello there"}, "think about how you can best show your personality; the voice performs brackets", 1),
+        ({"text": "hello there", "spoken": False}, "think about how you can best show your personality", 0),
     ],
 )
-def test_only_a_reply_the_app_reads_aloud_gets_the_voice_clause(tmp_path, body, hint):
+def test_only_a_reply_the_app_reads_aloud_gets_the_voice_clause(tmp_path, body, hint, asks):
     state, _ = _service_state(tmp_path)
+    asked: list[str] = []
 
-    async def voice(_request):
+    async def voice(request):
+        asked.append(request.path)
         return web.json_response({"reply_hint": "the voice performs brackets"})
 
     notif = _post_beside_a_voice_service(state, tmp_path, voice, body)
 
     assert notif["reply_hint"] == hint
+    assert len(asked) == asks
     state.store.close()
 
 
