@@ -16,6 +16,7 @@
 #   color <name|hex> [room|light]  Set colour
 #   scene <name> [room]       Activate a scene (fuzzy match)
 #   scenes [room]             List available scenes
+#   house [scene|off]         Whole house: scene in every room (default relax), or off
 
 set -euo pipefail
 
@@ -366,6 +367,19 @@ for room_name, sname, sid in scenes:
 " "$room_id"
 }
 
+cmd_house() {
+    # Whole-house shortcut: one call sets every room. "off" turns everything off;
+    # anything else is a scene name applied in every room that has it (default: relax).
+    local what="${1:-relax}"
+    if [[ "$what" == "off" ]]; then
+        api_put "groups/0/action" '{"on":false}' >/dev/null
+        echo "House off"
+        return
+    fi
+    cmd_scene "$what" >/dev/null
+    echo "House on: $what"
+}
+
 cmd_help() {
     cat <<'USAGE'
 Usage: hue <command> [args]
@@ -380,6 +394,7 @@ Commands:
   color <name|hex> [room|light]  Set colour by name or hex
   scene <name> [room]       Activate a scene (fuzzy match)
   scenes [room]             List available scenes
+  house [scene|off]         Whole house: scene in every room (default relax), or off
   help                      Show this help message
 
 Rooms: Living room, Bedroom, Office, Hallway
@@ -409,6 +424,7 @@ case "${1:-help}" in
     color|colour) cmd_color "${2:-}" "${3:-}" ;;
     scene)        cmd_scene "${2:-}" "${3:-}" ;;
     scenes)       cmd_scenes "${2:-}" ;;
+    house)        cmd_house "${2:-}" ;;
     help|--help|-h) cmd_help ;;
     *)
         echo "Unknown command: $1" >&2
