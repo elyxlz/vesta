@@ -1,6 +1,6 @@
 """ElevenLabs TTS provider: `eleven_v4_turbo` on the HTTP streaming call.
 
-Text in square brackets is an instruction to this model, not speech: `[laughs]` or `[whispering]`
+Text in square brackets is a direction to this model, not speech: `[laughs]` or `[whispers]`
 changes how the line is said. The provider sends the text as it gets it.
 """
 
@@ -152,8 +152,8 @@ class ElevenLabsTts:
     voice_setting = "selected_voice_id"
     formats = frozenset(OUTPUT_FORMATS)
     reply_hint = (
-        "this reply can be spoken aloud, and the voice performs text in square brackets as a direction and does not say it "
-        "([laughs], [whispers]), so put a word in square brackets only as a direction"
+        "this reply will be spoken aloud, so let your voice show feeling with directions in square brackets, "
+        "which it performs and does not say, and put nothing else in square brackets"
     )
 
     def settings_schema(self) -> list[SettingDef]:
