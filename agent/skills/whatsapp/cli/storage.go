@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1037,6 +1038,8 @@ func (ms *MessageStore) ListAllChatJIDs() ([]string, error) {
 	return jids, nil
 }
 
+var errMessageNotFound = errors.New("not found in this chat")
+
 func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaInfo, error) {
 	var info MediaInfo
 	var mediaType, filename, url sql.NullString
@@ -1062,7 +1065,7 @@ func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaIn
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("message %s not found in this chat", messageID)
+			return nil, fmt.Errorf("message %s %w", messageID, errMessageNotFound)
 		}
 		return nil, fmt.Errorf("failed to query media info: %v", err)
 	}
