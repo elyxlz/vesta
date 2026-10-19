@@ -140,6 +140,11 @@ ROWS = [
     ("paused: the user stops the reply on the device", PAUSED, {"kind": "stopped_by_user"}, True, True, 10.1, "idle", [STOP]),
     ("user turn: the user stops the reply on the device", IN_TURN, {"kind": "stopped_by_user"}, True, True, 0.0, "user_turn", [STOP]),
     ("idle: a tick with nothing paused changes nothing", IDLE, {"kind": "tick"}, True, True, 99.0, "idle", []),
+    ("idle: the wake phrase over a reply takes the floor at once", IDLE, {"kind": "wake"}, True, True, 0.0, "user_turn", [STOP, TURN_START]),
+    ("paused: the wake phrase takes the floor with no hold", PAUSED, {"kind": "wake"}, True, True, 10.1, "user_turn", [STOP, TURN_START]),
+    ("idle: the wake phrase with no reply waits for the words", IDLE, {"kind": "wake"}, False, True, 0.0, "idle", []),
+    ("idle: the wake phrase stops no reply when barge-in is off", IDLE, {"kind": "wake"}, True, False, 0.0, "idle", []),
+    ("user turn: the wake phrase changes nothing", IN_TURN, {"kind": "wake"}, True, True, 0.0, "user_turn", []),
 ]
 
 

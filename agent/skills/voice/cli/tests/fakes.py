@@ -10,6 +10,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from voice import server
+from voice.engine import wake
 from voice.providers.base import Question, SttEvent, SttOpenError, TtsError, Usage, Validation, Verdict, no_usage
 from voice.settings import Domain, JsonValue, SettingDef, SettingOption
 
@@ -144,6 +145,20 @@ class FakeJudge:
 
     def settings_schema(self) -> list[SettingDef]:
         return []
+
+
+# 80 ms of mic audio: the detector hears the phrase in a window that ends with WAKE_FRAME.
+WAKE_FRAME = b"\x11" * wake.FRAME_BYTES
+QUIET_FRAME = bytes(wake.FRAME_BYTES)
+
+
+@dc.dataclass
+class FakeDetector:
+    windows: int = 0
+
+    def score(self, window: bytes) -> float:
+        self.windows += 1
+        return 1.0 if window.endswith(WAKE_FRAME) else 0.0
 
 
 @contextlib.asynccontextmanager

@@ -103,6 +103,21 @@ Never put text you want heard in square brackets. A markdown link is such text: 
 
 You do not need to check which provider is selected before each reply. While `tts` is on, the `reply_hint` of each app message whose reply the app reads aloud carries the rule of the selected provider. A hint with no such rule means that the reply is not read aloud, or that the voice says each character. Then write no square-bracket tags: the user would see them as text in the chat, or hear them read out.
 
+## Wake word
+
+With `wake_word` on, a session sends no audio to speech to text until the user says the wake phrase (`wake_word_phrase`, default `hey aria`). A detector on this box listens for it. It is the same on every client of the engine: the app, a WhatsApp call, a room speaker. After the phrase the session listens as usual. It keeps listening while the user talks and while a reply plays or waits to play, and for the follow-up window after both (`wake_word_follow_up_secs`, default 5), so the user can answer you with no phrase. Then it waits for the phrase again. With `barge_in` on, the wake phrase stops a reply at once, like a clear "stop".
+
+The phrase never reaches you: the session removes it from the start of the user's words. Add the name in the phrase as a key term, so that speech to text writes it as you expect: `voice stt keyterms add Aria`.
+
+A phrase needs its own trained model on this box. `voice status` shows its path and whether it is there, under `wake_word_model`. With no model, a session with the wake word on listens to everything, and the app says why. SETUP.md section 5 says how to get a model.
+
+| Behavior | Default | What it does |
+| --- | --- | --- |
+| `wake_word` | off | wait for the phrase before speech to text hears anything |
+| `wake_word_phrase` | `hey aria` | the phrase; its model is `~/.voice/wake_words/<words joined by _>.onnx` |
+| `wake_word_threshold` | 0.5 | the detector score that counts as the phrase, 0.05 to 0.95 |
+| `wake_word_follow_up_secs` | 5 | seconds after the last speech in which the user continues with no phrase, 0 to 60 |
+
 ## Commands
 
 Every command prints one line of JSON on stdout. A command that fails prints `{"error": ...}` on stderr and exits non-zero. `<role>` is `stt`, `tts`, or `judge`.
@@ -121,7 +136,7 @@ voice <role> off                              # keeps the keys
 
 # Settings of the selected provider, and behaviors
 voice <role> set <key> <value>                # voice stt set eot_threshold 0.7
-voice behavior set <key> <value>              # voice behavior set barge_in off
+voice behavior set <key> <value>              # voice behavior set barge_in off, voice behavior set wake_word on
 
 # TTS voice
 voice tts voice <voice_id>
@@ -139,11 +154,11 @@ transcribe ~/meeting.mp4 --language it
 
 `--key` is necessary for a provider that needs a key and refused for one that needs none. A setting belongs to one provider and each provider keeps its own, so `voice <role> use` loses nothing: switch back and the voice, the tuning, and the key are as they were.
 
-**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. It applies to a conversation. In dictation the user talks to the message box, so their voice never stops a reply.
+**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. It applies to a conversation. In dictation the user talks to the message box, so their voice never stops a reply. The wake word behaviors are below.
 
 **Transcribe a file**: `transcribe <file> [--language <code>]` prints the transcript of any audio or video file on stdout and nothing else. It sends the file to the selected STT provider (language detected unless `--language` pins one such as `it`) and, when STT is unset, off, or the provider fails, runs the whisper skill's local whisper.cpp instead; it prints `{"error": ...}` on stderr and exits non-zero only when both fail. Every skill that needs speech as text calls this one command (the whatsapp daemon runs it on each incoming voice note), so a transcription problem anywhere is fixed here: check `voice status`, then the whisper skill's setup.
 
-**Daemon**: `voice daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; stop is the deliberate shutdown, so it does not fire the `daemon_died` notification every other exit fires; status reports whether the service is up and on which port. A session reads its providers and settings when it opens, so a change applies to the next session with no restart. Manage the daemon only through these commands, never by running `voice serve` yourself.
+**Daemon**: `voice daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; stop is the deliberate shutdown, so it does not fire the `daemon_died` notification every other exit fires; status reports whether the service is up and on which port. A session reads its providers and their settings when it opens, so a change applies to the next session with no restart. A behavior applies at once, also to the sessions that are open. Manage the daemon only through these commands, never by running `voice serve` yourself.
 
 ## Common asks
 
@@ -157,6 +172,8 @@ transcribe ~/meeting.mp4 --language it
 - **"Stop cutting me off"** → Flux: raise `eot_threshold` (0.9) or `eot_timeout_ms`. Scribe: raise `vad_silence_threshold_secs`
 - **"Stop when I talk over you" / "don't stop when I talk"** → `voice behavior set barge_in on` / `off`
 - **"Use the other speech provider"** → `voice stt use <provider>` or `voice tts use <provider>`
+- **"Only listen when I say the wake word" / "listen to everything again"** → `voice behavior set wake_word on` / `off`
+- **"You wake up when nobody called you" / "you don't hear me call you"** → raise / lower `wake_word_threshold` (default 0.5)
 
 ## Provider notes
 

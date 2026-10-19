@@ -6,7 +6,7 @@
 uv tool install --editable ~/agent/skills/voice/cli
 ```
 
-Provides the `voice` and `transcribe` commands. Re-run it whenever `[project.scripts]` in `cli/pyproject.toml` gains a command: an editable install picks up code changes on its own, but a new console script exists only after a reinstall.
+Provides the `voice` and `transcribe` commands. Re-run it whenever `cli/pyproject.toml` gains a command in `[project.scripts]` or a package in `dependencies`: an editable install picks up code changes on its own, but a new console script or package exists only after a reinstall.
 
 ## 2. Start the voice daemon
 
@@ -94,6 +94,32 @@ curl -L -o /usr/local/share/ggml-small.bin \
 The whatsapp skill's `setup.sh` downloads the same model, so if you already ran that only the
 binary is missing. Other model sizes and the `WHISPER_MODEL` override live in the `whisper`
 skill's SETUP.md.
+
+## 5. Wake word model (optional)
+
+The wake word (SKILL.md) needs one ONNX classifier for its phrase, made with [livekit-wakeword](https://github.com/livekit/livekit-wakeword) (Apache-2.0). The detector runs on this box's CPU, one thread for each open session.
+
+1. **Get the model file.** Training runs for hours on a machine with an NVIDIA GPU of 8 GB or more and more than 20 GB of free disk, so it is not a job for this box: ask the user for the file, or for a machine that can train it. On that machine:
+   ```bash
+   pip install "livekit-wakeword[train,eval,export]"
+   git clone https://github.com/livekit/livekit-wakeword.git
+   cp livekit-wakeword/configs/prod.yaml hey_aria.yaml
+   ```
+   In `hey_aria.yaml`, set `model_name: hey_aria` and `target_phrases: ["hey aria"]`, and replace `custom_negative_phrases` with phrases that sound like it and must not wake: `"aria"`, `"hey ari"`, `"area"`, `"hey area"`, `"hey siri"`, `"hey sarah"`, `"hey maria"`. Then:
+   ```bash
+   livekit-wakeword setup --config hey_aria.yaml
+   livekit-wakeword run hey_aria.yaml
+   ```
+   `run` generates speech, trains, exports, and evaluates. The model is `output/hey_aria/hey_aria.onnx`, and the evaluation gives its false wakes per hour and its recall.
+2. **Install it here**, at the path that `voice status` shows under `wake_word_model`:
+   ```bash
+   mkdir -p ~/.voice/wake_words && cp hey_aria.onnx ~/.voice/wake_words/hey_aria.onnx
+   uv tool install --editable ~/agent/skills/voice/cli
+   ```
+   The second line installs the detector's packages when the voice CLI is older than them, and is a no-op when they are there.
+3. **Turn it on**: `voice behavior set wake_word on`. `voice status` shows `"found": true` under `wake_word_model`.
+
+A phrase other than `hey aria` needs its own model: train it with that phrase, name the file after its words (`hey_vesta.onnx` for `hey vesta`), and set `voice behavior set wake_word_phrase "hey vesta"`.
 
 ## Adding a custom ElevenLabs voice
 

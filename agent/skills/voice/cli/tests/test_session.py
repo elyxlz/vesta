@@ -14,7 +14,7 @@ from voice.engine import turns
 from voice.providers.base import Verdict
 from voice.settings import JsonValue
 
-from .fakes import FakeJudge, FakeStream, FakeStt, FakeTts, frames_until, next_frame, voice_service
+from .fakes import FRAME_TIMEOUT_SECS, FakeDetector, FakeJudge, FakeStream, FakeStt, FakeTts, frames_until, next_frame, voice_service
 
 MIC = {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1}
 STOP_VERDICT: Verdict = {"said_to": "agent", "wants_stop": True}
@@ -325,14 +325,23 @@ def test_the_stored_behavior_takes_barge_in_away_from_every_session(tmp_path: pl
     asyncio.run(scenario())
 
 
-def test_a_change_of_a_behavior_during_a_session_does_not_change_that_session(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+def test_a_change_of_a_behavior_applies_to_a_session_that_is_open(
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, wake_model: FakeDetector
+) -> None:
     async def scenario() -> None:
-        async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
-            vc.set_setting(tmp_path, "behavior", "barge_in", False)
-            await speak_and_start(ws)
-            await stream.emit("transcription", "mhm")
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
+            stt.opened = asyncio.Event()
+            # The wake word frames show when the session read each change.
+            vc.mutate(tmp_path, lambda cfg: {**cfg, "behavior": {"barge_in": False, "wake_word": True, "wake_word_follow_up_secs": 0}})
+            assert await next_frame(ws) == {"type": "wake_listening", "value": True}
+            vc.set_setting(tmp_path, "behavior", "wake_word", False)
+            assert await next_frame(ws) == {"type": "wake_listening", "value": False}
+            await asyncio.wait_for(stt.opened.wait(), FRAME_TIMEOUT_SECS)
 
-            assert await frames_until(ws, "pause_playback") == [{"type": "transcript", "text": "mhm"}, {"type": "pause_playback"}]
+            await speak_and_start(ws)
+            await stt.streams[-1].emit("transcription", "mhm")
+
+            assert await frames_until(ws, "turn_start") == [{"type": "transcript", "text": "mhm"}, {"type": "turn_start"}]
 
     asyncio.run(scenario())
 

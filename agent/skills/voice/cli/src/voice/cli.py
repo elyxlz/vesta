@@ -27,6 +27,7 @@ import typing as tp
 
 from . import config as vc
 from . import daemon, invalidation, providers, sections, server
+from .engine import behavior, wake
 from .settings import JsonValue
 
 USAGE_EXIT = 2
@@ -63,15 +64,18 @@ def _role_view(config: vc.VoiceConfig, role: vc.Role) -> dict[str, JsonValue]:
     return view
 
 
-def status_view(config: vc.VoiceConfig) -> dict[str, JsonValue]:
+def status_view(config: vc.VoiceConfig, data_dir: pl.Path) -> dict[str, JsonValue]:
     view: dict[str, JsonValue] = {role: _role_view(config, role) for role in vc.ROLES}
     view["behavior"] = {s["key"]: s["value"] for s in sections.section_view(config, "behavior")}
+    # The model the wake phrase needs: a session with the wake word on and no model listens without it.
+    model = wake.model_path(data_dir, behavior.wake_phrase(config["behavior"]))
+    view["wake_word_model"] = {"path": str(model), "found": model.is_file()}
     return view
 
 
 def _print_status(scope: vc.Section | None = None) -> int:
     """The answer of every command that reads or changes the config: the whole status, one line."""
-    print(json.dumps(status_view(vc.load(_data_dir()))))
+    print(json.dumps(status_view(vc.load(_data_dir()), _data_dir())))
     if scope is not None:
         asyncio.run(invalidation.notify(scope))
     return 0

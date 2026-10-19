@@ -211,7 +211,13 @@ def test_a_behavior_is_read_and_set_like_a_provider_setting(tmp_path: pl.Path) -
     async def scenario(client: TestClient) -> None:
         async with client.get("/behavior/status") as resp:
             before = await resp.json()
-        assert [(s["key"], s["type"], s["value"]) for s in before["settings"]] == [("barge_in", "bool", True)]
+        assert [(s["key"], s["type"], s["value"]) for s in before["settings"]] == [
+            ("barge_in", "bool", True),
+            ("wake_word", "bool", False),
+            ("wake_word_phrase", "text", "hey aria"),
+            ("wake_word_threshold", "number", 0.5),
+            ("wake_word_follow_up_secs", "number", 5),
+        ]
         async with client.post("/behavior/set", json={"key": "barge_in", "value": False}) as resp:
             assert (await resp.json())["settings"][0]["value"] is False
         async with client.post("/behavior/set", json={"key": "barge_in", "value": "sometimes"}) as resp:

@@ -136,6 +136,19 @@ class StopPlayback(tp.TypedDict):
     dropped: list[str]
 
 
+class WakeListening(tp.TypedDict):
+    """With the wake word on: true while the session waits for the phrase and no mic audio goes
+    to speech to text, false while it listens to the user."""
+
+    type: tp.Literal["wake_listening"]
+    value: bool
+
+
+class WakeDetected(tp.TypedDict):
+    type: tp.Literal["wake_detected"]
+    score: float
+
+
 class Error(tp.TypedDict):
     type: tp.Literal["error"]
     # The `speak` id of the play that this error is about. Absent for an error of the session.
@@ -160,6 +173,8 @@ EngineFrame = (
     | PausePlayback
     | ResumePlayback
     | StopPlayback
+    | WakeListening
+    | WakeDetected
     | Error
     | Ended
 )

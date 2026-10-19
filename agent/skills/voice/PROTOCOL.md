@@ -73,6 +73,8 @@ A frame before `start_session`, and a second `start_session`, gets `error` and c
 | `pause_playback` | Pause the audio now and keep the queue. | Pause. |
 | `resume_playback` | Continue the paused audio. | Continue. |
 | `stop_playback {id, dropped}` | Stop the audio and clear the queue. `id` is the play that was cut, or null. `dropped` lists the plays that never started. | Stop, clear, and discard buffered bytes. |
+| `wake_listening {value}` | With the wake word on: `true` while the engine waits for the wake phrase and no mic audio goes to speech to text, `false` while it listens to the user. Sent on each change. | Show it (a dim light while it waits). Keep sending mic audio. |
+| `wake_detected {score}` | The engine heard the wake phrase. `score` is the detector's, 0 to 1. | Show it. |
 | `error {id?, message}` | Something failed. The session continues. With `id`, it is the `speak` of that id that cannot play: TTS is off, or its synthesis failed. | Show or log it. With `id`, give up that reply. |
 | `ended {reason}` | The session is over. | Close. |
 
@@ -92,6 +94,8 @@ A socket that closes with no `ended` frame means the engine failed or the networ
 | `agent_paused` | Playback is paused while the engine decides if the user takes the floor. |
 
 In `user_turn` the engine holds a new `play` and sends it after `turn_end` or `turn_dropped`. In every other state it sends each `play` at once.
+
+With the user's `wake_word` behavior on, the session starts with `wake_listening {true}` after its first `state`, and nothing you say becomes a turn until the phrase. The state stays `listening` while the engine waits. The behavior can change during a session: then `wake_listening` arrives at that time.
 
 The STT provider decides when a turn ends: you do not need a silence timer. Send `end_turn` only when the user ends the turn by hand.
 
