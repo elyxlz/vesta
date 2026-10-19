@@ -37,6 +37,7 @@ func TestBubbleLintPasses(t *testing.T) {
 		"Is one of you in Sardinia? ☀️",                 // a trailing emoji decorates the bubble, not a second thought
 		"ok! 👍",                                         // same for a thumbs-up
 		"done. 🚀🚀",                                      // several trailing emoji still decorate one bubble
+		"use dns 103.86.96.100 or 1.1.1.1 today",        // dotted numbers (IPv4) are one token, not full stops
 	}
 	for _, msg := range cases {
 		if reason := bubbleLintReason(msg); reason != "" {
