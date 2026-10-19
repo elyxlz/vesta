@@ -215,7 +215,11 @@ async def message_handler(request: web.Request) -> web.Response:
     event, ids = built
     intent_id = event["intent_id"] if "intent_id" in event else None
     seen = intent_id is not None and intent_id in state.seen_intent_ids
-    spoken_hint = "" if seen else await spoken_reply.spoken_reply_hint(request.app[_VOICE_HTTP_KEY], state.voice_port_file)
+    # `spoken` says whether the app reads the reply aloud; only a spoken reply gets the voice's clause.
+    # LEGACY(remove-when: MIN_SUPPORTED_CLIENT_VERSION is 0.3.22 or later): an app older than 0.3.22
+    # sends no `spoken` and reads each reply aloud while TTS is on, so no `spoken` counts as true.
+    spoken = "spoken" not in body or body["spoken"] is True
+    spoken_hint = "" if seen or not spoken else await spoken_reply.spoken_reply_hint(request.app[_VOICE_HTTP_KEY], state.voice_port_file)
     # Checked after the one await: from this check to the return nothing awaits, which is what
     # keeps a retry that arrived during the ask from running the intake a second time.
     if intent_id is not None and intent_id in state.seen_intent_ids:

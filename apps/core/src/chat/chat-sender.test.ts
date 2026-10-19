@@ -12,12 +12,14 @@ interface SentBody {
   text?: string;
   input_method?: string;
   attachments?: string[];
+  spoken?: boolean;
   intent_id: string;
 }
 
 function harness() {
   const requests: SentBody[] = [];
   let reject = false;
+  let spoken = false;
   const http: HttpClient = {
     request: () => Promise.reject(new Error("unused")),
     json: <T>(_path: string, init?: RequestInit) => {
@@ -42,6 +44,7 @@ function harness() {
       nextId += 1;
       return `intent-${String(nextId)}`;
     },
+    repliesSpoken: () => spoken,
   });
   return {
     sender,
@@ -50,6 +53,9 @@ function harness() {
     state: () => state,
     setReject: (value: boolean) => {
       reject = value;
+    },
+    setSpoken: (value: boolean) => {
+      spoken = value;
     },
   };
 }
@@ -87,6 +93,15 @@ describe("chat sender", () => {
     const { sender, requests } = harness();
     sender.send("hi");
     expect(requests[0]).not.toHaveProperty("attachments");
+  });
+
+  it("tells the agent whether the reply will be read aloud, as it is at each send", () => {
+    const { sender, requests, setSpoken } = harness();
+    sender.send("muted");
+    setSpoken(true);
+    sender.send("aloud");
+
+    expect(requests.map((request) => request.spoken)).toEqual([false, true]);
   });
 
   it("reposts a parked retry-state bubble under its original intent id", async () => {

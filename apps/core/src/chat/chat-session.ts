@@ -36,6 +36,8 @@ export interface ChatSessionDeps {
   // Read at each pacing step, so a preference flip lands mid-conversation. False commits every
   // reply at once (a voice conversation is duplex: the reply is spoken the moment it lands).
   naturalPacing: () => boolean;
+  // Read at each send: whether this client reads the reply aloud, which the send tells the agent.
+  repliesSpoken: () => boolean;
   // Seeds the tail from a stale-while-reconnecting hold, so a conversation renders immediately
   // across a controller epoch instead of blanking to a skeleton; seedTail refetches and merges by id.
   initialState?: ChatState;
@@ -207,6 +209,7 @@ export function createChatSession(
     commit,
     current: () => state.chat,
     makeId: deps.makeId,
+    repliesSpoken: deps.repliesSpoken,
   });
 
   let sawOpen = false;
