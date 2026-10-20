@@ -6,7 +6,7 @@ import aiohttp
 from aiohttp import web
 
 from voice.engine.buffers import PlayBuffer
-from voice.engine.detector import Detector, DetectorError, ModelKey
+from voice.engine.detector import Cache
 
 # One client session for calls to the TTS provider and the judge. It keeps its connections
 # open between replies, so a call pays for no new handshake.
@@ -16,4 +16,4 @@ PLAYS = web.AppKey("plays", dict[str, PlayBuffer])
 DATA_DIR = web.AppKey("data_dir", pl.Path)
 # (model file, its mtime) -> the loaded wake word model, or why it does not load. A loaded model
 # keeps no audio state, so every session shares it.
-DETECTORS = web.AppKey("detectors", dict[ModelKey, Detector | DetectorError])
+DETECTORS = web.AppKey("detectors", Cache)

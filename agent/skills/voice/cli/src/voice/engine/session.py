@@ -14,7 +14,6 @@ to the pre-roll.
 """
 
 import asyncio
-import collections
 import contextlib
 import dataclasses as dc
 import json
@@ -153,7 +152,7 @@ class Session:
     # The app's token map. This session adds its own tokens and removes them when it ends.
     plays: dict[str, buffers.PlayBuffer]
     # The app's detector map: for each model file, its newest version loaded, or why it does not load.
-    detectors: dict[detector.ModelKey, detector.Detector | detector.DetectorError]
+    detectors: detector.Cache
     data_dir: pl.Path
     stt_link: SttLink
     tts: TtsLink | None
@@ -168,11 +167,10 @@ class Session:
     # The open STT stream: None while the gate is closed, and while a stream opens.
     stt: SttStream | None = None
     stt_reader: asyncio.Task[None] | None = None
-    # The mic audio that arrives while a stream opens, sent first once it is open.
-    opening: list[bytes] | None = None
+    # The pre-roll and the mic audio that arrives while a stream opens, sent first once it is open.
+    opening: bytearray | None = None
     # The newest mic audio while no stream is open, up to wake.PRE_ROLL_BYTES.
-    pre_roll: collections.deque[bytes] = dc.field(default_factory=collections.deque)
-    pre_roll_bytes: int = 0
+    pre_roll: bytearray = dc.field(default_factory=bytearray)
     wake: WakeRun | None = None
     # The clock time until which the gate stays open with no activity, and whether the client was
     # told that the session waits for the wake word.
@@ -337,12 +335,10 @@ async def _hear(session: Session, pcm: bytes) -> None:
     if session.stt is not None:
         await session.stt.send(pcm)
     elif session.opening is not None:
-        session.opening.append(pcm)
+        session.opening += pcm
     else:
-        session.pre_roll.append(pcm)
-        session.pre_roll_bytes += len(pcm)
-        while session.pre_roll_bytes - len(session.pre_roll[0]) >= wake.PRE_ROLL_BYTES:
-            session.pre_roll_bytes -= len(session.pre_roll.popleft())
+        session.pre_roll += pcm
+        del session.pre_roll[: -wake.PRE_ROLL_BYTES]
 
 
 async def _read_client(session: Session) -> None:
@@ -583,20 +579,6 @@ async def _on_committed(session: Session, said: str) -> None:
 # --- the wake word gate ---
 
 
-async def _detector(session: Session, key: detector.ModelKey) -> detector.Detector | detector.DetectorError:
-    """The loaded model of one file version, shared by every session, or why it does not load. A
-    failure is kept too, so a file that does not change does not load again. A new version of a
-    file replaces the old one in the map; the sessions that use the old one keep their copy."""
-    if key not in session.detectors:
-        for old in [cached for cached in session.detectors if cached[0] == key[0]]:
-            del session.detectors[old]
-        try:
-            session.detectors[key] = await asyncio.to_thread(detector.load, pl.Path(key[0]))
-        except detector.DetectorError as e:
-            session.detectors[key] = e
-    return session.detectors[key]
-
-
 async def _detect(session: Session, run: WakeRun) -> None:
     """Score the newest window once for each frame of mic audio, and report each hit."""
     pending, window, hits = bytearray(), bytearray(), wake.Hits()
@@ -628,15 +610,15 @@ async def _stop_wake(session: Session) -> None:
 async def _apply_behavior(session: Session, stored: Domain) -> None:
     session.barge_in = behavior.barge_in_allowed(stored, session.session_can_barge_in)
     wanted = behavior.wake_settings(stored, session.session_can_wake)
-    model = None if wanted is None else await asyncio.to_thread(detector.model_key, wake.model_path(session.data_dir, wanted.phrase))
+    if wanted is None:
+        await _stop_wake(session)
+        return
+    model, found = await asyncio.to_thread(detector.cached, session.detectors, wake.model_path(session.data_dir, wanted.phrase))
     if session.wake is not None and session.wake.model != model:
         await _stop_wake(session)
-    if wanted is None or model is None:
-        return
     if session.wake is not None:
         session.wake.settings = wanted
         return
-    found = await _detector(session, model)
     if isinstance(found, detector.DetectorError):
         # The session listens without the wake word, and the client is told why, once.
         message = f"the wake word is on but cannot run, so this session listens without it: {found}"
@@ -682,9 +664,10 @@ async def _open_stt(session: Session) -> None:
 async def _on_stt_opened(session: Session, stream: SttStream) -> None:
     """Send the pre-roll and the audio of the wait, then hand the mic to the stream. The client
     reader adds to `opening` while a send waits, so the loop ends only when nothing is left."""
-    queued = session.opening if session.opening is not None else []
-    while queued:
-        await stream.send(queued.pop(0))
+    while session.opening:
+        queued = bytes(session.opening)
+        session.opening.clear()
+        await stream.send(queued)
     session.opening = None
     session.stt_retry_at = float("-inf")
     session.stt = stream
@@ -704,12 +687,9 @@ async def _close_stt(session: Session) -> None:
 
 async def _sync_gate(session: Session) -> None:
     """Open or close the STT stream as the wake rules say, and tell the client of each change."""
-    _touch(session)
     is_open = wake.gate_open(waking=session.wake is not None, active=_active(session), now=time.monotonic(), open_until=session.open_until)
     if is_open and session.stt is None and session.opening is None and time.monotonic() >= session.stt_retry_at:
-        session.opening = list(session.pre_roll)
-        session.pre_roll.clear()
-        session.pre_roll_bytes = 0
+        session.opening, session.pre_roll = session.pre_roll, bytearray()
         _spawn(session, _open_stt(session))
     elif not is_open and session.stt is not None:
         await _close_stt(session)
@@ -732,10 +712,13 @@ async def _on_pulse(session: Session) -> None:
         await _apply_behavior(session, config["behavior"])
 
 
-async def _on_stt_refused(session: Session, reason: str) -> None:
-    """The session goes on: the audio of the wait is lost, and the gate tries again later. The
-    client is told at the first refusal after a stream that opened."""
+async def _on_stt_refused(session: Session, reason: tp.Literal["failed", "limit"]) -> Outcome:
+    """With the wake word off the session needs a stream, so it ends. With it on, the session goes
+    on: the audio of the wait is lost, and the gate tries again later. The client is told at the
+    first refusal after a stream that opened."""
     session.opening = None
+    if session.wake is None:
+        return "stt_limit" if reason == "limit" else "stt_failed"
     first = session.stt_retry_at == float("-inf")
     session.stt_retry_at = time.monotonic() + STT_RETRY_SECS
     if first:
@@ -743,6 +726,7 @@ async def _on_stt_refused(session: Session, reason: str) -> None:
             session.ws,
             {"type": "error", "message": f"speech to text refused a stream ({reason}); the session tries again in {STT_RETRY_SECS:g} s"},
         )
+    return None
 
 
 # --- the loop ---
@@ -798,8 +782,8 @@ async def _handle(session: Session, item: Item) -> Outcome:
     if item["kind"] == "task_failed":
         return "engine_failed"
     if item["kind"] == "stt_refused":
-        await _on_stt_refused(session, item["reason"])
-    elif item["kind"] == "stt_opened":
+        return await _on_stt_refused(session, item["reason"])
+    if item["kind"] == "stt_opened":
         await _on_stt_opened(session, item["stream"])
     elif item["kind"] == "wake":
         await _on_wake(session, item["score"])
@@ -838,8 +822,7 @@ async def _close(session: Session) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    if session.stt is not None:
-        await session.stt.close()
+    await _close_stt(session)
     # A stream that opened as the session ended reaches nobody, so it closes here.
     while not session.inbox.empty():
         item = session.inbox.get_nowait()

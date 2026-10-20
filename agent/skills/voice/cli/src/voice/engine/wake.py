@@ -8,8 +8,9 @@ import dataclasses as dc
 import pathlib as pl
 import re
 
-SAMPLE_RATE = 16000
-SAMPLE_BYTES = 2
+from .frames import MIC_SAMPLE_BYTES as SAMPLE_BYTES
+from .frames import MIC_SAMPLE_RATE as SAMPLE_RATE
+
 # The detector scores the newest window once for each frame of this length (80 ms).
 FRAME_BYTES = 1280 * SAMPLE_BYTES
 # The window the detector scores: its classifier reads 2 s of audio.

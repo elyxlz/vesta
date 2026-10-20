@@ -13,13 +13,22 @@ from voice.engine import behavior, wake
 from voice.engine import session as engine_session
 from voice.settings import Domain, JsonValue
 
-from .fakes import FRAME_TIMEOUT_SECS, QUIET_FRAME, WAKE_FRAME, FakeDetector, FakeStt, FakeTts, frames_until, next_frame, voice_service
-from .test_session import start
+from .fakes import (
+    FRAME_TIMEOUT_SECS,
+    QUIET_FRAME,
+    WAKE_FRAME,
+    FakeDetector,
+    FakeStt,
+    FakeTts,
+    frames_until,
+    next_frame,
+    opened,
+    voice_service,
+)
+from .test_session import session, start
 
 # The quiet frames before the phrase that fill the detector's first window.
 QUIET_FRAMES = wake.WINDOW_BYTES // wake.FRAME_BYTES - 1
-# The frames the pre-roll keeps: the newest audio that is at least wake.PRE_ROLL_BYTES long.
-PRE_ROLL_FRAMES = -(-wake.PRE_ROLL_BYTES // wake.FRAME_BYTES)
 
 
 def wake_on(data_dir: pl.Path, **settings: bool | int | float | str) -> None:
@@ -49,12 +58,6 @@ async def read_up_to_here(ws: aiohttp.ClientWebSocketResponse) -> None:
     assert await next_frame(ws) == {"type": "error", "message": "the frame is not JSON"}
 
 
-async def opened(stt: FakeStt) -> None:
-    assert stt.opened is not None
-    await asyncio.wait_for(stt.opened.wait(), FRAME_TIMEOUT_SECS)
-    stt.opened.clear()
-
-
 def test_no_audio_reaches_speech_to_text_before_the_phrase_and_the_pre_roll_goes_first(
     tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector
 ) -> None:
@@ -76,8 +79,8 @@ def test_no_audio_reaches_speech_to_text_before_the_phrase_and_the_pre_roll_goes
             await read_up_to_here(ws)
 
             assert len(stt.streams) == 1
-            pre_roll = [QUIET_FRAME] * (PRE_ROLL_FRAMES - wake.HIT_FRAMES) + [WAKE_FRAME] * wake.HIT_FRAMES
-            assert stt.streams[0].audio == [*pre_roll, b"after"]
+            said = QUIET_FRAME * QUIET_FRAMES + WAKE_FRAME * wake.HIT_FRAMES
+            assert stt.streams[0].audio == [said[-wake.PRE_ROLL_BYTES :], b"after"]
 
     asyncio.run(scenario())
 
@@ -171,10 +174,7 @@ def test_turning_the_wake_word_on_closes_the_stream_of_an_open_session(
     monkeypatch.setattr(behavior, "MIN_FOLLOW_UP_SECS", 0)
 
     async def scenario() -> None:
-        async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
-            await ws.send_json(start())
-            assert await next_frame(ws) == {"type": "state", "value": "listening"}
-
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
             wake_on(tmp_path, wake_word_follow_up_secs=0)
 
             assert await next_frame(ws) == {"type": "wake_listening", "value": True}
@@ -190,8 +190,8 @@ def test_a_phrase_with_no_model_leaves_the_session_listening_with_no_wake_word(
     applied = asyncio.Event()
     apply_behavior = engine_session._apply_behavior
 
-    async def apply_and_tell(session: engine_session.Session, stored: Domain) -> None:
-        await apply_behavior(session, stored)
+    async def apply_and_tell(open_session: engine_session.Session, stored: Domain) -> None:
+        await apply_behavior(open_session, stored)
         applied.set()
 
     monkeypatch.setattr(engine_session, "_apply_behavior", apply_and_tell)
@@ -227,9 +227,7 @@ def test_a_session_that_states_no_wake_word_listens_with_none(tmp_path: pl.Path,
     wake_on(tmp_path)
 
     async def scenario() -> None:
-        async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
-            await ws.send_json(start(wake_word=False))
-            assert await next_frame(ws) == {"type": "state", "value": "listening"}
+        async with voice_service(tmp_path) as client, session(client, stt, start(wake_word=False)) as (ws, _stream):
             await ws.send_bytes(b"hello")
             await read_up_to_here(ws)
 

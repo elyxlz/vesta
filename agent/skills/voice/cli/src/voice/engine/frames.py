@@ -11,7 +11,9 @@ import typing as tp
 from voice.settings import JsonValue
 
 # The one mic format the engine accepts.
-MIC_AUDIO = {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1}
+MIC_SAMPLE_RATE = 16000
+MIC_SAMPLE_BYTES = 2
+MIC_AUDIO = {"encoding": "pcm_s16le", "sample_rate": MIC_SAMPLE_RATE, "channels": 1}
 
 # Play format -> the Content-Type of its audio on the `/voice/play/<token>` route, best sound
 # first: the highest sample rate first, and at one rate the format that loses nothing first.
@@ -192,6 +194,13 @@ def _text(body: dict[str, JsonValue], key: str) -> str:
     return str(body[key])
 
 
+def _optional_bool(body: dict[str, JsonValue], key: str) -> bool | None:
+    value = body[key] if key in body else None
+    if value is not None and not isinstance(value, bool):
+        raise FrameError(f"start_session: `{key}` must be true or false")
+    return value
+
+
 def _start_session(body: dict[str, JsonValue]) -> StartSession:
     playback = body["playback"] if "playback" in body else None
     delivery = playback["delivery"] if isinstance(playback, dict) and "delivery" in playback else None
@@ -200,20 +209,14 @@ def _start_session(body: dict[str, JsonValue]) -> StartSession:
     formats = playback["formats"] if "formats" in playback else None
     if not isinstance(formats, list) or not all(isinstance(name, str) for name in formats):
         raise FrameError("start_session: `playback.formats` must be a list of format names")
-    barge_in = body["barge_in"] if "barge_in" in body else None
-    if barge_in is not None and not isinstance(barge_in, bool):
-        raise FrameError("start_session: `barge_in` must be true or false")
-    wake_word = body["wake_word"] if "wake_word" in body else None
-    if wake_word is not None and not isinstance(wake_word, bool):
-        raise FrameError("start_session: `wake_word` must be true or false")
     return {
         "type": "start_session",
         "client": str(body["client"]) if "client" in body else "",
         "mic_supported": "audio" in body and body["audio"] == MIC_AUDIO,
         "delivery": delivery,
         "formats": [str(name) for name in formats],
-        "barge_in": barge_in,
-        "wake_word": wake_word,
+        "barge_in": _optional_bool(body, "barge_in"),
+        "wake_word": _optional_bool(body, "wake_word"),
     }
 
 

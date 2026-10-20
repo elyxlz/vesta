@@ -14,7 +14,7 @@ from voice.engine import behavior, turns
 from voice.providers.base import Verdict
 from voice.settings import JsonValue
 
-from .fakes import FRAME_TIMEOUT_SECS, FakeDetector, FakeJudge, FakeStream, FakeStt, FakeTts, frames_until, next_frame, voice_service
+from .fakes import FakeDetector, FakeJudge, FakeStream, FakeStt, FakeTts, frames_until, next_frame, opened, voice_service
 
 MIC = {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1}
 STOP_VERDICT: Verdict = {"said_to": "agent", "wants_stop": True}
@@ -338,7 +338,7 @@ def test_a_change_of_a_behavior_applies_to_a_session_that_is_open(
             assert await next_frame(ws) == {"type": "wake_listening", "value": True}
             vc.set_setting(tmp_path, "behavior", "wake_word", False)
             assert await next_frame(ws) == {"type": "wake_listening", "value": False}
-            await asyncio.wait_for(stt.opened.wait(), FRAME_TIMEOUT_SECS)
+            await opened(stt)
 
             await speak_and_start(ws)
             await stt.streams[-1].emit("transcription", "mhm")

@@ -173,6 +173,13 @@ async def voice_service(data_dir: pl.Path) -> tp.AsyncIterator[TestClient]:
         yield client
 
 
+async def opened(stt: FakeStt) -> None:
+    """Wait until the session opens a stream (`stt.opened` is set), and clear it for the next one."""
+    assert stt.opened is not None
+    await asyncio.wait_for(stt.opened.wait(), FRAME_TIMEOUT_SECS)
+    stt.opened.clear()
+
+
 async def next_frame(ws: aiohttp.ClientWebSocketResponse) -> dict[str, JsonValue]:
     return await ws.receive_json(timeout=FRAME_TIMEOUT_SECS)
 

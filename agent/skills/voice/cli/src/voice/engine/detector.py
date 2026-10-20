@@ -22,13 +22,6 @@ class DetectorError(Exception):
     """The model cannot load: the file is missing or bad, or the package is not installed."""
 
 
-def model_key(path: pl.Path) -> ModelKey:
-    try:
-        return str(path), path.stat().st_mtime_ns
-    except OSError:
-        return str(path), 0
-
-
 class Detector(tp.Protocol):
     def score(self, window: bytes) -> float:
         """The score, 0 to 1, that the window (pcm_s16le, 16 kHz, mono) ends with the phrase.
@@ -69,3 +62,29 @@ def load(path: pl.Path) -> Detector:
     except Exception as e:
         raise DetectorError(f"the wake word model at {path} did not load: {e}") from e
     return OnnxDetector(model=model, name=path.stem)
+
+
+# The loaded models of the app, shared by every session.
+Cache = dict[ModelKey, Detector | DetectorError]
+
+
+def _model_key(path: pl.Path) -> ModelKey:
+    try:
+        return str(path), path.stat().st_mtime_ns
+    except OSError:
+        return str(path), 0
+
+
+def cached(cache: Cache, path: pl.Path) -> tuple[ModelKey, Detector | DetectorError]:
+    """The model of the file as it is now, loaded once, or why it does not load. A failure is
+    kept too, so a file that does not change does not load again. A new version of a file replaces
+    the old one in the cache. It blocks, so the session calls it in a thread."""
+    key = _model_key(path)
+    if key not in cache:
+        for old in [cached_key for cached_key in cache if cached_key[0] == key[0]]:
+            del cache[old]
+        try:
+            cache[key] = load(path)
+        except DetectorError as e:
+            cache[key] = e
+    return key, cache[key]

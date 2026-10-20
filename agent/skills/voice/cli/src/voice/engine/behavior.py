@@ -13,6 +13,9 @@ DEFAULT_WAKE_THRESHOLD = 0.5
 DEFAULT_FOLLOW_UP_SECS = 5
 # A shorter window would close the stream at a pause in the middle of a sentence.
 MIN_FOLLOW_UP_SECS = 2
+MAX_FOLLOW_UP_SECS = 60
+MIN_WAKE_THRESHOLD = 0.05
+MAX_WAKE_THRESHOLD = 0.95
 
 BEHAVIOR_SCHEMA: list[SettingDef] = [
     {
@@ -42,8 +45,8 @@ BEHAVIOR_SCHEMA: list[SettingDef] = [
         "label": "wake sensitivity",
         "description": "the detector score that counts as the wake phrase; lower hears it more easily and wakes by mistake more often",
         "default": DEFAULT_WAKE_THRESHOLD,
-        "min": 0.05,
-        "max": 0.95,
+        "min": MIN_WAKE_THRESHOLD,
+        "max": MAX_WAKE_THRESHOLD,
         "step": 0.05,
     },
     {
@@ -53,7 +56,7 @@ BEHAVIOR_SCHEMA: list[SettingDef] = [
         "description": "after you or the agent stop talking, speech in this window continues the conversation with no wake phrase",
         "default": DEFAULT_FOLLOW_UP_SECS,
         "min": MIN_FOLLOW_UP_SECS,
-        "max": 60,
+        "max": MAX_FOLLOW_UP_SECS,
         "step": 1,
         "unit": "s",
     },
@@ -86,6 +89,6 @@ def wake_settings(stored: Domain, session_can: bool | None) -> WakeSettings | No
         return None
     return WakeSettings(
         phrase=wake_phrase(stored),
-        threshold=clamped(stored, "wake_word_threshold", DEFAULT_WAKE_THRESHOLD, 0.05, 0.95),
-        follow_up_secs=clamped(stored, "wake_word_follow_up_secs", DEFAULT_FOLLOW_UP_SECS, MIN_FOLLOW_UP_SECS, 60),
+        threshold=clamped(stored, "wake_word_threshold", DEFAULT_WAKE_THRESHOLD, MIN_WAKE_THRESHOLD, MAX_WAKE_THRESHOLD),
+        follow_up_secs=clamped(stored, "wake_word_follow_up_secs", DEFAULT_FOLLOW_UP_SECS, MIN_FOLLOW_UP_SECS, MAX_FOLLOW_UP_SECS),
     )
