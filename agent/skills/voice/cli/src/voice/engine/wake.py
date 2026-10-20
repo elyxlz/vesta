@@ -17,6 +17,9 @@ WINDOW_BYTES = 2 * SAMPLE_RATE * SAMPLE_BYTES
 # The audio the session keeps while no audio goes to speech to text (1.5 s). It goes first when
 # the gate opens, so the phrase and the words after it are complete.
 PRE_ROLL_BYTES = 3 * SAMPLE_RATE * SAMPLE_BYTES // 2
+# When the scores fall behind the mic, only the newest audio of this length (480 ms) is scored.
+# Older audio only fills the window, so a hit is never late by more than this.
+MAX_BEHIND_BYTES = 6 * FRAME_BYTES
 # Windows in a row at or above the threshold that make one hit.
 HIT_FRAMES = 2
 # After a hit, the gate stays open at least this long, so the user can start to talk.
@@ -44,6 +47,12 @@ def observe(hits: Hits, score: float, threshold: float) -> tuple[Hits, bool]:
     return Hits(run=hits.run + 1), False
 
 
+def scores(*, window_bytes: int, behind_bytes: int) -> bool:
+    """Whether the detector scores the window that one new frame completes: only a full window,
+    and only one in the newest MAX_BEHIND_BYTES of the audio that waits."""
+    return window_bytes >= WINDOW_BYTES and behind_bytes <= MAX_BEHIND_BYTES
+
+
 def gate_open(*, waking: bool, active: bool, now: float, open_until: float) -> bool:
     """Whether mic audio goes to speech to text. Always while the wake word is off. With it on:
     while the conversation is active (the user talks, or a reply plays or waits to play), and
@@ -52,7 +61,7 @@ def gate_open(*, waking: bool, active: bool, now: float, open_until: float) -> b
 
 
 def _words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
+    return re.findall(r"\w+", text.lower())
 
 
 def model_path(data_dir: pl.Path, phrase: str) -> pl.Path:
@@ -70,5 +79,6 @@ def strip_phrase(text: str, phrase: str, *, live: bool) -> str:
     still_the_phrase = 0 < len(said) <= len(phrase_words) and said[:-1] == phrase_words[: len(said) - 1]
     if live and still_the_phrase and phrase_words[len(said) - 1].startswith(said[-1]):
         return ""
-    pattern = r"^\W*" + r"\W+".join(re.escape(word) for word in phrase_words) + r"\b\W*"
+    # The last word must end there: "hey aria's timer" keeps its words.
+    pattern = r"^\W*" + r"\W+".join(re.escape(word) for word in phrase_words) + r"(?![\w'\u2019])\W*"
     return re.sub(pattern, "", text, count=1, flags=re.IGNORECASE)

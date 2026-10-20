@@ -12,11 +12,21 @@ import typing as tp
 if tp.TYPE_CHECKING:
     import numpy as np
 
-INSTALL = "uv tool install --editable ~/agent/skills/voice/cli"
+INSTALL = "uv tool install --editable ~/agent/skills/voice/cli && voice daemon restart"
+
+# A model file and its mtime (0 when there is no file), so a new file at the same path is a new key.
+ModelKey = tuple[str, int]
 
 
 class DetectorError(Exception):
     """The model cannot load: the file is missing or bad, or the package is not installed."""
+
+
+def model_key(path: pl.Path) -> ModelKey:
+    try:
+        return str(path), path.stat().st_mtime_ns
+    except OSError:
+        return str(path), 0
 
 
 class Detector(tp.Protocol):

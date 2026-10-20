@@ -9,8 +9,9 @@ import aiohttp
 import pytest
 import voice.config as vc
 from aiohttp.test_utils import TestClient
-from voice.engine import wake
-from voice.settings import JsonValue
+from voice.engine import behavior, wake
+from voice.engine import session as engine_session
+from voice.settings import Domain, JsonValue
 
 from .fakes import FRAME_TIMEOUT_SECS, QUIET_FRAME, WAKE_FRAME, FakeDetector, FakeStt, FakeTts, frames_until, next_frame, voice_service
 from .test_session import start
@@ -110,6 +111,7 @@ def test_after_the_turn_and_the_follow_up_window_the_session_waits_again(
     tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(wake, "HEARD_SECS", 0.3)
+    monkeypatch.setattr(behavior, "MIN_FOLLOW_UP_SECS", 0)
     wake_on(tmp_path, wake_word_follow_up_secs=0)
     stt.opened = asyncio.Event()
 
@@ -157,14 +159,17 @@ def test_the_phrase_over_a_reply_stops_it_at_once(tmp_path: pl.Path, stt: FakeSt
             assert await frames_until(ws, "state") == [
                 {"type": "wake_detected", "score": 1.0},
                 {"type": "stop_playback", "id": "r1", "dropped": []},
-                {"type": "turn_start"},
-                {"type": "state", "value": "user_turn"},
+                {"type": "state", "value": "listening"},
             ]
 
     asyncio.run(scenario())
 
 
-def test_turning_the_wake_word_on_closes_the_stream_of_an_open_session(tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector) -> None:
+def test_turning_the_wake_word_on_closes_the_stream_of_an_open_session(
+    tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(behavior, "MIN_FOLLOW_UP_SECS", 0)
+
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
             await ws.send_json(start())
@@ -179,9 +184,17 @@ def test_turning_the_wake_word_on_closes_the_stream_of_an_open_session(tmp_path:
 
 
 def test_a_phrase_with_no_model_leaves_the_session_listening_with_no_wake_word(
-    tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector
+    tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     wake_on(tmp_path, wake_word_phrase="hey nobody")
+    applied = asyncio.Event()
+    apply_behavior = engine_session._apply_behavior
+
+    async def apply_and_tell(session: engine_session.Session, stored: Domain) -> None:
+        await apply_behavior(session, stored)
+        applied.set()
+
+    monkeypatch.setattr(engine_session, "_apply_behavior", apply_and_tell)
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
@@ -196,5 +209,58 @@ def test_a_phrase_with_no_model_leaves_the_session_listening_with_no_wake_word(
             assert message.startswith("the wake word is on but cannot run, so this session listens without it: no wake word model at")
             assert stt.streams[0].audio == [b"hello"]
             assert wake_model.windows == 0
+
+            # A change of an other behavior does not tell the same failure again: the next error
+            # is the one of the next phrase.
+            applied.clear()
+            vc.set_setting(tmp_path, "behavior", "wake_word_threshold", 0.7)
+            await asyncio.wait_for(applied.wait(), FRAME_TIMEOUT_SECS)
+            vc.set_setting(tmp_path, "behavior", "wake_word_phrase", "hey other")
+            other: JsonValue = (await next_frame(ws))["message"]
+            assert isinstance(other, str)
+            assert other.endswith("hey_other.onnx")
+
+    asyncio.run(scenario())
+
+
+def test_a_session_that_states_no_wake_word_listens_with_none(tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector) -> None:
+    wake_on(tmp_path)
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
+            await ws.send_json(start(wake_word=False))
+            assert await next_frame(ws) == {"type": "state", "value": "listening"}
+            await ws.send_bytes(b"hello")
+            await read_up_to_here(ws)
+
+            assert stt.streams[0].audio == [b"hello"]
+            assert wake_model.windows == 0
+
+    asyncio.run(scenario())
+
+
+def test_a_refused_stream_leaves_the_session_open_and_the_gate_tries_again(
+    tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(engine_session, "STT_RETRY_SECS", 0.3)
+    wake_on(tmp_path)
+    stt.refuse = "limit"
+    stt.opened = asyncio.Event()
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, waiting_session(client) as ws:
+            await say_the_phrase(ws)
+
+            assert await frames_until(ws, "error") == [
+                {"type": "wake_detected", "score": 1.0},
+                {"type": "wake_listening", "value": False},
+                {"type": "error", "message": "speech to text refused a stream (limit); the session tries again in 0.3 s"},
+            ]
+            stt.refuse = None
+            await opened(stt)
+            await ws.send_bytes(b"after")
+            await asyncio.wait_for(stt.streams[0].heard.wait(), FRAME_TIMEOUT_SECS)
+
+            assert stt.streams[0].audio == [b"after"]
 
     asyncio.run(scenario())

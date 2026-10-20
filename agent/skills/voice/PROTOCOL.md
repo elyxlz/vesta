@@ -33,7 +33,7 @@ client                                engine
 
 | Frame | Meaning |
 | --- | --- |
-| `start_session {client, audio, playback, barge_in?}` | Starts the session. It is the first frame and it is sent one time. The engine answers with `state` or `ended`. |
+| `start_session {client, audio, playback, barge_in?, wake_word?}` | Starts the session. It is the first frame and it is sent one time. The engine answers with `state` or `ended`. |
 | binary | Mic audio in the declared format. Send it for the whole session, also while a reply plays. |
 | `speak {id, text}` | Say this text. `id` is your own id for the reply. Synthesis starts at once and a `play` follows. |
 | `playback {id, state}` | What your speaker did with a play (see Playback reports). |
@@ -46,7 +46,8 @@ client                                engine
   "client": "voice-home",
   "audio": {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1},
   "playback": {"delivery": "url", "formats": ["opus_48000", "mp3_44100", "mp3_22050"]},
-  "barge_in": true
+  "barge_in": true,
+  "wake_word": true
 }
 ```
 
@@ -55,6 +56,7 @@ client                                engine
 - `playback.delivery`: `"url"` means you fetch each play. `"bytes"` means the engine sends the audio on this socket.
 - `playback.formats`: every format the client can play, from `opus_48000`, `mp3_44100`, `pcm_24000`, `pcm_22050`, `mp3_22050`, `pcm_16000`, `ulaw_8000`. The order of the list does not matter: the engine takes the best one the selected TTS provider makes, in the order of that list of names (the highest sample rate first). `mp3_22050`, `pcm_16000`, `pcm_24000`, and `ulaw_8000` work with every shipped provider, so list one of them. With no TTS provider the list is not checked.
 - `barge_in`: optional. `false` says that this session cannot do barge-in: dictation, or a device whose mic hears its own speaker. An absent field counts as `true`. Barge-in happens only when this is not `false` and the user's `barge_in` behavior is on.
+- `wake_word`: optional. `false` says that this session listens with no wake word: dictation, where the user holds the mic. An absent field counts as `true`. The engine waits for the wake phrase only when this is not `false` and the user's `wake_word` behavior is on.
 
 A frame before `start_session`, and a second `start_session`, gets `error` and changes nothing.
 
@@ -95,7 +97,7 @@ A socket that closes with no `ended` frame means the engine failed or the networ
 
 In `user_turn` the engine holds a new `play` and sends it after `turn_end` or `turn_dropped`. In every other state it sends each `play` at once.
 
-With the user's `wake_word` behavior on, the session starts with `wake_listening {true}` after its first `state`, and nothing you say becomes a turn until the phrase. The state stays `listening` while the engine waits. The behavior can change during a session: then `wake_listening` arrives at that time.
+With the user's `wake_word` behavior on, the session starts with `wake_listening {true}` after its first `state`, and nothing you say becomes a turn until the phrase. The state stays `listening` while the engine waits. The behavior can change during a session: then `wake_listening` arrives at that time. The phrase over a reply stops the reply at once, and the user's next words start the turn. When speech to text refuses a stream that the phrase opens, you get one `error`, the session stays open, and the engine tries again some seconds later.
 
 The STT provider decides when a turn ends: you do not need a silence timer. Send `end_turn` only when the user ends the turn by hand.
 

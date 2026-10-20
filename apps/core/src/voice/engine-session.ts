@@ -55,6 +55,8 @@ export interface EngineSessionCallbacks {
 export interface EngineSessionOptions {
   // False for a session in which the user's voice never stops a reply (dictation).
   bargeIn: boolean;
+  // False for a session that listens with no wake word (dictation: the user holds the mic).
+  wakeWord: boolean;
 }
 
 export interface EngineSession {
@@ -262,6 +264,7 @@ export function createEngineSession(
           formats: playbackFormats(deps.speaker.playsOggOpus),
         },
         barge_in: options.bargeIn,
+        wake_word: options.wakeWord,
       });
       const buffered = pending;
       pending = [];

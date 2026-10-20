@@ -10,7 +10,7 @@ import pytest
 import voice.config as vc
 from aiohttp.test_utils import TestClient
 from voice import providers
-from voice.engine import turns
+from voice.engine import behavior, turns
 from voice.providers.base import Verdict
 from voice.settings import JsonValue
 
@@ -326,8 +326,10 @@ def test_the_stored_behavior_takes_barge_in_away_from_every_session(tmp_path: pl
 
 
 def test_a_change_of_a_behavior_applies_to_a_session_that_is_open(
-    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, wake_model: FakeDetector
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(behavior, "MIN_FOLLOW_UP_SECS", 0)
+
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
             stt.opened = asyncio.Event()

@@ -57,6 +57,8 @@ DEFAULT_AGENT_NAME = "agent"
 # How often the session checks the config file for a behavior change and the end of the
 # follow-up window.
 PULSE_SECS = 0.1
+# After STT refuses a stream that the gate opens, the gate opens none for this long.
+STT_RETRY_SECS = 5.0
 
 
 class ClientItem(tp.TypedDict):
@@ -122,7 +124,7 @@ class WakeRun:
     """The wake word of a session: its settings, its detector, and the audio the detector reads."""
 
     settings: behavior.WakeSettings
-    model: pl.Path
+    model: detector.ModelKey
     detector: detector.Detector
     audio: asyncio.Queue[bytes] = dc.field(default_factory=asyncio.Queue)
     task: asyncio.Task[None] | None = None
@@ -150,8 +152,8 @@ class Session:
     http: aiohttp.ClientSession
     # The app's token map. This session adds its own tokens and removes them when it ends.
     plays: dict[str, buffers.PlayBuffer]
-    # The app's detector map: one loaded model for each model file.
-    detectors: dict[tuple[str, int], detector.Detector]
+    # The app's detector map: for each model file, its newest version loaded, or why it does not load.
+    detectors: dict[detector.ModelKey, detector.Detector | detector.DetectorError]
     data_dir: pl.Path
     stt_link: SttLink
     tts: TtsLink | None
@@ -159,6 +161,8 @@ class Session:
     delivery: frames.Delivery
     # What `start_session` states about barge-in. `barge_in` is the result with the stored behavior.
     session_can_barge_in: bool | None
+    # What `start_session` states about the wake word, the same as for barge-in.
+    session_can_wake: bool | None
     agent_name: str
     barge_in: bool = True
     # The open STT stream: None while the gate is closed, and while a stream opens.
@@ -174,6 +178,10 @@ class Session:
     # told that the session waits for the wake word.
     open_until: float = float("-inf")
     waiting: bool = False
+    # After STT refuses a stream, the gate opens no stream before this clock time.
+    stt_retry_at: float = float("-inf")
+    # The wake word error the client was told last, so the same failure is told once.
+    wake_failure: str | None = None
     # The identity of the config file the behaviors were last read from.
     config_stamp: tuple[int, int] | None = None
     inbox: asyncio.Queue[Item] = dc.field(default_factory=asyncio.Queue)
@@ -304,6 +312,7 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
         judge=_judge_link(config["judge"]),
         delivery=start["delivery"],
         session_can_barge_in=start["barge_in"],
+        session_can_wake=start["wake_word"],
         agent_name=os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else DEFAULT_AGENT_NAME,
         config_stamp=stamp,
     )
@@ -574,27 +583,17 @@ async def _on_committed(session: Session, said: str) -> None:
 # --- the wake word gate ---
 
 
-def _model_key(model: pl.Path) -> tuple[str, int]:
-    """A model file and its mtime, so a new file at the same path loads again."""
-    try:
-        return str(model), model.stat().st_mtime_ns
-    except OSError:
-        return str(model), 0
-
-
-async def _detector(session: Session, model: pl.Path) -> detector.Detector | None:
-    """The loaded model of one file, shared by every session. None when it cannot load: the
-    session then listens without the wake word, and the client is told why."""
-    key = _model_key(model)
+async def _detector(session: Session, key: detector.ModelKey) -> detector.Detector | detector.DetectorError:
+    """The loaded model of one file version, shared by every session, or why it does not load. A
+    failure is kept too, so a file that does not change does not load again. A new version of a
+    file replaces the old one in the map; the sessions that use the old one keep their copy."""
     if key not in session.detectors:
+        for old in [cached for cached in session.detectors if cached[0] == key[0]]:
+            del session.detectors[old]
         try:
-            session.detectors[key] = await asyncio.to_thread(detector.load, model)
+            session.detectors[key] = await asyncio.to_thread(detector.load, pl.Path(key[0]))
         except detector.DetectorError as e:
-            logger.warning("the wake word cannot run, so this session listens without it: %s", e)
-            await _send(
-                session.ws, {"type": "error", "message": f"the wake word is on but cannot run, so this session listens without it: {e}"}
-            )
-            return None
+            session.detectors[key] = e
     return session.detectors[key]
 
 
@@ -604,10 +603,12 @@ async def _detect(session: Session, run: WakeRun) -> None:
     while True:
         pending += await run.audio.get()
         while len(pending) >= wake.FRAME_BYTES:
+            while not run.audio.empty():
+                pending += run.audio.get_nowait()
             window += pending[: wake.FRAME_BYTES]
             del pending[: wake.FRAME_BYTES]
             del window[: -wake.WINDOW_BYTES]
-            if len(window) < wake.WINDOW_BYTES:
+            if not wake.scores(window_bytes=len(window), behind_bytes=len(pending)):
                 continue
             score = await asyncio.to_thread(run.detector.score, bytes(window))
             hits, hit = wake.observe(hits, score, run.settings.threshold)
@@ -626,8 +627,8 @@ async def _stop_wake(session: Session) -> None:
 
 async def _apply_behavior(session: Session, stored: Domain) -> None:
     session.barge_in = behavior.barge_in_allowed(stored, session.session_can_barge_in)
-    wanted = behavior.wake_settings(stored)
-    model = wake.model_path(session.data_dir, wanted.phrase) if wanted is not None else None
+    wanted = behavior.wake_settings(stored, session.session_can_wake)
+    model = None if wanted is None else await asyncio.to_thread(detector.model_key, wake.model_path(session.data_dir, wanted.phrase))
     if session.wake is not None and session.wake.model != model:
         await _stop_wake(session)
     if wanted is None or model is None:
@@ -636,9 +637,17 @@ async def _apply_behavior(session: Session, stored: Domain) -> None:
         session.wake.settings = wanted
         return
     found = await _detector(session, model)
-    if found is not None:
-        session.wake = WakeRun(settings=wanted, model=model, detector=found)
-        session.wake.task = _spawn(session, _detect(session, session.wake))
+    if isinstance(found, detector.DetectorError):
+        # The session listens without the wake word, and the client is told why, once.
+        message = f"the wake word is on but cannot run, so this session listens without it: {found}"
+        if session.wake_failure != message:
+            session.wake_failure = message
+            logger.warning("%s", message)
+            await _send(session.ws, {"type": "error", "message": message})
+        return
+    session.wake_failure = None
+    session.wake = WakeRun(settings=wanted, model=model, detector=found)
+    session.wake.task = _spawn(session, _detect(session, session.wake))
 
 
 def _active(session: Session) -> bool:
@@ -677,6 +686,7 @@ async def _on_stt_opened(session: Session, stream: SttStream) -> None:
     while queued:
         await stream.send(queued.pop(0))
     session.opening = None
+    session.stt_retry_at = float("-inf")
     session.stt = stream
     session.stt_reader = _spawn(session, _read_stt(session, stream))
 
@@ -696,7 +706,7 @@ async def _sync_gate(session: Session) -> None:
     """Open or close the STT stream as the wake rules say, and tell the client of each change."""
     _touch(session)
     is_open = wake.gate_open(waking=session.wake is not None, active=_active(session), now=time.monotonic(), open_until=session.open_until)
-    if is_open and session.stt is None and session.opening is None:
+    if is_open and session.stt is None and session.opening is None and time.monotonic() >= session.stt_retry_at:
         session.opening = list(session.pre_roll)
         session.pre_roll.clear()
         session.pre_roll_bytes = 0
@@ -715,10 +725,24 @@ async def _on_wake(session: Session, score: float) -> None:
 
 
 async def _on_pulse(session: Session) -> None:
-    stamp = _config_stamp(session.data_dir)
+    stamp = await asyncio.to_thread(_config_stamp, session.data_dir)
     if stamp != session.config_stamp:
         session.config_stamp = stamp
-        await _apply_behavior(session, voice_config.load(session.data_dir)["behavior"])
+        config = await asyncio.to_thread(voice_config.load, session.data_dir)
+        await _apply_behavior(session, config["behavior"])
+
+
+async def _on_stt_refused(session: Session, reason: str) -> None:
+    """The session goes on: the audio of the wait is lost, and the gate tries again later. The
+    client is told at the first refusal after a stream that opened."""
+    session.opening = None
+    first = session.stt_retry_at == float("-inf")
+    session.stt_retry_at = time.monotonic() + STT_RETRY_SECS
+    if first:
+        await _send(
+            session.ws,
+            {"type": "error", "message": f"speech to text refused a stream ({reason}); the session tries again in {STT_RETRY_SECS:g} s"},
+        )
 
 
 # --- the loop ---
@@ -774,9 +798,8 @@ async def _handle(session: Session, item: Item) -> Outcome:
     if item["kind"] == "task_failed":
         return "engine_failed"
     if item["kind"] == "stt_refused":
-        session.opening = None
-        return "stt_limit" if item["reason"] == "limit" else "stt_failed"
-    if item["kind"] == "stt_opened":
+        await _on_stt_refused(session, item["reason"])
+    elif item["kind"] == "stt_opened":
         await _on_stt_opened(session, item["stream"])
     elif item["kind"] == "wake":
         await _on_wake(session, item["score"])

@@ -7,7 +7,7 @@ reply that plays (pause, resume, or stop).
 A verdict of None means "no verdict": the judge is off, or it had no answer. Text with no
 verdict counts as said to the agent, and the two time rules decide a barge-in: a segment that
 commits before HOLD_WAIT_MS was a backchannel, and one that is still open after it takes the floor.
-The wake phrase is said to the agent with no doubt, so it takes the floor from a reply at once.
+The wake phrase is said to the agent with no doubt, so it stops a reply at once.
 """
 
 import dataclasses as dc
@@ -169,9 +169,13 @@ def _on_stopped_by_user(state: TurnState) -> tuple[TurnState, list[Action]]:
 
 
 def _on_wake(state: TurnState, *, can_pause: bool) -> tuple[TurnState, list[Action]]:
-    if can_pause and state.phase != "user_turn":
+    """The phrase stops a reply at once. Only an open segment starts a turn, because only its
+    commit can end one: a hit with no words after it leaves no turn open."""
+    if not can_pause or state.phase == "user_turn":
+        return state, []
+    if state.segment_seen:
         return dc.replace(state, phase="user_turn"), [STOP, TURN_START]
-    return state, []
+    return dc.replace(state, phase="idle"), [STOP]
 
 
 def step(state: TurnState, event: TurnEvent, *, speaking: bool, barge_in: bool, now: float) -> tuple[TurnState, list[Action]]:

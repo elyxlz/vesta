@@ -49,6 +49,8 @@ class StartSession(tp.TypedDict):
     formats: list[str]
     # False means that this session cannot do barge-in. None is an absent field.
     barge_in: bool | None
+    # False means that this session listens with no wake word. None is an absent field.
+    wake_word: bool | None
 
 
 class Speak(tp.TypedDict):
@@ -201,6 +203,9 @@ def _start_session(body: dict[str, JsonValue]) -> StartSession:
     barge_in = body["barge_in"] if "barge_in" in body else None
     if barge_in is not None and not isinstance(barge_in, bool):
         raise FrameError("start_session: `barge_in` must be true or false")
+    wake_word = body["wake_word"] if "wake_word" in body else None
+    if wake_word is not None and not isinstance(wake_word, bool):
+        raise FrameError("start_session: `wake_word` must be true or false")
     return {
         "type": "start_session",
         "client": str(body["client"]) if "client" in body else "",
@@ -208,6 +213,7 @@ def _start_session(body: dict[str, JsonValue]) -> StartSession:
         "delivery": delivery,
         "formats": [str(name) for name in formats],
         "barge_in": barge_in,
+        "wake_word": wake_word,
     }
 
 

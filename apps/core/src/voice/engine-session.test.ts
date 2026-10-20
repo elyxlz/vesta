@@ -39,7 +39,7 @@ function setup(bargeIn = true, playsOggOpus = false) {
       client: "test",
     },
     rec.callbacks,
-    { bargeIn },
+    { bargeIn, wakeWord: bargeIn },
   );
   // Start the session up to the point where the socket is dialed.
   const dial = async () => {
@@ -75,6 +75,7 @@ describe("the engine session", () => {
       audio: { encoding: "pcm_s16le", sample_rate: 16000, channels: 1 },
       playback: { delivery: "url", formats: ["mp3_44100", "mp3_22050"] },
       barge_in: false,
+      wake_word: false,
     });
     expect(typeof socket.sent[0]).toBe("string");
     expect(socket.audio().map((f) => f.byteLength)).toEqual([10, 20]);
@@ -162,7 +163,7 @@ describe("the engine session", () => {
         client: "test",
       },
       rec.callbacks,
-      { bargeIn: true },
+      { bargeIn: true, wakeWord: true },
     );
     const starting = session.start();
     await tick();

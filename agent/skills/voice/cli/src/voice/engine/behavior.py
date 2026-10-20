@@ -11,6 +11,8 @@ from voice.settings import Domain, SettingDef, clamped
 DEFAULT_WAKE_PHRASE = "hey aria"
 DEFAULT_WAKE_THRESHOLD = 0.5
 DEFAULT_FOLLOW_UP_SECS = 5
+# A shorter window would close the stream at a pause in the middle of a sentence.
+MIN_FOLLOW_UP_SECS = 2
 
 BEHAVIOR_SCHEMA: list[SettingDef] = [
     {
@@ -50,7 +52,7 @@ BEHAVIOR_SCHEMA: list[SettingDef] = [
         "label": "follow-up window",
         "description": "after you or the agent stop talking, speech in this window continues the conversation with no wake phrase",
         "default": DEFAULT_FOLLOW_UP_SECS,
-        "min": 0,
+        "min": MIN_FOLLOW_UP_SECS,
         "max": 60,
         "step": 1,
         "unit": "s",
@@ -77,12 +79,13 @@ def wake_phrase(stored: Domain) -> str:
     return phrase if isinstance(phrase, str) and phrase.strip() else DEFAULT_WAKE_PHRASE
 
 
-def wake_settings(stored: Domain) -> WakeSettings | None:
-    """The wake word settings, or None while the wake word is off."""
-    if "wake_word" not in stored or stored["wake_word"] is not True:
+def wake_settings(stored: Domain, session_can: bool | None) -> WakeSettings | None:
+    """The wake word settings, or None while the wake word is off. As for barge-in, `session_can`
+    is what the session states (None when it states nothing), and False turns it off."""
+    if "wake_word" not in stored or stored["wake_word"] is not True or session_can is False:
         return None
     return WakeSettings(
         phrase=wake_phrase(stored),
         threshold=clamped(stored, "wake_word_threshold", DEFAULT_WAKE_THRESHOLD, 0.05, 0.95),
-        follow_up_secs=clamped(stored, "wake_word_follow_up_secs", DEFAULT_FOLLOW_UP_SECS, 0, 60),
+        follow_up_secs=clamped(stored, "wake_word_follow_up_secs", DEFAULT_FOLLOW_UP_SECS, MIN_FOLLOW_UP_SECS, 60),
     )
