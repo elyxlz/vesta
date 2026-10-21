@@ -598,12 +598,16 @@ def _html_to_text(markup: str) -> str:
     return parser.get_text()
 
 
-def _readable_body(m: MailMessage) -> tuple[str, str]:
-    """Return a message's readable body and its format: the plain-text part as ``text``, else the flattened HTML as ``html-to-text``."""
+def _readable_body(m: MailMessage, prefer_html: bool = False) -> tuple[str, str]:
+    """Return a message's readable body and its format: the plain-text part as ``text``, else the flattened HTML as ``html-to-text``.
+
+    ``prefer_html`` reads the HTML part even when a plain-text part exists: senders
+    often drop link targets (cancel, unsubscribe, manage) from the text part.
+    """
+    if m.html and (prefer_html or not m.text.strip()):
+        return _html_to_text(m.html), "html-to-text"
     if m.text.strip():
         return m.text, "text"
-    if m.html:
-        return _html_to_text(m.html), "html-to-text"
     return "", "text"
 
 
@@ -614,7 +618,7 @@ def cmd_get(args):
         if not msgs:
             sys.exit("not found")
         m = msgs[0]
-        body, body_format = _readable_body(m)
+        body, body_format = _readable_body(m, prefer_html=getattr(args, "html", False))
         out = {
             "from": _from_full(m),
             "to": _to_full(m),
@@ -986,6 +990,11 @@ def _add_read_parsers(sub):
     p.add_argument("--folder", default="INBOX")
     p.add_argument("--uid", required=True)
     p.add_argument("--body-chars", type=int, default=4000)
+    p.add_argument(
+        "--html",
+        action="store_true",
+        help="read the HTML part even when a plain-text part exists (keeps link targets)",
+    )
     _add_account_arg(p)
 
     p = sub.add_parser("search")
