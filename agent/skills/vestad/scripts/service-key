@@ -16,6 +16,10 @@
 # Omit --ttl for vestad's 30 day default; --never-expires wins over any --ttl.
 
 set -euo pipefail
+# Re-read the live vestad env: a vestad restart rewrites /run/vestad-env (new port),
+# but a long-lived agent process keeps the old values it inherited at boot.
+# shellcheck disable=SC1091
+[ -r /run/vestad-env ] && . /run/vestad-env
 
 USAGE="Usage: service-key mint <service> [--label <text>] [--ttl <secs>] [--never-expires]
        service-key list <service>

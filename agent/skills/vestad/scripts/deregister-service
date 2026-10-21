@@ -12,6 +12,10 @@
 # Usage: deregister-service <name>
 #   deregister-service browser
 set -euo pipefail
+# Re-read the live vestad env: a vestad restart rewrites /run/vestad-env (new port),
+# but a long-lived agent process keeps the old values it inherited at boot.
+# shellcheck disable=SC1091
+[ -r /run/vestad-env ] && . /run/vestad-env
 NAME="${1:?Usage: deregister-service <name>}"
 
 WAIT_SECONDS="${REGISTER_SERVICE_WAIT:-30}"

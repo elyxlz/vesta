@@ -9,6 +9,10 @@
 # Prints "UP" (exit 0) or "DOWN <code>" (exit 1). -q suppresses stdout.
 # The local config/provider API is a DIFFERENT thing: plain http on $WS_PORT.
 set -u
+# Re-read the live vestad env: a vestad restart rewrites /run/vestad-env (new port),
+# but a long-lived agent process keeps the old values it inherited at boot.
+# shellcheck disable=SC1091
+[ -r /run/vestad-env ] && . /run/vestad-env
 QUIET="false"
 [ "${1:-}" = "-q" ] && QUIET="true"
 
