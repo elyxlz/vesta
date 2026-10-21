@@ -1,13 +1,16 @@
-"""The wake word rules: when the detector heard the phrase, when mic audio goes to speech to text,
-and the phrase at the start of what the user said.
+"""The wake word rules: when the detector heard the phrase, when the session opens and closes the
+STT stream (the gate), and the phrase at the start of what the user said.
 
-The detector (detector.py) scores audio, and the session moves the audio. This module decides.
+The detector (detector.py) scores audio, and the session moves the audio and owns the stream.
+This module decides, as pure functions of the state, one event, and the clock.
 """
 
 import dataclasses as dc
 import pathlib as pl
 import re
+import typing as tp
 
+from . import frames
 from .frames import MIC_SAMPLE_BYTES as SAMPLE_BYTES
 from .frames import MIC_SAMPLE_RATE as SAMPLE_RATE
 
@@ -25,6 +28,8 @@ MAX_BEHIND_BYTES = 6 * FRAME_BYTES
 HIT_FRAMES = 2
 # After a hit, the gate stays open at least this long, so the user can start to talk.
 HEARD_SECS = 4.0
+# After speech to text refuses a stream, the gate opens none for this long.
+RETRY_SECS = 5.0
 # Under the voice data directory: one `<phrase words joined by _>.onnx` for each phrase.
 MODELS_DIR = "wake_words"
 
@@ -54,11 +59,88 @@ def scores(*, window_bytes: int, behind_bytes: int) -> bool:
     return window_bytes >= WINDOW_BYTES and behind_bytes <= MAX_BEHIND_BYTES
 
 
-def gate_open(*, waking: bool, active: bool, now: float, open_until: float) -> bool:
-    """Whether mic audio goes to speech to text. Always while the wake word is off. With it on:
-    while the conversation is active (the user talks, or a reply plays or waits to play), and
-    until `open_until`, the end of the window after a hit or after the last activity."""
-    return not waking or active or now < open_until
+# Where the STT stream of the session is: none, one that opens, or one that is open.
+Stream = tp.Literal["closed", "opening", "open"]
+
+
+@dc.dataclass(frozen=True)
+class Gate:
+    # With no activity, the gate stays open until this clock time: the window after a hit, after
+    # speech, and after the last activity.
+    open_until: float = float("-inf")
+    # After a refused stream, no stream opens before this clock time.
+    retry_at: float = float("-inf")
+    # The conversation was active at the last step.
+    active: bool = False
+    # The client was told that the session waits for the phrase.
+    waiting: bool = False
+
+
+class GateSignal(tp.TypedDict):
+    # `check` is any other event of the session. `speech` is live text from the stream, even
+    # when it is only the phrase, which no turn sees.
+    kind: tp.Literal["check", "speech", "hit", "opened"]
+
+
+class Refused(tp.TypedDict):
+    kind: tp.Literal["refused"]
+    reason: tp.Literal["failed", "limit"]
+
+
+GateEvent = GateSignal | Refused
+
+
+class StreamAction(tp.TypedDict):
+    type: tp.Literal["open_stream", "close_stream"]
+
+
+GateAction = StreamAction | frames.WakeListening | frames.Error | frames.Ended
+
+CHECK: GateSignal = {"kind": "check"}
+OPEN_STREAM: StreamAction = {"type": "open_stream"}
+CLOSE_STREAM: StreamAction = {"type": "close_stream"}
+
+
+def _on_refused(gate: Gate, event: Refused, *, now: float) -> tuple[Gate, list[GateAction]]:
+    """The gate tries again after RETRY_SECS. The client is told at the first refusal after a
+    stream that opened."""
+    told: list[GateAction] = []
+    if gate.retry_at == float("-inf"):
+        message = f"speech to text refused a stream ({event['reason']}); the session tries again in {RETRY_SECS:g} s"
+        told = [{"type": "error", "message": message}]
+    return dc.replace(gate, retry_at=now + RETRY_SECS), told
+
+
+def gate_step(
+    gate: Gate, event: GateEvent, *, follow_up_secs: float | None, active: bool, stream: Stream, now: float
+) -> tuple[Gate, list[GateAction]]:
+    """The gate after one event of the session, and what the session does about it.
+
+    `follow_up_secs` is None while the wake word is off: the gate is always open, and a refused
+    stream ends the session, which has no other way to hear. With it on, the gate is open while the
+    conversation is `active` (the user talks, or a reply plays or waits to play) and until
+    `open_until`. The window counts from the end of the activity, so the step after it extends it.
+    """
+    actions: list[GateAction] = []
+    if event["kind"] == "refused":
+        if follow_up_secs is None:
+            return gate, [{"type": "ended", "reason": "stt_limit" if event["reason"] == "limit" else "stt_failed"}]
+        gate, actions = _on_refused(gate, event, now=now)
+    elif event["kind"] == "opened":
+        gate = dc.replace(gate, retry_at=float("-inf"))
+    follow_up = 0.0 if follow_up_secs is None else follow_up_secs
+    if event["kind"] == "hit":
+        gate = dc.replace(gate, open_until=max(gate.open_until, now + max(follow_up, HEARD_SECS)))
+    elif event["kind"] == "speech" or active or gate.active:
+        gate = dc.replace(gate, open_until=max(gate.open_until, now + follow_up))
+    is_open = follow_up_secs is None or active or now < gate.open_until
+    if is_open and stream == "closed" and now >= gate.retry_at:
+        actions.append(OPEN_STREAM)
+    elif not is_open and stream == "open":
+        actions.append(CLOSE_STREAM)
+    if gate.waiting == is_open:
+        actions.append({"type": "wake_listening", "value": not is_open})
+    return dc.replace(gate, active=active, waiting=not is_open), actions
 
 
 def _words(text: str) -> list[str]:

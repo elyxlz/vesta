@@ -29,6 +29,8 @@ class FakeStream:
         self.heard = asyncio.Event()
         # When true, `send` raises an error that is not part of the contract: an adapter bug.
         self.broken = False
+        # Set when the session starts to read the events: the stream is the session's own.
+        self.reading = asyncio.Event()
 
     async def send(self, pcm: bytes) -> None:
         if self.broken:
@@ -44,6 +46,7 @@ class FakeStream:
         await self.queue.put({"kind": "closed", "text": ""})
 
     async def events(self) -> tp.AsyncIterator[SttEvent]:
+        self.reading.set()
         while True:
             event = await self.queue.get()
             yield event
@@ -61,8 +64,8 @@ class FakeStt:
     valid: bool = True
     account: Usage = dc.field(default_factory=no_usage)
     streams: list[FakeStream] = dc.field(default_factory=list)
-    # When set, an open sets it: the route opened a stream and sends no frame to say so.
-    opened: asyncio.Event | None = None
+    # Each open sets it: the route opened a stream and sends no frame to say so.
+    opened: asyncio.Event = dc.field(default_factory=asyncio.Event)
     opened_with: list[tuple[dict[str, str], Domain]] = dc.field(default_factory=list)
 
     async def open(self, creds: dict[str, str], settings: Domain) -> FakeStream:
@@ -70,8 +73,7 @@ class FakeStt:
             raise SttOpenError(self.refuse, f"refused: {self.refuse}")
         self.opened_with.append((creds, settings))
         self.streams.append(FakeStream())
-        if self.opened is not None:
-            self.opened.set()
+        self.opened.set()
         return self.streams[-1]
 
     async def validate(self, creds: dict[str, str], settings: Domain) -> Validation:
@@ -173,11 +175,14 @@ async def voice_service(data_dir: pl.Path) -> tp.AsyncIterator[TestClient]:
         yield client
 
 
-async def opened(stt: FakeStt) -> None:
-    """Wait until the session opens a stream (`stt.opened` is set), and clear it for the next one."""
-    assert stt.opened is not None
+async def opened(stt: FakeStt) -> FakeStream:
+    """The stream the session opens next, once the session reads it. Clears `stt.opened` for the
+    next one."""
     await asyncio.wait_for(stt.opened.wait(), FRAME_TIMEOUT_SECS)
     stt.opened.clear()
+    stream = stt.streams[-1]
+    await asyncio.wait_for(stream.reading.wait(), FRAME_TIMEOUT_SECS)
+    return stream
 
 
 async def next_frame(ws: aiohttp.ClientWebSocketResponse) -> dict[str, JsonValue]:

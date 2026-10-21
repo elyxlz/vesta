@@ -33,7 +33,7 @@ client                                engine
 
 | Frame | Meaning |
 | --- | --- |
-| `start_session {client, audio, playback, barge_in?, wake_word?}` | Starts the session. It is the first frame and it is sent one time. The engine answers with `state` or `ended`. |
+| `start_session {client, audio, playback, barge_in?, wake_word?}` | Starts the session. It is the first frame and it is sent one time. The engine answers with `state`, or with `ended` when it cannot start the session (`not_configured`, `unsupported_format`). The STT stream opens after that first `state`, so an `ended {stt_failed}` or `ended {stt_limit}` comes after it. |
 | binary | Mic audio in the declared format. Send it for the whole session, also while a reply plays. |
 | `speak {id, text}` | Say this text. `id` is your own id for the reply. Synthesis starts at once and a `play` follows. |
 | `playback {id, state}` | What your speaker did with a play (see Playback reports). |

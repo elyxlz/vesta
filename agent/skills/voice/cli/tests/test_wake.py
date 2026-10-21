@@ -29,19 +29,147 @@ def test_a_window_under_the_threshold_breaks_the_run() -> None:
     assert seen == [False, False, False, True]
 
 
+NOW = 100.0
+FOLLOW_UP = 5.0
+NEVER = float("-inf")
+WAITING = {"type": "wake_listening", "value": True}
+LISTENING = {"type": "wake_listening", "value": False}
+OPEN = {"type": "open_stream"}
+CLOSE = {"type": "close_stream"}
+CHECK: wake.GateEvent = {"kind": "check"}
+REFUSED: wake.GateEvent = {"kind": "refused", "reason": "limit"}
+TOLD_REFUSED = {"type": "error", "message": "speech to text refused a stream (limit); the session tries again in 5 s"}
+
+GATE_ROWS = [
+    ("wake word off: the stream opens", wake.Gate(), CHECK, None, False, "closed", wake.Gate(), [OPEN]),
+    (
+        "wake word off: a refusal ends the session",
+        wake.Gate(),
+        REFUSED,
+        None,
+        False,
+        "closed",
+        wake.Gate(),
+        [{"type": "ended", "reason": "stt_limit"}],
+    ),
+    ("waits for the phrase", wake.Gate(), CHECK, FOLLOW_UP, False, "closed", wake.Gate(waiting=True), [WAITING]),
+    (
+        "a hit opens the gate for at least HEARD_SECS",
+        wake.Gate(waiting=True),
+        {"kind": "hit"},
+        2.0,
+        False,
+        "closed",
+        wake.Gate(open_until=NOW + wake.HEARD_SECS),
+        [OPEN, LISTENING],
+    ),
+    (
+        "a stream that opens is not opened again",
+        wake.Gate(open_until=NOW + 1),
+        CHECK,
+        FOLLOW_UP,
+        False,
+        "opening",
+        wake.Gate(open_until=NOW + 1),
+        [],
+    ),
+    (
+        "activity keeps the gate open",
+        wake.Gate(),
+        CHECK,
+        FOLLOW_UP,
+        True,
+        "open",
+        wake.Gate(open_until=NOW + FOLLOW_UP, active=True),
+        [],
+    ),
+    (
+        "the window counts from the end of the activity",
+        wake.Gate(open_until=NOW - 1, active=True),
+        CHECK,
+        FOLLOW_UP,
+        False,
+        "open",
+        wake.Gate(open_until=NOW + FOLLOW_UP),
+        [],
+    ),
+    (
+        "speech that is only the phrase keeps the gate open",
+        wake.Gate(open_until=NOW + 1),
+        {"kind": "speech"},
+        FOLLOW_UP,
+        False,
+        "open",
+        wake.Gate(open_until=NOW + FOLLOW_UP),
+        [],
+    ),
+    (
+        "the window is over",
+        wake.Gate(open_until=NOW),
+        CHECK,
+        FOLLOW_UP,
+        False,
+        "open",
+        wake.Gate(open_until=NOW, waiting=True),
+        [CLOSE, WAITING],
+    ),
+    (
+        "the first refusal is told, and the gate waits",
+        wake.Gate(open_until=NOW + 1),
+        REFUSED,
+        FOLLOW_UP,
+        False,
+        "closed",
+        wake.Gate(open_until=NOW + 1, retry_at=NOW + wake.RETRY_SECS),
+        [TOLD_REFUSED],
+    ),
+    (
+        "a refusal in a row is not told again",
+        wake.Gate(open_until=NOW + 1, retry_at=NOW),
+        REFUSED,
+        FOLLOW_UP,
+        False,
+        "closed",
+        wake.Gate(open_until=NOW + 1, retry_at=NOW + wake.RETRY_SECS),
+        [],
+    ),
+    (
+        "the gate opens again after the wait",
+        wake.Gate(open_until=NOW + 1, retry_at=NOW),
+        CHECK,
+        FOLLOW_UP,
+        False,
+        "closed",
+        wake.Gate(open_until=NOW + 1, retry_at=NOW),
+        [OPEN],
+    ),
+    (
+        "a stream that opens ends the wait",
+        wake.Gate(open_until=NOW + 1, retry_at=NOW + 1),
+        {"kind": "opened"},
+        FOLLOW_UP,
+        False,
+        "open",
+        wake.Gate(open_until=NOW + 1, retry_at=NEVER),
+        [],
+    ),
+]
+
+
 @pytest.mark.parametrize(
-    ("waking", "active", "now", "open_until", "is_open"),
-    [
-        (False, False, 100.0, float("-inf"), True),
-        (True, False, 100.0, float("-inf"), False),
-        (True, True, 100.0, float("-inf"), True),
-        (True, False, 100.0, 100.5, True),
-        (True, False, 100.5, 100.5, False),
-    ],
-    ids=["wake word off", "waits for the phrase", "conversation active", "inside the window", "window over"],
+    ("name", "gate", "event", "follow_up_secs", "active", "stream", "after", "actions"), GATE_ROWS, ids=[row[0] for row in GATE_ROWS]
 )
-def test_the_gate_is_open_while_the_rules_say(waking: bool, active: bool, now: float, open_until: float, is_open: bool) -> None:
-    assert wake.gate_open(waking=waking, active=active, now=now, open_until=open_until) is is_open
+def test_the_gate_steps_as_the_rules_say(
+    name: str,
+    gate: wake.Gate,
+    event: wake.GateEvent,
+    follow_up_secs: float | None,
+    active: bool,
+    stream: wake.Stream,
+    after: wake.Gate,
+    actions: list[wake.GateAction],
+) -> None:
+    assert wake.gate_step(gate, event, follow_up_secs=follow_up_secs, active=active, stream=stream, now=NOW) == (after, actions)
 
 
 @pytest.mark.parametrize(

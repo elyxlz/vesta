@@ -56,8 +56,6 @@ DEFAULT_AGENT_NAME = "agent"
 # How often the session checks the config file for a behavior change and the end of the
 # follow-up window.
 PULSE_SECS = 0.1
-# After STT refuses a stream that the gate opens, the gate opens none for this long.
-STT_RETRY_SECS = 5.0
 
 
 class ClientItem(tp.TypedDict):
@@ -171,13 +169,9 @@ class Session:
     opening: bytearray | None = None
     # The newest mic audio while no stream is open, up to wake.PRE_ROLL_BYTES.
     pre_roll: bytearray = dc.field(default_factory=bytearray)
+    # Before the `wake` field: after it, `wake` in this class body names the field, not the module.
+    gate: wake.Gate = dc.field(default_factory=wake.Gate)
     wake: WakeRun | None = None
-    # The clock time until which the gate stays open with no activity, and whether the client was
-    # told that the session waits for the wake word.
-    open_until: float = float("-inf")
-    waiting: bool = False
-    # After STT refuses a stream, the gate opens no stream before this clock time.
-    stt_retry_at: float = float("-inf")
     # The wake word error the client was told last, so the same failure is told once.
     wake_failure: str | None = None
     # The identity of the config file the behaviors were last read from.
@@ -315,14 +309,6 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
         config_stamp=stamp,
     )
     await _apply_behavior(session, config["behavior"])
-    if session.wake is not None:
-        # The session waits for the wake word, so the STT stream opens at the first hit.
-        return session
-    try:
-        session.stt = await stt_provider.open(session.stt_link.creds, session.stt_link.settings)
-    except SttOpenError as e:
-        logger.warning("stt open failed for %s (%s): %s", start["client"], stt_name, e)
-        return "stt_limit" if e.reason == "limit" else "stt_failed"
     return session
 
 
@@ -637,17 +623,26 @@ def _active(session: Session) -> bool:
     return session.turn.phase != "idle" or session.turn.segment_seen or bool(session.speaker.sent) or bool(session.speaker.held)
 
 
-def _keep_open(session: Session, secs: float) -> None:
-    session.open_until = max(session.open_until, time.monotonic() + secs)
+def _stream(session: Session) -> wake.Stream:
+    if session.stt is not None:
+        return "open"
+    return "closed" if session.opening is None else "opening"
 
 
-def _follow_up_secs(session: Session) -> float:
-    return session.wake.settings.follow_up_secs if session.wake is not None else 0.0
-
-
-def _touch(session: Session) -> None:
-    if _active(session):
-        _keep_open(session, _follow_up_secs(session))
+def _gate_event(session: Session, item: Item | None) -> wake.GateEvent:
+    if item is None:
+        return wake.CHECK
+    if item["kind"] == "wake":
+        return {"kind": "hit"}
+    if item["kind"] == "stt_opened":
+        return {"kind": "opened"}
+    if item["kind"] == "stt_refused":
+        return {"kind": "refused", "reason": item["reason"]}
+    if item["kind"] == "stt" and item["stream"] is session.stt:
+        event = item["event"]
+        if event["kind"] == "transcription" and event["text"].strip():
+            return {"kind": "speech"}
+    return wake.CHECK
 
 
 async def _open_stt(session: Session) -> None:
@@ -655,7 +650,7 @@ async def _open_stt(session: Session) -> None:
     try:
         stream = await link.provider.open(link.creds, link.settings)
     except SttOpenError as e:
-        logger.warning("stt open failed at the wake word (%s): %s", link.name, e)
+        logger.warning("stt open failed (%s): %s", link.name, e)
         await session.inbox.put({"kind": "stt_refused", "reason": e.reason})
         return
     await session.inbox.put({"kind": "stt_opened", "stream": stream})
@@ -669,7 +664,6 @@ async def _on_stt_opened(session: Session, stream: SttStream) -> None:
         session.opening.clear()
         await stream.send(queued)
     session.opening = None
-    session.stt_retry_at = float("-inf")
     session.stt = stream
     session.stt_reader = _spawn(session, _read_stt(session, stream))
 
@@ -685,22 +679,31 @@ async def _close_stt(session: Session) -> None:
         await stream.close()
 
 
-async def _sync_gate(session: Session) -> None:
-    """Open or close the STT stream as the wake rules say, and tell the client of each change."""
-    is_open = wake.gate_open(waking=session.wake is not None, active=_active(session), now=time.monotonic(), open_until=session.open_until)
-    if is_open and session.stt is None and session.opening is None and time.monotonic() >= session.stt_retry_at:
-        session.opening, session.pre_roll = session.pre_roll, bytearray()
-        _spawn(session, _open_stt(session))
-    elif not is_open and session.stt is not None:
-        await _close_stt(session)
-    if session.waiting == is_open:
-        session.waiting = not is_open
-        await _send(session.ws, {"type": "wake_listening", "value": session.waiting})
+async def _sync_gate(session: Session, item: Item | None) -> Outcome:
+    """Step the gate after one item (None at the start of the session), and do what it says."""
+    session.gate, actions = wake.gate_step(
+        session.gate,
+        _gate_event(session, item),
+        follow_up_secs=session.wake.settings.follow_up_secs if session.wake is not None else None,
+        active=_active(session),
+        stream=_stream(session),
+        now=time.monotonic(),
+    )
+    for action in actions:
+        if action["type"] == "open_stream":
+            session.opening, session.pre_roll = session.pre_roll, bytearray()
+            _spawn(session, _open_stt(session))
+        elif action["type"] == "close_stream":
+            await _close_stt(session)
+        elif action["type"] == "ended":
+            return action["reason"]
+        else:
+            await _send(session.ws, action)
+    return None
 
 
 async def _on_wake(session: Session, score: float) -> None:
     await _send(session.ws, {"type": "wake_detected", "score": round(score, 2)})
-    _keep_open(session, max(_follow_up_secs(session), wake.HEARD_SECS))
     await _step(session, {"kind": "wake"})
 
 
@@ -710,23 +713,6 @@ async def _on_pulse(session: Session) -> None:
         session.config_stamp = stamp
         config = await asyncio.to_thread(voice_config.load, session.data_dir)
         await _apply_behavior(session, config["behavior"])
-
-
-async def _on_stt_refused(session: Session, reason: tp.Literal["failed", "limit"]) -> Outcome:
-    """With the wake word off the session needs a stream, so it ends. With it on, the session goes
-    on: the audio of the wait is lost, and the gate tries again later. The client is told at the
-    first refusal after a stream that opened."""
-    session.opening = None
-    if session.wake is None:
-        return "stt_limit" if reason == "limit" else "stt_failed"
-    first = session.stt_retry_at == float("-inf")
-    session.stt_retry_at = time.monotonic() + STT_RETRY_SECS
-    if first:
-        await _send(
-            session.ws,
-            {"type": "error", "message": f"speech to text refused a stream ({reason}); the session tries again in {STT_RETRY_SECS:g} s"},
-        )
-    return None
 
 
 # --- the loop ---
@@ -754,9 +740,6 @@ async def _on_stt(session: Session, item: SttItem) -> Outcome:
     if event["kind"] == "closed":
         return "stt_failed"
     if event["kind"] == "transcription":
-        # Speech keeps the gate open even when it is only the wake phrase, which no turn sees.
-        if event["text"].strip():
-            _keep_open(session, _follow_up_secs(session))
         await _on_live(session, event["text"])
     else:
         await _on_committed(session, event["text"])
@@ -782,8 +765,9 @@ async def _handle(session: Session, item: Item) -> Outcome:
     if item["kind"] == "task_failed":
         return "engine_failed"
     if item["kind"] == "stt_refused":
-        return await _on_stt_refused(session, item["reason"])
-    if item["kind"] == "stt_opened":
+        # The audio of the wait is lost. The gate decides what comes next.
+        session.opening = None
+    elif item["kind"] == "stt_opened":
         await _on_stt_opened(session, item["stream"])
     elif item["kind"] == "wake":
         await _on_wake(session, item["score"])
@@ -800,21 +784,19 @@ async def _handle(session: Session, item: Item) -> Outcome:
 
 async def _run(session: Session) -> Outcome:
     _spawn(session, _read_client(session))
-    if session.stt is not None:
-        session.stt_reader = _spawn(session, _read_stt(session, session.stt))
     _spawn(session, _pulse(session))
     if session.delivery == "bytes" and session.tts is not None:
         session.byte_sender = _spawn(session, _send_bytes(session, session.tts.audio_format))
     await _sync_state(session)
-    await _sync_gate(session)
+    # The first step opens the stream, or waits for the phrase: no outcome comes from it.
+    await _sync_gate(session, None)
     while True:
         item = await session.inbox.get()
-        # Before the item: an item can end the activity, and the follow-up window counts from it.
-        _touch(session)
         outcome = await _handle(session, item)
+        if outcome is None:
+            outcome = await _sync_gate(session, item)
         if outcome is not None:
             return outcome
-        await _sync_gate(session)
 
 
 async def _close(session: Session) -> None:

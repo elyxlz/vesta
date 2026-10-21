@@ -62,7 +62,6 @@ def test_no_audio_reaches_speech_to_text_before_the_phrase_and_the_pre_roll_goes
     tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector
 ) -> None:
     wake_on(tmp_path)
-    stt.opened = asyncio.Event()
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, waiting_session(client) as ws:
@@ -87,7 +86,6 @@ def test_no_audio_reaches_speech_to_text_before_the_phrase_and_the_pre_roll_goes
 
 def test_the_phrase_never_reaches_the_agent(tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector) -> None:
     wake_on(tmp_path)
-    stt.opened = asyncio.Event()
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, waiting_session(client) as ws:
@@ -116,7 +114,6 @@ def test_after_the_turn_and_the_follow_up_window_the_session_waits_again(
     monkeypatch.setattr(wake, "HEARD_SECS", 0.3)
     monkeypatch.setattr(behavior, "MIN_FOLLOW_UP_SECS", 0)
     wake_on(tmp_path, wake_word_follow_up_secs=0)
-    stt.opened = asyncio.Event()
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, waiting_session(client) as ws:
@@ -146,7 +143,6 @@ def test_after_the_turn_and_the_follow_up_window_the_session_waits_again(
 
 def test_the_phrase_over_a_reply_stops_it_at_once(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, wake_model: FakeDetector) -> None:
     wake_on(tmp_path)
-    stt.opened = asyncio.Event()
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, waiting_session(client) as ws:
@@ -240,10 +236,9 @@ def test_a_session_that_states_no_wake_word_listens_with_none(tmp_path: pl.Path,
 def test_a_refused_stream_leaves_the_session_open_and_the_gate_tries_again(
     tmp_path: pl.Path, stt: FakeStt, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(engine_session, "STT_RETRY_SECS", 0.3)
+    monkeypatch.setattr(wake, "RETRY_SECS", 0.3)
     wake_on(tmp_path)
     stt.refuse = "limit"
-    stt.opened = asyncio.Event()
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, waiting_session(client) as ws:
