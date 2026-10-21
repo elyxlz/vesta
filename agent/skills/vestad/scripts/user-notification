@@ -2,7 +2,6 @@
 set -euo pipefail
 # Re-read the live vestad env: a vestad restart rewrites /run/vestad-env (new port),
 # but a long-lived agent process keeps the old values it inherited at boot.
-# shellcheck disable=SC1091
 [ -r /run/vestad-env ] && . /run/vestad-env
 
 # Post a user-facing notification to vestad, which fans a `user_notification` delta to connected
