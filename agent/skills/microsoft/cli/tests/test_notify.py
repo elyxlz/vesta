@@ -69,3 +69,12 @@ def test_remove_folder(cfg, patched):
 def test_remove_last_mutes_account(cfg, patched):
     result = notify.remove_notify(cfg, None, account_email="me@example.com", folder="inbox")
     assert result["folders"] == []
+
+
+def test_get_notify_folders_matches_address_case_insensitively(tmp_path):
+    """The monitor passes MSAL's username, whose case can differ from the address the CLI stored."""
+    path = tmp_path / "notify.json"
+    path.write_text(json.dumps({"name@hotmail.com": ["inbox", "Junk Email"]}))
+    assert notify.get_notify_folders(path, "Name@hotmail.com") == ["inbox", "Junk Email"]
+    assert notify.get_notify_folders(path, "name@hotmail.com") == ["inbox", "Junk Email"]
+    assert notify.get_notify_folders(path, "other@hotmail.com") == ["inbox"]
