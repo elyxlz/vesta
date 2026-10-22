@@ -225,10 +225,10 @@ for gid in sorted(groups.keys(), key=int):
         ls = l.get('state', {})
         lname = l.get('name', 'Light ' + lid)
         on = ls.get('on', False)
-        bri = ls.get('bri', 0)
-        bri_pct = round(bri / 254 * 100)
+        bri = ls.get('bri')
+        bri_txt = f'{round(bri / 254 * 100):>3}%' if bri is not None else ' on/off'
         if on:
-            print(f'    {lid:>3}: {lname:<24} ON   {bri_pct:>3}%')
+            print(f'    {lid:>3}: {lname:<24} ON   {bri_txt}')
         else:
             print(f'    {lid:>3}: {lname:<24} OFF')
     print()
@@ -263,7 +263,7 @@ for lid in sorted(data.keys(), key=int):
     name = l.get('name', 'Unknown')
     s = l.get('state', {})
     on = 'ON' if s.get('on', False) else 'OFF'
-    bri = round(s.get('bri', 0) / 254 * 100)
+    bri = round(s['bri'] / 254 * 100) if s.get('bri') is not None else '-'
     reach = 'yes' if s.get('reachable', False) else 'NO'
     print(f'{lid:<6}{name:<28}{on:<6}{bri:<8}{reach}')
 "
