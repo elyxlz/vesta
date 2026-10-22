@@ -156,6 +156,8 @@ class Session:
     tts: TtsLink | None
     judge: JudgeLink | None
     delivery: frames.Delivery
+    # The `client` name from `start_session`: the session reads the behaviors of this client.
+    client: str
     # What `start_session` states about barge-in. `barge_in` is the result with the stored behavior.
     session_can_barge_in: bool | None
     # What `start_session` states about the wake word, the same as for barge-in.
@@ -303,12 +305,13 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
         tts=tts,
         judge=_judge_link(config["judge"]),
         delivery=start["delivery"],
+        client=start["client"],
         session_can_barge_in=start["barge_in"],
         session_can_wake=start["wake_word"],
         agent_name=os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else DEFAULT_AGENT_NAME,
         config_stamp=stamp,
     )
-    await _apply_behavior(session, config["behavior"])
+    await _apply_behavior(session, voice_config.client_behavior(config["behavior"], session.client))
     return session
 
 
@@ -712,7 +715,7 @@ async def _on_pulse(session: Session) -> None:
     if stamp != session.config_stamp:
         session.config_stamp = stamp
         config = await asyncio.to_thread(voice_config.load, session.data_dir)
-        await _apply_behavior(session, config["behavior"])
+        await _apply_behavior(session, voice_config.client_behavior(config["behavior"], session.client))
 
 
 # --- the loop ---

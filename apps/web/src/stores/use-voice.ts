@@ -21,6 +21,7 @@ import {
   type VoiceBehaviors,
 } from "@/lib/voice";
 import { useToastStore } from "@/stores/use-toast";
+import { runtimeInfo } from "@/lib/native";
 
 export type { VoiceMode };
 
@@ -150,7 +151,7 @@ export const useVoice = create<VoiceState>((set, get) => {
         if (!name) return Promise.reject(new Error("no agent selected"));
         return prepareSpeechUrl(name, text);
       },
-      client: "web",
+      client: runtimeInfo.clientKind,
     },
     {
       onTranscript: (text) => set({ liveTranscript: text }),

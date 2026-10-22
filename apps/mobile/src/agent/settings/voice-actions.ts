@@ -34,7 +34,7 @@ export function useVoiceSettings() {
   const settings = useQuery({
     queryKey: ["voice", name],
     enabled: hasVoiceService,
-    queryFn: () => fetchVoiceSettings(api, name),
+    queryFn: () => fetchVoiceSettings(api, name, "mobile"),
   });
   return { settings, hasVoiceService };
 }
@@ -75,6 +75,7 @@ export function useVoiceChange() {
           behaviors: await setVoiceBehavior(
             api,
             name,
+            "mobile",
             change.key,
             change.value,
           ),

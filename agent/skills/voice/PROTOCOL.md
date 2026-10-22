@@ -1,6 +1,6 @@
 # The voice engine socket
 
-`GET /voice/session` on the voice service is one WebSocket for one voice session. A client sends mic audio and the text to speak. The engine sends turn events and the audio to play. The engine knows nothing about chats, history, or who the client is: the client owns the conversation, the queue of its device, and when a session starts and ends.
+`GET /voice/session` on the voice service is one WebSocket for one voice session. A client sends mic audio and the text to speak. The engine sends turn events and the audio to play. The engine knows nothing about chats or history, and of the client it knows only the name, which selects the behaviors: the client owns the conversation, the queue of its device, and when a session starts and ends.
 
 Reach the service the way you reach any service of this box (see the `vestad` skill): on its port from inside the container (`voice daemon status` prints it), or through vestad with a service key from outside. The engine checks no credential itself.
 
@@ -51,12 +51,12 @@ client                                engine
 }
 ```
 
-- `client`: the name of your client. The engine uses it only in logs.
+- `client`: the name of your client. The engine reads the behaviors of this name: the shared values, with the values that the user keeps for this client over them (`voice behavior set <key> <value> --client <name>`). The stock clients are `web`, `desktop`, `mobile`, and `whatsapp-call`. A new name follows the shared values until the user sets a value for it.
 - `audio`: the engine accepts exactly `pcm_s16le`, 16000 Hz, 1 channel. Any other value ends the session with `unsupported_format`.
 - `playback.delivery`: `"url"` means you fetch each play. `"bytes"` means the engine sends the audio on this socket.
 - `playback.formats`: every format the client can play, from `opus_48000`, `mp3_44100`, `pcm_24000`, `pcm_22050`, `mp3_22050`, `pcm_16000`, `ulaw_8000`. The order of the list does not matter: the engine takes the best one the selected TTS provider makes, in the order of that list of names (the highest sample rate first). `mp3_22050`, `pcm_16000`, `pcm_24000`, and `ulaw_8000` work with every shipped provider, so list one of them. With no TTS provider the list is not checked.
-- `barge_in`: optional. `false` says that this session cannot do barge-in: dictation, or a device whose mic hears its own speaker. An absent field counts as `true`. Barge-in happens only when this is not `false` and the user's `barge_in` behavior is on.
-- `wake_word`: optional. `false` says that this session listens with no wake word: dictation, where the user holds the mic. An absent field counts as `true`. The engine waits for the wake phrase only when this is not `false` and the user's `wake_word` behavior is on.
+- `barge_in`: optional. `false` says that this session cannot do barge-in: dictation, or a device whose mic hears its own speaker. An absent field counts as `true`. Barge-in happens only when this is not `false` and the `barge_in` behavior of this client is on.
+- `wake_word`: optional. `false` says that this session listens with no wake word: dictation, where the user holds the mic. An absent field counts as `true`. The engine waits for the wake phrase only when this is not `false` and the `wake_word` behavior of this client is on.
 
 A frame before `start_session`, and a second `start_session`, gets `error` and changes nothing.
 

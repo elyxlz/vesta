@@ -137,6 +137,8 @@ voice <role> off                              # keeps the keys
 # Settings of the selected provider, and behaviors
 voice <role> set <key> <value>                # voice stt set eot_threshold 0.7
 voice behavior set <key> <value>              # voice behavior set barge_in off, voice behavior set wake_word on
+voice behavior set <key> <value> --client <c> # one client only: voice behavior set barge_in off --client whatsapp-call
+voice behavior unset <key> --client <c>       # that client follows the shared value again
 
 # TTS voice
 voice tts voice <voice_id>
@@ -154,7 +156,9 @@ transcribe ~/meeting.mp4 --language it
 
 `--key` is necessary for a provider that needs a key and refused for one that needs none. A setting belongs to one provider and each provider keeps its own, so `voice <role> use` loses nothing: switch back and the voice, the tuning, and the key are as they were.
 
-**Behaviors** change how every session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. It applies to a conversation. In dictation the user talks to the message box, so their voice never stops a reply. The wake word behaviors are below.
+**Behaviors** change how a session acts, whichever provider is selected. `barge_in` (on by default) lets the user stop a spoken reply by talking over it. With it off, a reply plays to its end or until the user stops it on the device. It applies to a conversation. In dictation the user talks to the message box, so their voice never stops a reply. The wake word behaviors are below.
+
+Each behavior has a shared value, and a client can keep its own value, which replaces the shared value for that client only. The clients are `web`, `desktop`, and `mobile` (the apps) and `whatsapp-call`. The voice settings of an app set the values of that app, so the wake word can be on in the desktop app and off on the phone. `voice status` shows the shared values under `behavior` and the values of each client under `client_behavior`. When the user names a device or calls ("on my phone", "on calls"), set the value for that client. When the user names no client, set the shared value, then look in `client_behavior` for a client that keeps a different value of its own, and ask the user whether that client must change too.
 
 **Transcribe a file**: `transcribe <file> [--language <code>]` prints the transcript of any audio or video file on stdout and nothing else. It sends the file to the selected STT provider (language detected unless `--language` pins one such as `it`) and, when STT is unset, off, or the provider fails, runs the whisper skill's local whisper.cpp instead; it prints `{"error": ...}` on stderr and exits non-zero only when both fail. Every skill that needs speech as text calls this one command (the whatsapp daemon runs it on each incoming voice note), so a transcription problem anywhere is fixed here: check `voice status`, then the whisper skill's setup.
 
@@ -171,6 +175,7 @@ transcribe ~/meeting.mp4 --language it
 - **"Finalize my turns faster"** → Flux: `voice stt set eot_threshold 0.6`. Scribe: `voice stt set vad_silence_threshold_secs 0.5`
 - **"Stop cutting me off"** → Flux: raise `eot_threshold` (0.9) or `eot_timeout_ms`. Scribe: raise `vad_silence_threshold_secs`
 - **"Stop when I talk over you" / "don't stop when I talk"** → `voice behavior set barge_in on` / `off`
+- **"Don't stop when I talk on WhatsApp calls"** → `voice behavior set barge_in off --client whatsapp-call`
 - **"Use the other speech provider"** → `voice stt use <provider>` or `voice tts use <provider>`
 - **"Only listen when I say the wake word" / "listen to everything again"** → `voice behavior set wake_word on` / `off`
 - **"You wake up when nobody called you" / "you don't hear me call you"** → raise / lower `wake_word_threshold` (default 0.5)

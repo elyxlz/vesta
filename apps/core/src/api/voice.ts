@@ -1,3 +1,4 @@
+import type { ClientKind } from "../protocol/frames";
 import { ApiError, jsonInit, type HttpClient } from "../transport/http";
 import { agentPath } from "./agents";
 
@@ -38,8 +39,9 @@ export interface VoiceStatus {
   settings?: SettingDef[];
 }
 
-// The behaviors: values that change how every voice session acts, whichever provider is
-// selected. They use the settings format of the providers.
+// The behaviors: values that change how a voice session acts, whichever provider is selected.
+// Each client kind reads and sets its own values, which start as the shared ones. They use the
+// settings format of the providers.
 export interface VoiceBehaviors {
   settings: SettingDef[];
 }
@@ -144,16 +146,19 @@ export interface VoiceSettingsData {
 export async function fetchVoiceSettings(
   http: HttpClient,
   name: string,
+  client: ClientKind,
   signal?: AbortSignal,
 ): Promise<VoiceSettingsData> {
+  const query = new URLSearchParams({ client });
   const [stt, tts, judge, behaviors] = await Promise.all([
     fetchVoiceStatus(http, name, "stt", signal),
     fetchVoiceStatus(http, name, "tts", signal),
     noneWhenMissing(fetchVoiceStatus(http, name, "judge", signal)),
     noneWhenMissing(
-      http.json<VoiceBehaviors>(voicePath(name, "behavior/status"), {
-        signal,
-      }),
+      http.json<VoiceBehaviors>(
+        voicePath(name, `behavior/status?${query.toString()}`),
+        { signal },
+      ),
     ),
   ]);
   return { stt, tts, judge, behaviors };
@@ -162,12 +167,13 @@ export async function fetchVoiceSettings(
 export async function setVoiceBehavior(
   http: HttpClient,
   name: string,
+  client: ClientKind,
   key: string,
   value: unknown,
 ): Promise<VoiceBehaviors> {
   return http.json<VoiceBehaviors>(
     voicePath(name, "behavior/set"),
-    jsonInit("POST", { key, value }),
+    jsonInit("POST", { key, value, client }),
   );
 }
 

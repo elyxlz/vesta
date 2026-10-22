@@ -226,6 +226,24 @@ def test_a_behavior_is_read_and_set_like_a_provider_setting(tmp_path: pl.Path) -
     serve(tmp_path, scenario)
 
 
+def test_a_client_reads_and_sets_its_own_behaviors(tmp_path: pl.Path) -> None:
+    async def scenario(client: TestClient) -> None:
+        async with client.post("/behavior/set", json={"key": "barge_in", "value": False, "client": "web"}) as resp:
+            assert (await resp.json())["settings"][0]["value"] is False
+        async with client.get("/behavior/status", params={"client": "web"}) as resp:
+            assert (await resp.json())["settings"][0]["value"] is False
+        async with client.get("/behavior/status", params={"client": "mobile"}) as resp:
+            assert (await resp.json())["settings"][0]["value"] is True
+        async with client.get("/behavior/status") as resp:
+            assert (await resp.json())["settings"][0]["value"] is True
+        async with client.post("/stt/set", json={"key": "eot_threshold", "value": 0.7, "client": "web"}) as resp:
+            assert resp.status == 400
+        async with client.post("/behavior/set", json={"key": "barge_in", "value": False, "client": 3}) as resp:
+            assert resp.status == 400
+
+    serve(tmp_path, scenario)
+
+
 def test_the_judge_has_a_status_and_a_switch_like_the_two_other_roles(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(providers.JUDGES, "fake", FakeJudge())
 

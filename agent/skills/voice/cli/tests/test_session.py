@@ -325,6 +325,19 @@ def test_the_stored_behavior_takes_barge_in_away_from_every_session(tmp_path: pl
     asyncio.run(scenario())
 
 
+def test_a_session_reads_the_behaviors_of_its_own_client(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+    vc.set_client_behavior(tmp_path, "whatsapp-call", "barge_in", False)
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt, start(client="whatsapp-call")) as (ws, stream):
+            await speak_and_start(ws)
+            await stream.emit("transcription", "hello")
+
+            assert await frames_until(ws, "turn_start") == [{"type": "transcript", "text": "hello"}, {"type": "turn_start"}]
+
+    asyncio.run(scenario())
+
+
 def test_a_change_of_a_behavior_applies_to_a_session_that_is_open(
     tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
 ) -> None:

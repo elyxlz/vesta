@@ -4,6 +4,7 @@ import pathlib as pl
 
 import pytest
 import voice.config as vc
+from voice.settings import SettingValue
 
 
 def test_connect_stores_the_entry_selects_the_provider_and_turns_stt_and_tts_on(tmp_path: pl.Path) -> None:
@@ -102,6 +103,32 @@ def test_a_behavior_is_stored_in_its_own_entry(tmp_path: pl.Path) -> None:
 
     assert config["behavior"] == {"barge_in": False}
     assert config["stt"] == {}
+
+
+def test_a_client_keeps_its_own_behavior_over_the_shared_value(tmp_path: pl.Path) -> None:
+    vc.set_setting(tmp_path, "behavior", "barge_in", True)
+    vc.set_setting(tmp_path, "behavior", "wake_word", True)
+    stored = vc.set_client_behavior(tmp_path, "whatsapp-call", "barge_in", False)["behavior"]
+
+    assert vc.client_behavior(stored, "whatsapp-call") == {"barge_in": False, "wake_word": True}
+    assert vc.client_behavior(stored, "web") == {"barge_in": True, "wake_word": True}
+    assert vc.client_behavior(stored, None) == {"barge_in": True, "wake_word": True}
+
+
+def test_a_client_with_no_value_of_its_own_follows_the_shared_value_again(tmp_path: pl.Path) -> None:
+    vc.set_client_behavior(tmp_path, "web", "barge_in", False)
+    vc.set_client_behavior(tmp_path, "web", "wake_word", True)
+    vc.set_client_behavior(tmp_path, "web", "barge_in", None)
+    stored = vc.set_client_behavior(tmp_path, "mobile", "wake_word", True)["behavior"]
+
+    assert vc.client_values(stored) == {"web": {"wake_word": True}, "mobile": {"wake_word": True}}
+    stored = vc.set_client_behavior(tmp_path, "web", "wake_word", None)["behavior"]
+    assert vc.client_values(stored) == {"mobile": {"wake_word": True}}
+
+
+@pytest.mark.parametrize("clients", [["web"], {"web": "off"}, "web"])
+def test_client_values_that_are_not_a_map_read_as_none(clients: SettingValue) -> None:
+    assert vc.client_values({"barge_in": True, "clients": clients}) == {}
 
 
 def test_a_custom_voice_belongs_to_the_selected_tts_provider(tmp_path: pl.Path) -> None:

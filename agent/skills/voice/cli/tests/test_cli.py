@@ -202,6 +202,15 @@ def test_a_behavior_is_set_with_its_own_command(home: pl.Path, capsys: pytest.Ca
     assert status["behavior"] == {**BEHAVIOR_DEFAULTS, "barge_in": False}
 
 
+def test_a_client_gets_its_own_behavior_and_loses_it_with_unset(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _code, status, _err = run(capsys, "behavior", "set", "barge_in", "off", "--client", "whatsapp-call")
+
+    assert status["behavior"] == BEHAVIOR_DEFAULTS
+    assert status["client_behavior"] == {"whatsapp-call": {"barge_in": False}}
+    assert run(capsys, "behavior", "unset", "barge_in", "--client", "whatsapp-call")[1]["client_behavior"] == {}
+    assert failure(capsys, "behavior", "unset", "idle_ms", "--client", "web").startswith("unknown behavior: idle_ms")
+
+
 def test_status_says_where_the_model_of_the_wake_phrase_is_and_if_it_is_there(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(capsys, "behavior", "set", "wake_word_phrase", "Hey, Vesta")
     model = home / "wake_words" / "hey_vesta.onnx"

@@ -8,7 +8,7 @@ import {
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { session } from "@/api/client";
-import { native } from "@/lib/native";
+import { runtimeInfo } from "@/lib/native";
 import { deviceIdentity } from "@/lib/device-identity";
 import { useAuth } from "@/providers/AuthProvider/context";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
@@ -24,7 +24,7 @@ function buildController(): Controller {
     session,
     sync: {
       clientVersion: __CLIENT_VERSION__,
-      clientKind: native.runtime === "electron" ? "desktop" : "web",
+      clientKind: runtimeInfo.clientKind,
       device: deviceIdentity(),
     },
   });
