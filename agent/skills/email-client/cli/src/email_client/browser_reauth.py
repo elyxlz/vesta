@@ -47,8 +47,12 @@ def needs_mfa_refresh(res: dict) -> bool:
     return bool(codes & MFA_EXPIRED_CODES) or res.get("error") == "interaction_required"
 
 
-def silent_reauth(profile: dict, user: str, session: str, timeout: int = 60) -> dict | None:
-    """Mint a fresh token via the browser session, or None if it needs a human."""
+def _failure(reason: str) -> dict:
+    return {"error": "silent_reauth_failed", "reason": reason}
+
+
+def silent_reauth(profile: dict, user: str, session: str, timeout: int = 60) -> dict:
+    """Mint a fresh token via the browser session; without `access_token`, `reason` says why it needs a human."""
     import msal
 
     app = msal.PublicClientApplication(profile["oauth_client_id"], authority=profile["oauth_authority"])
@@ -69,15 +73,18 @@ def silent_reauth(profile: dict, user: str, session: str, timeout: int = 60) -> 
             check=False,
         )
         if proc.returncode != 0 or not result_file.exists():
-            return None
+            return _failure(f"browser exec exited {proc.returncode}")
         redirect = result_file.read_text().strip()
     if not redirect:
-        return None
+        return _failure("no redirect: the sign-in page wants interaction")
     params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(redirect).query))
     if "code" not in params:
-        return None
+        detail = params.get("error_description", "").split("\n")[0][:200]
+        return _failure(f"{params.get('error', 'no code')}: {detail}".rstrip(": "))
     res = app.acquire_token_by_auth_code_flow(flow, params)
-    return res if "access_token" in res else None
+    if "access_token" in res:
+        return res
+    return _failure(f"token exchange failed: {res.get('error', 'unknown')}")
 
 
 def _log_path(acc_dir: pathlib.Path) -> pathlib.Path:
@@ -98,7 +105,7 @@ def may_attempt(acc_dir: pathlib.Path) -> bool:
     return not past or time.time() - past[-1]["ts"] >= COOLDOWN_SECS
 
 
-def record(acc_dir: pathlib.Path, account: str, failed: dict, *, ok: bool) -> None:
+def record(acc_dir: pathlib.Path, account: str, failed: dict, *, ok: bool, reason: str | None = None) -> None:
     """Append to the per-account log and raise one interrupting notification per attempt."""
     now = time.time()
     prev_ok = [a for a in _attempts(acc_dir) if a.get("ok")]
@@ -108,6 +115,7 @@ def record(acc_dir: pathlib.Path, account: str, failed: dict, *, ok: bool) -> No
         "ok": ok,
         "trigger": failed.get("error_codes") or failed.get("error"),
         "hours_since_last_ok": round((now - prev_ok[-1]["ts"]) / 3600, 1) if prev_ok else None,
+        "reason": reason,
     }
     with _log_path(acc_dir).open("a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -117,7 +125,7 @@ def record(acc_dir: pathlib.Path, account: str, failed: dict, *, ok: bool) -> No
         "type": "browser_reauth",
         "interrupt": True,
         "account": account,
-        **{k: entry[k] for k in ("ok", "trigger", "hours_since_last_ok")},
+        **{k: entry[k] for k in ("ok", "trigger", "hours_since_last_ok", "reason")},
         "attempts_total": len(_attempts(acc_dir)),
         "timestamp": entry["at"],
     }

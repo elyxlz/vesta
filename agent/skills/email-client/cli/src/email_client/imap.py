@@ -259,8 +259,9 @@ def _refresh_microsoft(tok: dict, profile: dict, account: str) -> dict:
         session = load_config(account).get("browser_session")
         if session and browser_reauth.needs_mfa_refresh(res) and browser_reauth.may_attempt(account_dir(account)):
             fresh = browser_reauth.silent_reauth(profile, account_user(account), session)
-            browser_reauth.record(account_dir(account), account, res, ok=fresh is not None)
-            if fresh is not None:
+            ok = "access_token" in fresh
+            browser_reauth.record(account_dir(account), account, res, ok=ok, reason=None if ok else fresh.get("reason"))
+            if ok:
                 res = fresh
         if "access_token" not in res:
             sys.exit(f"refresh failed: {res}")

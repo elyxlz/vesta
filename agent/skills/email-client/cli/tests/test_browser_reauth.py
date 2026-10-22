@@ -54,3 +54,16 @@ def test_needs_mfa_refresh_only_for_interaction_errors():
     assert br.needs_mfa_refresh({"error_codes": [50078]})
     assert br.needs_mfa_refresh({"error": "interaction_required"})
     assert not br.needs_mfa_refresh({"error": "invalid_client", "error_codes": [7000215]})
+
+
+def test_failed_silent_reauth_records_its_reason(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(br, "silent_reauth", lambda p, u, s: br._failure("interaction_required: AADSTS50076"))
+    try:
+        imap._refresh_microsoft({"refresh_token": "r"}, PROFILE, "acct")
+    except SystemExit as e:
+        assert "refresh failed" in str(e)
+    entry = json.loads((tmp_path / "browser_reauth.jsonl").read_text().splitlines()[-1])
+    assert entry["ok"] is False and entry["reason"] == "interaction_required: AADSTS50076"
+    notif = json.loads(next((tmp_path / "notifs").glob("*browser_reauth*")).read_text())
+    assert notif["reason"] == "interaction_required: AADSTS50076"
