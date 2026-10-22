@@ -7,7 +7,8 @@ in the same format, so one check serves every `set` command and every `set` rout
 import math
 import typing as tp
 
-SettingValue = bool | int | float | str | list[str] | list[dict[str, str]] | dict[str, dict[str, str]]
+Scalar = bool | int | float | str
+SettingValue = Scalar | list[str] | list[dict[str, str]] | dict[str, dict[str, str]] | dict[str, dict[str, Scalar]]
 Domain = dict[str, SettingValue]
 # Dynamic JSON a provider hands back as is (a usage report, a subscription).
 type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
@@ -76,7 +77,7 @@ def _check_select(definition: SettingDef, value: SettingValue) -> str:
     return value
 
 
-def check_setting(schema: list[SettingDef], key: str, value: SettingValue) -> bool | int | float | str:
+def check_setting(schema: list[SettingDef], key: str, value: SettingValue) -> Scalar:
     """The value to store for `key`, or a ValueError that says what is wrong."""
     definition = next((d for d in schema if d["key"] == key), None)
     if definition is None:

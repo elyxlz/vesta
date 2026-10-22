@@ -4,14 +4,15 @@ The file has one entry for each role (`stt`, `tts`, `judge`) and one `behavior` 
 entry with nothing in it is `{}`. A role entry holds `provider` (the selected one), `credentials` (one entry for each connected provider:
 its key, or an empty entry for a provider that needs no key), `enabled`, and the settings of its
 providers. Each provider reads only its own setting keys, so a switch between providers loses
-nothing.
+nothing. The `behavior` entry holds the shared behaviors, and under `clients` the values that one
+client keeps for itself, by the `client` name its `start_session` gives.
 """
 
 import json
 import pathlib as pl
 import typing as tp
 
-from .settings import Domain, SettingValue
+from .settings import Domain, Scalar, SettingValue
 
 VOICE_CONFIG_FILENAME = "voice_config.json"
 
@@ -22,6 +23,8 @@ SECTIONS: tuple[Section, ...] = ("stt", "tts", "judge", "behavior")
 
 # The keys of a role entry that are not a provider's settings.
 ROLE_KEYS = ("provider", "credentials", "enabled")
+# The key of the behavior entry that holds the values of each client.
+CLIENTS_KEY = "clients"
 
 VoiceConfig = dict[Section, Domain]
 
@@ -106,6 +109,40 @@ def custom_voices(entry: Domain) -> list[dict[str, str]]:
 def provider_voices(entry: Domain, provider: str) -> list[dict[str, str]]:
     """The voices the user added for one provider."""
     return [v for v in custom_voices(entry) if "provider" in v and v["provider"] == provider and "id" in v]
+
+
+def client_values(behavior: Domain) -> dict[str, dict[str, Scalar]]:
+    """The values that each client keeps for itself, by client name."""
+    clients = behavior[CLIENTS_KEY] if CLIENTS_KEY in behavior else {}
+    if not isinstance(clients, dict):
+        return {}
+    return {client: dict(own) for client, own in clients.items() if isinstance(own, dict)}
+
+
+def client_behavior(behavior: Domain, client: str | None) -> Domain:
+    """The behaviors of one client: the shared values, with the values that the client keeps for
+    itself over them. With no client, the shared values only."""
+    shared = {key: value for key, value in behavior.items() if key != CLIENTS_KEY}
+    own = client_values(behavior)
+    return {**shared, **own[client]} if client is not None and client in own else shared
+
+
+def set_client_behavior(data_dir: pl.Path, client: str, key: str, value: Scalar | None) -> VoiceConfig:
+    """Store the value of one behavior for one client. The caller checks it against the schema
+    first. None removes it, so the client follows the shared value again."""
+
+    def _update(cfg: VoiceConfig) -> VoiceConfig:
+        clients = client_values(cfg["behavior"])
+        own = {k: v for k, v in (clients[client] if client in clients else {}).items() if k != key}
+        if value is not None:
+            own[key] = value
+        clients = {name: values for name, values in clients.items() if name != client}
+        if own:
+            clients[client] = own
+        cfg["behavior"] = {**cfg["behavior"], CLIENTS_KEY: clients}
+        return cfg
+
+    return mutate(data_dir, _update)
 
 
 def selected_entry(config: VoiceConfig, role: Role) -> tuple[Domain, str]:

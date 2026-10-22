@@ -7,7 +7,8 @@
     voice <role> disconnect <provider>
     voice <role> on | off
     voice <role> set <key> <value>
-    voice behavior set <key> <value>
+    voice behavior set <key> <value> [--client <name>]
+    voice behavior unset <key> --client <name>
     voice tts voice <id>
     voice tts voices add <id> --name <n> [--description <d>] | remove <id>
     voice stt keyterms add <term> | remove <term>
@@ -27,6 +28,7 @@ import typing as tp
 
 from . import config as vc
 from . import daemon, invalidation, providers, sections, server
+from .engine import behavior, wake
 from .settings import JsonValue
 
 USAGE_EXIT = 2
@@ -63,15 +65,19 @@ def _role_view(config: vc.VoiceConfig, role: vc.Role) -> dict[str, JsonValue]:
     return view
 
 
-def status_view(config: vc.VoiceConfig) -> dict[str, JsonValue]:
+def status_view(config: vc.VoiceConfig, data_dir: pl.Path) -> dict[str, JsonValue]:
     view: dict[str, JsonValue] = {role: _role_view(config, role) for role in vc.ROLES}
     view["behavior"] = {s["key"]: s["value"] for s in sections.section_view(config, "behavior")}
+    view["client_behavior"] = {client: dict(own) for client, own in vc.client_values(config["behavior"]).items()}
+    # The model the wake phrase needs: a session with the wake word on and no model listens without it.
+    model = wake.model_path(data_dir, behavior.wake_phrase(config["behavior"]))
+    view["wake_word_model"] = {"path": str(model), "found": model.is_file()}
     return view
 
 
 def _print_status(scope: vc.Section | None = None) -> int:
     """The answer of every command that reads or changes the config: the whole status, one line."""
-    print(json.dumps(status_view(vc.load(_data_dir()))))
+    print(json.dumps(status_view(vc.load(_data_dir()), _data_dir())))
     if scope is not None:
         asyncio.run(invalidation.notify(scope))
     return 0
@@ -136,8 +142,13 @@ def cmd_off(args: argparse.Namespace) -> int:
 
 
 def cmd_set(args: argparse.Namespace) -> int:
-    sections.store_setting(_data_dir(), args.role, args.key, args.value)
+    sections.store_setting(_data_dir(), args.role, args.key, args.value, args.client)
     return _print_status(args.role)
+
+
+def cmd_unset(args: argparse.Namespace) -> int:
+    sections.clear_client_setting(_data_dir(), args.client, args.key)
+    return _print_status("behavior")
 
 
 def cmd_voice(args: argparse.Namespace) -> int:
@@ -196,7 +207,7 @@ def _add_set(verbs: "argparse._SubParsersAction[_Parser]", section: vc.Section) 
     p = verbs.add_parser("set")
     p.add_argument("key")
     p.add_argument("value")
-    p.set_defaults(func=cmd_set, role=section)
+    p.set_defaults(func=cmd_set, role=section, client=None)
 
 
 def _build_parser() -> _Parser:
@@ -228,7 +239,15 @@ def _build_parser() -> _Parser:
     _add_role(sub, "judge")
 
     behavior_verbs = sub.add_parser("behavior", help="values that change how a session acts").add_subparsers(dest="verb", required=True)
-    _add_set(behavior_verbs, "behavior")
+    p = behavior_verbs.add_parser("set", help="the shared value, or with --client the value of one client")
+    p.add_argument("key")
+    p.add_argument("value")
+    p.add_argument("--client", help="the client name from start_session: web, desktop, mobile, whatsapp-call")
+    p.set_defaults(func=cmd_set, role="behavior")
+    p = behavior_verbs.add_parser("unset", help="remove the value of one client, so it follows the shared value")
+    p.add_argument("key")
+    p.add_argument("--client", required=True)
+    p.set_defaults(func=cmd_unset)
 
     p_daemon = sub.add_parser("daemon", help="manage the voice daemon: start|stop|restart|status")
     p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")

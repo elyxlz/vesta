@@ -133,6 +133,15 @@ describe("the voice session", () => {
     expect(conversation.frames()[0]?.barge_in).toBe(true);
   });
 
+  it("dictation listens with no wake word and a conversation follows the wake word behavior", async () => {
+    const { session, startAnd } = setup();
+    const dictation = await startAnd("dictation");
+    expect(dictation.frames()[0]?.wake_word).toBe(false);
+    session.cancel();
+    const conversation = await startAnd("conversation");
+    expect(conversation.frames()[0]?.wake_word).toBe(true);
+  });
+
   it("dictation accumulates turns and sends one message on confirm", async () => {
     const { session, events, startAnd, turn } = setup();
     const socket = await startAnd("dictation");

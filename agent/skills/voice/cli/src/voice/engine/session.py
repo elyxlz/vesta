@@ -1,13 +1,16 @@
 """The `/voice/session` socket: one session for each socket, and a session shares nothing.
 
 A session composes the pure parts: `turns` decides what text does, `playback` tracks what the
-client's speaker did, and this module moves frames between the client, the STT stream, the judge,
-and the TTS provider. Everything is read once, at session start: the selected providers, their
-settings, the judge, and the behaviors. A change applies to the next session.
+client's speaker did, `wake` decides when mic audio goes to speech to text, and this module moves
+frames between the client, the STT stream, the wake detector, the judge, and the TTS provider.
+The selected providers, their settings, and the judge are read once, at session start: a change
+applies to the next session. The behaviors apply at once: the session reads them again each time
+the config file changes.
 
-One loop handles every event in order (client frames, STT events, verdicts, the hold timer), so
-no two decisions run at the same time. Mic audio does not wait for that loop: the client reader
-hands it straight to the STT stream.
+One loop handles every event in order (client frames, STT events, verdicts, wake hits, the
+timers), so no two decisions run at the same time. Mic audio does not wait for that loop: the
+client reader hands it to the wake detector, and to the STT stream or, while no stream is open,
+to the pre-roll.
 """
 
 import asyncio
@@ -16,6 +19,7 @@ import dataclasses as dc
 import json
 import logging
 import os
+import pathlib as pl
 import secrets
 import time
 import typing as tp
@@ -25,10 +29,21 @@ from aiohttp import web
 
 from voice import appkeys, providers
 from voice import config as voice_config
-from voice.providers.base import Judge, Line, Question, SttEvent, SttOpenError, SttStream, TtsError, TtsProvider, Verdict
+from voice.providers.base import (
+    Judge,
+    Line,
+    Question,
+    SttEvent,
+    SttOpenError,
+    SttProvider,
+    SttStream,
+    TtsError,
+    TtsProvider,
+    Verdict,
+)
 from voice.settings import Domain
 
-from . import behavior, buffers, frames, playback, turns
+from . import behavior, buffers, detector, frames, playback, turns, wake
 
 logger = logging.getLogger("voice.session")
 
@@ -38,6 +53,9 @@ WS_HEARTBEAT_SECS = 30.0
 PLAY_URL_PREFIX = "/voice/play/"
 PLAY_TOKEN_BYTES = 16
 DEFAULT_AGENT_NAME = "agent"
+# How often the session checks the config file for a behavior change and the end of the
+# follow-up window.
+PULSE_SECS = 0.1
 
 
 class ClientItem(tp.TypedDict):
@@ -48,6 +66,23 @@ class ClientItem(tp.TypedDict):
 class SttItem(tp.TypedDict):
     kind: tp.Literal["stt"]
     event: SttEvent
+    # The stream that sent the event: an event of a stream the gate closed counts for nothing.
+    stream: SttStream
+
+
+class SttOpenedItem(tp.TypedDict):
+    kind: tp.Literal["stt_opened"]
+    stream: SttStream
+
+
+class SttRefusedItem(tp.TypedDict):
+    kind: tp.Literal["stt_refused"]
+    reason: tp.Literal["failed", "limit"]
+
+
+class WakeItem(tp.TypedDict):
+    kind: tp.Literal["wake"]
+    score: float
 
 
 class JudgedItem(tp.TypedDict):
@@ -63,14 +98,33 @@ class SynthFailedItem(tp.TypedDict):
 
 
 class SignalItem(tp.TypedDict):
-    kind: tp.Literal["tick", "client_closed", "task_failed"]
+    kind: tp.Literal["tick", "pulse", "client_closed", "task_failed"]
 
 
-Item = ClientItem | SttItem | JudgedItem | SynthFailedItem | SignalItem
+Item = ClientItem | SttItem | SttOpenedItem | SttRefusedItem | WakeItem | JudgedItem | SynthFailedItem | SignalItem
 # How one handled item ends the session: with an `ended` reason, silently when the client is
 # gone, or with an `error` when a part of the engine itself failed.
 Outcome = frames.EndedReason | tp.Literal["client_gone", "engine_failed"] | None
 ENGINE_FAILED = "the engine failed and this session is over; open a new session"
+
+
+@dc.dataclass(frozen=True)
+class SttLink:
+    name: str
+    provider: SttProvider
+    creds: dict[str, str]
+    settings: Domain
+
+
+@dc.dataclass
+class WakeRun:
+    """The wake word of a session: its settings, its detector, and the audio the detector reads."""
+
+    settings: behavior.WakeSettings
+    model: detector.ModelKey
+    detector: detector.Detector
+    audio: asyncio.Queue[bytes] = dc.field(default_factory=asyncio.Queue)
+    task: asyncio.Task[None] | None = None
 
 
 @dc.dataclass(frozen=True)
@@ -95,12 +149,35 @@ class Session:
     http: aiohttp.ClientSession
     # The app's token map. This session adds its own tokens and removes them when it ends.
     plays: dict[str, buffers.PlayBuffer]
-    stt: SttStream
+    # The app's detector map: for each model file, its newest version loaded, or why it does not load.
+    detectors: detector.Cache
+    data_dir: pl.Path
+    stt_link: SttLink
     tts: TtsLink | None
     judge: JudgeLink | None
     delivery: frames.Delivery
-    barge_in: bool
+    # The `client` name from `start_session`: the session reads the behaviors of this client.
+    client: str
+    # What `start_session` states about barge-in. `barge_in` is the result with the stored behavior.
+    session_can_barge_in: bool | None
+    # What `start_session` states about the wake word, the same as for barge-in.
+    session_can_wake: bool | None
     agent_name: str
+    barge_in: bool = True
+    # The open STT stream: None while the gate is closed, and while a stream opens.
+    stt: SttStream | None = None
+    stt_reader: asyncio.Task[None] | None = None
+    # The pre-roll and the mic audio that arrives while a stream opens, sent first once it is open.
+    opening: bytearray | None = None
+    # The newest mic audio while no stream is open, up to wake.PRE_ROLL_BYTES.
+    pre_roll: bytearray = dc.field(default_factory=bytearray)
+    # Before the `wake` field: after it, `wake` in this class body names the field, not the module.
+    gate: wake.Gate = dc.field(default_factory=wake.Gate)
+    wake: WakeRun | None = None
+    # The wake word error the client was told last, so the same failure is told once.
+    wake_failure: str | None = None
+    # The identity of the config file the behaviors were last read from.
+    config_stamp: tuple[int, int] | None = None
     inbox: asyncio.Queue[Item] = dc.field(default_factory=asyncio.Queue)
     turn: turns.TurnState = dc.field(default_factory=turns.TurnState)
     # What the client's speaker did with the plays of this session.
@@ -194,8 +271,19 @@ def _judge_link(entry: Domain) -> JudgeLink | None:
     return JudgeLink(provider, voice_config.provider_creds(entry, name), voice_config.provider_settings(entry))
 
 
+def _config_stamp(data_dir: pl.Path) -> tuple[int, int] | None:
+    """The identity of the config file: each save replaces the file, so a new inode."""
+    try:
+        stat = voice_config.config_path(data_dir).stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns
+
+
 async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.StartSession) -> Session | frames.EndedReason:
-    config = voice_config.load(app[appkeys.DATA_DIR])
+    data_dir = app[appkeys.DATA_DIR]
+    stamp = _config_stamp(data_dir)
+    config = voice_config.load(data_dir)
     stt_entry = config["stt"]
     stt_name = voice_config.provider_name(stt_entry)
     stt_provider = providers.get_stt(stt_name)
@@ -207,31 +295,45 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
         tts = _tts_link(config["tts"], start["formats"])
     except _UnsupportedFormatError:
         return "unsupported_format"
-    try:
-        stt = await stt_provider.open(voice_config.provider_creds(stt_entry, stt_name), voice_config.provider_settings(stt_entry))
-    except SttOpenError as e:
-        logger.warning("stt open failed for %s (%s): %s", start["client"], stt_name, e)
-        return "stt_limit" if e.reason == "limit" else "stt_failed"
-    return Session(
+    session = Session(
         ws=ws,
         http=app[appkeys.HTTP],
         plays=app[appkeys.PLAYS],
-        stt=stt,
+        detectors=app[appkeys.DETECTORS],
+        data_dir=data_dir,
+        stt_link=SttLink(stt_name, stt_provider, voice_config.provider_creds(stt_entry, stt_name), voice_config.provider_settings(stt_entry)),
         tts=tts,
         judge=_judge_link(config["judge"]),
         delivery=start["delivery"],
-        barge_in=behavior.barge_in_allowed(config["behavior"], start["barge_in"]),
+        client=start["client"],
+        session_can_barge_in=start["barge_in"],
+        session_can_wake=start["wake_word"],
         agent_name=os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else DEFAULT_AGENT_NAME,
+        config_stamp=stamp,
     )
+    await _apply_behavior(session, voice_config.client_behavior(config["behavior"], session.client))
+    return session
 
 
 # --- the two readers ---
 
 
+async def _hear(session: Session, pcm: bytes) -> None:
+    if session.wake is not None:
+        session.wake.audio.put_nowait(pcm)
+    if session.stt is not None:
+        await session.stt.send(pcm)
+    elif session.opening is not None:
+        session.opening += pcm
+    else:
+        session.pre_roll += pcm
+        del session.pre_roll[: -wake.PRE_ROLL_BYTES]
+
+
 async def _read_client(session: Session) -> None:
     async for msg in session.ws:
         if msg.type == aiohttp.WSMsgType.BINARY:
-            await session.stt.send(msg.data)
+            await _hear(session, msg.data)
         elif msg.type == aiohttp.WSMsgType.TEXT:
             try:
                 frame = frames.parse_client_frame(msg.data)
@@ -243,9 +345,15 @@ async def _read_client(session: Session) -> None:
     await session.inbox.put({"kind": "client_closed"})
 
 
-async def _read_stt(session: Session) -> None:
-    async for event in session.stt.events():
-        await session.inbox.put({"kind": "stt", "event": event})
+async def _read_stt(session: Session, stream: SttStream) -> None:
+    async for event in stream.events():
+        await session.inbox.put({"kind": "stt", "event": event, "stream": stream})
+
+
+async def _pulse(session: Session) -> None:
+    while True:
+        await asyncio.sleep(PULSE_SECS)
+        await session.inbox.put({"kind": "pulse"})
 
 
 # --- playback ---
@@ -410,7 +518,12 @@ def _drop_pending_ask(session: Session) -> None:
         session.asking = None
 
 
-async def _on_live(session: Session, text: str) -> None:
+def _without_phrase(session: Session, text: str, *, live: bool) -> str:
+    return wake.strip_phrase(text, session.wake.settings.phrase, live=live) if session.wake is not None else text
+
+
+async def _on_live(session: Session, said: str) -> None:
+    text = _without_phrase(session, said, live=True)
     if not text.strip():
         return
     await _send(session.ws, {"type": "transcript", "text": text})
@@ -442,13 +555,167 @@ async def _verdict_for(session: Session, text: str) -> Verdict | None:
     return session.verdict[1] if session.verdict is not None and session.verdict[0] == text else None
 
 
-async def _on_committed(session: Session, text: str) -> None:
+async def _on_committed(session: Session, said: str) -> None:
+    text = _without_phrase(session, said, live=False)
     verdict = await _verdict_for(session, text)
     _drop_pending_ask(session)
     session.verdict = None
     # The segment is over, so its live text is over, whatever the turn rules decide about it.
     await _send(session.ws, {"type": "transcript", "text": ""})
     await _step(session, {"kind": "committed", "text": text, "verdict": verdict})
+
+
+# --- the wake word gate ---
+
+
+async def _detect(session: Session, run: WakeRun) -> None:
+    """Score the newest window once for each frame of mic audio, and report each hit."""
+    pending, window, hits = bytearray(), bytearray(), wake.Hits()
+    while True:
+        pending += await run.audio.get()
+        while len(pending) >= wake.FRAME_BYTES:
+            while not run.audio.empty():
+                pending += run.audio.get_nowait()
+            window += pending[: wake.FRAME_BYTES]
+            del pending[: wake.FRAME_BYTES]
+            del window[: -wake.WINDOW_BYTES]
+            if not wake.scores(window_bytes=len(window), behind_bytes=len(pending)):
+                continue
+            score = await asyncio.to_thread(run.detector.score, bytes(window))
+            hits, hit = wake.observe(hits, score, run.settings.threshold)
+            if hit:
+                logger.info("wake word heard (score %.2f)", score)
+                await session.inbox.put({"kind": "wake", "score": score})
+
+
+async def _stop_wake(session: Session) -> None:
+    run, session.wake = session.wake, None
+    if run is not None and run.task is not None:
+        run.task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run.task
+
+
+async def _apply_behavior(session: Session, stored: Domain) -> None:
+    session.barge_in = behavior.barge_in_allowed(stored, session.session_can_barge_in)
+    wanted = behavior.wake_settings(stored, session.session_can_wake)
+    if wanted is None:
+        await _stop_wake(session)
+        return
+    model, found = await asyncio.to_thread(detector.cached, session.detectors, wake.model_path(session.data_dir, wanted.phrase))
+    if session.wake is not None and session.wake.model != model:
+        await _stop_wake(session)
+    if session.wake is not None:
+        session.wake.settings = wanted
+        return
+    if isinstance(found, detector.DetectorError):
+        # The session listens without the wake word, and the client is told why, once.
+        message = f"the wake word is on but cannot run, so this session listens without it: {found}"
+        if session.wake_failure != message:
+            session.wake_failure = message
+            logger.warning("%s", message)
+            await _send(session.ws, {"type": "error", "message": message})
+        return
+    session.wake_failure = None
+    session.wake = WakeRun(settings=wanted, model=model, detector=found)
+    session.wake.task = _spawn(session, _detect(session, session.wake))
+
+
+def _active(session: Session) -> bool:
+    """The user talks, or a reply plays or waits to play."""
+    return session.turn.phase != "idle" or session.turn.segment_seen or bool(session.speaker.sent) or bool(session.speaker.held)
+
+
+def _stream(session: Session) -> wake.Stream:
+    if session.stt is not None:
+        return "open"
+    return "closed" if session.opening is None else "opening"
+
+
+def _gate_event(session: Session, item: Item | None) -> wake.GateEvent:
+    if item is None:
+        return wake.CHECK
+    if item["kind"] == "wake":
+        return {"kind": "hit"}
+    if item["kind"] == "stt_opened":
+        return {"kind": "opened"}
+    if item["kind"] == "stt_refused":
+        return {"kind": "refused", "reason": item["reason"]}
+    if item["kind"] == "stt" and item["stream"] is session.stt:
+        event = item["event"]
+        if event["kind"] == "transcription" and event["text"].strip():
+            return {"kind": "speech"}
+    return wake.CHECK
+
+
+async def _open_stt(session: Session) -> None:
+    link = session.stt_link
+    try:
+        stream = await link.provider.open(link.creds, link.settings)
+    except SttOpenError as e:
+        logger.warning("stt open failed (%s): %s", link.name, e)
+        await session.inbox.put({"kind": "stt_refused", "reason": e.reason})
+        return
+    await session.inbox.put({"kind": "stt_opened", "stream": stream})
+
+
+async def _on_stt_opened(session: Session, stream: SttStream) -> None:
+    """Send the pre-roll and the audio of the wait, then hand the mic to the stream. The client
+    reader adds to `opening` while a send waits, so the loop ends only when nothing is left."""
+    while session.opening:
+        queued = bytes(session.opening)
+        session.opening.clear()
+        await stream.send(queued)
+    session.opening = None
+    session.stt = stream
+    session.stt_reader = _spawn(session, _read_stt(session, stream))
+
+
+async def _close_stt(session: Session) -> None:
+    stream, reader = session.stt, session.stt_reader
+    session.stt, session.stt_reader = None, None
+    if reader is not None:
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
+    if stream is not None:
+        await stream.close()
+
+
+async def _sync_gate(session: Session, item: Item | None) -> Outcome:
+    """Step the gate after one item (None at the start of the session), and do what it says."""
+    session.gate, actions = wake.gate_step(
+        session.gate,
+        _gate_event(session, item),
+        follow_up_secs=session.wake.settings.follow_up_secs if session.wake is not None else None,
+        active=_active(session),
+        stream=_stream(session),
+        now=time.monotonic(),
+    )
+    for action in actions:
+        if action["type"] == "open_stream":
+            session.opening, session.pre_roll = session.pre_roll, bytearray()
+            _spawn(session, _open_stt(session))
+        elif action["type"] == "close_stream":
+            await _close_stt(session)
+        elif action["type"] == "ended":
+            return action["reason"]
+        else:
+            await _send(session.ws, action)
+    return None
+
+
+async def _on_wake(session: Session, score: float) -> None:
+    await _send(session.ws, {"type": "wake_detected", "score": round(score, 2)})
+    await _step(session, {"kind": "wake"})
+
+
+async def _on_pulse(session: Session) -> None:
+    stamp = await asyncio.to_thread(_config_stamp, session.data_dir)
+    if stamp != session.config_stamp:
+        session.config_stamp = stamp
+        config = await asyncio.to_thread(voice_config.load, session.data_dir)
+        await _apply_behavior(session, voice_config.client_behavior(config["behavior"], session.client))
 
 
 # --- the loop ---
@@ -462,13 +729,17 @@ async def _on_client(session: Session, frame: frames.ClientFrame) -> Outcome:
     elif frame["type"] == "playback":
         await _on_report(session, frame)
     elif frame["type"] == "end_turn":
-        await session.stt.commit()
+        if session.stt is not None:
+            await session.stt.commit()
     else:
         return "client_ended"
     return None
 
 
-async def _on_stt(session: Session, event: SttEvent) -> Outcome:
+async def _on_stt(session: Session, item: SttItem) -> Outcome:
+    if item["stream"] is not session.stt:
+        return None
+    event = item["event"]
     if event["kind"] == "closed":
         return "stt_failed"
     if event["kind"] == "transcription":
@@ -491,12 +762,21 @@ async def _handle(session: Session, item: Item) -> Outcome:
     if item["kind"] == "client":
         return await _on_client(session, item["frame"])
     if item["kind"] == "stt":
-        return await _on_stt(session, item["event"])
+        return await _on_stt(session, item)
     if item["kind"] == "client_closed":
         return "client_gone"
     if item["kind"] == "task_failed":
         return "engine_failed"
-    if item["kind"] == "judged":
+    if item["kind"] == "stt_refused":
+        # The audio of the wait is lost. The gate decides what comes next.
+        session.opening = None
+    elif item["kind"] == "stt_opened":
+        await _on_stt_opened(session, item["stream"])
+    elif item["kind"] == "wake":
+        await _on_wake(session, item["score"])
+    elif item["kind"] == "pulse":
+        await _on_pulse(session)
+    elif item["kind"] == "judged":
         await _on_judged(session, item["text"])
     elif item["kind"] == "tick":
         await _step(session, {"kind": "tick"})
@@ -507,12 +787,17 @@ async def _handle(session: Session, item: Item) -> Outcome:
 
 async def _run(session: Session) -> Outcome:
     _spawn(session, _read_client(session))
-    _spawn(session, _read_stt(session))
+    _spawn(session, _pulse(session))
     if session.delivery == "bytes" and session.tts is not None:
         session.byte_sender = _spawn(session, _send_bytes(session, session.tts.audio_format))
     await _sync_state(session)
+    # The first step opens the stream, or waits for the phrase: no outcome comes from it.
+    await _sync_gate(session, None)
     while True:
-        outcome = await _handle(session, await session.inbox.get())
+        item = await session.inbox.get()
+        outcome = await _handle(session, item)
+        if outcome is None:
+            outcome = await _sync_gate(session, item)
         if outcome is not None:
             return outcome
 
@@ -522,7 +807,12 @@ async def _close(session: Session) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    await session.stt.close()
+    await _close_stt(session)
+    # A stream that opened as the session ended reaches nobody, so it closes here.
+    while not session.inbox.empty():
+        item = session.inbox.get_nowait()
+        if item["kind"] == "stt_opened":
+            await item["stream"].close()
     for token in list(session.synthesis):
         session.plays.pop(token, None)
 

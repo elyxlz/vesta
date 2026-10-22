@@ -83,10 +83,10 @@ def _role_status(config: voice_config.VoiceConfig, role: voice_config.Role) -> w
     return web.json_response({**status, "settings": sections.section_view(config, role)})
 
 
-def _section_status(request: web.Request, section: voice_config.Section) -> web.Response:
+def _section_status(request: web.Request, section: voice_config.Section, client: str | None = None) -> web.Response:
     config = _load(request)
     if section == "behavior":
-        return web.json_response({"settings": sections.section_view(config, "behavior")})
+        return web.json_response({"settings": sections.section_view(config, "behavior", client)})
     return _role_status(config, section)
 
 
@@ -96,7 +96,9 @@ async def role_status(request: web.Request) -> web.Response:
 
 
 async def behavior_status(request: web.Request) -> web.Response:
-    return _section_status(request, "behavior")
+    """The behaviors of the client that `?client=` names, or the shared ones with no client."""
+    client = request.query["client"] if "client" in request.query else None
+    return _section_status(request, "behavior", client or None)
 
 
 async def set_enabled(request: web.Request) -> web.Response:
@@ -132,28 +134,32 @@ async def use(request: web.Request) -> web.Response:
     return _section_status(request, role)
 
 
-async def _store_setting(request: web.Request, section: voice_config.Section, key: str, value: JsonValue) -> web.Response:
+async def _store_setting(request: web.Request, section: voice_config.Section, key: str, value: JsonValue, client: str | None) -> web.Response:
     if not isinstance(value, bool | int | float | str):
         return _error("value must be a boolean, a number, or text", 400)
     try:
-        sections.store_setting(request.app[appkeys.DATA_DIR], section, key, value)
+        sections.store_setting(request.app[appkeys.DATA_DIR], section, key, value, client)
     except ValueError as e:
         return _error(str(e), 400)
     _spawn_invalidation(section)
     # Return the full updated status so the client doesn't need a separate refresh.
-    return _section_status(request, section)
+    return _section_status(request, section, client)
 
 
 async def set_setting(request: web.Request) -> web.Response:
-    """Generic setter: checks the value, saves it, and returns the updated status."""
+    """Generic setter: checks the value, saves it (for the `client` the body names, if any), and
+    returns the updated status."""
     body = await _json_body(request)
     if isinstance(body, web.Response):
         return body
     key = body["key"] if "key" in body else None
     if not key or not isinstance(key, str):
         return _error("key required", 400)
+    client = body["client"] if "client" in body else None
+    if client is not None and (not isinstance(client, str) or not client):
+        return _error("client must be a name", 400)
     section = next(name for name in voice_config.SECTIONS if name == request.match_info["domain"])
-    return await _store_setting(request, section, key, body["value"] if "value" in body else None)
+    return await _store_setting(request, section, key, body["value"] if "value" in body else None, client)
 
 
 # --- STT ---
@@ -196,9 +202,9 @@ async def stt_set_eot(request: web.Request) -> web.Response:
     if isinstance(body, web.Response):
         return body
     if "threshold" in body:
-        return await _store_setting(request, "stt", "eot_threshold", body["threshold"])
+        return await _store_setting(request, "stt", "eot_threshold", body["threshold"], None)
     if "timeout_ms" in body:
-        return await _store_setting(request, "stt", "eot_timeout_ms", body["timeout_ms"])
+        return await _store_setting(request, "stt", "eot_timeout_ms", body["timeout_ms"], None)
     return _error("threshold or timeout_ms required", 400)
 
 

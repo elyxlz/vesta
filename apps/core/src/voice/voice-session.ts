@@ -203,8 +203,9 @@ export function createVoiceSession(
           callbacks.onListeningChange(active);
         },
       },
-      // In dictation the user talks to the composer, so their voice never stops a reply.
-      { bargeIn: conversation },
+      // In dictation the user talks to the composer and holds the mic, so their voice never stops
+      // a reply and no wake word is needed.
+      { bargeIn: conversation, wakeWord: conversation },
     );
 
     engine = session;

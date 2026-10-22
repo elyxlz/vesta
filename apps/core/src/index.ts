@@ -68,7 +68,7 @@ export { createReplica } from "./replica/store";
 export { ApiError, jsonInit } from "./transport/http";
 export type { FetchLike, HttpClient } from "./transport/http";
 export type { SyncState } from "./transport/socket";
-export type { DeviceContext } from "./protocol/frames";
+export type { ClientKind, DeviceContext } from "./protocol/frames";
 export { readSse } from "./transport/sse";
 export type { SseHandle, StreamEvent } from "./transport/sse";
 

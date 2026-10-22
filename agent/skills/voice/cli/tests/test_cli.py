@@ -11,6 +11,14 @@ from voice.settings import JsonValue
 
 from .fakes import FakeJudge, FakeStt, FakeTts
 
+BEHAVIOR_DEFAULTS: dict[str, JsonValue] = {
+    "barge_in": True,
+    "wake_word": False,
+    "wake_word_phrase": "hey aria",
+    "wake_word_threshold": 0.5,
+    "wake_word_follow_up_secs": 5,
+}
+
 
 @pytest.fixture
 def home(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch) -> pl.Path:
@@ -75,7 +83,7 @@ def test_status_shows_each_role_and_each_behavior_and_never_a_key(home: pl.Path,
         "keyterms": [],
     }
     assert status["judge"] == {"providers": ["keyed", "local", "typesafe"], "connected": [], "selected": None, "on": False, "settings": {}}
-    assert status["behavior"] == {"barge_in": True}
+    assert status["behavior"] == BEHAVIOR_DEFAULTS
     assert "secret-key-value" not in json.dumps(status)
 
 
@@ -173,7 +181,10 @@ def test_set_refuses_an_unknown_key_a_wrong_type_and_an_empty_text(home: pl.Path
     assert failure(capsys, "stt", "set", "eot_threshold", "0.7") == "unknown setting: eot_threshold (settings: address)"
     assert failure(capsys, "stt", "set", "address", " ") == "address must be text that is not empty"
     assert failure(capsys, "behavior", "set", "barge_in", "maybe") == "barge_in must be on or off, got 'maybe'"
-    assert failure(capsys, "behavior", "set", "idle_ms", "5") == "unknown setting: idle_ms (settings: barge_in)"
+    assert (
+        failure(capsys, "behavior", "set", "idle_ms", "5")
+        == "unknown setting: idle_ms (settings: barge_in, wake_word, wake_word_phrase, wake_word_threshold, wake_word_follow_up_secs)"
+    )
     assert failure(capsys, "tts", "set", "fake_voice", "v-other") == "tts has no selected provider; run `voice tts connect <provider>` first"
 
 
@@ -188,7 +199,33 @@ def test_a_value_out_of_range_is_refused(tmp_path: pl.Path, monkeypatch: pytest.
 def test_a_behavior_is_set_with_its_own_command(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
     _code, status, _err = run(capsys, "behavior", "set", "barge_in", "off")
 
-    assert status["behavior"] == {"barge_in": False}
+    assert status["behavior"] == {**BEHAVIOR_DEFAULTS, "barge_in": False}
+
+
+def test_a_client_gets_its_own_behavior_and_loses_it_with_unset(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _code, status, _err = run(capsys, "behavior", "set", "barge_in", "off", "--client", "whatsapp-call")
+
+    assert status["behavior"] == BEHAVIOR_DEFAULTS
+    assert status["client_behavior"] == {"whatsapp-call": {"barge_in": False}}
+    assert run(capsys, "behavior", "unset", "barge_in", "--client", "whatsapp-call")[1]["client_behavior"] == {}
+    assert failure(capsys, "behavior", "unset", "idle_ms", "--client", "web").startswith("unknown behavior: idle_ms")
+
+
+def test_status_says_where_the_model_of_the_wake_phrase_is_and_if_it_is_there(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, "behavior", "set", "wake_word_phrase", "Hey, Vesta")
+    model = home / "wake_words" / "hey_vesta.onnx"
+
+    assert run(capsys, "status")[1]["wake_word_model"] == {"path": str(model), "found": False}
+    model.parent.mkdir()
+    model.write_bytes(b"onnx")
+    assert run(capsys, "status")[1]["wake_word_model"] == {"path": str(model), "found": True}
+
+
+def test_the_wake_word_is_switched_with_the_behavior_command(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _code, status, _err = run(capsys, "behavior", "set", "wake_word", "on")
+
+    assert status["behavior"] == {**BEHAVIOR_DEFAULTS, "wake_word": True}
+    assert failure(capsys, "behavior", "set", "wake_word_threshold", "1") == "wake_word_threshold must be at most 0.95, got '1'"
 
 
 def test_voice_sets_the_voice_of_the_selected_provider_only(

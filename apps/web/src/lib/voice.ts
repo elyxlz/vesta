@@ -21,8 +21,9 @@ export const setVoiceSetting = (
 ): Promise<SttStatus> =>
   core.setVoiceSetting(httpClient, n, domain, key, value);
 
+// The behaviors this app reads and sets are the ones of its own client kind.
 export const setVoiceBehavior = (n: string, key: string, value: unknown) =>
-  core.setVoiceBehavior(httpClient, n, key, value);
+  core.setVoiceBehavior(httpClient, n, runtimeInfo.clientKind, key, value);
 
 export const selectVoiceProvider = (
   n: string,
@@ -32,7 +33,12 @@ export const selectVoiceProvider = (
   core.selectVoiceProvider(httpClient, n, domain, provider);
 
 export const fetchVoiceSettings = (agentName: string, signal?: AbortSignal) =>
-  core.fetchVoiceSettings(httpClient, agentName, signal);
+  core.fetchVoiceSettings(
+    httpClient,
+    agentName,
+    runtimeInfo.clientKind,
+    signal,
+  );
 
 export const fetchVoiceUsage = (agentName: string, domain: "stt" | "tts") =>
   core.fetchVoiceUsage(httpClient, agentName, domain);

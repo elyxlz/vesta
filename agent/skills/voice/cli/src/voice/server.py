@@ -40,6 +40,7 @@ def create_app(data_dir: Path | None = None) -> web.Application:
     app = web.Application()
     app[appkeys.DATA_DIR] = data_dir if data_dir is not None else voice_config.data_dir()
     app[appkeys.PLAYS] = {}
+    app[appkeys.DETECTORS] = {}
     app.cleanup_ctx.append(_provider_http)
 
     # The engine: one socket for each session, and the audio of each play

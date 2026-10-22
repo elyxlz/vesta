@@ -1,9 +1,11 @@
 """The settings of each section: which schema checks a value, and the one checked write.
 
 A section is a role (`stt`, `tts`, `judge`) or `behavior`. A role's schema is the schema of its
-selected provider, and the behaviors have the engine's schema. Every `set` command and every
-`set` route writes through `store_setting`, so a value is checked in exactly one place, and
-every status reads through `section_view`, so a view shows what the check accepts.
+selected provider, and the behaviors have the engine's schema. A behavior has a shared value and a
+value for each client that keeps its own; a role setting has one value for every client. Every
+`set` command and every `set` route writes through `store_setting`, so a value is checked in
+exactly one place, and every status reads through `section_view`, so a view shows what the check
+accepts.
 """
 
 import pathlib as pl
@@ -45,21 +47,37 @@ def section_schema(config: voice_config.VoiceConfig, section: voice_config.Secti
     return _with_own_voices(tts.settings_schema(), tts.voice_setting, voice_config.provider_voices(entry, name))
 
 
-def section_view(config: voice_config.VoiceConfig, section: voice_config.Section) -> list[dict[str, JsonValue]]:
+def section_view(config: voice_config.VoiceConfig, section: voice_config.Section, client: str | None = None) -> list[dict[str, JsonValue]]:
     """The schema of the section with the current value of each setting, which is what a settings
-    card renders. Empty for a role with no selected provider."""
+    card renders. A client sees its own behaviors. Empty for a role with no selected provider."""
     try:
         schema = section_schema(config, section)
     except ValueError:
         return []
-    entry = config[section]
+    entry = voice_config.client_behavior(config["behavior"], client) if section == "behavior" else config[section]
     return [{**d, "value": entry[d["key"]] if d["key"] in entry else (d["default"] if "default" in d else None)} for d in schema]
 
 
-def store_setting(data_dir: pl.Path, section: voice_config.Section, key: str, value: SettingValue) -> None:
-    """Check one value against the schema of its section and store it. Raises ValueError."""
+def store_setting(data_dir: pl.Path, section: voice_config.Section, key: str, value: SettingValue, client: str | None = None) -> None:
+    """Check one value against the schema of its section and store it, for one client when it names
+    one. Raises ValueError."""
     schema = section_schema(voice_config.load(data_dir), section)
-    voice_config.set_setting(data_dir, section, key, check_setting(schema, key, value))
+    checked = check_setting(schema, key, value)
+    if client is None:
+        voice_config.set_setting(data_dir, section, key, checked)
+    elif section == "behavior":
+        voice_config.set_client_behavior(data_dir, client, key, checked)
+    else:
+        raise ValueError(f"only a behavior has a value for each client, and {section} is a role")
+
+
+def clear_client_setting(data_dir: pl.Path, client: str, key: str) -> None:
+    """Remove the value that one client keeps for a behavior, so it follows the shared value again.
+    Raises ValueError for a key that is not a behavior."""
+    if all(d["key"] != key for d in behavior.BEHAVIOR_SCHEMA):
+        known = ", ".join(d["key"] for d in behavior.BEHAVIOR_SCHEMA)
+        raise ValueError(f"unknown behavior: {key} (behaviors: {known})")
+    voice_config.set_client_behavior(data_dir, client, key, None)
 
 
 def store_voice(data_dir: pl.Path, voice_id: str) -> None:

@@ -10,11 +10,11 @@ import pytest
 import voice.config as vc
 from aiohttp.test_utils import TestClient
 from voice import providers
-from voice.engine import turns
+from voice.engine import behavior, turns
 from voice.providers.base import Verdict
 from voice.settings import JsonValue
 
-from .fakes import FakeJudge, FakeStream, FakeStt, FakeTts, frames_until, next_frame, voice_service
+from .fakes import FakeDetector, FakeJudge, FakeStream, FakeStt, FakeTts, frames_until, next_frame, opened, voice_service
 
 MIC = {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1}
 STOP_VERDICT: Verdict = {"said_to": "agent", "wants_stop": True}
@@ -29,11 +29,11 @@ def start(delivery: str = "url", formats: tuple[str, ...] = ("mp3_44100", "mp3_2
 async def session(
     client: TestClient, stt: FakeStt, first: dict[str, JsonValue] | None = None
 ) -> tp.AsyncIterator[tuple[aiohttp.ClientWebSocketResponse, FakeStream]]:
-    """An open session, after its first `state` frame."""
+    """An open session, after its first `state` frame, and its STT stream once the session reads it."""
     async with client.ws_connect("/voice/session") as ws:
         await ws.send_json(first if first is not None else start())
         assert await next_frame(ws) == {"type": "state", "value": "listening"}
-        yield ws, stt.streams[-1]
+        yield ws, await opened(stt)
 
 
 async def speak_and_start(ws: aiohttp.ClientWebSocketResponse, play_id: str = "r1", text: str = "It will be sunny.") -> dict[str, JsonValue]:
@@ -325,14 +325,37 @@ def test_the_stored_behavior_takes_barge_in_away_from_every_session(tmp_path: pl
     asyncio.run(scenario())
 
 
-def test_a_change_of_a_behavior_during_a_session_does_not_change_that_session(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
-    async def scenario() -> None:
-        async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
-            vc.set_setting(tmp_path, "behavior", "barge_in", False)
-            await speak_and_start(ws)
-            await stream.emit("transcription", "mhm")
+def test_a_session_reads_the_behaviors_of_its_own_client(tmp_path: pl.Path, stt: FakeStt, tts: FakeTts) -> None:
+    vc.set_client_behavior(tmp_path, "whatsapp-call", "barge_in", False)
 
-            assert await frames_until(ws, "pause_playback") == [{"type": "transcript", "text": "mhm"}, {"type": "pause_playback"}]
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt, start(client="whatsapp-call")) as (ws, stream):
+            await speak_and_start(ws)
+            await stream.emit("transcription", "hello")
+
+            assert await frames_until(ws, "turn_start") == [{"type": "transcript", "text": "hello"}, {"type": "turn_start"}]
+
+    asyncio.run(scenario())
+
+
+def test_a_change_of_a_behavior_applies_to_a_session_that_is_open(
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, wake_model: FakeDetector, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(behavior, "MIN_FOLLOW_UP_SECS", 0)
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, _stream):
+            # The wake word frames show when the session read each change.
+            vc.mutate(tmp_path, lambda cfg: {**cfg, "behavior": {"barge_in": False, "wake_word": True, "wake_word_follow_up_secs": 0}})
+            assert await next_frame(ws) == {"type": "wake_listening", "value": True}
+            vc.set_setting(tmp_path, "behavior", "wake_word", False)
+            assert await next_frame(ws) == {"type": "wake_listening", "value": False}
+            await opened(stt)
+
+            await speak_and_start(ws)
+            await stt.streams[-1].emit("transcription", "mhm")
+
+            assert await frames_until(ws, "turn_start") == [{"type": "transcript", "text": "mhm"}, {"type": "turn_start"}]
 
     asyncio.run(scenario())
 
@@ -458,8 +481,6 @@ ENDED_ROWS = [
         "unsupported_format",
     ),
     ("the tts provider can make none of the formats", "ok", start(formats=("opus_48000", "flac")), "unsupported_format"),
-    ("the stt provider refuses the connection", "failed", start(), "stt_failed"),
-    ("the stt provider is at its limit of sessions", "limit", start(), "stt_limit"),
 ]
 
 
@@ -470,13 +491,28 @@ def test_a_session_that_cannot_start_ends_with_its_reason(
     monkeypatch.setitem(providers.TTS, "fake", FakeTts())
     vc.connect(tmp_path, "tts", "fake", {})
     if stt_setup is not None:
-        refuse: tp.Literal["failed", "limit"] | None = "failed" if stt_setup == "failed" else "limit" if stt_setup == "limit" else None
-        monkeypatch.setitem(providers.STT, "fake", FakeStt(refuse=refuse))
+        monkeypatch.setitem(providers.STT, "fake", FakeStt())
         vc.connect(tmp_path, "stt", "fake", {})
 
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
             await ws.send_json(first)
+            assert await next_frame(ws) == {"type": "ended", "reason": reason}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("refuse", "reason"), [("failed", "stt_failed"), ("limit", "stt_limit")])
+def test_a_session_whose_stt_refuses_the_stream_ends_with_the_reason(
+    tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch, refuse: tp.Literal["failed", "limit"], reason: str
+) -> None:
+    monkeypatch.setitem(providers.STT, "fake", FakeStt(refuse=refuse))
+    vc.connect(tmp_path, "stt", "fake", {})
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, client.ws_connect("/voice/session") as ws:
+            await ws.send_json(start())
+            assert await next_frame(ws) == {"type": "state", "value": "listening"}
             assert await next_frame(ws) == {"type": "ended", "reason": reason}
 
     asyncio.run(scenario())

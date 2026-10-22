@@ -5,8 +5,9 @@ import pathlib as pl
 import pytest
 import voice.config as vc
 from voice import providers
+from voice.engine import detector, wake
 
-from .fakes import FakeJudge, FakeStt, FakeTts
+from .fakes import FakeDetector, FakeJudge, FakeStt, FakeTts
 
 
 @pytest.fixture
@@ -31,4 +32,22 @@ def judge(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeJudge:
     monkeypatch.setitem(providers.JUDGES, "fake", fake)
     vc.connect(tmp_path, "judge", "fake", {})
     vc.set_enabled(tmp_path, "judge", True)
+    return fake
+
+
+@pytest.fixture
+def wake_model(monkeypatch: pytest.MonkeyPatch, tmp_path: pl.Path) -> FakeDetector:
+    """A model file for the default phrase, which loads as the fake detector. A phrase with no
+    file fails to load as a real one does."""
+    fake = FakeDetector()
+
+    def load(path: pl.Path) -> FakeDetector:
+        if not path.is_file():
+            raise detector.DetectorError(f"no wake word model at {path}")
+        return fake
+
+    monkeypatch.setattr(detector, "load", load)
+    model = wake.model_path(tmp_path, "hey aria")
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"onnx")
     return fake

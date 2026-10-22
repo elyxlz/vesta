@@ -2,6 +2,7 @@ import { createBrowserBridge } from "./browser";
 import { createElectronBridge } from "./electron";
 import type { NativeBridge, Runtime, VestaNativeApi } from "./types";
 import type { Platform } from "@/lib/platform";
+import type { ClientKind } from "@vesta/core";
 
 export type { NativeBridge, NativeGeolocationFix } from "./types";
 
@@ -32,6 +33,8 @@ export const native: NativeBridge = selectNativeBridge(
 export interface RuntimeInfo {
   runtime: Runtime;
   platform: Platform;
+  /** The client kind this app reports to vestad and to the voice service. */
+  clientKind: ClientKind;
   /** Running inside the Electron desktop app. */
   isDesktopApp: boolean;
   /** Desktop OS (any runtime). */
@@ -52,6 +55,7 @@ const { platform } = native;
 export const runtimeInfo: RuntimeInfo = {
   runtime: native.runtime,
   platform,
+  clientKind: isDesktopApp ? "desktop" : "web",
   isDesktopApp,
   isDesktop:
     platform === "macos" || platform === "windows" || platform === "linux",
