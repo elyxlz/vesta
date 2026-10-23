@@ -1,17 +1,15 @@
 import { Pressable, StyleSheet, View } from "react-native";
 import Reanimated, {
   Easing,
+  FadeIn,
   FadeInUp,
+  FadeOut,
   FadeOutDown,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  splitSpokenTail,
-  type AgentRow,
-  type ConversationPhase,
-  type OrbMotion,
-} from "@vesta/core";
+import { splitSpokenTail, type AgentRow, type OrbMotion } from "@vesta/core";
 import { AgentOrb } from "@/components/AgentOrb";
+import { FormSwitch } from "@/components/ui/form-switch";
 import { Text } from "@/components/ui/Typography";
 import { fontNames } from "@/theme/typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -31,14 +29,9 @@ const ORB_EXIT_MS = 270;
 const ROW_ENTER_MS = 380;
 const ROW_ENTER_DELAY_MS = 15;
 const ROW_EXIT_MS = 190;
-
-const PHASE_LABELS: Record<ConversationPhase, string> = {
-  connecting: "connecting…",
-  listening: "listening",
-  thinking: "thinking",
-  speaking: "speaking",
-  muted: "muted",
-};
+const WAKE_ENTER_DELAY_MS = 120;
+const PANEL_PADDING_TOP = 4;
+const PANEL_PADDING_HORIZONTAL = 8;
 
 function RoundControl({
   label,
@@ -77,25 +70,30 @@ function RoundControl({
 // The live conversation surface: the agent's real status orb with voice motion overlaid, and one
 // row of controls, the mirror of web's panel. Your words take the pill over as you speak, the
 // freshest one bold so the eye can ride the stream; between turns the pill shows the phase.
+// `wakeWordOn` is null for a voice service with no wake word, which shows no toggle.
 export function VoiceConversationPanel({
   agent,
   name,
-  phase,
+  label,
   motion,
   transcript,
   micMuted,
+  wakeWordOn,
   height,
   onToggleMute,
+  onToggleWakeWord,
   onEnd,
 }: {
   agent: AgentRow | null;
   name: string;
-  phase: ConversationPhase;
+  label: string;
   motion: OrbMotion | undefined;
   transcript: string;
   micMuted: boolean;
+  wakeWordOn: boolean | null;
   height: number;
   onToggleMute: () => void;
+  onToggleWakeWord: () => void;
   onEnd: () => void;
 }) {
   const { colors } = usePreferences();
@@ -123,6 +121,31 @@ export function VoiceConversationPanel({
           />
         ) : null}
       </Reanimated.View>
+      {wakeWordOn === null ? null : (
+        <Reanimated.View
+          entering={FadeIn.duration(ROW_ENTER_MS)
+            .delay(WAKE_ENTER_DELAY_MS)
+            .easing(SHEET_EASE)}
+          exiting={FadeOut.duration(ROW_EXIT_MS).easing(SHEET_EASE)}
+          style={styles.wakeCorner}
+        >
+          <Pressable
+            accessibilityLabel="Wake word"
+            accessibilityRole="switch"
+            accessibilityState={{ checked: wakeWordOn }}
+            onPress={onToggleWakeWord}
+            style={[styles.wakeChip, { backgroundColor: colors.input }]}
+          >
+            <Text style={[styles.wakeLabel, { color: colors.secondaryText }]}>
+              wake word
+            </Text>
+            {/* The chip is the control; the switch only shows its state. */}
+            <View pointerEvents="none">
+              <FormSwitch value={wakeWordOn} onValueChange={onToggleWakeWord} />
+            </View>
+          </Pressable>
+        </Reanimated.View>
+      )}
       <Reanimated.View
         entering={FadeInUp.duration(ROW_ENTER_MS)
           .delay(ROW_ENTER_DELAY_MS)
@@ -136,7 +159,16 @@ export function VoiceConversationPanel({
           active={micMuted}
           onPress={onToggleMute}
         />
-        <View style={[styles.pill, { backgroundColor: colors.input }]}>
+        {/* The pill takes the bubble color while the microphone is transcribing the user. */}
+        <View
+          style={[
+            styles.pill,
+            {
+              backgroundColor:
+                motion === "listening" ? colors.bubble : colors.input,
+            },
+          ]}
+        >
           {/* The words are anchored to the pill's bottom inside a three-line clip, so the newest
               word always sits at the bottom and older lines run out the top. */}
           {spoken ? (
@@ -162,7 +194,7 @@ export function VoiceConversationPanel({
                 { color: colors.secondaryText },
               ]}
             >
-              {PHASE_LABELS[phase]}
+              {label}
             </Text>
           )}
         </View>
@@ -175,8 +207,8 @@ export function VoiceConversationPanel({
 const styles = StyleSheet.create({
   // Laid out inside the composer's glass surface, which supplies the card.
   panel: {
-    paddingHorizontal: 8,
-    paddingTop: 4,
+    paddingHorizontal: PANEL_PADDING_HORIZONTAL,
+    paddingTop: PANEL_PADDING_TOP,
     paddingBottom: 8,
     gap: 16,
     justifyContent: "flex-end",
@@ -192,6 +224,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // The wake word toggle sits in the card's top right corner, above the orb layer.
+  wakeCorner: {
+    position: "absolute",
+    top: PANEL_PADDING_TOP,
+    right: PANEL_PADDING_HORIZONTAL,
+  },
+  wakeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    height: CONTROL_SIZE,
+    borderRadius: CONTROL_SIZE / 2,
+    paddingLeft: 12,
+    paddingRight: 4,
+  },
+  wakeLabel: { fontSize: 13, fontFamily: fontNames.sans.native["400"] },
   controlsRow: {
     flexDirection: "row",
     alignItems: "flex-end",

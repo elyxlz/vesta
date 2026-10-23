@@ -17,6 +17,7 @@ function recorder() {
     listening: [] as boolean[],
     speaking: [] as boolean[],
     userSpeaking: [] as boolean[],
+    wakeWaiting: [] as boolean[],
     inactivity: 0,
   };
   const callbacks: VoiceSessionCallbacks = {
@@ -27,6 +28,7 @@ function recorder() {
     onListeningChange: (l) => events.listening.push(l),
     onSpeakingChange: (s) => events.speaking.push(s),
     onUserSpeakingChange: (s) => events.userSpeaking.push(s),
+    onWakeWaitingChange: (w) => events.wakeWaiting.push(w),
     onInactivityStop: () => (events.inactivity += 1),
   };
   return { events, callbacks };
@@ -226,6 +228,16 @@ describe("the voice session", () => {
     socket.emit({ type: "turn_dropped", text: "", kind: null });
     expect(events.userSpeaking).toEqual([true, false]);
     expect(events.sends).toEqual([]);
+  });
+
+  it("a conversation reports the wake gate until the session ends", async () => {
+    const { session, events, startAnd } = setup();
+    const socket = await startAnd("conversation");
+    socket.emit({ type: "wake_listening", value: true });
+    socket.emit({ type: "wake_listening", value: false });
+    socket.emit({ type: "wake_listening", value: true });
+    session.stop();
+    expect(events.wakeWaiting).toEqual([true, false, true, false]);
   });
 
   it("a session that ends in the middle of a turn closes the user's turn", async () => {

@@ -2,9 +2,13 @@ import { useState } from "react";
 import { motion as m } from "motion/react";
 import { Mic, MicOff, X } from "lucide-react";
 import {
+  conversationMotion,
   conversationPhase,
+  conversationPhaseLabel,
   conversationStage,
   splitSpokenTail,
+  wakeWordBehavior,
+  type OrbMotion,
 } from "@vesta/core";
 import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
@@ -12,6 +16,7 @@ import { sheetEase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider/context";
 import { useVoice } from "@/stores/use-voice";
+import { WakeWordSwitch } from "./wake-word-switch";
 
 const ORB_SIZE = 168;
 
@@ -20,11 +25,12 @@ const ORB_SIZE = 168;
 // The recording red shared by every active voice control (the composer's stop button, the
 // panel's muted mic).
 export const RECORDING_BUTTON = "bg-red-500 text-white hover:bg-red-600";
+const ROUND_CONTROL = "size-10 rounded-full [&_svg]:size-4.5";
 
 interface LiveFrame {
   transcript: string;
   phase: string;
-  motion: "talking" | "listening" | undefined;
+  motion: OrbMotion | undefined;
 }
 
 function sameFrame(a: LiveFrame, b: LiveFrame): boolean {
@@ -45,26 +51,21 @@ export function ConversationPanel() {
   const liveTranscript = useVoice((s) => s.liveTranscript);
   const micMuted = useVoice((s) => s.micMuted);
   const isSpeaking = useVoice((s) => s.isSpeaking);
+  const wakeWaiting = useVoice((s) => s.wakeWaiting);
+  const behaviors = useVoice((s) => s.behaviors);
+  const wake = wakeWordBehavior(behaviors?.settings);
   const stopVoice = useVoice((s) => s.stopVoice);
   const toggleMicMuted = useVoice((s) => s.toggleMicMuted);
 
-  const thinking = orbState === "thinking";
   // Your words take the pill over as you speak, the freshest one bold so the eye can ride the
   // stream; between turns the pill falls back to the phase.
   const transcript = liveTranscript.trim();
-  const livePhase = conversationPhase({
-    listening,
-    micMuted,
-    speaking: isSpeaking,
-    thinking,
-  });
-  // The status decides the look; the voice phase only decides the motion. A muted mic or a
-  // still-dialing session holds the orb still rather than pretending to listen.
-  const liveMotion = isSpeaking
-    ? ("talking" as const)
-    : listening && !micMuted
-      ? ("listening" as const)
-      : undefined;
+  const voice = { listening, micMuted, speaking: isSpeaking, wakeWaiting };
+  const livePhase = conversationPhaseLabel(
+    conversationPhase({ ...voice, thinking: orbState === "thinking" }),
+    wake?.phrase ?? null,
+  );
+  const liveMotion = conversationMotion(voice);
   // The last live frame, held so the exit morph keeps rendering it after the session ends.
   const [lastShown, setLastShown] = useState({
     transcript: "",
@@ -82,7 +83,8 @@ export function ConversationPanel() {
   );
 
   return (
-    <div className="flex h-full flex-col items-center justify-end gap-4 px-4 pt-3 pb-4">
+    <div className="relative flex h-full flex-col items-center justify-end gap-4 px-4 pt-3 pb-4">
+      <WakeWordSwitch />
       {/* Staggered mount slide inside the still-growing clip window: orb first, action bar a
           beat behind, both revealed by the pill's height spring as it clears them. */}
       <m.div
@@ -121,17 +123,20 @@ export function ConversationPanel() {
           onClick={toggleMicMuted}
           aria-pressed={micMuted}
           aria-label={micMuted ? "unmute microphone" : "mute microphone"}
-          className={cn(
-            "size-10 rounded-full [&_svg]:size-4.5",
-            micMuted && RECORDING_BUTTON,
-          )}
+          className={cn(ROUND_CONTROL, micMuted && RECORDING_BUTTON)}
         >
           {micMuted ? <MicOff /> : <Mic />}
         </Button>
         <div className="flex min-w-0 flex-1 justify-center px-3">
           {/* Two lines at most, clipped from the top, so the newest words are always the
               visible ones while a long turn streams in. */}
-          <div className="w-full min-w-0 rounded-2xl bg-muted px-4 py-1.5">
+          {/* The pill takes the bubble color while the microphone is transcribing the user. */}
+          <div
+            className={cn(
+              "w-full min-w-0 rounded-2xl px-4 py-1.5 transition-colors duration-300",
+              motion === "listening" ? "bg-bubble" : "bg-muted",
+            )}
+          >
             <div
               className={cn(
                 "flex max-h-[2lh] flex-col justify-end overflow-hidden text-sm break-words text-muted-foreground",
@@ -158,7 +163,7 @@ export function ConversationPanel() {
           onClick={stopVoice}
           aria-label="end conversation"
           title="end conversation"
-          className="size-10 rounded-full [&_svg]:size-4.5"
+          className={ROUND_CONTROL}
         >
           <X />
         </Button>

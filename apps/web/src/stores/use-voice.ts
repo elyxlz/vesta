@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { usePreferences } from "@/stores/use-preferences";
 import {
   createVoiceSession,
+  WAKE_WORD_SETTING,
+  wakeWordBehavior,
   type InputMethod,
   type ServiceInfo,
   type VoiceMode,
@@ -14,6 +16,7 @@ import {
   browserSpeaker,
   fetchVoiceSettings,
   prepareSpeechUrl,
+  setVoiceBehavior,
   voicePlayUrl,
   voiceWsUrl,
   type SttStatus,
@@ -57,6 +60,8 @@ interface VoiceState {
   listening: boolean;
   liveTranscript: string;
   voiceError: string | null;
+  // A conversation with the wake word on: the engine waits for the phrase.
+  wakeWaiting: boolean;
 
   // TTS
   isSpeaking: boolean;
@@ -81,6 +86,8 @@ interface VoiceState {
   toggleMuted: () => void;
   toggleMicMuted: () => void;
   setConversationAutoEnd: (value: boolean) => void;
+  // Turns the wake word of this app on or off. An open conversation follows at once.
+  toggleWakeWord: () => void;
   // The chat's send, its input reset (a voice mode takes the composer over, so typed text is
   // dropped when one starts), and the chat socket's speaking report for a conversation.
   registerChat: (
@@ -166,6 +173,7 @@ export const useVoice = create<VoiceState>((set, get) => {
         }),
       onListeningChange: (listening) => set({ listening }),
       onSpeakingChange: (isSpeaking) => set({ isSpeaking }),
+      onWakeWaitingChange: (wakeWaiting) => set({ wakeWaiting }),
       onUserSpeakingChange: (speaking) => reportSpeakingCallback?.(speaking),
       onInactivityStop: () =>
         useToastStore
@@ -199,6 +207,7 @@ export const useVoice = create<VoiceState>((set, get) => {
     listening: false,
     liveTranscript: "",
     voiceError: null,
+    wakeWaiting: false,
 
     isSpeaking: false,
     muted: usePreferences.getState().voiceMuted,
@@ -261,6 +270,28 @@ export const useVoice = create<VoiceState>((set, get) => {
     setConversationAutoEnd: (value) => {
       usePreferences.getState().update({ conversationAutoEnd: value });
       set({ conversationAutoEnd: value });
+    },
+    toggleWakeWord: () => {
+      const { agentName, behaviors } = get();
+      const wake = wakeWordBehavior(behaviors?.settings);
+      if (!agentName || !behaviors || !wake) return;
+      const value = !wake.on;
+      // Shown at once; the answer of the set replaces it.
+      set({
+        behaviors: {
+          settings: behaviors.settings.map((s) =>
+            s.key === WAKE_WORD_SETTING ? { ...s, value } : s,
+          ),
+        },
+      });
+      setVoiceBehavior(agentName, WAKE_WORD_SETTING, value)
+        .then((saved) => set({ behaviors: saved }))
+        .catch(() => {
+          useToastStore
+            .getState()
+            .show("error", "could not change the wake word");
+          get().refreshVoiceStatus();
+        });
     },
     toggleMuted: () => {
       const next = !get().muted;

@@ -15,6 +15,8 @@ export type EngineFrame =
   | { type: "pause_playback" }
   | { type: "resume_playback" }
   | { type: "stop_playback" }
+  // With the wake word on: true while the engine waits for the phrase, false while it listens.
+  | { type: "wake_listening"; value: boolean }
   // `id` names the reply that cannot play; null for an error of the session.
   | { type: "error"; id: string | null; message: string }
   | { type: "ended"; reason: string };
@@ -30,7 +32,7 @@ function parsed(data: string): Record<string, unknown> | null {
 export function parseEngineFrame(data: string): EngineFrame | null {
   const body = parsed(data);
   if (!body) return null;
-  const { type, text, id, url, reason, message } = body;
+  const { type, text, id, url, reason, message, value } = body;
   switch (type) {
     case "state":
     case "turn_start":
@@ -47,6 +49,8 @@ export function parseEngineFrame(data: string): EngineFrame | null {
       return typeof id === "string" && typeof url === "string"
         ? { type, id, url }
         : null;
+    case "wake_listening":
+      return typeof value === "boolean" ? { type, value } : null;
     case "error":
       return typeof message === "string"
         ? { type, id: typeof id === "string" ? id : null, message }

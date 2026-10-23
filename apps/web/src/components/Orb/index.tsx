@@ -106,7 +106,13 @@ export function Orb({
     <div
       role="img"
       aria-label={label ?? `agent ${state}`}
-      style={{ width: size, height: size, position: "relative" }}
+      style={{
+        width: size,
+        height: size,
+        position: "relative",
+        opacity: visual.opacity,
+        transition: "opacity 0.5s ease-out",
+      }}
     >
       <div
         style={{
