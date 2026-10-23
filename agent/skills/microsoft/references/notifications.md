@@ -9,7 +9,7 @@ microsoft notify add --account user@example.com --all                 # watch ev
 microsoft notify remove --account user@example.com --folder inbox     # stop notifying on inbox
 ```
 
-`notify add --folder` validates the folder exists first. Removing every folder mutes the account. The watch list lives in `~/.microsoft/notify.json`. Watching is time-based: it fires on **new arrivals** (including rule-routed mail), not on messages you manually move into a folder.
+`notify add --folder` validates the folder exists first. Removing every folder mutes the account. The watch list lives in `~/.microsoft/notify.json`. Watching is time-based: it fires on **new arrivals** (including rule-routed mail), not on messages you manually move into a folder. `notify list` reads that file, so it proves the configuration, not the polling: after an add, check `~/.microsoft/logs/monitor.log` once for a `Found N new emails for <account> in <folder>` line naming the new folder.
 
 Once an account has authorized Teams (via `auth setup`), the daemon also watches its Teams chats and writes one notification per incoming chat message (source `microsoft`, type `teams`, with `sender`, `topic`, `chat_id`; your own outgoing messages are skipped). Teams chat notifications interrupt by default, like a direct message. Reply with `microsoft teams send --chat <chat_id>`.
 
