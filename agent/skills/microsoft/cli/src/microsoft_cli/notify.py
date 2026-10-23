@@ -34,9 +34,18 @@ def _save(path: Path, data: dict[str, list[str]]) -> None:
     tmp.replace(path)
 
 
+def _key(data: dict[str, list[str]], account_email: str) -> str:
+    """The entry for an address, matched case-insensitively: MSAL reports the account's username in
+    whatever case it was registered with (e.g. "Name@hotmail.com"), while the CLI is usually called
+    with a lowercase address, so an exact lookup silently fell back to INBOX-only for the monitor."""
+    folded = account_email.casefold()
+    return next((k for k in data if k.casefold() == folded), account_email)
+
+
 def get_notify_folders(path: Path, account_email: str) -> list[str]:
     data = _load(path)
-    return data[account_email] if account_email in data else list(DEFAULT_NOTIFY_FOLDERS)
+    key = _key(data, account_email)
+    return data[key] if key in data else list(DEFAULT_NOTIFY_FOLDERS)
 
 
 def list_notify(config: Config, _client: httpx.Client, *, account_email: str) -> dict[str, object]:
@@ -50,6 +59,8 @@ def add_notify(
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     path = notify_file_for(config)
     data = _load(path)
+
+    account_email = _key(data, account_email)
 
     if all_folders:
         server_folders = folders.fetch_folders_cfg(config, client, account_id)
@@ -78,6 +89,7 @@ def remove_notify(config: Config, _client: httpx.Client, *, account_email: str, 
     auth.get_account_id_by_email(account_email, config.cache_file)
     path = notify_file_for(config)
     data = _load(path)
+    account_email = _key(data, account_email)
     current = data[account_email] if account_email in data else list(DEFAULT_NOTIFY_FOLDERS)
     current = [f for f in current if f.casefold() != folder.casefold()]
     data[account_email] = current
