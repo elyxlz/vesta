@@ -38,6 +38,8 @@ export interface VoiceSessionCallbacks {
   onModeChange: (mode: VoiceMode | null) => void;
   onListeningChange: (listening: boolean) => void;
   onSpeakingChange: (speaking: boolean) => void;
+  // A conversation with the wake word on: true while the engine waits for the phrase.
+  onWakeWaitingChange: (waiting: boolean) => void;
   // A conversation ended itself after the inactivity window; the client tells the user.
   onInactivityStop: () => void;
   // The user's live turn in a conversation: true at turn start, false at turn end or when
@@ -192,6 +194,7 @@ export function createVoiceSession(
           sessionSpeaking = value;
           reportSpeaking();
         },
+        onWakeWaitingChange: callbacks.onWakeWaitingChange,
         onPlayFailed: callbacks.onError,
         onError: (message) => {
           if (engine !== session) return;

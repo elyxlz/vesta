@@ -76,6 +76,7 @@ export function useLiveVoice({
   // A muted mic streams silence rather than nothing, so the session stays up.
   const [micMuted, setMicMuted] = useState(false);
   const micMutedRef = useRef(false);
+  const [wakeWaiting, setWakeWaiting] = useState(false);
 
   // Live-updated refs, so the session (created once per agent) always reads the current
   // callbacks and settings.
@@ -265,6 +266,7 @@ export function useLiveVoice({
         },
         onListeningChange: setListening,
         onSpeakingChange: setSpeaking,
+        onWakeWaitingChange: setWakeWaiting,
         onUserSpeakingChange: (speaking) =>
           callbacksRef.current.onUserSpeakingChange(speaking),
         onInactivityStop: () => callbacksRef.current.onInactivityStop(),
@@ -299,6 +301,7 @@ export function useLiveVoice({
     speaking,
     ttsEnabled,
     micMuted,
+    wakeWaiting,
     toggleMicMuted: () => setMicMuted((muted) => !muted),
     start,
     stop,

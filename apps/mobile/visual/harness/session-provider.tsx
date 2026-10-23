@@ -286,6 +286,22 @@ const voiceBehaviors: VoiceBehaviors = {
       description: "talk over a spoken reply to stop it",
       value: true,
     },
+    {
+      key: "wake_word",
+      type: "bool",
+      label: "wake word",
+      description:
+        "listen only after the wake phrase; until then no audio goes to speech to text",
+      value: true,
+    },
+    {
+      key: "wake_word_phrase",
+      type: "text",
+      label: "wake phrase",
+      description:
+        "the phrase that starts a conversation; it needs a trained model, see the voice setup",
+      value: "hey aria",
+    },
   ],
 };
 // More voices than the system alert holds, so the voice setting opens the list screen.

@@ -649,6 +649,18 @@
       "group": "Chat"
     },
     {
+      "id": "chat-voice-conversation",
+      "title": "Chat, voice conversation",
+      "description": "The composer as the live conversation panel: the agent orb with voice motion, mute, the wake word toggle, the words spoken so far with the newest bold, and end.",
+      "group": "Chat"
+    },
+    {
+      "id": "chat-voice-conversation-wake",
+      "title": "Chat, voice conversation waiting for the wake word",
+      "description": "The conversation panel before the wake phrase: the orb dim and all but still, and the pill that names the phrase to say.",
+      "group": "Chat"
+    },
+    {
       "id": "chat-markdown",
       "title": "Chat, rich reply",
       "description": "A reply with heading, code block, table, list, and link.",

@@ -45,6 +45,9 @@ export interface EngineSessionCallbacks {
   // A started turn ended and goes to nobody.
   onTurnDropped: () => void;
   onSpeakingChange: (speaking: boolean) => void;
+  // True while the engine waits for the wake phrase; false when it listens and when the session
+  // ends.
+  onWakeWaitingChange: (waiting: boolean) => void;
   // One play could not play. The session continues.
   onPlayFailed: (message: string) => void;
   // The session is over and did not end by `stop`.
@@ -103,6 +106,12 @@ export function createEngineSession(
   // Replies asked for while the session starts; sent when the engine accepts it.
   let waitingReplies: string[] = [];
   let replies = 0;
+  let wakeWaiting = false;
+  const setWakeWaiting = (value: boolean): void => {
+    if (wakeWaiting === value) return;
+    wakeWaiting = value;
+    callbacks.onWakeWaitingChange(value);
+  };
   // The engine's error and the speaker can both report one failed reply; the user hears of it once.
   const failedReplies = new Set<string>();
   const replyFailed = (id: string, message: string): void => {
@@ -138,6 +147,7 @@ export function createEngineSession(
     pendingBytes = 0;
     waitingReplies = [];
     failedReplies.clear();
+    setWakeWaiting(false);
     plays.stop();
     if (socket) {
       socket.onopen = null;
@@ -234,6 +244,9 @@ export function createEngineSession(
         break;
       case "stop_playback":
         plays.stop();
+        break;
+      case "wake_listening":
+        setWakeWaiting(frame.value);
         break;
       case "error":
         // With an id, a reply the engine could not say: TTS is off, or its synthesis failed.
