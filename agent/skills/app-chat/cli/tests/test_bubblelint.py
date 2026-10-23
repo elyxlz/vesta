@@ -38,6 +38,10 @@ def test_bubble_lint_passes():
         "1. eggs\n2) milk",
         "here are steps:\n1. open\n2. run",
         "- eggs\n- milk",
+        # Two or more line-leading letter markers make a lettered list.
+        "a. bacon bagels\nb. avo on sourdough\nc. comte toastie",
+        "a) bacon bagels\nb) avo on sourdough",
+        "options:\nA. bacon\nB. avo",
     ]:
         assert bubble_lint_reason(msg) == "", msg
 
@@ -59,6 +63,10 @@ def test_bubble_lint_blocks():
         # "2." that still reads as a wall, and a real full stop inside an item still trips.
         "1. Hello 2. Hi",
         "1. one thought. and another",
+        # A lone letter marker is prose, and a wall inside a lettered item still trips.
+        "a. foo. bar",
+        "I. went home. then slept",
+        "a. bacon. then eggs\nb. avo",
         (
             "so the thing about the deploy is that it kept timing out on the build step "
             "and i had to bump the worker memory and also tweak the cache config and re-run "
@@ -88,5 +96,9 @@ def test_text_after_full_stop():
         ("1.", False),
         ("1. one thought. and another", True),
         ("1. Hello 2. Hi", True),
+        ("a. bacon bagels\nb. avo on sourdough", False),
+        ("a) bacon\nb) avo", False),
+        ("A. Smith said hi. then left", True),
+        ("a. bacon. then eggs\nb. avo", True),
     ]:
         assert text_after_full_stop(msg) is want, msg
