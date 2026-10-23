@@ -130,7 +130,13 @@ export function ConversationPanel() {
         <div className="flex min-w-0 flex-1 justify-center px-3">
           {/* Two lines at most, clipped from the top, so the newest words are always the
               visible ones while a long turn streams in. */}
-          <div className="w-full min-w-0 rounded-2xl bg-muted px-4 py-1.5">
+          {/* The pill takes the bubble color while the microphone is transcribing the user. */}
+          <div
+            className={cn(
+              "w-full min-w-0 rounded-2xl px-4 py-1.5 transition-colors duration-300",
+              motion === "listening" ? "bg-bubble" : "bg-muted",
+            )}
+          >
             <div
               className={cn(
                 "flex max-h-[2lh] flex-col justify-end overflow-hidden text-sm break-words text-muted-foreground",

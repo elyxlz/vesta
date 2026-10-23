@@ -159,7 +159,16 @@ export function VoiceConversationPanel({
           active={micMuted}
           onPress={onToggleMute}
         />
-        <View style={[styles.pill, { backgroundColor: colors.input }]}>
+        {/* The pill takes the bubble color while the microphone is transcribing the user. */}
+        <View
+          style={[
+            styles.pill,
+            {
+              backgroundColor:
+                motion === "listening" ? colors.bubble : colors.input,
+            },
+          ]}
+        >
           {/* The words are anchored to the pill's bottom inside a three-line clip, so the newest
               word always sits at the bottom and older lines run out the top. */}
           {spoken ? (
