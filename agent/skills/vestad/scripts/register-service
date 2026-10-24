@@ -20,6 +20,9 @@
 #   PORT=$(register-service file-host --public)
 
 set -euo pipefail
+# Re-read the live vestad env: a vestad restart rewrites /run/vestad-env (new port),
+# but a long-lived agent process keeps the old values it inherited at boot.
+[ -r /run/vestad-env ] && . /run/vestad-env
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 if [ "${2:-}" = "--public" ]; then
