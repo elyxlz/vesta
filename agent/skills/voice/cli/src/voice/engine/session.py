@@ -311,6 +311,7 @@ async def _open(app: web.Application, ws: web.WebSocketResponse, start: frames.S
         agent_name=os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else DEFAULT_AGENT_NAME,
         config_stamp=stamp,
     )
+    logger.info("session started: client=%s barge_in=%s wake_word=%s", session.client, start["barge_in"], start["wake_word"])
     await _apply_behavior(session, voice_config.client_behavior(config["behavior"], session.client))
     return session
 
@@ -519,7 +520,9 @@ def _drop_pending_ask(session: Session) -> None:
 
 
 def _without_phrase(session: Session, text: str, *, live: bool) -> str:
-    return wake.strip_phrase(text, session.wake.settings.phrase, live=live) if session.wake is not None else text
+    if session.wake is None or session.wake.settings.keep_phrase:
+        return text
+    return wake.strip_phrase(text, session.wake.settings.phrase, live=live)
 
 
 async def _on_live(session: Session, said: str) -> None:
@@ -622,8 +625,13 @@ async def _apply_behavior(session: Session, stored: Domain) -> None:
 
 
 def _active(session: Session) -> bool:
-    """The user talks, or a reply plays or waits to play."""
-    return session.turn.phase != "idle" or session.turn.segment_seen or bool(session.speaker.sent) or bool(session.speaker.held)
+    """The user talks."""
+    return session.turn.phase != "idle" or session.turn.segment_seen
+
+
+def _playing(session: Session) -> bool:
+    """A reply plays or waits to play."""
+    return bool(session.speaker.sent) or bool(session.speaker.held)
 
 
 def _stream(session: Session) -> wake.Stream:
@@ -691,6 +699,7 @@ async def _sync_gate(session: Session, item: Item | None) -> Outcome:
         active=_active(session),
         stream=_stream(session),
         now=time.monotonic(),
+        playing=_playing(session),
     )
     for action in actions:
         if action["type"] == "open_stream":

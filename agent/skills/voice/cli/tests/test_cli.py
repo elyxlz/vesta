@@ -17,6 +17,7 @@ BEHAVIOR_DEFAULTS: dict[str, JsonValue] = {
     "wake_word_phrase": "hey aria",
     "wake_word_threshold": 0.5,
     "wake_word_follow_up_secs": 5,
+    "wake_word_keep_phrase": False,
 }
 
 
@@ -181,9 +182,9 @@ def test_set_refuses_an_unknown_key_a_wrong_type_and_an_empty_text(home: pl.Path
     assert failure(capsys, "stt", "set", "eot_threshold", "0.7") == "unknown setting: eot_threshold (settings: address)"
     assert failure(capsys, "stt", "set", "address", " ") == "address must be text that is not empty"
     assert failure(capsys, "behavior", "set", "barge_in", "maybe") == "barge_in must be on or off, got 'maybe'"
-    assert (
-        failure(capsys, "behavior", "set", "idle_ms", "5")
-        == "unknown setting: idle_ms (settings: barge_in, wake_word, wake_word_phrase, wake_word_threshold, wake_word_follow_up_secs)"
+    assert failure(capsys, "behavior", "set", "idle_ms", "5") == (
+        "unknown setting: idle_ms (settings: barge_in, wake_word, wake_word_phrase, wake_word_threshold, "
+        "wake_word_follow_up_secs, wake_word_keep_phrase)"
     )
     assert failure(capsys, "tts", "set", "fake_voice", "v-other") == "tts has no selected provider; run `voice tts connect <provider>` first"
 

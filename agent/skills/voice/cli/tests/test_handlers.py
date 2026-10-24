@@ -217,6 +217,7 @@ def test_a_behavior_is_read_and_set_like_a_provider_setting(tmp_path: pl.Path) -
             ("wake_word_phrase", "text", "hey aria"),
             ("wake_word_threshold", "number", 0.5),
             ("wake_word_follow_up_secs", "number", 5),
+            ("wake_word_keep_phrase", "bool", False),
         ]
         async with client.post("/behavior/set", json={"key": "barge_in", "value": False}) as resp:
             assert (await resp.json())["settings"][0]["value"] is False
