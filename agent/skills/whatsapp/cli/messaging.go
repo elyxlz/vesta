@@ -212,7 +212,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, qu
 
 	time.Sleep(randomDelay(PreSendDelayMin, PreSendDelayMax))
 
-	resolvedText, mentionedJIDs := wac.parseMentions(message)
+	resolvedText, mentionedJIDs := wac.parseMentions(message, jid)
 
 	// Look up the sender of the quoted message if reply-to is set.
 	var quotedParticipant, quotedContent string
@@ -436,7 +436,12 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 
 // parseMentions finds @mention patterns in text, resolves them to JIDs,
 // and returns the modified text (with @phone format) and list of mentioned JIDs.
-func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
+// Mentions only make sense where the tagged person can be a participant, so a
+// destination that is not a group chat leaves the text untouched.
+func (wac *WhatsAppClient) parseMentions(text string, dest types.JID) (string, []string) {
+	if dest.Server != types.GroupServer {
+		return text, nil
+	}
 	matches := mentionPattern.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
 		return text, nil
@@ -460,7 +465,7 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 			}
 		}
 
-		jid, err := wac.ResolveRecipient(identifier)
+		jid, err := wac.resolveMentionExact(identifier)
 		if err != nil {
 			continue
 		}
@@ -477,6 +482,39 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 	}
 
 	return text, mentionedJIDs
+}
+
+// resolveMentionExact resolves a mention token only on an exact match: a phone
+// number, a full JID, or a saved contact whose name equals the token ignoring
+// case. Unlike ResolveRecipient it never falls back to a substring hit, so a
+// casual "@xy" cannot turn into a tag of a contact whose name merely contains it.
+func (wac *WhatsAppClient) resolveMentionExact(identifier string) (types.JID, error) {
+	if strings.Contains(identifier, "@") {
+		return types.ParseJID(identifier)
+	}
+	if digits := strings.TrimPrefix(identifier, "+"); isNumeric(digits) {
+		if err := errIfGroupIDDigits(digits); err != nil {
+			return types.JID{}, err
+		}
+		return types.NewJID(digits, types.DefaultUserServer), nil
+	}
+	if wac.store == nil {
+		return types.JID{}, fmt.Errorf("no contact store")
+	}
+	contacts, err := wac.store.SearchContacts(identifier, 50)
+	if err != nil {
+		return types.JID{}, err
+	}
+	var exact []Contact
+	for _, c := range contacts {
+		if nameEquals(c.Name, identifier) {
+			exact = append(exact, c)
+		}
+	}
+	if jid, handled, err := wac.preferExactContactMatch(exact, identifier); handled {
+		return jid, err
+	}
+	return types.JID{}, fmt.Errorf("no contact named exactly '%s'", identifier)
 }
 
 // buildMessage creates a waProto.Message, using ExtendedTextMessage with
