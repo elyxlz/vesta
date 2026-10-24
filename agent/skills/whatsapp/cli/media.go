@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -43,14 +44,27 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 		return "", fmt.Errorf("message ID cannot be empty")
 	}
 
-	jid, err := wac.ResolveRecipient(chatIdentifier)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve chat: %v", err)
+	// With no chat given, the store's id-only lookup supplies the message's chat.
+	var jid types.JID
+	if chatIdentifier != "" {
+		var err error
+		if jid, err = wac.ResolveRecipient(chatIdentifier); err != nil {
+			return "", fmt.Errorf("failed to resolve chat: %v", err)
+		}
 	}
 
+	errChatRequired := fmt.Errorf("--to is required (chat not found for this message id)")
 	mediaInfo, err := wac.store.GetMessageMediaInfo(messageID, jid.String())
+	if chatIdentifier == "" && errors.Is(err, errMessageNotFound) {
+		return "", errChatRequired
+	}
 	if err != nil {
 		return "", err
+	}
+	if chatIdentifier == "" {
+		if jid, err = types.ParseJID(mediaInfo.ChatJID); err != nil || jid.IsEmpty() {
+			return "", errChatRequired
+		}
 	}
 
 	directPath := extractDirectPath(mediaInfo.URL)
@@ -94,24 +108,10 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 		return "", fmt.Errorf("failed to download media: %v", err)
 	}
 
-	savePath := downloadPath
-	if savePath == "" {
-		downloadsDir := filepath.Join(wac.dataDir, "downloads")
-		if err := os.MkdirAll(downloadsDir, 0755); err != nil {
-			return "", fmt.Errorf("failed to create downloads directory: %v", err)
-		}
-		filename := mediaInfo.Filename
-		if filename == "" {
-			ext := getExtensionForMediaType(mediaInfo.MediaType)
-			filename = fmt.Sprintf("%s_%s%s", messageID, time.Now().Format("20060102_150405"), ext)
-		}
-		savePath = filepath.Join(downloadsDir, filename)
-	} else {
-		if err := validateFilePath(downloadPath); err != nil {
-			return "", fmt.Errorf("invalid download path: %v", err)
-		}
+	savePath, err := mediaSavePath(wac.dataDir, downloadPath, messageID, mediaInfo)
+	if err != nil {
+		return "", err
 	}
-
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
 		return "", fmt.Errorf("failed to create directory: %v", err)
 	}
@@ -205,6 +205,29 @@ func mediaTypeToString(mt whatsmeow.MediaType) string {
 	default:
 		return ""
 	}
+}
+
+// mediaSavePath is the downloads dir by default, or a file inside downloadPath when that is a directory.
+func mediaSavePath(dataDir, downloadPath, messageID string, mediaInfo *MediaInfo) (string, error) {
+	if downloadPath == "" {
+		return filepath.Join(dataDir, "downloads", mediaFilename(messageID, mediaInfo)), nil
+	}
+	if err := validateFilePath(downloadPath); err != nil {
+		return "", fmt.Errorf("invalid download path: %v", err)
+	}
+	if st, err := os.Stat(downloadPath); err == nil && st.IsDir() {
+		return filepath.Join(downloadPath, mediaFilename(messageID, mediaInfo)), nil
+	}
+	return downloadPath, nil
+}
+
+// mediaFilename is the stored filename, or "<id>_<timestamp><ext>" when the message has none.
+func mediaFilename(messageID string, mediaInfo *MediaInfo) string {
+	if name := filepath.Base(mediaInfo.Filename); mediaInfo.Filename != "" && name != "." && name != string(filepath.Separator) {
+		return name
+	}
+	ext := getExtensionForMediaType(mediaInfo.MediaType)
+	return fmt.Sprintf("%s_%s%s", messageID, time.Now().Format("20060102_150405"), ext)
 }
 
 func getExtensionForMediaType(mediaType string) string {
