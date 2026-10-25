@@ -111,6 +111,8 @@ Unless `wake_word_keep_phrase` is on, the phrase never reaches you: the session 
 
 A phrase needs its own trained model on this box. `voice status` shows its path and whether it is there, under `wake_word_model`. With no model, a session with the wake word on listens to everything, and the app says why. SETUP.md section 5 says how to get a model.
 
+Reading `wake word heard (score N)` in `~/agent/logs/voice.log`: a hit followed within a few seconds by a user message is the user, whatever its score, so check the next message before blaming a hit on the agent's own voice or the room. A hit with no user message after it is the false-wake candidate.
+
 | Behavior | Default | What it does |
 | --- | --- | --- |
 | `wake_word` | off | wait for the phrase before speech to text hears anything |
