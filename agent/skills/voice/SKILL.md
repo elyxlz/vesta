@@ -105,18 +105,21 @@ You do not need to check which provider is selected before each reply. While `tt
 
 ## Wake word
 
-With `wake_word` on, a session sends no audio to speech to text until the user says the wake phrase (`wake_word_phrase`, default `hey aria`). A detector on this box listens for it. It is the same on every client of the engine: an app conversation, a WhatsApp call, a room speaker. App dictation never waits for it, because the user holds the mic. After the phrase the session listens as usual. It keeps listening while the user talks and while a reply plays or waits to play, and for the follow-up window after both (`wake_word_follow_up_secs`, default 5), so the user can answer you with no phrase. Then it waits for the phrase again. With `barge_in` on, the wake phrase stops a reply at once, like a clear "stop".
+With `wake_word` on, a session sends no audio to speech to text until the user says the wake phrase (`wake_word_phrase`, default `hey aria`). A detector on this box listens for it. It is the same on every client of the engine: an app conversation, a WhatsApp call, a room speaker. App dictation never waits for it, because the user holds the mic. After the phrase the session listens as usual. It keeps listening while the user talks, and for the follow-up window after the user's speech or after a reply ends (`wake_word_follow_up_secs`, default 5), so the user can answer you with no phrase. While a reply plays or waits to play, only the phrase gets through: speech to text hears nothing else, so talk near the mic does not cut in. Then it waits for the phrase again. With `barge_in` on, the wake phrase stops a reply at once, like a clear "stop".
 
-The phrase never reaches you: the session removes it from the start of the user's words. Add the name in the phrase as a key term, so that speech to text writes it as you expect: `voice stt keyterms add Aria`.
+Unless `wake_word_keep_phrase` is on, the phrase never reaches you: the session removes it from the start of the user's words. Add the name in the phrase as a key term, so that speech to text writes it as you expect: `voice stt keyterms add Aria`.
 
 A phrase needs its own trained model on this box. `voice status` shows its path and whether it is there, under `wake_word_model`. With no model, a session with the wake word on listens to everything, and the app says why. SETUP.md section 5 says how to get a model.
+
+Reading `wake word heard (score N)` in `~/agent/logs/voice.log`: a hit followed within a few seconds by a user message is the user, whatever its score, so check the next message before blaming a hit on the agent's own voice or the room. A hit with no user message after it is the false-wake candidate.
 
 | Behavior | Default | What it does |
 | --- | --- | --- |
 | `wake_word` | off | wait for the phrase before speech to text hears anything |
 | `wake_word_phrase` | `hey aria` | the phrase; its model is `~/.voice/wake_words/<words joined by _>.onnx` |
 | `wake_word_threshold` | 0.5 | the detector score that counts as the phrase, 0.05 to 0.95 |
-| `wake_word_follow_up_secs` | 5 | seconds after the last speech in which the user continues with no phrase, 2 to 60 |
+| `wake_word_follow_up_secs` | 5 | seconds after the last speech in which the user continues with no phrase, 0 to 60; 0 asks for the phrase before every line, and a long pause mid-sentence may need it again |
+| `wake_word_keep_phrase` | off | keep the wake phrase at the start of the user's words instead of removing it |
 
 ## Commands
 
