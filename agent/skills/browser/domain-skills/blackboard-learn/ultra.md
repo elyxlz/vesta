@@ -19,6 +19,12 @@ signed_in = "Sign Out" in js("document.body.innerText")
 
 Not signed in after the click means the SSO session expired: ask for a handover.
 
+If the user reports a Microsoft "stale request" error on the handover sign-in page, stale identity
+provider cookies in the session are replaying an old request. Stop the handover, delete the
+institution's and Microsoft's sign-in cookies in that session (CDP `Network.getAllCookies`, then
+`Network.deleteCookies` for those domains, never printing values), and start a fresh handover at
+the Learn front door.
+
 ## Read data through the REST API, not the page
 
 Ultra wraps `window.fetch`, so `fetch()` from `js()` fails with `TypeError: Failed to fetch`.
@@ -67,6 +73,9 @@ path instead of a link.
 - Recordings are "Course members only", so the viewer must be signed in as a member.
 - Week pages may show a "Recordings" heading whose links render as `undefined`; ignore them and use
   the Collaborate panel.
+- No "Download" option and "No captions" is common. The player still streams a plain MP4: read
+  its `video` element's source URL in the player tab and fetch it with `curl` (no cookies were
+  needed), then transcribe it locally with the `whisper` skill and delete the video.
 
 ## Deadlines can live only in a content title
 
