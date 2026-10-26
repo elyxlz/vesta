@@ -249,3 +249,14 @@ func TestCallNotificationsWithNothingSpokenCarryNoMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestRequireCallMgrReadOnlyNamesReadOnly(t *testing.T) {
+	_, err := requireCallMgr(&WhatsAppClient{readOnly: true})
+	if err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("read-only instance: got %v, want a read-only error", err)
+	}
+	_, err = requireCallMgr(&WhatsAppClient{})
+	if err == nil || strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("writable instance without a manager: got %v, want the daemon-only error", err)
+	}
+}
