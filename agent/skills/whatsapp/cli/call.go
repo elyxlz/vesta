@@ -81,13 +81,6 @@ func (cm *CallManager) handleIncoming(call *meowcaller.Call) {
 	peer := call.Peer()
 	name, phone := cm.displayFor(peer)
 
-	// Read-only instances never send or answer; a call there is just observed and declined.
-	if cm.wac.readOnly {
-		_ = call.Reject()
-		cm.notifyCall(callNotif{Type: "call_missed", Direction: "inbound", ContactName: name, ContactPhone: phone, Reason: "instance is read-only"})
-		return
-	}
-
 	cm.mu.Lock()
 	if cm.active != nil {
 		cm.mu.Unlock()
@@ -319,6 +312,9 @@ func (cm *CallManager) endCall(ac *activeCall, reason string) {
 // the socket but keeps the handlers honest.
 func requireCallMgr(wac *WhatsAppClient) (*CallManager, error) {
 	if wac.callMgr == nil {
+		if wac.readOnly {
+			return nil, fmt.Errorf("calling is disabled: instance is read-only")
+		}
 		return nil, fmt.Errorf("calling is only available from the running daemon")
 	}
 	return wac.callMgr, nil
