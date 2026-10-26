@@ -508,6 +508,13 @@ def cmd_search(args):
     else:
         charset = "UTF-8"
         attempts = _non_ascii_attempts(args.query)
+    if args.folder == "INBOX":
+        # Search reads one folder; on Gmail archived mail lives outside INBOX, so say so on stderr.
+        print(
+            "note: searched INBOX only; archived mail is in another folder "
+            "(Gmail: [Gmail]/All Mail, see list-folders); search it before reporting absence",
+            file=sys.stderr,
+        )
     for i, (criteria, literal) in enumerate(attempts):
         try:
             _fetch_summaries(args, include_to=False, criteria=criteria, charset=charset, literal=literal)

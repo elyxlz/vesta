@@ -151,3 +151,16 @@ def test_ascii_queries_keep_the_default_charset(monkeypatch):
     box = _Box(valid={"UNSEEN"})
     _run(monkeypatch, box, "UNSEEN")
     assert box.charsets == ["US-ASCII"]
+
+
+@pytest.mark.parametrize(("folder", "noted"), [("INBOX", True), ("[Gmail]/All Mail", False)])
+def test_an_inbox_search_notes_on_stderr_that_it_read_one_folder(monkeypatch, capsys, folder, noted):
+    query = 'SUBJECT "invoice"'
+    box = _Box(valid={query})
+    monkeypatch.setattr(imap, "connect", lambda *a, **k: box)
+    imap.cmd_search(argparse.Namespace(query=query, folder=folder, limit=5, account=None))
+    out, err = capsys.readouterr()
+    assert box.folder_set == folder
+    assert out.strip() == "[]"
+    assert ("searched INBOX only" in err) is noted
+    assert ("[Gmail]/All Mail" in err) is noted
