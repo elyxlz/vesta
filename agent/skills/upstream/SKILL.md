@@ -156,7 +156,9 @@ master ancestry; the shared-history guard catches it). A bare `git push upstream
 credentials by design; the wrapper is the authenticated path. Once the PR URL exists, the
 filing is finished for this turn: what happens to the PR next reaches you as notifications
 (next section), so end the turn instead of polling `pr checks` or `pr view --comments`.
-Keep the worktree until the local apply below is verified, then
+Keep the worktree until the local apply below is verified AND every background check you
+launched inside it has finished (a check still running when the tree disappears produces a
+garbage result that reads like evidence), then
 `git -C ~ worktree remove /tmp/vesta-pr`. A later fix recreates it from the branch:
 `git -C ~ fetch upstream && git -C ~ worktree add /tmp/vesta-pr <branch>`.
 
@@ -212,5 +214,7 @@ Run `./check.sh guards` IN THE WORKTREE: it is ruff plus repo conventions (lint 
 comment-length cap of 8 lines, import cycles, shellcheck). Format Python from `~/agent`
 so the pinned ruff and config match CI: `cd ~/agent && ruff format <path> && ruff check <path>`.
 Markdown under `agent/` must contain no em or en dashes:
-`grep -rnP '\x{2014}|\x{2013}' <paths>` must be empty; instruct subagents about this up
-front, since models reach for those dashes by default.
+`grep -rnP '\x{2014}|\x{2013}' <paths>` must be empty. Note that `guards` does NOT run this
+check: the dash rule is enforced by `test_deployment.py`, which only the full `./check.sh agent`
+suite runs, so on a markdown diff grep the dashes yourself before every push. Instruct
+subagents about this up front, since models reach for those dashes by default.
