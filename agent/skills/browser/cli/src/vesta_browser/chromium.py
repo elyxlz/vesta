@@ -15,6 +15,7 @@ import json
 import os
 import pathlib as pl
 import shutil
+import socket
 import time
 import urllib.parse
 import urllib.request
@@ -95,6 +96,24 @@ def pin_startup_pref(profile_dir: pl.Path) -> None:
     prefs_path.write_text(json.dumps(prefs))
 
 
+SINGLETON_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+
+
+def clear_stale_singleton(profile_dir: pl.Path) -> bool:
+    """Drop a profile lock left by a Chromium that is gone; a container restart changes the hostname,
+    and Chromium then refuses the profile as held by "another computer"."""
+    lock = profile_dir / "SingletonLock"
+    try:
+        host, _, pid = str(lock.readlink()).rpartition("-")
+    except OSError:
+        return False
+    if host == socket.gethostname() and pid.isdigit() and pl.Path(f"/proc/{pid}").exists():
+        return False
+    for name in SINGLETON_FILES:
+        (profile_dir / name).unlink(missing_ok=True)
+    return True
+
+
 def missing(paths: Paths) -> list[str]:
     """Every file the standard route needs and this box does not have, each named with its path."""
     needed = (
@@ -121,6 +140,7 @@ async def start(session: Session, paths: Paths, *, headed: HeadedDisplay) -> Chr
     port_file = session.profile_dir / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
     await asyncio.to_thread(pin_startup_pref, session.profile_dir)
+    await asyncio.to_thread(clear_stale_singleton, session.profile_dir)
     process = await spawn(
         paths.children_ledger,
         *launch_argv(paths, session, headed),

@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import signal
+import socket
 import sys
 
 import pytest
@@ -304,3 +306,34 @@ def test_start_places_the_agent_helpers_the_harness_loads(rig):
     placed = session.scratch_dir / "home" / "agent-workspace" / "agent_helpers.py"
     assert placed.read_text() == chromium.AGENT_HELPERS.read_text()
     assert "def new_tab(" in placed.read_text() and "activate_tab" in placed.read_text()
+
+
+def test_start_clears_a_profile_lock_left_by_a_chromium_on_another_host(rig):
+    paths, session = rig
+    session.profile_dir.mkdir(parents=True, exist_ok=True)
+    (session.profile_dir / "SingletonLock").symlink_to("old-container-41764")
+    (session.profile_dir / "SingletonCookie").symlink_to("123")
+
+    async def run():
+        runtime = await chromium.start(session, paths, headed=HEADED)
+        await chromium.stop(runtime, session)
+
+    asyncio.run(run())
+    assert not (session.profile_dir / "SingletonCookie").is_symlink()
+
+
+def test_a_lock_held_by_a_live_chromium_on_this_host_is_kept(tmp_path):
+    (tmp_path / "SingletonLock").symlink_to(f"{socket.gethostname()}-{os.getpid()}")
+    assert chromium.clear_stale_singleton(tmp_path) is False
+    assert (tmp_path / "SingletonLock").is_symlink()
+
+
+def test_a_lock_naming_a_dead_pid_on_this_host_is_cleared(tmp_path):
+    (tmp_path / "SingletonLock").symlink_to(f"{socket.gethostname()}-999999999")
+    (tmp_path / "SingletonSocket").symlink_to("/tmp/gone")
+    assert chromium.clear_stale_singleton(tmp_path) is True
+    assert not (tmp_path / "SingletonLock").is_symlink() and not (tmp_path / "SingletonSocket").is_symlink()
+
+
+def test_no_lock_is_a_no_op(tmp_path):
+    assert chromium.clear_stale_singleton(tmp_path) is False
