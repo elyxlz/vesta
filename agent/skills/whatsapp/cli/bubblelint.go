@@ -95,13 +95,13 @@ func bubbleLintReason(message string) string {
 		why = append(why, fmt.Sprintf("%d chars", nChars))
 	}
 	if textAfterFullStop(message) {
-		why = append(why, "text after a full stop")
+		why = append(why, "text after a sentence end: . ! or ?")
 	}
 	if len(why) == 0 {
 		return ""
 	}
 	return "bubble lint: this send is a wall (" + strings.Join(why, ", ") + "). " +
-		"texting rule: short bubbles, one thought per send, and don't use full stops at all. " +
+		"texting rule: short bubbles, one thought per send, and no . ! or ? with more text after it. " +
 		"split it into several separate send calls, a beat between each, one idea each. if this " +
 		"is genuine reference material (a brief, a code block, a list they asked for), resend the " +
 		"same command with --longform to bypass."
