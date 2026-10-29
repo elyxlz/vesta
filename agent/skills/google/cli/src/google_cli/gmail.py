@@ -11,6 +11,7 @@ from typing import Any
 
 from . import api, pending_send
 from .config import Config
+from .redaction import mask_identifiers
 
 EMAIL_SAVE_SUBDIR = "emails"
 LONG_EMAIL_WARNING_THRESHOLD = 5000
@@ -82,7 +83,7 @@ def _parse_message_snapshot(msg: dict) -> dict:
         "from": _get_header(headers, "From"),
         "to": _get_header(headers, "To"),
         "date": _get_header(headers, "Date"),
-        "snippet": msg["snippet"] if "snippet" in msg else "",
+        "snippet": mask_identifiers(msg["snippet"] if "snippet" in msg else ""),
         "labelIds": msg["labelIds"] if "labelIds" in msg else [],
     }
 
@@ -259,7 +260,9 @@ def get_email(config: Config, *, message_id: str, include_attachments: bool = Tr
     headers = payload["headers"] if "headers" in payload else []
 
     subject = _get_header(headers, "Subject")
-    full_body = _get_body_text(payload)
+    # Mask at the read boundary: the saved body is routinely grepped and pasted back
+    # into context, so an unmasked file on disk is the same exposure one step later.
+    full_body = mask_identifiers(_get_body_text(payload))
 
     result: dict[str, Any] = {
         "id": msg["id"],
@@ -269,7 +272,7 @@ def get_email(config: Config, *, message_id: str, include_attachments: bool = Tr
         "to": _get_header(headers, "To"),
         "cc": _get_header(headers, "Cc"),
         "date": _get_header(headers, "Date"),
-        "snippet": msg["snippet"] if "snippet" in msg else "",
+        "snippet": mask_identifiers(msg["snippet"] if "snippet" in msg else ""),
         "labelIds": msg["labelIds"] if "labelIds" in msg else [],
     }
 
