@@ -95,6 +95,23 @@ else
     ok "the provider refused $refused turns today"
 fi
 
+# Provider auth loss: the daemon stays up but defers every message until re-auth, so no shutdown
+# is logged and the refusal probe above sees no zero-usage turns. The window runs from the flip to
+# not_authenticated to the next "Provider: ... (authenticated)" init line; a window still open at
+# the end of the log counts up to now.
+authgap=$(cat "$HOME"/agent/logs/vesta.log* 2>/dev/null | sed "s/$esc\[[0-9;]*m//g" | grep -v '\[AGENT\]' \
+    | grep -E 'flipped to not_authenticated|\[INIT\] Provider: .*\(authenticated\)' | sort | awk -v today="$today" -v yesterday="$yesterday" -v now="$(date +%s)" '
+    { cmd = "date -d \"" $1 " " $2 "\" +%s"; cmd | getline t; close(cmd) }
+    /not_authenticated/ { if (!lost) { lost = t; day = $1 } next }
+    /\(authenticated\)/ && lost { if (day == today || day == yesterday) { g = int((t - lost) / 60); if (g > max) { max = g; at = day } } lost = 0 }
+    END { if (lost && (day == today || day == yesterday)) { g = int((now - lost) / 60); if (g > max) { max = g; at = day } } print max + 0, at }')
+authgap_min=${authgap%% *}
+if [ "$authgap_min" -ge "${AUTHLOSS_MIN_RED:-30}" ]; then
+    bad "provider was unauthenticated for $authgap_min minutes on ${authgap#* }: every message and reminder in that window was deferred; check what fired late and tell the user what slipped"
+else
+    ok "longest provider auth-loss window in 2 days: $authgap_min minutes"
+fi
+
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between
 # checkpoints the recent commits touch only the -wal sibling; judge by the newest of the pair.
 db="$HOME/agent/data/events.db"
