@@ -21,6 +21,8 @@ _MAX_CATCHUP = timedelta(days=7)
 # Bounds a cycle's drain per folder in volume as _MAX_CATCHUP bounds it in time; later cycles drain the rest.
 _MAIL_PAGE_SIZE = 50
 _MAX_WINDOW_MESSAGES = 500
+# How long a unit may stay unreadable before the agent is paged that it is blind to it.
+_STALL_ALERT_SECONDS = 30 * 60
 
 
 # Zero-width and bidi / formatting characters that marketing emails use to pad previews with
@@ -92,6 +94,33 @@ def _poll_unit(
         ctx.monitor_logger.exception("Polling %s failed; leaving its watermark where it was", unit)
         read_through = None
     units[unit] = last_dt.isoformat() if read_through is None else read_through.isoformat()
+    lag_before = (datetime.fromisoformat(state["last_cycle"]) - last_dt).total_seconds()
+    lag_after = (new_check_time - datetime.fromisoformat(units[unit])).total_seconds()
+    _report_stall(ctx, unit, read_through is None, lag_before, lag_after)
+
+
+def _report_stall(ctx: MicrosoftContext, unit: str, failed: bool, lag_before: float, lag_after: float) -> None:
+    """Page once when a failing unit's lag crosses _STALL_ALERT_SECONDS and once when it drops back under.
+    Both lags come from the persisted watermark and last_cycle, so a restart neither repeats nor drops either."""
+    if failed and lag_before < _STALL_ALERT_SECONDS <= lag_after:
+        minutes = int(lag_after // 60)
+        notifications.write_notification(
+            ctx.notif_dir,
+            "monitor_stalled",
+            interrupt=True,
+            unit=unit,
+            behind_minutes=minutes,
+            message=f"{unit} has not been readable for {minutes} min; new items are not reaching you. "
+            "Nothing is lost: it resumes from its watermark when the API answers again.",
+        )
+    elif not failed and lag_after < _STALL_ALERT_SECONDS <= lag_before:
+        notifications.write_notification(
+            ctx.notif_dir,
+            "monitor_recovered",
+            interrupt=False,
+            unit=unit,
+            message=f"{unit} is readable again and has caught up from its watermark.",
+        )
 
 
 def _whole_window(new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> Callable[[datetime, bool], datetime | None]:
