@@ -162,10 +162,15 @@ func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string)
 	reactionMsg := wac.client.BuildReaction(jid, senderJID, messageID, emoji)
 	sendCtx, cancelSend := context.WithTimeout(context.Background(), SendTimeout)
 	defer cancelSend()
-	_, err = wac.client.SendMessage(sendCtx, jid, reactionMsg)
+	resp, err := wac.client.SendMessage(sendCtx, jid, reactionMsg)
 	if err != nil {
 		return false, wac.classifySendError("send reaction", err)
 	}
+	// Record the reaction as outbound so watchers reading messages.db for the
+	// last outbound message see it as a reply: reactions never flow back
+	// through history sync, so without this row a reaction-only answer reads
+	// as silence.
+	wac.recordOutgoingMessage(jid, StoreMessageParams{ID: resp.ID, Content: "reacted " + emoji + " to " + messageID})
 
 	action := "sent"
 	if emoji == "" {
