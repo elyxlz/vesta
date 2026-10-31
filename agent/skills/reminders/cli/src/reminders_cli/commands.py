@@ -36,6 +36,7 @@ class TriggerData(TypedDict, total=False):
     tz: str  # "cron": pinned IANA timezone (DST-aware); absent = the schedule follows the agent's own zone
     hours: int  # "interval": fixed hour spacing
     fuzz_minutes: int  # "cron": each fire shifts by a deterministic sample in [-fuzz, +fuzz]
+    start: str  # "cron": ISO-8601 UTC instant before which the schedule never fires (a dated --at in the future)
 
 
 RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more than once; "date" is the one-shot type
@@ -140,7 +141,10 @@ def _cron_trigger_from_data(trigger_data: TriggerData) -> CronTrigger:
     # No stored tz means the schedule follows the agent's zone, resolved at build time: the daemon
     # re-arms every trigger at startup, so a timezone change plus restart moves every unpinned schedule.
     tz_name = trigger_data["tz"] if "tz" in trigger_data else None
-    return CronTrigger.from_crontab(trigger_data["expr"], timezone=_zone(tz_name))
+    trigger = CronTrigger.from_crontab(trigger_data["expr"], timezone=_zone(tz_name))
+    if "start" in trigger_data:
+        trigger.start_date = datetime.fromisoformat(trigger_data["start"])
+    return trigger
 
 
 def _validate_fuzz(fuzz_minutes: int, trigger: CronTrigger):
@@ -471,14 +475,21 @@ def _recurring_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, Trigg
         expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
         schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d}{zone_label}"
 
-    return _cron_schedule(reminder_id, spec, expr, schedule_info)
+    # A dated --at on a later day is the first fire, not just the time of day.
+    starts_later = spec.recurring != "yearly" and local_dt.date() > _now_utc().astimezone(local_dt.tzinfo).date()
+    start = local_dt.astimezone(UTC) if starts_later else None
+    return _cron_schedule(reminder_id, spec, expr, schedule_info, start=start)
 
 
-def _cron_schedule(reminder_id: str, spec: ReminderSpec, expr: str, schedule_info: str) -> tuple[str, TriggerData, datetime | None]:
+def _cron_schedule(
+    reminder_id: str, spec: ReminderSpec, expr: str, schedule_info: str, *, start: datetime | None = None
+) -> tuple[str, TriggerData, datetime | None]:
     """The stored trigger for a cron expression: pinned to spec.tz when given, fuzzed when asked."""
     trigger_data: TriggerData = {"type": "cron", "expr": _normalize_cron_expr(expr)}
     if spec.tz:
         trigger_data["tz"] = spec.tz
+    if start is not None:
+        trigger_data["start"] = start.isoformat()
     trigger = _cron_trigger_from_data(trigger_data)
     next_run = trigger.get_next_fire_time(None, _now_utc())
     if spec.fuzz_minutes is not None:
