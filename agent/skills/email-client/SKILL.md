@@ -130,7 +130,7 @@ email-client-send --account personal --to recipient@example.com --subject "Pics"
 
 Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HTML (combine with `--body` for multipart/alternative, or pass it alone for a synthesized plain-text fallback). Attachments are capped at 25 MB total; the send aborts with a clear error past that, since most providers reject larger.
 
-After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
+After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. On Gmail accounts the APPEND is skipped automatically: Gmail's SMTP already saves a copy of every sent message, so a second APPEND would leave two copies in Sent (set `EMAIL_CLIENT_FORCE_SENT_SYNC=1` to force it). The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
 
 ### Delayed send and undo
 
