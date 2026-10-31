@@ -364,22 +364,38 @@ def report_events(ctx: CalDavAccount, calendar_id: str, start: dt.datetime, end:
     return [record.calendar_data for record in parse_multistatus(text) if record.calendar_data]
 
 
+def _has_uid(calendar_data: str, uid: str) -> bool:
+    """Does this iCalendar resource hold a VEVENT with exactly this UID?"""
+    try:
+        vcal = ics.parse_calendar(calendar_data)
+    except ValueError:
+        return False
+    for vevent in ics.vevents(vcal):
+        uid_prop = ics.first_prop(vevent, "UID")
+        if uid_prop is not None and uid_prop.value.strip() == uid:
+            return True
+    return False
+
+
 def find_event(ctx: CalDavAccount, calendar_id: str, uid: str) -> tuple[str, str, str | None]:
     """Return (event_url, ics_text, etag) for an event UID.
 
     A UID calendar-query REPORT is the primary path (it also yields the etag
     that guards later writes); the conventional ``{uid}.ics`` resource name is
-    the fallback for servers that mishandle prop-filter.
+    the fallback for servers that mishandle prop-filter. The filter itself is
+    not trusted: Google's CalDAV ignores UID prop-filters and answers with the
+    whole collection, so every record is checked for the UID and only a real
+    match is returned (keeps delete/update/respond off the wrong event).
     """
     collection = collection_url(ctx, calendar_id)
     body = UID_QUERY.format(uid=xml_escape(uid))
     status, text, final = request(ctx, "REPORT", collection, body=body, depth="1", tolerate=(412,))
     if status != 412:
         for record in parse_multistatus(text):
-            if record.calendar_data and record.href:
+            if record.calendar_data and record.href and _has_uid(record.calendar_data, uid):
                 return urllib.parse.urljoin(final, record.href), record.calendar_data, record.etag
     direct = collection + urllib.parse.quote(uid, safe="") + ".ics"
     status, text, final = request(ctx, "GET", direct, tolerate=(404,))
-    if status == 200:
+    if status == 200 and _has_uid(text, uid):
         return final, text, None
     sys.exit(f"event {uid!r} not found in calendar {calendar_id!r}")
