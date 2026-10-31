@@ -388,6 +388,14 @@ def test_delay_is_client_configuration_not_a_send_option(tmp_path):
     assert "seconds" not in vars(args)
 
 
+def test_repeated_to_flags_are_joined_not_replaced(tmp_path):
+    parser = smtp_send._build_parser()
+
+    args = parser.parse_args(["--to", "a@example.com", "--to", "b@example.com", "--subject", "Hello", "--body", "Body"])
+
+    assert args.to == ["a@example.com", "b@example.com"]
+
+
 def test_a_delayed_send_is_refused_when_no_daemon_can_dispatch_it(tmp_path, monkeypatch):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
