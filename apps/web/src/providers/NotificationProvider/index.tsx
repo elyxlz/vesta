@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { stripVoiceTags } from "@/lib/voice-tags";
 import { type Delta, type Tree } from "@vesta/core";
 import { useReplica } from "@vesta/core/react";
 import { useOptionalController } from "@/providers/ControllerProvider/context";
@@ -94,7 +95,7 @@ export function NotificationProvider({
     (agentName: string, text: string) => {
       if (anyoneFocused()) return;
       if (!permissionRef.current) return;
-      const body = text.trim();
+      const body = stripVoiceTags(text).trim();
       if (!body) return;
       try {
         const n = new Notification(agentName, {
