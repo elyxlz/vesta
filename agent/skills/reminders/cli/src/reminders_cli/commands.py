@@ -241,6 +241,27 @@ def _normalize_cron_expr(expr: str) -> str:
     return " ".join(fields)
 
 
+def cron_dom_step_warning(expr: str) -> str | None:
+    """Warn when the day-of-month field steps by N>1 ("*/2"): the step restarts every month, so it is not 'every N days'.
+
+    "*/2" fires on days 1,3,...,31, so the 31st and the next month's 1st fire back to back (and 29th -> 1st in
+    February is a three-day gap). A reminder meant as "every other day" silently doubles up at month ends.
+    """
+    fields = expr.split()
+    if len(fields) != 5:
+        return None
+    dom = fields[2]
+    for part in dom.split(","):
+        if "/" in part:
+            step = part.split("/", 1)[1]
+            if step.isdigit() and int(step) > 1:
+                return (
+                    f"day-of-month step '{dom}' restarts each month, so it is not 'every {step} days': "
+                    "month ends fire back to back or skip. Guard in the message or use a weekday pattern."
+                )
+    return None
+
+
 def _parse_local_dt(datetime_str: str, timezone_str: str | None, *, allow_bare_time: bool = False) -> datetime:
     local_tz = _zone(timezone_str)
 
@@ -556,6 +577,7 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
         "next_run": _echo_local(next_run),
         "created_at": created_at,
         "status": "scheduled",
+        **({"warning": w} if spec.cron and (w := cron_dom_step_warning(spec.cron)) else {}),
     }
 
 
