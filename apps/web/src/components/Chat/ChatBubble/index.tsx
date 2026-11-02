@@ -3,6 +3,7 @@ import { bubbleRadiusStyle } from "../bubble-radius";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
+import { stripVoiceTags } from "@/lib/voice-tags";
 import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, InputMethod, ChatMessage } from "@vesta/core";
 import { cn } from "@/lib/utils";
@@ -186,7 +187,9 @@ function MessageBubble({
                 ))}
               </div>
             )}
-            {text && <Markdown>{text}</Markdown>}
+            {text && (
+              <Markdown>{isUser ? text : stripVoiceTags(text)}</Markdown>
+            )}
           </div>
           {ts && (
             <span
