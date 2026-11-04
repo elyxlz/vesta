@@ -18,6 +18,8 @@ signed_in = "Sign Out" in js("document.body.innerText")
 ```
 
 Not signed in after the click means the SSO session expired: ask for a handover.
+A REST call that returns 401 before this click is NOT evidence of expiry: the Learn cookie is
+issued by the click itself, so do the click, then judge.
 
 If the user reports a Microsoft "stale request" error on the handover sign-in page, stale identity
 provider cookies in the session are replaying an old request. Stop the handover, delete the
