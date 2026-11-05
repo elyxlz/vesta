@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import subprocess
 import uuid
 from contextlib import closing
 from datetime import UTC, datetime, time, timedelta
@@ -267,6 +268,33 @@ def _to_utc_dt(datetime_str: str, timezone_str: str | None) -> datetime:
 # ---------------------------------------------------------------------------
 
 
+def _email_fallback(reminder_id: str, message: str):
+    """Best-effort email copy of a fired reminder (EM 27/10: every reminder
+    gets a copy at emanuele@). Lives HERE, in the daemon, so it cannot depend
+    on agent memory: the agent-side copy silently drifted for 12 days (last
+    sent 24/10/2026) before this was added 5/11/2026. Disable per-box with
+    REMINDER_FALLBACK_OFF=1; override the recipient with REMINDER_FALLBACK_TO."""
+    if os.environ.get("REMINDER_FALLBACK_OFF"):
+        return
+    to = os.environ.get("REMINDER_FALLBACK_TO", "emanuele@alphalabs.it")
+    account = os.environ.get("REMINDER_FALLBACK_ACCOUNT", "work")
+    try:
+        result = subprocess.run(
+            [
+                "email-client-send", "--account", account, "--to", to,
+                "--subject", f"Promemoria: {message[:60]}",
+                "--body", message,
+            ],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+        if result.returncode != 0:
+            logger.warning("Email fallback for %s: rc=%s stderr=%s", reminder_id, result.returncode, (result.stderr or "")[:200])
+        else:
+            logger.info("Email fallback for %s sent to %s", reminder_id, to)
+    except Exception:
+        logger.warning("Email fallback for %s failed", reminder_id, exc_info=True)
+
+
 def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_dir: str):
     """Called by APScheduler when a reminder fires."""
     data_dir = Path(data_dir)
@@ -297,6 +325,11 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                     message,
                     snooze_hint=trigger_type == "date",
                 )
+                if trigger_type == "date":
+                    # One-shots only: recurring crons (diari/log/bandi sweeps) are
+                    # agent-side tasks whose email copies already exist by design;
+                    # fallback-ing them would spam emanuele@ several times a day.
+                    _email_fallback(reminder_id, message)
 
                 if trigger_type == "date":
                     conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
