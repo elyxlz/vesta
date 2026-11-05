@@ -7,10 +7,10 @@ daemon right after write_reminder_notification, where it cannot be forgotten.
 
 All tests are hermetic: subprocess.run is monkeypatched, no SMTP is touched.
 """
+
 import subprocess
 
 import pytest
-
 from reminders_cli.commands import _email_fallback
 
 
@@ -32,7 +32,8 @@ def test_off_flag_skips_send(monkeypatch):
 def test_sends_email_client_send_with_defaults(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        subprocess, "run",
+        subprocess,
+        "run",
         lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0),
     )
     _email_fallback("abc123", "call mom")
@@ -48,7 +49,8 @@ def test_sends_email_client_send_with_defaults(monkeypatch):
 def test_env_overrides(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        subprocess, "run",
+        subprocess,
+        "run",
         lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0),
     )
     monkeypatch.setenv("REMINDER_FALLBACK_TO", "other@example.com")

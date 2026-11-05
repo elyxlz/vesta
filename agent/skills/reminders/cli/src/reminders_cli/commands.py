@@ -281,11 +281,20 @@ def _email_fallback(reminder_id: str, message: str):
     try:
         result = subprocess.run(
             [
-                "email-client-send", "--account", account, "--to", to,
-                "--subject", f"Promemoria: {message[:60]}",
-                "--body", message,
+                "email-client-send",
+                "--account",
+                account,
+                "--to",
+                to,
+                "--subject",
+                f"Promemoria: {message[:60]}",
+                "--body",
+                message,
             ],
-            capture_output=True, text=True, timeout=90, check=False,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
         )
         if result.returncode != 0:
             logger.warning("Email fallback for %s: rc=%s stderr=%s", reminder_id, result.returncode, (result.stderr or "")[:200])
