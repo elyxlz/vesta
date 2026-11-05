@@ -47,7 +47,10 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
           paddingBottom: `calc(${String(bottomBarHeight)}px + 0rem)`,
         }}
       >
-        <Dashboard />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <Dashboard />
+        </div>
+        <Chat composerOnly />
       </div>
       <div
         className="w-full shrink-0 snap-center flex flex-col"

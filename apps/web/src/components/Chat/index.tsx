@@ -53,9 +53,13 @@ const CONVERSATION_FADE = {
 interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
+  // Only the composer, in normal flow: lets a surface beside the chat (the mobile dashboard
+  // pane) message the agent without the history. Draft and attachments are per-agent stores,
+  // so the full chat shows the same draft.
+  composerOnly?: boolean;
 }
 
-export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
+export function Chat({ onCollapse, fullscreen, composerOnly }: ChatProps = {}) {
   const { name, agent } = useSelectedAgent();
   const notAuthenticated = agentNeedsUser(agent.status);
   const isMobile = useIsMobile();
@@ -251,6 +255,40 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     ta.style.height = `${String(Math.min(ta.scrollHeight, 240))}px`;
   };
 
+  const composer = (
+    <ChatComposer
+      fullscreen={fullscreen}
+      agentName={name}
+      notAuthenticated={notAuthenticated}
+      voiceConfigured={voiceConfigured}
+      recordingMode={recordingMode}
+      listening={listening}
+      liveTranscript={liveTranscript}
+      onMorphSettled={onMorphSettled}
+      onHeightAnimation={handleHeightAnimation}
+      startVoice={startVoice}
+      stopVoice={stopVoice}
+      cancelVoice={cancelVoice}
+      input={input}
+      onInputChange={handleInput}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      onSend={handleSend}
+      canSend={canSend}
+      attachments={attachments}
+      textareaRef={textareaRef}
+    />
+  );
+
+  if (composerOnly) {
+    return (
+      <div className="relative shrink-0" {...dropHandlers}>
+        <BottomBanner error={voiceError} />
+        {composer}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Card
@@ -354,28 +392,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             )}
           >
             <BottomBanner error={voiceError} />
-            <ChatComposer
-              fullscreen={fullscreen}
-              agentName={name}
-              notAuthenticated={notAuthenticated}
-              voiceConfigured={voiceConfigured}
-              recordingMode={recordingMode}
-              listening={listening}
-              liveTranscript={liveTranscript}
-              onMorphSettled={onMorphSettled}
-              onHeightAnimation={handleHeightAnimation}
-              startVoice={startVoice}
-              stopVoice={stopVoice}
-              cancelVoice={cancelVoice}
-              input={input}
-              onInputChange={handleInput}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onSend={handleSend}
-              canSend={canSend}
-              attachments={attachments}
-              textareaRef={textareaRef}
-            />
+            {composer}
           </div>
         </div>
       </Card>
