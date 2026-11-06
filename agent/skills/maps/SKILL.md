@@ -12,7 +12,7 @@ opens the whole trip. You refer to a place across commands by its `cid` (a durab
 `--json-pretty`) to read a result programmatically. The other commands always print JSON.
 `--country` defaults from the box's timezone, so results and formatting already match where the
 user lives; pass it only for a query about another country. Set `--locale` when the user's
-language is not English: `maps --locale it-IT search ...`.
+language is not English: `maps search ... --locale it-IT` (the flag goes after the subcommand; before it, argparse rejects it).
 
 ## Find places
 
