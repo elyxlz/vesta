@@ -88,4 +88,5 @@ The default voice is the user's own. Mine exemplars from the genre being written
 
 - Never pad a draft to satisfy a metric, and never flatten the user's voice into something generic; the reviewers pull toward idiosyncratic, human prose, so lean into it.
 - The citation reviewer does web lookups and can be slow; spawn it with the others and accept the longer round.
+- In a message sent in the user's name about a meeting or call you did not attend, state only what the user told you happened: no "as promised", "as discussed" or "as you mentioned" unless the user said it.
 - Present residual gaps honestly. A sound piece with a flagged weakness beats a polished one with a hallucinated citation.
