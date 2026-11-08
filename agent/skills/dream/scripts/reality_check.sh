@@ -87,10 +87,26 @@ done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
-# refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+# refusal leaves, so count those lines rather than the daemon's rate-limit warnings. Three benign
+# or bogus matches must not count: a turn cut off by an incoming message carries a "Preempt sent"
+# line beside it, a compaction call carries a "Compaction boundary" line, and the agent's own
+# [AGENT] tool-call narration echoes command text verbatim, so it can embed the pattern as prose.
+# Each candidate is judged by its +-1-line window and by not being [AGENT] narration.
+refused=$(awk -v d="$today" '
+{ n++; L[n] = $0 }
+END {
+  r = 0
+  for (i = 1; i <= n; i++) {
+    if (L[i] ~ /\[USAGE\] in=0 out=0 cache_read=0 / && index(L[i], d) && L[i] !~ /\[AGENT\]/) {
+      ctx = ""
+      for (j = i - 1; j <= i + 1; j++) if (j >= 1 && j <= n) ctx = ctx L[j]
+      if (ctx !~ /Preempt sent/ && ctx !~ /ompact/) r++
+    }
+  }
+  print r
+}' "$HOME"/agent/logs/vesta.log* 2>/dev/null)
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
-    bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
+    bad "the provider refused $refused turns today (preempts and compaction turns excluded): each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
     ok "the provider refused $refused turns today"
 fi
