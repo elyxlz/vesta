@@ -86,6 +86,7 @@ The default voice is the user's own. Mine exemplars from the genre being written
 
 ## Notes
 
+- Editing the user's existing document means editing THEIR file (their Canva, Word, Pages). Holding only a PDF of it, ask for the editable source; never rebuild it in your own layout, the design is part of what they asked to keep.
 - Never pad a draft to satisfy a metric, and never flatten the user's voice into something generic; the reviewers pull toward idiosyncratic, human prose, so lean into it.
 - The citation reviewer does web lookups and can be slow; spawn it with the others and accept the longer round.
 - Present residual gaps honestly. A sound piece with a flagged weakness beats a polished one with a hallucinated citation.

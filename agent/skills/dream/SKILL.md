@@ -177,6 +177,7 @@ MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory
 Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks; a lesson kept for its cost of recurrence (a false statement to the user, an irreversible action) retires only by graduating, never by quiet weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics. The same accounting applies when a fix removes an instrument (a check, a probe, a scheduled trigger): name in the same pass what now covers its job, either another instrument whose reading comes from outside your own model, or an explicit "nothing, it measured noise". A sentence telling a future you to read carefully is not coverage, and a removal with no named successor is a gap that reads as a win in the summary that records it.
 
 **Move:**
+- A fact with a time condition (tenure, age, "for the first N years", "until X") gets recomputed against today before it is relocated or copied. Relocation keeps its authority while the condition silently expires.
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
 - Depth about other people over the cap moves to their `~/.contacts/` file, never gets deleted. The user's own depth is the exception: it stays in MEMORY.md §4, never paged out to contacts.
 
