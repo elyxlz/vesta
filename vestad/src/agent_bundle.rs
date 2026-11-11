@@ -67,9 +67,22 @@ fn append_entry<W: std::io::Write>(builder: &mut tar::Builder<W>, name: &str, da
         .map_err(|err| DockerError::Failed(format!("appending {name} entry: {err}")))
 }
 
+/// A gzip writer that compresses blocks on every available core. The output is one ordinary
+/// gzip member (a single header, one combined crc), so `flate2::read::GzDecoder` reads it back in full.
+fn parallel_gzip_writer<W: std::io::Write + Send + 'static>(
+    file: W,
+) -> Result<gzp::par::compress::ParCompress<'static, gzp::deflate::Gzip, W>, DockerError> {
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let builder = gzp::par::compress::ParCompressBuilder::<gzp::deflate::Gzip>::new()
+        .num_threads(threads)
+        .map_err(|err| docker_failed("configuring bundle compression", err))?
+        .compression_level(flate2::Compression::default());
+    Ok(builder.from_writer(file))
+}
+
 fn write_bundle_inner(output: &Path, manifest: &BundleManifest, constitution: &str, image_tar: &Path) -> Result<(), DockerError> {
     let file = std::fs::File::create(output).map_err(|err| docker_failed("creating bundle file", err))?;
-    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let encoder = parallel_gzip_writer(file)?;
     let mut builder = tar::Builder::new(encoder);
 
     let manifest_bytes = serde_json::to_vec(manifest).map_err(|err| docker_failed("encoding bundle manifest", err))?;
@@ -85,8 +98,8 @@ fn write_bundle_inner(output: &Path, manifest: &BundleManifest, constitution: &s
         .append_data(&mut header, IMAGE_ENTRY, &mut image_file)
         .map_err(|err| docker_failed("appending image tar entry", err))?;
 
-    let encoder = builder.into_inner().map_err(|err| docker_failed("finishing bundle tar", err))?;
-    encoder.finish().map_err(|err| docker_failed("finishing bundle gzip", err))?;
+    let mut encoder = builder.into_inner().map_err(|err| docker_failed("finishing bundle tar", err))?;
+    gzp::ZWriter::finish(&mut encoder).map_err(|err| docker_failed("finishing bundle gzip", err))?;
     Ok(())
 }
 
@@ -707,6 +720,42 @@ mod tests {
         })
         .expect("image");
         assert_eq!(image_bytes, b"fake image tar bytes");
+    }
+
+    #[test]
+    fn large_bundle_is_one_gzip_member_that_plain_gzdecoder_reads_in_full() {
+        // Spans many compression blocks, so a multi-member stream would make a plain GzDecoder stop early.
+        let image: Vec<u8> = (0..24u32 * 1024 * 1024)
+            .map(|i| if (i >> 17) % 2 == 0 { (i.wrapping_mul(2_654_435_761) >> 13) as u8 } else { b"vesta-bundle"[(i % 12) as usize] })
+            .collect();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let image_src = dir.path().join("image-src.tar");
+        std::fs::write(&image_src, &image).expect("write image");
+        let manifest = build_manifest("apollo", crate::settings::UserDesired::Running, vec![], "2026-08-07T00:00:00Z".into());
+        let bundle = dir.path().join("out.tar.gz");
+        write_bundle(&bundle, &manifest, "be kind", &image_src).expect("write");
+
+        let mut expected_tar = tar::Builder::new(Vec::new());
+        append_entry(&mut expected_tar, MANIFEST_ENTRY, &serde_json::to_vec(&manifest).expect("manifest")).expect("manifest entry");
+        append_entry(&mut expected_tar, CONSTITUTION_ENTRY, b"be kind").expect("constitution entry");
+        append_entry(&mut expected_tar, IMAGE_ENTRY, &image).expect("image entry");
+        let expected_tar = expected_tar.into_inner().expect("tar");
+
+        let mut plain = Vec::new();
+        flate2::read::GzDecoder::new(std::fs::File::open(&bundle).expect("open")).read_to_end(&mut plain).expect("plain gunzip");
+        assert!(plain == expected_tar, "plain GzDecoder must yield the whole tar ({} of {} bytes)", plain.len(), expected_tar.len());
+
+        let mut multi = Vec::new();
+        flate2::read::MultiGzDecoder::new(std::fs::File::open(&bundle).expect("open")).read_to_end(&mut multi).expect("multi gunzip");
+        assert!(multi == expected_tar);
+
+        let mut read_back = Vec::new();
+        read_bundle_image(&bundle, |chunk| {
+            read_back.extend_from_slice(chunk);
+            Ok(())
+        })
+        .expect("image");
+        assert!(read_back == image);
     }
 
     #[test]
