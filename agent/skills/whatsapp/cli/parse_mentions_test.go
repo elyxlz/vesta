@@ -3,7 +3,12 @@ package main
 import (
 	"slices"
 	"testing"
+
+	"go.mau.fi/whatsmeow/types"
 )
+
+// mentionTestGroup is a group destination, the only kind of chat where mentions are parsed.
+var mentionTestGroup = types.NewJID("120363000000000001", types.GroupServer)
 
 // newMentionTestClient builds a store-backed client (the contacts_test.go pattern) with saved
 // contacts whose names collide with email domain segments, so a resolvable "@ed"/"@Emi" is
@@ -89,7 +94,78 @@ func TestParseMentions(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotText, gotJIDs := wac.parseMentions(tc.text)
+			gotText, gotJIDs := wac.parseMentions(tc.text, mentionTestGroup)
+			if gotText != tc.wantText {
+				t.Errorf("text = %q, want %q", gotText, tc.wantText)
+			}
+			if !slices.Equal(gotJIDs, tc.wantJIDs) {
+				t.Errorf("jids = %v, want %v", gotJIDs, tc.wantJIDs)
+			}
+		})
+	}
+}
+
+// TestParseMentionsExactOnly pins that a mention resolves only on an exact match and only in a
+// group: a token that is a mere substring of a saved name, or any mention in a 1:1 chat, leaves
+// the text untouched.
+func TestParseMentionsExactOnly(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.SaveManualContact("Mohammed X", "+15551000003"); err != nil {
+		t.Fatalf("failed to save contact: %v", err)
+	}
+	if _, err := store.SaveManualContact("Emi", "+15551000001"); err != nil {
+		t.Fatalf("failed to save contact: %v", err)
+	}
+	wac := &WhatsAppClient{store: store}
+
+	direct := types.NewJID("15551000009", types.DefaultUserServer)
+	cases := []struct {
+		name     string
+		text     string
+		dest     types.JID
+		wantText string
+		wantJIDs []string
+	}{
+		{
+			name:     "substring of a contact name is not a mention",
+			text:     "she @ed you",
+			dest:     mentionTestGroup,
+			wantText: "she @ed you",
+			wantJIDs: nil,
+		},
+		{
+			name:     "exact name match ignoring case resolves in a group",
+			text:     "hi @emi",
+			dest:     mentionTestGroup,
+			wantText: "hi @15551000001",
+			wantJIDs: []string{"15551000001@s.whatsapp.net"},
+		},
+		{
+			name:     "phone number resolves in a group",
+			text:     "hi @+15551000003",
+			dest:     mentionTestGroup,
+			wantText: "hi @15551000003",
+			wantJIDs: []string{"15551000003@s.whatsapp.net"},
+		},
+		{
+			name:     "exact name in a 1:1 chat is never rewritten",
+			text:     "hi @Emi",
+			dest:     direct,
+			wantText: "hi @Emi",
+			wantJIDs: nil,
+		},
+		{
+			name:     "phone number in a 1:1 chat is never rewritten",
+			text:     "hi @15551000003",
+			dest:     direct,
+			wantText: "hi @15551000003",
+			wantJIDs: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotText, gotJIDs := wac.parseMentions(tc.text, tc.dest)
 			if gotText != tc.wantText {
 				t.Errorf("text = %q, want %q", gotText, tc.wantText)
 			}
