@@ -321,6 +321,12 @@ export type {
   ProviderSelection,
 } from "./provider/provider";
 
+export {
+  ANDROID_APP_URL,
+  IOS_APP_URL,
+  RELEASES_URL,
+} from "./app-downloads/app-downloads";
+
 export { createController } from "./controller/controller";
 export type { Controller, ControllerDeps } from "./controller/controller";
 export type { SocketLike } from "./transport/websocket";
