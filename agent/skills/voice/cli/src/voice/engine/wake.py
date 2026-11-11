@@ -72,6 +72,10 @@ class Gate:
     retry_at: float = float("-inf")
     # The conversation was active at the last step.
     active: bool = False
+    # A reply played or waited to play at the last step.
+    playing: bool = False
+    # A hit holds the gate open until this clock time, even while a reply plays.
+    heard_until: float = float("-inf")
     # The client was told that the session waits for the phrase.
     waiting: bool = False
 
@@ -112,14 +116,22 @@ def _on_refused(gate: Gate, event: Refused, *, now: float) -> tuple[Gate, list[G
 
 
 def gate_step(
-    gate: Gate, event: GateEvent, *, follow_up_secs: float | None, active: bool, stream: Stream, now: float
+    gate: Gate,
+    event: GateEvent,
+    *,
+    follow_up_secs: float | None,
+    active: bool,
+    stream: Stream,
+    now: float,
+    playing: bool = False,
 ) -> tuple[Gate, list[GateAction]]:
     """The gate after one event of the session, and what the session does about it.
 
     `follow_up_secs` is None while the wake word is off: the gate is always open, and a refused
     stream ends the session, which has no other way to hear. With it on, the gate is open while the
-    conversation is `active` (the user talks, or a reply plays or waits to play) and until
-    `open_until`. The window counts from the end of the activity, so the step after it extends it.
+    user is `active` (talks) and until `open_until`, except while a reply is `playing` (plays or
+    waits to play): then only the phrase gets through, and a hit holds the gate open until
+    `heard_until`. The window counts from the end of the activity, so the step after it extends it.
     """
     actions: list[GateAction] = []
     if event["kind"] == "refused":
@@ -130,17 +142,18 @@ def gate_step(
         gate = dc.replace(gate, retry_at=float("-inf"))
     follow_up = 0.0 if follow_up_secs is None else follow_up_secs
     if event["kind"] == "hit":
-        gate = dc.replace(gate, open_until=max(gate.open_until, now + max(follow_up, HEARD_SECS)))
-    elif event["kind"] == "speech" or active or gate.active:
+        heard = now + max(follow_up, HEARD_SECS)
+        gate = dc.replace(gate, open_until=max(gate.open_until, heard), heard_until=max(gate.heard_until, heard))
+    elif event["kind"] == "speech" or active or gate.active or playing or gate.playing:
         gate = dc.replace(gate, open_until=max(gate.open_until, now + follow_up))
-    is_open = follow_up_secs is None or active or now < gate.open_until
+    is_open = follow_up_secs is None or active or now < gate.heard_until or (now < gate.open_until and not playing)
     if is_open and stream == "closed" and now >= gate.retry_at:
         actions.append(OPEN_STREAM)
     elif not is_open and stream == "open":
         actions.append(CLOSE_STREAM)
     if gate.waiting == is_open:
         actions.append({"type": "wake_listening", "value": not is_open})
-    return dc.replace(gate, active=active, waiting=not is_open), actions
+    return dc.replace(gate, active=active, playing=playing, waiting=not is_open), actions
 
 
 def _words(text: str) -> list[str]:

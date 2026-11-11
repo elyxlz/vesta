@@ -99,10 +99,10 @@ skill's SETUP.md.
 
 The wake word (SKILL.md) needs one ONNX classifier for its phrase, made with [livekit-wakeword](https://github.com/livekit/livekit-wakeword) (Apache-2.0). The detector runs on this box's CPU, one thread for each open session.
 
-1. **Get the model file.** Training runs for hours on a machine with an NVIDIA GPU of 8 GB or more and more than 20 GB of free disk, so it is not a job for this box: ask the user for the file, or for a machine that can train it. On that machine:
+1. **Get the model file.** Training runs for hours on a machine with an NVIDIA GPU of 8 GB or more and more than 20 GB of free disk. Check this box first: if `nvidia-smi` shows such a GPU here, train here. Otherwise ask the user for the file, or for a machine that can train it. The training machine also needs `espeak-ng` (`apt install espeak-ng`), or speech generation fails with `espeak-ng not found`. On that machine:
    ```bash
-   pip install "livekit-wakeword[train,eval,export]"
    git clone https://github.com/livekit/livekit-wakeword.git
+   pip install "./livekit-wakeword[train,eval,export]"
    cp livekit-wakeword/configs/prod.yaml hey_aria.yaml
    ```
    In `hey_aria.yaml`, set `model_name: hey_aria` and `target_phrases: ["hey aria"]`, and replace `custom_negative_phrases` with phrases that sound like it and must not wake: `"aria"`, `"hey ari"`, `"area"`, `"hey area"`, `"hey siri"`, `"hey sarah"`, `"hey maria"`. Then:
@@ -110,7 +110,7 @@ The wake word (SKILL.md) needs one ONNX classifier for its phrase, made with [li
    livekit-wakeword setup --config hey_aria.yaml
    livekit-wakeword run hey_aria.yaml
    ```
-   `run` generates speech, trains, exports, and evaluates. The model is `output/hey_aria/hey_aria.onnx`, and the evaluation gives its false wakes per hour and its recall.
+   Install from the clone as above, not from PyPI: the `run` command of the 0.3.0 release stops at feature extraction with `run_extraction() missing 1 required positional argument: 'sess_options'`, which the repository has fixed. `run` generates speech, trains, exports, and evaluates. The model is `output/hey_aria/hey_aria.onnx`, and the evaluation gives its false wakes per hour and its recall.
 2. **Install it here**, at the path that `voice status` shows under `wake_word_model`:
    ```bash
    mkdir -p ~/.voice/wake_words && cp hey_aria.onnx ~/.voice/wake_words/hey_aria.onnx

@@ -60,7 +60,7 @@ GATE_ROWS = [
         2.0,
         False,
         "closed",
-        wake.Gate(open_until=NOW + wake.HEARD_SECS),
+        wake.Gate(open_until=NOW + wake.HEARD_SECS, heard_until=NOW + wake.HEARD_SECS),
         [OPEN, LISTENING],
     ),
     (
@@ -156,6 +156,66 @@ GATE_ROWS = [
 ]
 
 
+PLAYING_ROWS = [
+    (
+        "a reply that plays closes the gate to everything but the phrase",
+        wake.Gate(open_until=NOW + 1),
+        CHECK,
+        FOLLOW_UP,
+        False,
+        "open",
+        wake.Gate(open_until=NOW + FOLLOW_UP, playing=True, waiting=True),
+        [CLOSE, WAITING],
+    ),
+    (
+        "a hit while a reply plays opens the gate",
+        wake.Gate(open_until=NOW + 1, playing=True, waiting=True),
+        {"kind": "hit"},
+        FOLLOW_UP,
+        False,
+        "closed",
+        wake.Gate(open_until=NOW + FOLLOW_UP, heard_until=NOW + FOLLOW_UP, playing=True),
+        [OPEN, LISTENING],
+    ),
+    (
+        "the user who talks keeps the gate open while a reply plays",
+        wake.Gate(),
+        CHECK,
+        FOLLOW_UP,
+        True,
+        "open",
+        wake.Gate(open_until=NOW + FOLLOW_UP, active=True, playing=True),
+        [],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "gate", "event", "follow_up_secs", "active", "stream", "after", "actions"),
+    PLAYING_ROWS,
+    ids=[row[0] for row in PLAYING_ROWS],
+)
+def test_the_gate_waits_for_the_phrase_while_a_reply_plays(
+    name: str,
+    gate: wake.Gate,
+    event: wake.GateEvent,
+    follow_up_secs: float | None,
+    active: bool,
+    stream: wake.Stream,
+    after: wake.Gate,
+    actions: list[wake.GateAction],
+) -> None:
+    got = wake.gate_step(gate, event, follow_up_secs=follow_up_secs, active=active, stream=stream, now=NOW, playing=True)
+    assert got == (after, actions)
+
+
+def test_the_window_opens_when_the_reply_ends() -> None:
+    gate, _ = wake.gate_step(wake.Gate(), CHECK, follow_up_secs=FOLLOW_UP, active=False, stream="closed", now=NOW, playing=True)
+    gate, actions = wake.gate_step(gate, CHECK, follow_up_secs=FOLLOW_UP, active=False, stream="closed", now=NOW + 3, playing=False)
+    assert OPEN in actions and LISTENING in actions
+    assert gate.open_until == NOW + 3 + FOLLOW_UP
+
+
 @pytest.mark.parametrize(
     ("name", "gate", "event", "follow_up_secs", "active", "stream", "after", "actions"), GATE_ROWS, ids=[row[0] for row in GATE_ROWS]
 )
@@ -228,10 +288,25 @@ def test_a_session_that_states_no_wake_word_listens_with_none() -> None:
 
 
 def test_the_follow_up_window_is_never_shorter_than_the_minimum() -> None:
-    settings = behavior.wake_settings({"wake_word": True, "wake_word_follow_up_secs": 0}, None)
+    settings = behavior.wake_settings({"wake_word": True, "wake_word_follow_up_secs": -3}, None)
 
     assert settings is not None
     assert settings.follow_up_secs == behavior.MIN_FOLLOW_UP_SECS
+
+
+def test_a_zero_follow_up_window_asks_for_the_phrase_every_time() -> None:
+    settings = behavior.wake_settings({"wake_word": True, "wake_word_follow_up_secs": 0}, None)
+
+    assert settings is not None
+    assert settings.follow_up_secs == 0
+
+
+def test_the_phrase_is_kept_in_the_transcript_only_when_asked() -> None:
+    kept = behavior.wake_settings({"wake_word": True, "wake_word_keep_phrase": True}, None)
+    dropped = behavior.wake_settings({"wake_word": True}, None)
+
+    assert kept is not None and kept.keep_phrase
+    assert dropped is not None and not dropped.keep_phrase
 
 
 def test_a_missing_model_file_does_not_load(tmp_path: pl.Path) -> None:

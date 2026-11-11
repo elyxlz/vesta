@@ -147,11 +147,11 @@ def test_the_phrase_over_a_reply_stops_it_at_once(tmp_path: pl.Path, stt: FakeSt
     async def scenario() -> None:
         async with voice_service(tmp_path) as client, waiting_session(client) as ws:
             await ws.send_json({"type": "speak", "id": "r1", "text": "It will be sunny."})
-            # A reply that waits to play is a conversation, so the session listens while it plays.
-            assert [frame["type"] for frame in await frames_until(ws, "wake_listening")] == ["play", "wake_listening"]
-            await opened(stt)
+            # While a reply plays or waits to play, only the phrase gets through: no stream opens.
+            assert (await next_frame(ws))["type"] == "play"
             await ws.send_json({"type": "playback", "id": "r1", "state": "started"})
             assert await next_frame(ws) == {"type": "state", "value": "agent_speaking"}
+            assert stt.streams == []
 
             await say_the_phrase(ws)
 

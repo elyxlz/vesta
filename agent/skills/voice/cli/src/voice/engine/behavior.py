@@ -11,8 +11,9 @@ from voice.settings import Domain, SettingDef, clamped
 DEFAULT_WAKE_PHRASE = "hey aria"
 DEFAULT_WAKE_THRESHOLD = 0.5
 DEFAULT_FOLLOW_UP_SECS = 5
-# A shorter window would close the stream at a pause in the middle of a sentence.
-MIN_FOLLOW_UP_SECS = 2
+# 0 asks for the phrase before every line. A short window can close the stream at a pause in
+# the middle of a sentence, so the user then says the phrase again.
+MIN_FOLLOW_UP_SECS = 0
 MAX_FOLLOW_UP_SECS = 60
 MIN_WAKE_THRESHOLD = 0.05
 MAX_WAKE_THRESHOLD = 0.95
@@ -60,6 +61,13 @@ BEHAVIOR_SCHEMA: list[SettingDef] = [
         "step": 1,
         "unit": "s",
     },
+    {
+        "key": "wake_word_keep_phrase",
+        "type": "bool",
+        "label": "keep wake phrase in transcript",
+        "description": "show the wake phrase in what you said; when off it is removed from the start of your words",
+        "default": False,
+    },
 ]
 
 
@@ -68,6 +76,7 @@ class WakeSettings:
     phrase: str
     threshold: float
     follow_up_secs: float
+    keep_phrase: bool = False
 
 
 def barge_in_allowed(stored: Domain, session_can: bool | None) -> bool:
@@ -91,4 +100,5 @@ def wake_settings(stored: Domain, session_can: bool | None) -> WakeSettings | No
         phrase=wake_phrase(stored),
         threshold=clamped(stored, "wake_word_threshold", DEFAULT_WAKE_THRESHOLD, MIN_WAKE_THRESHOLD, MAX_WAKE_THRESHOLD),
         follow_up_secs=clamped(stored, "wake_word_follow_up_secs", DEFAULT_FOLLOW_UP_SECS, MIN_FOLLOW_UP_SECS, MAX_FOLLOW_UP_SECS),
+        keep_phrase=stored.get("wake_word_keep_phrase") is True,
     )
