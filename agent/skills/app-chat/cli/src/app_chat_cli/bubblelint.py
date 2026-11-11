@@ -39,6 +39,8 @@ _ELLIPSIS_RE = re.compile(r"\.{3,}")  # ellipsis: a texting beat, not a full sto
 # A line-leading ordered-list marker ("1.", "2)") is not a full stop: each item is one
 # short thought. Only the marker is blanked, so a real wall inside an item still trips.
 _LIST_MARKER_RE = re.compile(r"^[ \t]*\d+[.)][ \t]", re.MULTILINE)
+# A lettered marker ("a.", "b)") counts only with 2+ in the message, so "I. went" prose still trips.
+_LETTER_MARKER_RE = re.compile(r"^[ \t]*[A-Za-z][.)][ \t]", re.MULTILINE)
 _ENDER_RE = re.compile(r"[.!?]+")
 
 _SPACE = " \t\r\n\v\f"
@@ -46,6 +48,8 @@ _SPACE = " \t\r\n\v\f"
 
 def _strip_protected(text: str) -> str:
     """Blank out spans whose '.', '?' or '!' are not sentence boundaries."""
+    if len(_LETTER_MARKER_RE.findall(text)) >= 2:
+        text = _LETTER_MARKER_RE.sub(" ", text)
     for rx in (_LIST_MARKER_RE, _URL_RE, _DECIMAL_RE, _INITIALISM_RE, _HOST_RE, _ABBR_RE, _ELLIPSIS_RE):
         text = rx.sub(" ", text)
     return text
