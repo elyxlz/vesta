@@ -24,7 +24,7 @@ The `--json` output is a list of results, each with `name`, `address`, `lat`/`ln
 `cid`, `ftid`, `rating`, `review_count`, `category`, `phone`, `website`, `open_now` (Google's
 answer at request time; null when the place publishes no hours), and a `links` block (`place_url`
 opens the exact place; `directions_url` is a ready directions link). The table shows each
-result's `cid`, which you pass to `show` or `directions`, and marks a currently closed place.
+result's `cid`, which you pass to `show` or `directions`, and marks a currently closed place. An unmarked row is not proof of open: it may carry `open_now: null` (no published hours), so before telling the user a place is open, read `open_now` from `--json` or today's hours from `show`.
 Filter with `--min-rating`, `--category`, and `--sort rating`.
 `--near` takes an address or `lat,lng`; a coordinate centres the search on that point, so pass
 the user's position when you have it. `--radius-km` and `--sort distance` measure from `--near`,
