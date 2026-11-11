@@ -249,8 +249,9 @@ def test_recovery_reads_at_most_the_max_catchup_window(tmp_path, monkeypatch):
     )
     monitor.run(ctx)
 
-    assert [call["sender"] for call in calls] == ["Recent"]
-    assert calls[0]["missed"] is True
+    emails = [call for call in calls if "sender" in call]
+    assert [call["sender"] for call in emails] == ["Recent"]
+    assert emails[0]["missed"] is True
 
 
 def test_legacy_bare_timestamp_state_is_read_as_the_starting_watermark(tmp_path, monkeypatch):
