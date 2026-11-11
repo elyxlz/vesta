@@ -279,7 +279,7 @@ def _write_config_store(data: dict[str, pyd.JsonValue]) -> None:
 
 
 @contextlib.contextmanager
-def config_write_lock() -> tp.Iterator[None]:
+def config_write_lock() -> tp.Generator[None, None, None]:
     """Serialize config read-modify-write transactions across API worker threads."""
     with _CONFIG_WRITE_LOCK:
         yield
@@ -667,7 +667,7 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
             validate_provider_catalog = (
                 "model" in value or "max_context_tokens" in value or (isinstance(value.get("kind"), str) and value["kind"] != current_kind)
             )
-            merged = merge_provider(config, tp.cast("dict[str, pyd.JsonValue]", value))
+            merged = merge_provider(config, value)
             candidate["provider"] = merged
             updates["provider"] = merged
         else:
@@ -684,7 +684,7 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
                 rule.id = uuid.uuid4().hex
         updates["notification_rules"] = [rule.model_dump(mode="json") for rule in validated.notification_rules]
     if "active_skills" in updates:
-        updates["active_skills"] = validated.active_skills
+        updates["active_skills"] = list[pyd.JsonValue](validated.active_skills)
     return updates
 
 

@@ -150,7 +150,7 @@ def _validated_sign_in(
     provider = updates.get("provider")
     if not isinstance(provider, dict):  # validate_config_updates guarantees this; keep the boundary explicit.
         raise TypeError("validated provider is not an object")
-    return tp.cast("dict[str, pyd.JsonValue]", provider)
+    return provider
 
 
 def _persist_sign_in(provider: dict[str, pyd.JsonValue]) -> str | None:

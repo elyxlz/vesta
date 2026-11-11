@@ -7,6 +7,8 @@ import shutil
 import signal
 import subprocess
 
+import pydantic as pyd
+
 from . import config as cfg
 from . import logger
 
@@ -166,7 +168,7 @@ def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
     names = [name for name in configured if isinstance(name, str)] if isinstance(configured, list) else _text_names(legacy_active)
     names.extend(_text_names(config.agent_dir / "core/default-skills.txt"))
     active = _valid_skill_names(names)
-    cfg.update_config_store({"active_skills": active})
+    cfg.update_config_store({"active_skills": list[pyd.JsonValue](active)})
     config.active_skills = active
 
     claude_dir = pl.Path.home() / ".claude"

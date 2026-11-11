@@ -3,6 +3,7 @@
 import json
 import typing
 
+import pydantic as pyd
 import pytest
 from aiohttp import web
 
@@ -11,7 +12,7 @@ import core.config as cfg
 
 
 def test_parse_models_maps_id_and_display_name():
-    payload = {"data": [{"id": "claude-opus-5", "display_name": "Claude Opus 5"}]}
+    payload: pyd.JsonValue = {"data": [{"id": "claude-opus-5", "display_name": "Claude Opus 5"}]}
     result = cm.parse_models(payload)
     assert result == [{"slug": "claude-opus-5", "label": "Claude Opus 5", "author": "Anthropic"}]
 
