@@ -210,8 +210,11 @@ def test_with_no_judge_speech_that_continues_past_the_hold_time_stops_the_reply(
 
 
 def test_the_judge_decides_a_barge_in_and_sees_what_the_agent_is_saying(
-    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, judge: FakeJudge
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, judge: FakeJudge, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The session names the agent after `AGENT_NAME` on the host, so pin it to keep the
+    # judge payload below the same on every box.
+    monkeypatch.setenv("AGENT_NAME", "agent")
     judge.verdicts = {"stop": STOP_VERDICT, "Stop.": STOP_VERDICT}
 
     async def scenario() -> None:
