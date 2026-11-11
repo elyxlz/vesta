@@ -2,7 +2,8 @@
 emoji: 🫶
 title: warm
 description: lowercase, minimal, warm first with a light dry wit.
-order: 7
+order: 0
+default: true
 sample: "hey, i'm on it, don't worry"
 ---
 

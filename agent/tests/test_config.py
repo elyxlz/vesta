@@ -138,7 +138,7 @@ def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch, tmp_
     monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", tmp_path / ".credentials.json")
     config, issues = load_config()
     assert config.provider is None
-    assert config.agent_personality == "dry"
+    assert config.agent_personality == "warm"
     assert issues == []
     assert isinstance(config, cfg.VestaConfig)
 
@@ -157,7 +157,7 @@ def test_update_merges_and_clear_reverts(agentdir):
     # A None clears just that key; the provider override stays.
     update_config_store({"agent_personality": None})
     assert read_config_store() == {"provider": {"kind": "claude", "model": "sonnet"}}
-    assert cfg.VestaConfig().agent_personality == "dry"
+    assert cfg.VestaConfig().agent_personality == "warm"
 
 
 def test_active_skills_load_from_config_store(agentdir):
