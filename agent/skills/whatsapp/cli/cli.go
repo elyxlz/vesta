@@ -279,8 +279,12 @@ func runServe() {
 		os.Exit(1)
 	}
 
-	// Live voice calling wraps the connected client; it answers inbound calls from here on.
-	wac.callMgr = NewCallManager(wac)
+	// Live voice calling wraps the connected client; it answers inbound calls from here on. A
+	// read-only instance gets none: any call signal from a linked device (even a reject) changes
+	// how the call rings on the owner's own phone, so it stays out of calls entirely.
+	if !wac.readOnly {
+		wac.callMgr = NewCallManager(wac)
+	}
 
 	sockPath := filepath.Join(dataDir, "whatsapp.sock")
 	listener, err := startSocketServer(sockPath, wac)
