@@ -510,6 +510,38 @@ def test_create_draft_reply_is_threaded(tmp_path):
     assert not any(u.endswith("/send") for u in posted)
 
 
+_OWN_SENT = {
+    "Id": "d1",
+    "From": {"EmailAddress": {"Address": "User@Example.com"}},
+    "ToRecipients": [{"EmailAddress": {"Address": "b@x.com"}}],
+}
+
+
+def test_reply_to_the_accounts_own_message_answers_its_recipients(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client(_OWN_SENT)
+    owa_rest.reply_message(client, "user@example.com", cfg, item_id="m1", body="following up")
+    posted = [c.args[0] for c in client.post.call_args_list]
+    assert posted[0].endswith("/me/messages/m1/createreply")
+    assert posted[-1].endswith("/me/messages/d1/send")
+    assert client.patch.call_args.kwargs["json"]["ToRecipients"] == [{"EmailAddress": {"Address": "b@x.com"}}]
+
+
+def test_reply_draft_to_the_accounts_own_message_answers_its_recipients(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client(_OWN_SENT)
+    owa_rest.create_draft(client, "user@example.com", cfg, mail=MailDraft(body="following up", reply_to_id="m1"))
+    assert client.patch.call_args.kwargs["json"]["ToRecipients"] == [{"EmailAddress": {"Address": "b@x.com"}}]
+
+
+def test_reply_to_someone_elses_message_uses_the_reply_action(tmp_path):
+    cfg = _patched_token(tmp_path)
+    client = _mock_client({"From": {"EmailAddress": {"Address": "b@x.com"}}})
+    owa_rest.reply_message(client, "user@example.com", cfg, item_id="m1", body="thanks")
+    assert client.post.call_args.args[0].endswith("/me/messages/m1/reply")
+    client.patch.assert_not_called()
+
+
 def test_create_draft_forward_sets_recipients(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"Id": "draft-2"})

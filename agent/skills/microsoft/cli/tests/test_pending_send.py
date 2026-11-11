@@ -306,16 +306,58 @@ def _patch_graph_reply_recipients(monkeypatch, calls, to, cc):
     monkeypatch.setattr(email.graph, "request_cfg", request)
 
 
-def test_a_queued_reply_to_the_accounts_own_message_reports_the_account_as_recipient(tmp_path, monkeypatch):
+def _patch_graph_own_sent_message(monkeypatch, calls):
+    """Source `my-sent-1` was sent by the account to bob; Graph's createReply pre-fills the account."""
+    _patch_graph_reply_recipients(monkeypatch, calls, to=["me@example.com"], cc=[])
+    prefilled = email.graph.request_cfg
+
+    def request(config, client, method, path, account_id, **kwargs):
+        if method == "GET" and path == "/me/messages/my-sent-1":
+            calls.append({"method": method, "path": path, "json": None})
+            return {
+                "from": {"emailAddress": {"address": "Me@Example.com"}},
+                "toRecipients": [{"emailAddress": {"address": "bob@example.com"}}],
+            }
+        return prefilled(config, client, method, path, account_id, **kwargs)
+
+    monkeypatch.setattr(email.graph, "request_cfg", request)
+
+
+def test_a_queued_reply_to_the_accounts_own_message_answers_its_recipients(tmp_path, monkeypatch):
     calls = []
     config = Config(data_dir=tmp_path)
-    _patch_graph_reply_recipients(monkeypatch, calls, to=["me@example.com"], cc=[])
+    _patch_graph_own_sent_message(monkeypatch, calls)
 
     result = email.reply_to_email(config, None, account_email="me@example.com", email_id="my-sent-1", body="Following up")
 
-    assert result["status"] == "pending"
-    assert result["recipients"] == "me@example.com"
-    assert pending_send.list_pending(tmp_path)[0].public()["recipients"] == "me@example.com"
+    assert result["recipients"] == "bob@example.com"
+    assert pending_send.list_pending(tmp_path)[0].public()["recipients"] == "bob@example.com"
+    patches = [c["json"] for c in calls if c["method"] == "PATCH" and "toRecipients" in c["json"]]
+    assert patches == [{"toRecipients": [{"emailAddress": {"address": "bob@example.com"}}]}]
+
+
+def test_an_immediate_reply_to_the_accounts_own_message_answers_its_recipients(tmp_path, monkeypatch):
+    calls = []
+    config = Config(data_dir=tmp_path)
+    pending_send.set_delay_seconds(tmp_path, 0)
+    _patch_graph_own_sent_message(monkeypatch, calls)
+
+    email.reply_to_email(config, None, account_email="me@example.com", email_id="my-sent-1", body="Following up")
+
+    reply = next(c for c in calls if c["path"] == "/me/messages/my-sent-1/reply")
+    assert reply["json"]["message"]["toRecipients"] == [{"emailAddress": {"address": "bob@example.com"}}]
+
+
+def test_a_reply_to_someone_elses_message_keeps_graphs_recipients(tmp_path, monkeypatch):
+    calls = []
+    config = Config(data_dir=tmp_path)
+    pending_send.set_delay_seconds(tmp_path, 0)
+    _patch_graph(monkeypatch, calls)
+
+    email.reply_to_email(config, None, account_email="me@example.com", email_id="original-1", body="Thanks")
+
+    reply = next(c for c in calls if c["path"] == "/me/messages/original-1/reply")
+    assert "toRecipients" not in reply["json"]["message"]
 
 
 def test_a_queued_reply_all_reports_the_threads_to_and_cc(tmp_path, monkeypatch):
@@ -342,13 +384,14 @@ def test_graph_immediate_reply_with_attachments_sends_the_body_over_the_quote(tm
 
     assert result == {"status": "sent"}
     assert [(call["method"], call["path"]) for call in calls] == [
+        ("GET", "/me/messages/original-1"),
         ("POST", "/me/messages/original-1/createReply"),
         ("GET", "/me/messages/reply-draft"),
         ("PATCH", "/me/messages/reply-draft"),
         ("POST", "/me/messages/reply-draft/attachments"),
         ("POST", "/me/messages/reply-draft/send"),
     ]
-    content = calls[2]["json"]["body"]["content"]
+    content = calls[3]["json"]["body"]["content"]
     assert content.index("Thanks") < content.index(QUOTED)
     assert content.endswith("<br><br>" + QUOTED)
 

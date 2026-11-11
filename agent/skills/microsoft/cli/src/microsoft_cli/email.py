@@ -365,6 +365,17 @@ def _split_attachments(attachments: list[str] | None) -> tuple[list[dict[str, An
     return small, large
 
 
+def _own_message_to(config: Config, client: httpx.Client, account_id: str, account_email: str, email_id: str) -> list[str]:
+    """createReply addresses the source's sender, which on the account's own message is the account
+    itself; Outlook answers that message's To recipients instead. Returns them, or [] otherwise."""
+    source = graph.request_cfg(config, client, "GET", f"/me/messages/{email_id}", account_id, params={"$select": "from,toRecipients"})
+    if not source or "from" not in source or not source["from"]:
+        return []
+    if _extract_addresses([source["from"]]).casefold() != account_email.casefold():
+        return []
+    return [a for a in _extract_addresses(source["toRecipients"] if "toRecipients" in source else []).split(", ") if a]
+
+
 def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: str, mail: MailDraft) -> dict[str, Any]:
     source_id = mail.reply_to_id or mail.forward_id
     create_endpoint = "createReplyAll" if mail.reply_to_id and mail.reply_all else "createReply" if mail.reply_to_id else "createForward"
@@ -402,6 +413,8 @@ def create_email_draft(config: Config, client: httpx.Client, *, account_email: s
 
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
+    if mail.reply_to_id and not mail.reply_all and not mail.to:
+        mail = dataclasses.replace(mail, to=_own_message_to(config, client, account_id, account_email, mail.reply_to_id) or None)
     if mail.reply_to_id or mail.forward_id:
         return _draft_reply_or_forward(config, client, account_id, mail)
 
@@ -551,6 +564,8 @@ def reply_to_email(
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
+    own_to = [] if reply_all else _own_message_to(config, client, account_id, account_email, email_id)
+    recipients = {"toRecipients": [{"emailAddress": {"address": addr}} for addr in own_to]} if own_to else {}
 
     if attachments:
         draft = graph.request_cfg(config, client, "POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
@@ -558,13 +573,15 @@ def reply_to_email(
             raise ValueError("Failed to create reply draft")
 
         draft_id = draft["id"]
+        if recipients:
+            graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=recipients)
         _compose_over_quote(config, client, draft_id, account_id, body, html)
         _attach_files(config, client, draft_id, attachments, account_id)
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
     endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
-    payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
+    payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}, **recipients}}
     graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
     return {"status": "sent"}
 
@@ -657,6 +674,10 @@ def reply_draft(
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply draft")
     draft_id = draft["id"]
+    own_to = [] if reply_all else _own_message_to(config, client, account_id, account_email, email_id)
+    if own_to:
+        to_recipients = [{"emailAddress": {"address": addr}} for addr in own_to]
+        graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json={"toRecipients": to_recipients})
     _compose_over_quote(config, client, draft_id, account_id, body, False)
     _attach_files(config, client, draft_id, attachments, account_id)
 
