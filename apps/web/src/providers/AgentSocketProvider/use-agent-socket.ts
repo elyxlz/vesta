@@ -148,6 +148,7 @@ export function useAgentSocketState({
     historyLoaded: state.chat.historyLoaded,
     pendingNotifications,
     hasMore: state.chat.cursor !== null,
+    pagedBack: state.chat.pagedBack,
     loadingMore: state.loadingMore,
     loadMore,
     trimHistory,

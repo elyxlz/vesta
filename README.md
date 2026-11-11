@@ -59,7 +59,7 @@ irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- -
 ### Mobile app
 
 - **Android**: install [the latest APK](https://github.com/elyxlz/vesta/releases/latest/download/vesta-android.apk) directly (your browser asks once to allow the install). Each release attaches a fresh build.
-- **iOS**: delivered through TestFlight internal testing for now.
+- **iOS**: install from [the App Store](https://apps.apple.com/us/app/vesta-guardian-angel/id6821612931).
 
 ## Setup
 
