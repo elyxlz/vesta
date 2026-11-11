@@ -33,6 +33,18 @@ Set `MICROSOFT_READ_ONLY=1` (same truthy values) to make **every connected accou
 
 The refusal happens in the CLI before any Graph or OWA-REST call, so it covers both backends. Still allowed on purpose: `email send-delay` and `email pending` configure and inspect the **local** outbox and are invisible to the account's owner, and `email undo` only ever cancels a queued send. Default off: unset/empty leaves every command allowed.
 
+## A pending send is a server draft
+
+While the send delay is above zero, `email send`/`reply`/`forward` create the outgoing message as a
+real draft in the mailbox's **Drafts** folder and queue its id; when the delay expires the daemon
+calls `/send` on that draft id. Until then the queued message is indistinguishable from any other
+draft with the same subject, so deleting drafts by subject match while a send is pending can delete
+the queued message itself, and its delivery then fails with a 404. Delete an old draft only by its
+exact id, and only after the sent copy shows in Sent Items. To send a draft made with
+`reply-draft` when no command sends an existing draft, run `reply` again with the same body, confirm
+the copy in Sent Items, then delete the old draft by id. Use `email undo --id <pending_id>` to
+cancel a queued send; it removes that draft for you.
+
 ## Personalization
 
 ## Threaded reply DRAFT (leave unsent for the user to send)
