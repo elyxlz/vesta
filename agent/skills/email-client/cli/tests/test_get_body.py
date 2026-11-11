@@ -56,9 +56,9 @@ class _Box:
         return False
 
 
-def _run(monkeypatch, capsys, msg, body_chars=4000):
+def _run(monkeypatch, capsys, msg, body_chars=4000, html=False):
     monkeypatch.setattr(imap, "connect", lambda *a, **k: _Box(msg))
-    args = argparse.Namespace(account=None, folder="INBOX", uid="1", body_chars=body_chars)
+    args = argparse.Namespace(account=None, folder="INBOX", uid="1", body_chars=body_chars, html=html)
     imap.cmd_get(args)
     return json.loads(capsys.readouterr().out)
 
@@ -86,6 +86,20 @@ def test_plain_text_part_is_preferred_untouched(monkeypatch, capsys):
     out = _run(monkeypatch, capsys, _Msg(text="plain <b>wins</b>", html=BULK_SENDER_SHAPED))
     assert out["body_format"] == "text"
     assert out["body"] == "plain <b>wins</b>"
+
+
+def test_html_flag_reads_the_html_part_over_a_linkless_text_part(monkeypatch, capsys):
+    """A text part that drops the link targets must not hide them when --html is asked for."""
+    msg = _Msg(text="See details", html=BULK_SENDER_SHAPED)
+    out = _run(monkeypatch, capsys, msg, html=True)
+    assert out["body_format"] == "html-to-text"
+    assert "https://pay.example/tx/ABC123" in out["body"]
+
+
+def test_html_flag_without_an_html_part_returns_the_text(monkeypatch, capsys):
+    out = _run(monkeypatch, capsys, _Msg(text="only text"), html=True)
+    assert out["body_format"] == "text"
+    assert out["body"] == "only text"
 
 
 def test_whitespace_only_text_part_falls_through_to_html(monkeypatch, capsys):
