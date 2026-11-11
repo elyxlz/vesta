@@ -193,3 +193,24 @@ def test_facets_skips_rows_whose_data_is_not_valid_json(monkeypatch, tmp_path, c
     assert facets["source"] == ["whatsapp"]
     assert facets["sender"] == ["bob"]
     assert facets["fields"]["chat_name"] == ["Bride squad"]
+
+
+@pytest.mark.parametrize("spec", ["sender~=|x", "sender~=x|", "sender~=.*", "sender=", "sender~=(a)?"])
+def test_parse_match_rejects_match_all(spec):
+    with pytest.raises(ValueError, match="empty string"):
+        cli._parse_match(spec)
+
+
+def test_parse_match_allows_negated_and_normal_regex():
+    assert cli._parse_match("sender!~=|x")["negate"] is True
+    assert cli._parse_match("sender~=a@x\\.com|b@y\\.com")["op"] == "regex"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "flag"), [({"sender": " "}, "--sender"), ({"keyword": "|urgent"}, "--keyword"), ({"match": ["sender~=|x"]}, "--match")]
+)
+def test_add_refuses_match_all_predicate(monkeypatch, capsys, kwargs, flag):
+    store = _store(monkeypatch)
+    assert cli.cmd_add(_args(action="trash", source="whatsapp", **kwargs)) == 1
+    assert store == []
+    assert flag in capsys.readouterr().err
