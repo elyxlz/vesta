@@ -406,3 +406,29 @@ def test_remind_list_interval_row_keeps_a_live_future_column(tmp_config: Config)
     listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config)}
 
     assert db.parse_datetime(listed[hourly["id"]]["next_run"]) == db.parse_datetime(live)
+
+
+def test_recurring_with_future_dated_at_starts_on_that_date(tmp_config: Config):
+    """--at 'YYYY-MM-DDTHH:MM' on a later date is the first fire: the reminder must not also fire today."""
+    london = ZoneInfo("Europe/London")
+    later = (datetime.now(london) + timedelta(days=2)).date()
+    result = commands.remind_set(
+        tmp_config,
+        commands.ReminderSpec(message="chaser", scheduled_datetime=f"{later.isoformat()}T10:10:00", tz="Europe/London", recurring="daily"),
+    )
+    data = _trigger_data(tmp_config, result["id"])
+    assert "start" in data
+    trigger = commands._cron_trigger_from_data(data)
+    first = trigger.get_next_fire_time(None, datetime.now(UTC))
+    assert first.astimezone(london).date() == later
+    assert first.astimezone(london).hour == 10 and first.astimezone(london).minute == 10
+
+
+def test_recurring_with_todays_date_has_no_start(tmp_config: Config):
+    london = ZoneInfo("Europe/London")
+    today = datetime.now(london).date()
+    result = commands.remind_set(
+        tmp_config,
+        commands.ReminderSpec(message="standup", scheduled_datetime=f"{today.isoformat()}T23:59:00", tz="Europe/London", recurring="daily"),
+    )
+    assert "start" not in _trigger_data(tmp_config, result["id"])

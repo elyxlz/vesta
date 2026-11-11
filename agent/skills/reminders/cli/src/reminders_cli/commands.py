@@ -36,6 +36,7 @@ class TriggerData(TypedDict, total=False):
     tz: str  # "cron": pinned IANA timezone (DST-aware); absent = the schedule follows the agent's own zone
     hours: int  # "interval": fixed hour spacing
     fuzz_minutes: int  # "cron": each fire shifts by a deterministic sample in [-fuzz, +fuzz]
+    start: str  # "cron": ISO-8601 UTC instant before which the schedule never fires (a dated --at in the future)
 
 
 RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more than once; "date" is the one-shot type
@@ -140,7 +141,10 @@ def _cron_trigger_from_data(trigger_data: TriggerData) -> CronTrigger:
     # No stored tz means the schedule follows the agent's zone, resolved at build time: the daemon
     # re-arms every trigger at startup, so a timezone change plus restart moves every unpinned schedule.
     tz_name = trigger_data["tz"] if "tz" in trigger_data else None
-    return CronTrigger.from_crontab(trigger_data["expr"], timezone=_zone(tz_name))
+    trigger = CronTrigger.from_crontab(trigger_data["expr"], timezone=_zone(tz_name))
+    if "start" in trigger_data:
+        trigger.start_date = datetime.fromisoformat(trigger_data["start"])
+    return trigger
 
 
 def _validate_fuzz(fuzz_minutes: int, trigger: CronTrigger):
@@ -235,6 +239,27 @@ def _normalize_cron_expr(expr: str) -> str:
         raise ValueError(f"Cron expression must have 5 fields (min hour day month dow), got {len(fields)}: '{expr}'")
     fields[4] = _normalize_dow(fields[4])
     return " ".join(fields)
+
+
+def cron_dom_step_warning(expr: str) -> str | None:
+    """Warn when the day-of-month field steps by N>1 ("*/2"): the step restarts every month, so it is not 'every N days'.
+
+    "*/2" fires on days 1,3,...,31, so the 31st and the next month's 1st fire back to back (and 29th -> 1st in
+    February is a three-day gap). A reminder meant as "every other day" silently doubles up at month ends.
+    """
+    fields = expr.split()
+    if len(fields) != 5:
+        return None
+    dom = fields[2]
+    for part in dom.split(","):
+        if "/" in part:
+            step = part.split("/", 1)[1]
+            if step.isdigit() and int(step) > 1:
+                return (
+                    f"day-of-month step '{dom}' restarts each month, so it is not 'every {step} days': "
+                    "month ends fire back to back or skip. Guard in the message or use a weekday pattern."
+                )
+    return None
 
 
 def _parse_local_dt(datetime_str: str, timezone_str: str | None, *, allow_bare_time: bool = False) -> datetime:
@@ -471,14 +496,21 @@ def _recurring_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, Trigg
         expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
         schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d}{zone_label}"
 
-    return _cron_schedule(reminder_id, spec, expr, schedule_info)
+    # A dated --at on a later day is the first fire, not just the time of day.
+    starts_later = spec.recurring != "yearly" and local_dt.date() > _now_utc().astimezone(local_dt.tzinfo).date()
+    start = local_dt.astimezone(UTC) if starts_later else None
+    return _cron_schedule(reminder_id, spec, expr, schedule_info, start=start)
 
 
-def _cron_schedule(reminder_id: str, spec: ReminderSpec, expr: str, schedule_info: str) -> tuple[str, TriggerData, datetime | None]:
+def _cron_schedule(
+    reminder_id: str, spec: ReminderSpec, expr: str, schedule_info: str, *, start: datetime | None = None
+) -> tuple[str, TriggerData, datetime | None]:
     """The stored trigger for a cron expression: pinned to spec.tz when given, fuzzed when asked."""
     trigger_data: TriggerData = {"type": "cron", "expr": _normalize_cron_expr(expr)}
     if spec.tz:
         trigger_data["tz"] = spec.tz
+    if start is not None:
+        trigger_data["start"] = start.isoformat()
     trigger = _cron_trigger_from_data(trigger_data)
     next_run = trigger.get_next_fire_time(None, _now_utc())
     if spec.fuzz_minutes is not None:
@@ -545,6 +577,7 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
         "next_run": _echo_local(next_run),
         "created_at": created_at,
         "status": "scheduled",
+        **({"warning": w} if spec.cron and (w := cron_dom_step_warning(spec.cron)) else {}),
     }
 
 
