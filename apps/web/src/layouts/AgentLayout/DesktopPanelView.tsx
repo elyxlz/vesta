@@ -11,7 +11,7 @@ import { Dashboard } from "@/components/Dashboard";
 import { agentSubpage } from "@/lib/agent-subpage";
 import { cn } from "@/lib/utils";
 import { useLayout } from "@/stores/use-layout";
-import { setChatFullscreen } from "@/stores/use-preferences";
+import { setDashboardView } from "@/stores/use-preferences";
 
 const DASHBOARD_CHAT_LAYOUT_ID = "agent-dashboard-chat";
 const DASHBOARD_PANEL_ID = "dashboard";
@@ -39,7 +39,7 @@ export function DesktopPanelView({
 
   // Remember which of the two views the agent was left in; logs and settings keep it.
   useEffect(() => {
-    if (name && onPanelOrChat) setChatFullscreen(name, isChat);
+    if (name && onPanelOrChat) setDashboardView(name, !isChat);
   }, [name, onPanelOrChat, isChat]);
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({

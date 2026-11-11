@@ -5,6 +5,8 @@ import type { Platform } from "@/lib/platform";
 // is the serving gateway's own version and so always inside its client window. The Android APK
 // keeps one name on every release, so it comes from the latest one.
 const RELEASES_URL = "https://github.com/elyxlz/vesta/releases";
+const APP_STORE_URL =
+  "https://apps.apple.com/us/app/vesta-guardian-angel/id6821612931";
 
 interface AppChoice {
   label: string;
@@ -56,6 +58,11 @@ export function appTiles(version: string): AppTile[] {
         },
       ],
     },
-    { platform: "ios", name: "iPhone", hint: null, choices: [] },
+    {
+      platform: "ios",
+      name: "iPhone",
+      hint: null,
+      choices: [{ label: "iPhone", url: APP_STORE_URL }],
+    },
   ];
 }

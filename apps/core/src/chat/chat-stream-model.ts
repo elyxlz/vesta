@@ -29,6 +29,8 @@ export interface ChatState {
   pendingIntents: Set<string>;
   cursor: number | null;
   historyLoaded: boolean;
+  // An older page was prepended, so the top of `messages` is a place the user paged back to.
+  pagedBack: boolean;
 }
 
 export function initialChatState(): ChatState {
@@ -38,6 +40,7 @@ export function initialChatState(): ChatState {
     pendingIntents: new Set(),
     cursor: null,
     historyLoaded: false,
+    pagedBack: false,
   };
 }
 
@@ -73,6 +76,7 @@ export function seedTail(state: ChatState, page: HistoryPage): ChatState {
     pendingIntents,
     cursor: joined && state.historyLoaded ? state.cursor : page.cursor,
     historyLoaded: true,
+    pagedBack: joined && state.pagedBack,
   };
 }
 
@@ -292,6 +296,7 @@ export function prependPage(
     shownIds,
     messages: [...events, ...state.messages],
     cursor,
+    pagedBack: true,
   };
 }
 
