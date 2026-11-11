@@ -39,7 +39,7 @@ func (l *writerLogger) outputf(level, msg string, args ...any) {
 	if logLevelRank[level] < l.min {
 		return
 	}
-	line := fmt.Sprintf("%s [%s %s] %s\n", time.Now().Format("15:04:05.000"), l.module, level, fmt.Sprintf(msg, args...))
+	line := fmt.Sprintf("%s [%s %s] %s\n", time.Now().Format("2006-01-02 15:04:05.000"), l.module, level, fmt.Sprintf(msg, args...))
 	l.mutex.Lock()
 	io.WriteString(l.writer, line)
 	l.mutex.Unlock()
