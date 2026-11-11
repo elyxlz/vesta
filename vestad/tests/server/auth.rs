@@ -46,9 +46,9 @@ fn provider_setup_and_catalogs_are_owned_by_the_named_agent() {
     assert_eq!(personalities_status, 200);
     let personalities: serde_json::Value =
         serde_json::from_str(&personalities_body).expect("personality catalog JSON");
-    assert_eq!(personalities["default"], "dry");
+    assert_eq!(personalities["default"], "warm");
     assert!(personalities["presets"].as_array().is_some_and(|presets| {
-        presets.iter().any(|preset| preset["name"] == "dry")
+        presets.iter().any(|preset| preset["name"] == "warm")
     }));
 
     let provider_path = format!("/agents/{}/provider", agent.name);
