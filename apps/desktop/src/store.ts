@@ -33,28 +33,25 @@ export function storageBackendIsSecure(
   );
 }
 
-export function credentialStorageIsSecure(): boolean {
+export async function credentialStorageIsSecure(): Promise<boolean> {
+  const encryptionAvailable = await safeStorage.isAsyncEncryptionAvailable();
   const linuxBackend =
     process.platform === "linux"
       ? safeStorage.getSelectedStorageBackend()
       : "unknown";
   return storageBackendIsSecure(
     process.platform,
-    safeStorage.isEncryptionAvailable(),
+    encryptionAvailable,
     linuxBackend,
   );
 }
 
 // The store degrades rather than refuses: encrypted with whatever backend the OS offers, and
 // plain JSON when it offers none, so a session always survives a relaunch.
-function payload(value: unknown): unknown {
-  if (!safeStorage.isEncryptionAvailable()) return value;
-  return {
-    version: STORE_VERSION,
-    encrypted: safeStorage
-      .encryptString(JSON.stringify(value))
-      .toString("base64"),
-  };
+async function payload(value: unknown): Promise<unknown> {
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return value;
+  const encrypted = await safeStorage.encryptStringAsync(JSON.stringify(value));
+  return { version: STORE_VERSION, encrypted: encrypted.toString("base64") };
 }
 
 function parseEncryptedStore(value: unknown): EncryptedStore | null {
@@ -89,8 +86,16 @@ async function readJson(filename: string): Promise<unknown> {
   }
 }
 
-function writeStore(filename: string, value: unknown): Promise<void> {
-  return writeJson(filename, payload(value));
+async function writeStore(filename: string, value: unknown): Promise<void> {
+  await writeJson(filename, await payload(value));
+}
+
+async function rewriteStore(filename: string, value: unknown): Promise<void> {
+  try {
+    await writeStore(filename, value);
+  } catch (cause) {
+    console.warn(`could not re-encrypt ${filename}`, cause);
+  }
 }
 
 async function readStore(filename: string): Promise<unknown> {
@@ -99,24 +104,26 @@ async function readStore(filename: string): Promise<unknown> {
 
   const encrypted = parseEncryptedStore(parsed);
   if (encrypted) {
+    let value: unknown;
+    let shouldReEncrypt: boolean;
     try {
-      const decrypted = safeStorage.decryptString(
+      const decrypted = await safeStorage.decryptStringAsync(
         Buffer.from(encrypted.encrypted, "base64"),
       );
-      return JSON.parse(decrypted);
+      value = JSON.parse(decrypted.result);
+      shouldReEncrypt = decrypted.shouldReEncrypt;
     } catch {
       return null;
     }
+    // The OS rotated the key or offers a stronger one: write the value again under it.
+    if (shouldReEncrypt) await rewriteStore(filename, value);
+    return value;
   }
 
   // A plain store (written while no encryption backend was available) is encrypted in place as
   // soon as one is.
-  if (safeStorage.isEncryptionAvailable()) {
-    try {
-      await writeStore(filename, parsed);
-    } catch (cause) {
-      console.warn(`could not encrypt plain ${filename}`, cause);
-    }
+  if (await safeStorage.isAsyncEncryptionAvailable()) {
+    await rewriteStore(filename, parsed);
   }
   return parsed;
 }
