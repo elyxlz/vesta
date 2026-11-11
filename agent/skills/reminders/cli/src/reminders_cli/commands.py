@@ -408,13 +408,47 @@ def cron_zone_moved(job: Job, trigger_data: TriggerData) -> bool:
     return str(job.trigger.timezone) != str(_zone(stored_tz))
 
 
+def _replay_missed_cron(row, now: datetime, notif_dir: Path | None, conn) -> None:
+    """At daemon startup, report a plain cron reminder whose fire fell inside the downtime.
+
+    A plain cron row's `scheduled_time` holds its NEXT fire (send_reminder_job advances it on every
+    fire). The scheduler is rebuilt fresh at startup, so a fire that came due while the daemon was
+    down is never run and never reported: the job is simply re-armed for its next slot. A daily
+    morning brief vanished this way on 11 Oct 2026 after a ~6.7h outage, with no trace. So a
+    scheduled_time older than MISSED_GRACE means a fire was missed: write ONE `reminder_missed`
+    (coalesced, however many slots passed) and advance scheduled_time so it is reported once.
+    Startup only: during normal running the live job fires and advances the row itself."""
+    if not notif_dir or not row["scheduled_time"]:
+        return
+    trigger_data: TriggerData = json.loads(row["trigger_data"])
+    if (trigger_data["type"] if "type" in trigger_data else None) != "cron" or "fuzz_minutes" in trigger_data:
+        return
+    due = db.parse_datetime(row["scheduled_time"])
+    if due > now - MISSED_GRACE:
+        return
+    logger.info("Reminder %s: recurring fire at %s missed while down, sending missed notification", row["id"], due.isoformat())
+    # Name the slot that was missed: replayed hours later (or the next day), "Morning brief." alone
+    # reads as due NOW, and a 04:00 restart would otherwise invite a brief at 04:00.
+    slot = due.astimezone(_zone(trigger_data["tz"] if "tz" in trigger_data else None)).strftime("%a %d %b %H:%M %Z")
+    message = f"[MISSED: this recurring reminder was due {slot} while the daemon was down]\n{row['message']}"
+    write_reminder_notification(notif_dir, row["id"], message, notif_type="reminder_missed")
+    next_fire = _cron_trigger_from_data(trigger_data).get_next_fire_time(None, now)
+    if next_fire is not None:
+        conn.execute("UPDATE reminders SET scheduled_time = ? WHERE id = ?", (next_fire.isoformat(), row["id"]))
+
+
 def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_dir: Path | None = None):
     """Load all active reminders from DB and register as APScheduler jobs.
-    Past-due one-time reminders fire missed notifications immediately."""
+    Past-due one-time reminders fire missed notifications immediately, and a recurring cron fire
+    that came due during the downtime is reported once as missed."""
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute(f"SELECT id, message, trigger_data FROM reminders WHERE {LIVE_REMINDER}")
-        for row in cursor:
+        cursor = conn.execute(f"SELECT id, message, trigger_data, scheduled_time FROM reminders WHERE {LIVE_REMINDER}")
+        for row in cursor.fetchall():
+            try:
+                _replay_missed_cron(row, now, notif_dir, conn)
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.error("Missed-fire check failed for reminder %s: %s", row["id"], e)
             _restore_row(scheduler, row, now, notif_dir, conn, config)
         conn.commit()
 
