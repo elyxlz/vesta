@@ -249,12 +249,19 @@ def _add_email_read_parsers(email_sub) -> None:
     p_attachment.add_argument("--out-dir", default=None, help="Directory for --all downloads (default ~/.microsoft/attachments/<email-id>)")
 
 
+def _nonblank_body(value: str) -> str:
+    """argparse type for --body: a blank body is refused before anything is drafted or queued."""
+    if not value.strip():
+        raise argparse.ArgumentTypeError("--body is empty or whitespace only; refusing to compose a blank message")
+    return value
+
+
 def _add_email_compose_parsers(email_sub) -> None:
     p_send = email_sub.add_parser("send")
     p_send.add_argument("--account", required=True)
     p_send.add_argument("--to", nargs="+", default=None)
     p_send.add_argument("--subject", required=True)
-    p_send.add_argument("--body", required=True)
+    p_send.add_argument("--body", required=True, type=_nonblank_body)
     p_send.add_argument("--cc", nargs="+", default=None)
     p_send.add_argument("--bcc", nargs="+", default=None)
     p_send.add_argument("--attachments", nargs="+", default=None)
@@ -264,7 +271,7 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_draft.add_argument("--account", required=True)
     p_draft.add_argument("--to", nargs="+", default=None)
     p_draft.add_argument("--subject", default=None)
-    p_draft.add_argument("--body", required=True)
+    p_draft.add_argument("--body", required=True, type=_nonblank_body)
     p_draft.add_argument("--cc", nargs="+", default=None)
     p_draft.add_argument("--bcc", nargs="+", default=None)
     p_draft.add_argument("--attachments", nargs="+", default=None)
@@ -275,7 +282,7 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
     p_reply.add_argument("--id", "--email-id", required=True, dest="email_id")
-    p_reply.add_argument("--body", required=True)
+    p_reply.add_argument("--body", required=True, type=_nonblank_body)
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
@@ -283,7 +290,9 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_reply_draft = email_sub.add_parser("reply-draft")
     p_reply_draft.add_argument("--account", required=True)
     p_reply_draft.add_argument("--id", "--email-id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
-    p_reply_draft.add_argument("--body", required=True, help="Reply text placed above the quoted history; '- ' lines become bullets")
+    p_reply_draft.add_argument(
+        "--body", required=True, type=_nonblank_body, help="Reply text placed above the quoted history; '- ' lines become bullets"
+    )
     p_reply_draft.add_argument("--attachments", nargs="+", default=None)
     p_reply_draft.add_argument("--reply-all", action="store_true")
     p_reply_draft.add_argument("--replace-draft", dest="replace_draft", default=None, help="Delete this draft id first (for re-edits)")
@@ -292,7 +301,7 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_forward.add_argument("--account", required=True)
     p_forward.add_argument("--id", "--email-id", required=True, dest="email_id")
     p_forward.add_argument("--to", nargs="+", required=True)
-    p_forward.add_argument("--body", default="")
+    p_forward.add_argument("--body", default=None, type=_nonblank_body)
     p_forward.add_argument("--cc", nargs="+", default=None)
     p_forward.add_argument("--attachments", nargs="+", default=None)
     p_forward.add_argument("--html", action="store_true")
@@ -738,7 +747,7 @@ def _email_routes():
             owa_rest_commands.forward_email,
             lambda a: {
                 "email_id": a.email_id,
-                "mail": MailDraft(to=a.to, body=a.body, cc=a.cc, attachments=a.attachments, html=a.html),
+                "mail": MailDraft(to=a.to, body=a.body or "", cc=a.cc, attachments=a.attachments, html=a.html),
             },
         ),
         "move": (email.move_email, owa_rest_commands.move_email, lambda a: {"email_id": a.email_id, "to_folder": a.to_folder}),
