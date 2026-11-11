@@ -226,7 +226,7 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
-    data["active_skills"] = load_active_skills(config)
+    data["active_skills"] = list[pyd.JsonValue](load_active_skills(config))
     data["notification_rules"] = [rule.model_dump(mode="json") for rule in load_notification_rules()]
     return web.json_response(data)
 

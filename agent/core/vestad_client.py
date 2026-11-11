@@ -75,7 +75,7 @@ async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | N
         return False
 
 
-async def fetch_user_devices() -> pyd.JsonValue | None:
+async def fetch_user_devices() -> pyd.JsonValue:
     """GET /agents/{me}/devices: every device the user has, with what each reported about itself (its
     IANA timezone; on a phone that shares it, its position plus the macro place). None (logged) when
     vestad cannot answer, so the caller reports that instead of guessing."""

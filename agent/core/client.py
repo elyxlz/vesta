@@ -327,7 +327,7 @@ async def consume_stream(*, state: vm.State, config: cfg.VestaConfig) -> None:
 
 
 @contextlib.asynccontextmanager
-async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.AsyncIterator[ClaudeSDKClient]:
+async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.AsyncGenerator[ClaudeSDKClient, None]:
     """The SDK session lifecycle, owned end to end: build options, open the client, spawn the single
     stream consumer for the session, and on exit cancel the consumer and reset the session fields.
 

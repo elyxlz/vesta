@@ -13,8 +13,10 @@ def test_shipped_personality_catalog_is_ordered_with_one_default():
     assert catalog["default"] == "warm"
     presets = catalog["presets"]
     assert isinstance(presets, list)
-    assert [preset["name"] for preset in presets] == ["warm", "dry", "classic", "polished", "terse", "chill", "extra"]
-    assert all("default" not in preset for preset in presets)
+    assert all(isinstance(preset, dict) for preset in presets)
+    preset_dicts = [preset for preset in presets if isinstance(preset, dict)]
+    assert [preset["name"] for preset in preset_dicts] == ["warm", "dry", "classic", "polished", "terse", "chill", "extra"]
+    assert all("default" not in preset for preset in preset_dicts)
     assert PRESETS_PATH.name == "presets"
 
 
