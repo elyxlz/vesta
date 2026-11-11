@@ -1,10 +1,12 @@
 """Email commands for Microsoft CLI."""
 
 import base64
+import contextlib
 import dataclasses
 import html
 import pathlib as pl
 import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -140,6 +142,17 @@ def _read_attachment(file_path: str) -> tuple[bytes, str, int]:
     path = pl.Path(file_path).expanduser().resolve()
     content_bytes = path.read_bytes()
     return content_bytes, path.name, len(content_bytes)
+
+
+@contextlib.contextmanager
+def _discard_draft_on_failure(config: Config, client: httpx.Client, draft_id: str, account_id: str) -> Iterator[None]:
+    """Delete draft `draft_id` if filling it raises, so a failed build leaves no half-built draft in Drafts."""
+    try:
+        yield
+    except Exception:
+        with contextlib.suppress(Exception):
+            graph.request_cfg(config, client, "DELETE", f"/me/messages/{draft_id}", account_id)
+        raise
 
 
 def _attach_files(config: Config, client: httpx.Client, message_id: str, attachments: list[str] | None, account_id: str) -> None:
@@ -372,21 +385,22 @@ def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: st
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply/forward draft")
     draft_id = draft["id"]
-    prefilled = _compose_over_quote(config, client, draft_id, account_id, mail.body, mail.html)
+    with _discard_draft_on_failure(config, client, draft_id, account_id):
+        prefilled = _compose_over_quote(config, client, draft_id, account_id, mail.body, mail.html)
 
-    updates: dict[str, Any] = {}
-    if mail.subject:
-        updates["subject"] = mail.subject
-    if mail.to:
-        updates["toRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.to]
-    if mail.cc:
-        updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.cc]
-    if mail.bcc:
-        updates["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.bcc]
-    if updates:
-        graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
+        updates: dict[str, Any] = {}
+        if mail.subject:
+            updates["subject"] = mail.subject
+        if mail.to:
+            updates["toRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.to]
+        if mail.cc:
+            updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.cc]
+        if mail.bcc:
+            updates["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.bcc]
+        if updates:
+            graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
 
-    _attach_files(config, client, draft_id, mail.attachments, account_id)
+        _attach_files(config, client, draft_id, mail.attachments, account_id)
     return {
         "status": "drafted",
         "id": draft_id,
@@ -433,16 +447,17 @@ def create_email_draft(config: Config, client: httpx.Client, *, account_email: s
 
     message_id = result["id"]
 
-    for att in large_attachments:
-        graph.upload_mail_attachment_cfg(
-            config,
-            client,
-            message_id,
-            att["name"],
-            att["content_bytes"],
-            account_id,
-            att["content_type"] if "content_type" in att else "application/octet-stream",
-        )
+    with _discard_draft_on_failure(config, client, message_id, account_id):
+        for att in large_attachments:
+            graph.upload_mail_attachment_cfg(
+                config,
+                client,
+                message_id,
+                att["name"],
+                att["content_bytes"],
+                account_id,
+                att["content_type"] if "content_type" in att else "application/octet-stream",
+            )
 
     return result
 
@@ -501,20 +516,21 @@ def _send_email_now(config: Config, client: httpx.Client, *, account_email: str,
 
         message_id = result["id"]
 
-        for att in processed_attachments:
-            if att["size"] >= LARGE_ATTACHMENT_THRESHOLD:
-                graph.upload_mail_attachment_cfg(
-                    config,
-                    client,
-                    message_id,
-                    att["name"],
-                    att["content_bytes"],
-                    account_id,
-                    att["content_type"] if "content_type" in att else "application/octet-stream",
-                )
-            else:
-                small_att = _file_attachment(att["name"], att["content_bytes"])
-                graph.request_cfg(config, client, "POST", f"/me/messages/{message_id}/attachments", account_id, json=small_att)
+        with _discard_draft_on_failure(config, client, message_id, account_id):
+            for att in processed_attachments:
+                if att["size"] >= LARGE_ATTACHMENT_THRESHOLD:
+                    graph.upload_mail_attachment_cfg(
+                        config,
+                        client,
+                        message_id,
+                        att["name"],
+                        att["content_bytes"],
+                        account_id,
+                        att["content_type"] if "content_type" in att else "application/octet-stream",
+                    )
+                else:
+                    small_att = _file_attachment(att["name"], att["content_bytes"])
+                    graph.request_cfg(config, client, "POST", f"/me/messages/{message_id}/attachments", account_id, json=small_att)
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{message_id}/send", account_id)
         return {"status": "sent"}
@@ -558,8 +574,9 @@ def reply_to_email(
             raise ValueError("Failed to create reply draft")
 
         draft_id = draft["id"]
-        _compose_over_quote(config, client, draft_id, account_id, body, html)
-        _attach_files(config, client, draft_id, attachments, account_id)
+        with _discard_draft_on_failure(config, client, draft_id, account_id):
+            _compose_over_quote(config, client, draft_id, account_id, body, html)
+            _attach_files(config, client, draft_id, attachments, account_id)
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
@@ -657,8 +674,9 @@ def reply_draft(
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply draft")
     draft_id = draft["id"]
-    _compose_over_quote(config, client, draft_id, account_id, body, False)
-    _attach_files(config, client, draft_id, attachments, account_id)
+    with _discard_draft_on_failure(config, client, draft_id, account_id):
+        _compose_over_quote(config, client, draft_id, account_id, body, False)
+        _attach_files(config, client, draft_id, attachments, account_id)
 
     check = graph.request_cfg(
         config,
@@ -702,12 +720,13 @@ def forward_email(config: Config, client: httpx.Client, *, account_email: str, e
             raise ValueError("Failed to create forward draft")
         draft_id = draft["id"]
 
-        updates: dict[str, Any] = {"toRecipients": to_recipients}
-        if cc:
-            updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
-        graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
-        _compose_over_quote(config, client, draft_id, account_id, body, html)
-        _attach_files(config, client, draft_id, attachments, account_id)
+        with _discard_draft_on_failure(config, client, draft_id, account_id):
+            updates: dict[str, Any] = {"toRecipients": to_recipients}
+            if cc:
+                updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
+            graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
+            _compose_over_quote(config, client, draft_id, account_id, body, html)
+            _attach_files(config, client, draft_id, attachments, account_id)
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
 
