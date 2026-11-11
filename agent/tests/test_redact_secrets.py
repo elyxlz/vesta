@@ -1327,9 +1327,11 @@ def test_scan_leaves_the_database_stores_to_their_row_refs(tmp_path, event_bus, 
     assert _file_hits(out) == []
 
 
-@pytest.mark.parametrize("pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts"])
+@pytest.mark.parametrize(
+    "pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts", "go/pkg/mod/golang.org/x/crypto"]
+)
 def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monkeypatch, capsys, pruned):
-    """By name anywhere (a cache, a test fixture dir) and by path (the upstream source trees)."""
+    """By name anywhere (a cache, a test fixture dir) and by path (the upstream source trees, the Go module cache)."""
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
     blob = tmp_path / pruned / "blob.txt"
     blob.parent.mkdir(parents=True)
@@ -1339,3 +1341,10 @@ def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monk
 
     assert _file_hits(out) == []
     assert "No secrets found." in out
+
+
+def test_snippet_has_no_control_bytes_so_the_report_stays_text():
+    text = "\x00\x01binary\x0f token=ghp_" + "A" * 36 + " tail\n"
+    (snippet,) = redact.find_matches(text)
+    assert not any(ord(c) < 32 or ord(c) == 127 for c in snippet)
+    assert "[REDACTED]" in snippet and "binary" in snippet
