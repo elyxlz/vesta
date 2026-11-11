@@ -24,7 +24,7 @@ const (
 
 var (
 	bubbleURLRe        = regexp.MustCompile(`https?://\S+`)         // urls
-	bubbleDecimalRe    = regexp.MustCompile(`\b\d+[.,]\d+\b`)       // decimals: 8.6, 86,5
+	bubbleDecimalRe    = regexp.MustCompile(`\b\d+(?:[.,]\d+)+\b`)  // decimals and dotted runs: 8.6, 86,5, 1.2.3, 192.0.2.10
 	bubbleInitialismRe = regexp.MustCompile(`\b(?:[A-Za-z]\.){2,}`) // initialisms: W.A.S.T.E., U.K.
 	// Bare, schemeless hostnames: UGG.co.uk, example.com, sub-domain.example.co.uk. A dot-connected
 	// run with no interior whitespace is one token, never a full stop. Must run BEFORE bubbleAbbrRe,

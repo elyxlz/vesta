@@ -16,6 +16,8 @@ func TestBubbleLintPasses(t *testing.T) {
 		"done, anything else?",                          // a trailing mark ends the bubble
 		"one thought.",                                  // a trailing full stop ends the bubble
 		"meet at 8.30 by the door",                      // decimal must not read as a full stop
+		"allow 192.0.2.10 (the server)",                 // an IP is one token
+		"on version 1.2.3 now",                          // dotted version, same shape
 		"the W.A.S.T.E. system is down",                 // initialism protected
 		"see https://example.com/a.b.c for the details", // url protected
 		"call Dr. Smith back today",                     // abbreviation protected
@@ -50,6 +52,7 @@ func TestBubbleLintBlocks(t *testing.T) {
 		msg  string
 	}{
 		{"text after a full stop", "hey. ok"},
+		{"a real stop after an IP still trips", "it is 192.0.2.10. then reboot it"},
 		{"two sentences in one bubble", "done. anything else?"},
 		{"three sentences in one bubble", "i checked the first folder. then the second one. nothing in either."},
 		{"text after a question mark", "hey! how are you?"},
