@@ -43,6 +43,9 @@ account (a second Microsoft tenant) or a parallel task, named in lowercase lette
 and `_`, starting with a letter or digit, at most 64 characters. A session runs one program at a
 time. A session idle for 30 minutes stops its browser, and the next program starts it again on the
 same profile.
+Stopping drops every open tab, so a page waiting on the user outside a handover (a QR scan, a
+code or a confirm tap on their phone) is lost if they take longer than that: keep that session
+busy with a short `browser exec` that polls the page until the step lands or you give up.
 
 `--timeout` is the program's budget in seconds: 120 by default, 5 minimum, 600 maximum. Raise the
 Bash tool timeout together with it, or the tool call ends while the program is still running.
