@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestBubbleLintPasses pins the sends that must reach the recipient untouched:
 // short bubbles that end at their one mark (or carry none at all), and the
@@ -107,5 +110,14 @@ func TestTextAfterFullStop(t *testing.T) {
 		if got := textAfterFullStop(c.msg); got != c.want {
 			t.Errorf("textAfterFullStop(%q) = %v, want %v", c.msg, got, c.want)
 		}
+	}
+}
+
+// The rejection must name every sentence ender, so a question mark mid-bubble
+// is not misread as a full-stop problem when the caller rewrites the send.
+func TestBubbleLintReasonNamesQuestionMark(t *testing.T) {
+	got := bubbleLintReason("want a 3rd? or leave it")
+	if !strings.Contains(got, "?") {
+		t.Errorf("bubbleLintReason reason should name '?', got %q", got)
 	}
 }
