@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useColorScheme } from "react-native";
+import { Appearance, useColorScheme } from "react-native";
 import { darkColors, lightColors, type AppColors } from "@/theme/colors";
 import {
   getNaturalChatPacingForAgent,
@@ -17,9 +17,16 @@ import {
   PREFERENCES_KEY,
   readStoredPreferences,
   type PreferencesState,
+  type ThemePreference,
 } from "./model";
 
 export type { ThemePreference } from "./model";
+
+// Native chrome (headers, sheets, grabbers) reads the window's interface
+// style, not our colors, so the chosen theme is applied to it as well.
+function applyNativeTheme(theme: ThemePreference) {
+  Appearance.setColorScheme(theme === "system" ? "unspecified" : theme);
+}
 
 interface PreferencesValue extends PreferencesState {
   hydrated: boolean;
@@ -54,6 +61,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       .then((stored) => {
         if (!active) return;
         const next = readStoredPreferences(stored);
+        applyNativeTheme(next.theme);
         preferencesRef.current = next;
         setPreferences(next);
       })
@@ -71,6 +79,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const update = useCallback(
     (patch: Partial<PreferencesState>): Promise<void> => {
       const next = { ...preferencesRef.current, ...patch };
+      if (next.theme !== preferencesRef.current.theme) {
+        applyNativeTheme(next.theme);
+      }
       preferencesRef.current = next;
       setPreferences(next);
       const write = writeChainRef.current.then(() =>

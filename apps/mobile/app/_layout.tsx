@@ -55,7 +55,13 @@ import {
   type BootTargetFrame,
 } from "@/components/BootTransition";
 import { fontNames } from "@/theme/typography";
-import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
+import {
+  authSheetOptions,
+  blockingSheetOptions,
+  fullSheetOptions,
+  resizableSheetOptions,
+  stackHeaderOptions,
+} from "@/theme/sheets";
 
 const IS_ANDROID = process.env.EXPO_OS === "android";
 
@@ -155,17 +161,11 @@ function SessionNavigation() {
           <NavigationBar style={dark ? "light" : "dark"} />
           <Stack
             screenOptions={{
-              contentStyle: { backgroundColor: colors.background },
-              headerTransparent: true,
-              headerStyle: { backgroundColor: "transparent" },
-              headerTintColor: colors.text,
-              headerTitleStyle,
+              ...stackHeaderOptions(colors),
               headerLargeTitleStyle: {
                 fontFamily: fontNames.heading.native["500"],
                 fontWeight: "500",
               },
-              headerShadowVisible: false,
-              headerBackButtonDisplayMode: "minimal",
             }}
           >
             <Stack.Protected guard={status !== "connected"}>
@@ -186,88 +186,42 @@ function SessionNavigation() {
               <Stack.Screen
                 name="new-agent"
                 options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: "fitToContents",
-                  sheetInitialDetentIndex: 0,
+                  ...authSheetOptions(colors),
                   sheetGrabberVisible: true,
-                  sheetExpandsWhenScrolledToEdge: false,
                 }}
               />
               <Stack.Screen
                 name="gateway-update"
-                options={
-                  IS_ANDROID
-                    ? {
-                        headerShown: false,
-                        animation: "none",
-                        gestureEnabled: false,
-                        contentStyle: { backgroundColor: colors.background },
-                      }
-                    : {
-                        headerShown: false,
-                        presentation: "formSheet",
-                        sheetAllowedDetents: "fitToContents",
-                        sheetGrabberVisible: false,
-                        gestureEnabled: false,
-                        contentStyle: { backgroundColor: colors.card },
-                      }
-                }
+                options={blockingSheetOptions(colors)}
               />
               <Stack.Screen
                 name="settings"
                 options={{
+                  ...resizableSheetOptions(colors),
                   title: "Settings",
                   headerTitleAlign: "center",
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  // Android's collapsed multi-detent sheet can measure only
-                  // its header; use the full-height settings presentation.
-                  sheetAllowedDetents: IS_ANDROID ? [1] : [0.5, 1],
-                  sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: !IS_ANDROID,
-                  sheetExpandsWhenScrolledToEdge: true,
-                  contentStyle: { backgroundColor: colors.background },
                 }}
               />
               <Stack.Screen
                 name="switch-gateway"
                 options={{
-                  headerShown: false,
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: "fitToContents",
+                  ...authSheetOptions(colors),
                   sheetGrabberVisible: true,
-                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
                 name="whats-new"
                 options={{
+                  ...resizableSheetOptions(colors),
                   title: "What’s new",
                   headerTitleAlign: "center",
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: IS_ANDROID ? [1] : [0.5, 1],
-                  sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: !IS_ANDROID,
-                  sheetExpandsWhenScrolledToEdge: true,
-                  contentStyle: { backgroundColor: colors.background },
                 }}
               />
               <Stack.Screen
                 name="gateway-logs"
                 // Its own full-height sheet: pushed inside the settings sheet it would inherit
                 // that sheet's half-height detent and lay its tail out under the edge.
-                options={{
-                  presentation: "formSheet",
-                  ...formSheetCorners,
-                  sheetAllowedDetents: [1],
-                  sheetGrabberVisible: false,
-                  sheetExpandsWhenScrolledToEdge: false,
-                  contentStyle: { backgroundColor: colors.background },
-                }}
+                options={fullSheetOptions(colors)}
               />
               <Stack.Screen
                 name="debug"
@@ -293,23 +247,7 @@ function SessionNavigation() {
                 screen renders inline instead of presenting as the privacy gate's sheet. */}
             <Stack.Screen
               name="privacy"
-              options={
-                IS_ANDROID
-                  ? {
-                      headerShown: false,
-                      animation: "none",
-                      gestureEnabled: false,
-                      contentStyle: { backgroundColor: colors.background },
-                    }
-                  : {
-                      headerShown: false,
-                      presentation: "formSheet",
-                      sheetAllowedDetents: "fitToContents",
-                      sheetGrabberVisible: false,
-                      gestureEnabled: false,
-                      contentStyle: { backgroundColor: colors.card },
-                    }
-              }
+              options={blockingSheetOptions(colors)}
             />
           </Stack>
           <GatewayConnectionBanner
