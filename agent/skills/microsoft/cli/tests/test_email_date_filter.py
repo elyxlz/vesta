@@ -40,6 +40,26 @@ def test_email_matches_query_across_subject_from_and_preview():
     assert not email._email_matches_query(msg, "invoice")
 
 
+def test_filter_mailbox_messages_star_query_returns_in_range_messages(monkeypatch):
+    in_range = [
+        {"id": "a", "subject": "Lunch", "bodyPreview": "see you", "from": {}},
+        {"id": "b", "subject": "Invoice", "bodyPreview": "attached", "from": {}},
+    ]
+    seen: dict = {}
+
+    def fake_paginate(*a, params, limit, **k):
+        seen.update(params=params, limit=limit)
+        return iter(in_range)
+
+    monkeypatch.setattr(email.graph, "paginate_cfg", fake_paginate)
+    monkeypatch.setattr(email.graph, "localize_datetime_fields", lambda e: None)
+    for query in ("*", " * ", ""):
+        out = email._filter_mailbox_messages(None, None, "acct", "endpoint", since="2026-10-01", until=None, query=query, limit=10)
+        assert [m["id"] for m in out] == ["a", "b"]
+        assert seen["params"]["$filter"] == "receivedDateTime ge 2026-10-01T00:00:00Z"
+        assert seen["limit"] == 10
+
+
 def test_owa_date_filter_uses_pascalcase_property():
     clause = owa_rest_commands._owa_date_filter("2021-01-01", "2021-12-31")
     assert clause == "ReceivedDateTime ge 2021-01-01T00:00:00Z and ReceivedDateTime le 2021-12-31T23:59:59Z"

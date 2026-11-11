@@ -102,6 +102,9 @@ def _filter_mailbox_messages(
     """Reach mail by date via Graph $filter on receivedDateTime, newest first. When a text
     `query` is also given, Graph forbids combining $search with $filter, so we run the date
     $filter and match the text client-side, trimming to `limit` after filtering."""
+    # A blank or bare "*" query is no text filter.
+    if query is not None and query.strip() in ("", "*"):
+        query = None
     params: dict[str, Any] = {
         "$filter": _build_received_filter(since, until),
         "$orderby": "receivedDateTime desc",
