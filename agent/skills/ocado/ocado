@@ -1,0 +1,930 @@
+#!/usr/bin/env python3
+"""ocado: drive the user's Ocado account through Ocado's own web API.
+
+Every call runs as an in-page fetch() inside the signed-in `browser` session
+(default `ocado`), so the session cookies, the AWS WAF token and the CSRF token
+are always the browser's own. Whatever this CLI changes is the user's real
+account state, so the website shows it immediately.
+"""
+
+import argparse
+import contextlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+SESSION = os.environ.get("OCADO_SESSION", "ocado")
+BASE = "https://www.ocado.com"
+CRED = Path("~/.ocado/cred.json").expanduser()
+CONF = Path("~/.ocado/config.json").expanduser()
+REGION_DEFAULT = "9138094d-f307-46aa-a62d-86c8bdaeb4b9"  # England
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+FETCH_JS = r"""(async (calls)=>{
+ const st=window.__INITIAL_STATE__;
+ if(!st) return JSON.stringify({error:'page-not-loaded'});
+ if(!st.session?.isLoggedIn) return JSON.stringify({error:'not-logged-in'});
+ const t=st.session?.csrf?.token;
+ if(!t) return JSON.stringify({error:'no-csrf'});
+ const out=[];
+ for(const c of calls){
+  const r=await fetch(c.path,{method:c.method,credentials:'include',headers:{
+    'accept':'application/json; charset=utf-8','content-type':'application/json; charset=utf-8',
+    'x-csrf-token':t,'ecom-request-source':'web'},
+    body:c.body===undefined?undefined:JSON.stringify(c.body)});
+  const tx=await r.text(); let b; try{b=JSON.parse(tx)}catch(e){b=tx.slice(0,800)}
+  const waf=r.headers.get('x-amzn-waf-action');
+  out.push({status:r.status,body:b,waf:waf});
+  if(waf) break;
+ }
+ return JSON.stringify({loggedIn: !!window.__INITIAL_STATE__?.session?.isLoggedIn, results: out});
+})"""
+
+
+class OcadoError(Exception):
+    pass
+
+
+def browser(program, timeout=110):
+    r = subprocess.run(
+        ["browser", "exec", "--session", SESSION, "--timeout", str(timeout)],
+        input=program,
+        capture_output=True,
+        text=True,
+        timeout=timeout + 30,
+        check=False,
+    )
+    raw = (r.stdout or r.stderr).strip().splitlines()
+    if not raw:
+        raise OcadoError("browser returned nothing")
+    d = json.loads(raw[-1])
+    if not d.get("ok"):
+        err = d.get("error") or {}
+        tail = (d.get("output") or {}).get("stderr", "")[-600:]
+        raise OcadoError(f"browser: {err.get('code')} {err.get('message')} {tail}")
+    return (d.get("output") or {}).get("stdout", "")
+
+
+def api(calls):
+    """Run a batch of {method, path, body?} calls in the page; return results.
+
+    The result goes through a private temp file: browser stdout is capped, and
+    product pages easily exceed it.
+    """
+    fd, tmp = tempfile.mkstemp(prefix="ocado-", suffix=".json")
+    os.close(fd)
+    prog = f"""
+import json
+info = page_info()
+if 'www.ocado.com' not in (info.get('url') or '') or not js("!!window.__INITIAL_STATE__"):
+    goto_url({BASE + "/"!r}); wait(4)
+open({tmp!r}, "w").write(js({FETCH_JS!r} + "(" + {json.dumps(json.dumps(calls))} + ")"))
+"""
+    browser(prog)
+    try:
+        d = json.loads(Path(tmp).read_text())
+    except (OSError, ValueError) as e:
+        raise OcadoError(f"no readable result from the page: {e}") from e
+    finally:
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
+    if d.get("error") == "not-logged-in":
+        raise OcadoError("not logged in: run `ocado login`")
+    if d.get("error"):
+        raise OcadoError(f"Ocado page not usable ({d['error']}): retry, or check the `ocado` browser session")
+    for r in d["results"]:
+        if r.get("waf"):
+            raise OcadoError(f"AWS WAF challenge ({r['waf']}): nothing after this call ran; reload ocado.com in the session and retry")
+    return d["results"]
+
+
+def call(method, path, body=None, ok=(200, 201, 202, 204)):
+    c = {"method": method, "path": path}
+    if body is not None:
+        c["body"] = body
+    r = api([c])[0]
+    if r["status"] == 401:
+        raise OcadoError("session expired: run `ocado login`")
+    if r["status"] == 202 and r["body"] in ("", None):
+        raise OcadoError(f"{method} {path} -> 202 with empty body (likely a bot challenge); outcome unknown, re-check state")
+    if r["status"] not in ok:
+        raise OcadoError(f"{method} {path} -> {r['status']}: {json.dumps(r['body'])[:600]}")
+    return r["body"]
+
+
+def gql(name, query, variables=None):
+    b = call("POST", "/graphql", {"operationName": name, "query": query, "variables": variables or {}})
+    if isinstance(b, dict) and b.get("errors"):
+        raise OcadoError(f"graphql {name}: {json.dumps(b['errors'])[:600]}")
+    return (b or {}).get("data") or {}
+
+
+def conf():
+    if CONF.exists():
+        return json.loads(CONF.read_text())
+    return {}
+
+
+def region():
+    return conf().get("regionId", REGION_DEFAULT)
+
+
+def money(m):
+    return f"£{m['amount']}" if m else "-"
+
+
+def out(obj, args):
+    if args.json:
+        print(json.dumps(obj, indent=None if not args.pretty else 2, ensure_ascii=False))
+        return True
+    return False
+
+
+# ---------- products ----------
+
+
+def resolve_product(ref):
+    """Accept a productId (uuid) or retailerProductId (the number in product URLs)."""
+    if UUID_RE.match(ref):
+        return ref.lower()
+    if ref.isdigit():
+        b = call("GET", f"/api/webproductpagews/v5/products/bop?retailerProductId={ref}")
+        return b["product"]["productId"]
+    m = re.search(r"/products/[^/]+/(\d+)", ref)
+    if m:
+        return resolve_product(m.group(1))
+    raise OcadoError(f"not a product id/sku/url: {ref!r} (use `ocado search` to find one)")
+
+
+def decorate(ids):
+    if not ids:
+        return {}
+    b = call("PUT", "/api/webproductpagews/v6/products", list(ids))
+    return {p["productId"]: p for p in b.get("products", [])}
+
+
+def purl(p):
+    """Product page link. Ocado redirects any slug to the canonical one; this mimics it."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (p.get("name") or "x").lower()).strip("-") or "x"
+    return f"{BASE}/products/{slug}/{p.get('retailerProductId')}"
+
+
+def prow(p, qty=None):
+    q = f"{qty}x " if qty is not None else ""
+    promo = "; ".join(x.get("description", "") for x in p.get("promotions") or [] if x.get("description"))
+    avail = "" if p.get("available", True) else " [UNAVAILABLE]"
+    return (
+        f"{q}{p.get('name')} ({p.get('packSizeDescription', '')}) {money(p.get('price'))}{avail}"
+        f"  sku={p.get('retailerProductId')} id={p['productId']}" + (f"  promo: {promo}" if promo else "") + f"\n    {purl(p)}"
+    )
+
+
+def cmd_search(a):
+    from urllib.parse import quote
+
+    n = a.limit
+    b = call("GET", f"/api/webproductpagews/v6/product-pages/search?q={quote(a.query)}&tag=web&maxPageSize={n}&maxProductsToDecorate={n}")
+    prods = [p for g in b.get("productGroups", []) for p in g.get("decoratedProducts", [])][:n]
+    if out(prods, a):
+        return
+    for p in prods:
+        print(prow(p))
+
+
+def cmd_product(a):
+    pid = resolve_product(a.product)
+    p = decorate([pid]).get(pid)
+    if out(p, a):
+        return
+    print(prow(p))
+
+
+# ---------- trolley ----------
+
+
+def cart():
+    return call("GET", "/api/cart/v1/carts/active")
+
+
+def cmd_trolley(a):
+    c = cart()
+    ids = [i["productId"] for i in c.get("items", [])]
+    meta = decorate(ids)
+    rows = []
+    for i in c.get("items", []):
+        p = meta.get(i["productId"], {"productId": i["productId"], "name": "?"})
+        rows.append(
+            {
+                "productId": i["productId"],
+                "retailerProductId": p.get("retailerProductId"),
+                "name": p.get("name"),
+                "pack": p.get("packSizeDescription"),
+                "quantity": i.get("quantity"),
+                "linePrice": (i.get("finalPrice") or {}).get("amount"),
+            }
+        )
+    g = c.get("activeCheckoutGroup") or {}
+    tot = c.get("activeCheckoutGroupTotals") or {}
+    summary = {
+        "items": rows,
+        "total": tot.get("itemPriceAfterPromos"),
+        "savings": tot.get("savingsPrice"),
+        "minimum": g.get("minimumCheckoutThreshold"),
+        "canCheckout": g.get("canCheckout"),
+        "restrictions": g.get("checkoutRestrictions"),
+        "editingOrderId": g.get("orderId"),
+    }
+    if out(summary, a):
+        return
+    for r in rows:
+        print(f"{r['quantity']}x {r['name']} ({r['pack']}) £{r['linePrice']}  sku={r['retailerProductId']} id={r['productId']}")
+    print(f"-- {len(rows)} lines, total {money(summary['total'])}, saved {money(summary['savings'])}, minimum {money(summary['minimum'])}")
+    if summary["restrictions"]:
+        print(f"-- checkout blocked by: {', '.join(summary['restrictions'])}")
+
+
+def apply_qty(pairs):
+    return call("POST", "/api/cart/v1/carts/active/apply-quantity", [{"productId": pid, "quantity": q} for pid, q in pairs])
+
+
+def cmd_add(a):
+    pid = resolve_product(a.product)
+    b = apply_qty([(pid, a.qty)])
+    lim = b.get("limitedItems") or []
+    un = b.get("unavailableData") or {}
+    print(
+        json.dumps(
+            {
+                "added": pid,
+                "qty": a.qty,
+                "limited": lim,
+                "unavailable": un,
+                "total": ((b.get("basketUpdateResult") or {}).get("totals") or {}).get("itemPriceAfterPromos"),
+            }
+        )
+    )
+
+
+def cmd_remove(a):
+    pid = resolve_product(a.product)
+    c = cart()
+    have = next((i.get("quantity", 0) for i in c.get("items", []) if i["productId"] == pid), 0)
+    if not have:
+        raise OcadoError("that product is not in the trolley")
+    q = have if a.all or a.qty is None else min(a.qty, have)
+    apply_qty([(pid, -q)])
+    print(json.dumps({"removed": pid, "qty": q, "left": have - q}))
+
+
+def cmd_set(a):
+    pid = resolve_product(a.product)
+    c = cart()
+    have = next((i.get("quantity", 0) for i in c.get("items", []) if i["productId"] == pid), 0)
+    if a.qty != have:
+        apply_qty([(pid, a.qty - have)])
+    print(json.dumps({"product": pid, "was": have, "now": a.qty}))
+
+
+def cmd_restore(a):
+    """Make the trolley match a snapshot saved with `ocado --json trolley > file`."""
+    want = {i["productId"]: i["quantity"] for i in json.loads(Path(a.snapshot).read_text())["items"]}
+    have = {i["productId"]: i.get("quantity", 0) for i in cart().get("items", [])}
+    deltas = [(pid, want.get(pid, 0) - have.get(pid, 0)) for pid in set(want) | set(have)]
+    deltas = [(pid, d) for pid, d in deltas if d]
+    removes = [pid for pid, d in deltas if d < 0]
+    if removes and not a.yes:
+        print(json.dumps({"wouldChange": len(deltas), "wouldReduceOrRemove": len(removes), "snapshotLines": len(want)}))
+        raise OcadoError("restore would reduce/remove lines: check the plan above, then re-run with --yes")
+    if deltas:
+        apply_qty(deltas)
+    print(json.dumps({"changedLines": len(deltas)}))
+
+
+def cmd_empty(a):
+    if not a.yes:
+        raise OcadoError("empties the whole trolley: re-run with --yes")
+    call("DELETE", "/api/cart/v1/carts/active/items")
+    print(json.dumps({"emptied": True}))
+
+
+# ---------- orders ----------
+
+
+def order(oid):
+    b = call("GET", f"/api/order/v6/orders/{oid}")
+    return b["entities"]["order"][oid]
+
+
+def cmd_orders(a):
+    q = (
+        "query GetCompletedOrders($first: Int!, $after: String) { completedOrders(first: $first, after: $after) "
+        "{ edges { node { orderId status prices { total { amount currency } } slot { ... on InternalOrderSlot { start end } } } } } }"
+    )
+    rows = []
+    try:
+        up = gql(
+            "GetUpcomingOrders",
+            "query GetUpcomingOrders { ordersUpcoming { orderId status prices { total { amount currency } } "
+            "editInfo { isEditable isUnderEdit guaranteedEditableBy } slot { timeWindow { start end } } } }",
+        )["ordersUpcoming"]
+        rows.extend(
+            {
+                "orderId": o["orderId"],
+                "status": o["status"],
+                "total": o["prices"]["total"]["amount"],
+                "start": ((o.get("slot") or {}).get("timeWindow") or {}).get("start"),
+                "editable": (o.get("editInfo") or {}).get("isEditable"),
+                "editableBy": (o.get("editInfo") or {}).get("guaranteedEditableBy"),
+            }
+            for o in up
+        )
+    except OcadoError as e:
+        print(f"warn: upcoming orders: {e}", file=sys.stderr)
+    done = gql("GetCompletedOrders", q, {"first": a.limit})["completedOrders"]["edges"]
+    for e in done:
+        n = e["node"]
+        rows.append(
+            {
+                "orderId": n["orderId"],
+                "status": n["status"],
+                "total": n["prices"]["total"]["amount"],
+                "start": (n.get("slot") or {}).get("start"),
+            }
+        )
+    if out(rows, a):
+        return
+    for r in rows:
+        extra = f"  editable until {r['editableBy']}" if r.get("editable") else ""
+        print(f"{r['orderId']}  {r['status']:<10} £{r['total']:>7}  {r['start']}{extra}")
+
+
+def cmd_order(a):
+    o = order(a.order_id)
+    gp = o.get("groupedProducts") or {}
+    if out(o, a):
+        return
+    t = o["orderTotals"]
+    print(f"order {o['orderId']} {o['status']}  {o['dates']['deliveryStartDate']} -> {o['dates']['deliveryEndDate']}")
+    print(f"  {o.get('address')}")
+    for p in gp.get("products", []):
+        pr = (p.get("prices") or {}).get("offered") or (p.get("prices") or {}).get("retail")
+        print(
+            f"  {p['quantity']}x {p['name']} ({(p.get('packInfo') or {}).get('packSizeDescription', '')}) {money(pr)}"
+            f"  sku={p['retailerProductId']} id={p['productId']}"
+        )
+    for k in ("substitutes", "missings", "returns"):
+        for p in gp.get(k, []):
+            print(f"  [{k[:-1]}] {p.get('quantity')}x {p.get('name')}  id={p.get('productId')}")
+    print(
+        f"  retail {money(t['retailPrice'])}, promos -{money(t['promoSavings'])}, vouchers -{money(t['vouchersSavingsPrice'])},"
+        f" total {money(t['totalPrice'])} ({o.get('totalItems')} items)"
+    )
+
+
+def cmd_order_again(a):
+    """Ocado's own 'Order again': puts a past order's items into the trolley."""
+    if a.empty_first and not a.yes:
+        raise OcadoError("--empty-first replaces the current trolley: add --yes")
+    if a.empty_first:
+        call("DELETE", "/api/cart/v1/carts/active/items")
+    b = call("POST", "/api/cart/v1/carts/active/buy-again", {"orderId": a.order_id})
+    added = b.get("addedItems") or []
+    notadded = b.get("notAddedItems") or b.get("unavailableItems") or []
+    print(json.dumps({"orderId": a.order_id, "added": len(added), "notAdded": notadded if a.json else len(notadded)}))
+
+
+def cmd_edit(a):
+    """Open a pending order for amendment: it becomes the active trolley."""
+    if a.cancel:
+        call("DELETE", f"/api/customersessions/v2/sessions/order-edit/{a.order_id}?regionId={region()}")
+        print(json.dumps({"orderId": a.order_id, "edit": "discarded"}))
+    else:
+        call("POST", "/api/customersessions/v2/sessions/order-edit", {"orderId": a.order_id, "regionId": region()})
+        print(
+            json.dumps({"orderId": a.order_id, "edit": "open", "next": "change items with add/remove/set, then save on the website checkout"})
+        )
+
+
+# ---------- favourites ----------
+
+
+def cmd_favs(a):
+    b = call(
+        "GET",
+        f"/api/webproductpagews/v6/product-pages/favorites?sortOptionId=favorite&tag=web&maxPageSize={a.limit}&maxProductsToDecorate={a.limit}",
+    )
+    prods = [p for g in b.get("productGroups", []) for p in g.get("decoratedProducts", [])]
+    more = [i for g in b.get("productGroups", []) for i in g.get("otherProductIds", [])]
+    if out({"products": prods, "moreIds": more}, a):
+        return
+    for p in prods:
+        print(prow(p))
+    if more:
+        print(f"-- +{len(more)} more (raise --limit)")
+
+
+def cmd_fav(a):
+    pid = resolve_product(a.product)
+    m = "PUT" if a.action == "add" else "DELETE"
+    call(m, f"/api/customer-favorites/v1/customers/favorites/{pid}")
+    print(json.dumps({"favourite": a.action, "productId": pid}))
+
+
+# ---------- regulars ----------
+
+
+def cmd_regulars(a):
+    regs = call("GET", "/api/regulars/v1/regulars")
+    meta = decorate([r["productId"] for r in regs]) if regs else {}
+    if out(regs, a):
+        return
+    if not regs:
+        print("no regulars")
+    for r in regs:
+        p = meta.get(r["productId"], {"productId": r["productId"], "name": "?"})
+        print(f"{r.get('quantity')}x every {r.get('frequency')}: {prow(p)}")
+
+
+def cmd_regular(a):
+    pid = resolve_product(a.product)
+    if a.action == "remove":
+        call("DELETE", f"/api/regulars/v1/regulars/{pid}")
+        print(json.dumps({"regular": "removed", "productId": pid}))
+        return
+    regs = call("GET", "/api/regulars/v1/regulars")
+    exists = any(r["productId"] == pid for r in regs)
+    body = {"productId": pid, "quantity": a.qty, "frequency": a.frequency}
+    call("PUT" if exists else "POST", "/api/regulars/v1/regulars", body)
+    print(json.dumps({"regular": "updated" if exists else "added", **body}))
+
+
+# ---------- shopping lists ----------
+
+LISTS_Q = (
+    "query GetShoppingLists($first: Int) { shoppingLists { shoppingListId name productCount "
+    "prices { discountedPrice { amount currency } } products(first: $first) { productId description } } }"
+)
+LIST_Q = (
+    "query GetShoppingList($shoppingListId: ID!) { shoppingList(shoppingListId: $shoppingListId) { shoppingListId name "
+    "productCount lastModifiedDateTime prices { discountedPrice { amount currency } } products { productId } } }"
+)
+
+
+def find_list(ref):
+    lists = gql("GetShoppingLists", LISTS_Q, {"first": 1})["shoppingLists"]
+    for sl in lists:
+        if sl["shoppingListId"] == ref:
+            return sl
+    named = [sl for sl in lists if sl["name"].lower() == ref.lower()]
+    if len(named) > 1:
+        raise OcadoError(f"{len(named)} lists are called {ref!r}: use the id ({', '.join(sl['shoppingListId'] for sl in named)})")
+    if named:
+        return named[0]
+    raise OcadoError(f"no shopping list {ref!r}; have: {', '.join(sl['name'] for sl in lists) or 'none'}")
+
+
+def mut(name, field, inp_name, inp, sel="success"):
+    q = f"mutation {name}(${inp_name}: {name}Input!) {{ {field}({inp_name}: ${inp_name}) {{ {sel} }} }}"
+    r = gql(name, q, {inp_name: inp})[field]
+    if isinstance(r, dict) and r.get("success") is False:
+        raise OcadoError(f"{name} refused: {r.get('failureReason') or 'no reason given'}")
+    return r
+
+
+def cmd_lists(a):
+    lists = gql("GetShoppingLists", LISTS_Q, {"first": 1})["shoppingLists"]
+    if out(lists, a):
+        return
+    if not lists:
+        print("no shopping lists")
+    for sl in lists:
+        print(
+            f"{sl['name']}  ({sl['productCount']} items, {money((sl.get('prices') or {}).get('discountedPrice'))})  id={sl['shoppingListId']}"
+        )
+
+
+def cmd_list(a):
+    if a.action == "create":
+        r = mut(
+            "ShoppingListCreate",
+            "shoppingListCreate",
+            "shoppingListCreateInput",
+            {"name": a.name, "productIds": [resolve_product(p) for p in a.products]},
+            "success failureReason shoppingList { shoppingListId }",
+        )
+        print(json.dumps(r))
+        return
+    sl = find_list(a.list)
+    lid = sl["shoppingListId"]
+    if a.action == "show":
+        d = gql("GetShoppingList", LIST_Q, {"shoppingListId": lid})["shoppingList"]
+        meta = decorate([p["productId"] for p in d["products"]])
+        if out({**d, "productsDecorated": list(meta.values())}, a):
+            return
+        print(f"{d['name']} ({d['productCount']} items, {money((d.get('prices') or {}).get('discountedPrice'))})")
+        for p in d["products"]:
+            print("  " + prow(meta.get(p["productId"], {"productId": p["productId"], "name": "?"})))
+    elif a.action == "rename":
+        print(
+            json.dumps(
+                mut(
+                    "ShoppingListUpdateName",
+                    "shoppingListUpdateName",
+                    "shoppingListUpdateNameInput",
+                    {"shoppingListId": lid, "name": a.name},
+                    "shoppingList { name }",
+                )
+            )
+        )
+    elif a.action == "delete":
+        if not a.yes:
+            raise OcadoError(f"deletes list {sl['name']!r} ({sl['productCount']} items): re-run with --yes")
+        print(json.dumps(mut("ShoppingListDelete", "shoppingListDelete", "shoppingListDeleteInput", {"shoppingListId": lid})))
+    elif a.action in ("add", "remove"):
+        res = []
+        for p in a.products:
+            pid = resolve_product(p)
+            if a.action == "add":
+                r = mut(
+                    "ShoppingListAddProduct",
+                    "shoppingListAddProduct",
+                    "shoppingListAddProductInput",
+                    {"shoppingListId": lid, "productId": pid},
+                    "success failureReason",
+                )
+            else:
+                r = mut(
+                    "ShoppingListRemoveProduct",
+                    "shoppingListRemoveProduct",
+                    "shoppingListRemoveProductInput",
+                    {"shoppingListId": lid, "productId": pid},
+                )
+            res.append({"productId": pid, **r})
+        print(json.dumps(res))
+    elif a.action == "to-trolley":
+        q = (
+            "mutation CartAddShoppingList($addShoppingListInput: CartAddShoppingListInput!) "
+            "{ cartAddShoppingList(addShoppingListInput: $addShoppingListInput) "
+            "{ successfulUpdates { product { productId } quantity } unsuccessfulUpdates { product { productId } quantity reason } } }"
+        )
+        r = gql("CartAddShoppingList", q, {"addShoppingListInput": {"shoppingListId": lid}})["cartAddShoppingList"]
+        print(json.dumps({"added": len(r["successfulUpdates"]), "failed": r["unsuccessfulUpdates"]}))
+
+
+# ---------- delivery slots ----------
+
+
+def destination():
+    c = conf()
+    if c.get("deliveryDestinationId"):
+        return c["deliveryDestinationId"]
+    return cart().get("deliveryDestinationId")
+
+
+def cmd_slots(a):
+    b = call(
+        "POST",
+        "/api/ecomslots/v2/slots",
+        {
+            "deliveryDestinationId": destination(),
+            "regionId": region(),
+            "shippingGroupType": "default home delivery",
+            "displayConfiguration": "DELIVERY_METHOD",
+            "numberOfDays": a.days,
+        },
+    )
+    rows = [
+        {
+            "slotId": s["slotId"],
+            "start": s["slotWindow"]["startTime"],
+            "end": s["slotWindow"]["endTime"],
+            "price": (s.get("deliveryPrice") or {}).get("amount", "-"),
+            "attributes": s.get("attributes"),
+        }
+        for car in b.get("carriers", [])
+        for day in car.get("gridSlots", [])
+        for s in day.get("slots", [])
+        if a.all or "AVAILABLE" in s.get("attributes", [])
+    ]
+    rows.sort(key=lambda r: r["start"])
+    if out(rows, a):
+        return
+    for r in rows:
+        print(f"{r['start'][:16]} -> {r['end'][11:16]}  £{r['price']}  {','.join(r['attributes'] or [])}  id={r['slotId']}")
+
+
+def cmd_reserve(a):
+    b = call(
+        "POST",
+        "/api/ecomslots/v1/slots/reservation",
+        {"regionId": region(), "slotId": a.slot_id, "deliveryDestinationId": destination()},
+    )
+    print(json.dumps(b))
+
+
+# ---------- auth ----------
+
+
+def cmd_status(_a):
+    prog = f"""
+info = page_info()
+if 'www.ocado.com' not in (info.get('url') or ''):
+    goto_url({BASE + "/"!r}); wait(4)
+print(js("JSON.stringify({{loggedIn: !!window.__INITIAL_STATE__?.session?.isLoggedIn, url: location.href}})"))
+"""
+    print(browser(prog).strip().splitlines()[-1])
+
+
+def _aware(ts):
+    t = datetime.fromisoformat(ts)
+    return t if t.tzinfo else t.replace(tzinfo=UTC)
+
+
+def latest_otp(since_iso, seen):
+    """Newest Ocado login code received after since_iso. The body is saved to a
+    private temp dir and deleted at once, so the code never lingers on disk."""
+    import shutil
+
+    r = subprocess.run(
+        ["microsoft", "email", "list", "--account", account_email(), "--since", since_iso[:10], "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        raise OcadoError(f"microsoft email list failed: {(r.stderr or r.stdout)[-300:]}")
+    msgs = json.loads(r.stdout or "[]")
+    if not isinstance(msgs, list):
+        raise OcadoError(f"microsoft email list: unexpected answer {str(msgs)[:200]}")
+    since = _aware(since_iso)
+    for m in msgs:
+        if m["id"] in seen:
+            continue
+        subj = (m.get("subject") or "").lower()
+        rec = m.get("receivedDateTime") or m.get("received") or ""
+        if not ("ocado" in json.dumps(m.get("from", "")).lower() and "code" in subj and rec and _aware(rec) >= since):
+            continue
+        seen.add(m["id"])
+        d = tempfile.mkdtemp(prefix="ocado-otp-")
+        body = ""
+        try:
+            dest = Path(d) / "body.txt"
+            subprocess.run(
+                ["microsoft", "email", "get", "--account", account_email(), "--id", m["id"], "--no-attachments", "--save-to", str(dest)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if dest.exists():
+                body = dest.read_text()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        mm = re.search(r"log in to your Ocado account\.\s*(\d{4,8})", body)
+        if mm:
+            return mm.group(1)
+    return None
+
+
+def account_email():
+    return json.loads(CRED.read_text())["username"]
+
+
+DEEP = (
+    "window.__deep=(sel)=>{const out=[];const walk=(root)=>{root.querySelectorAll(sel).forEach(e=>out.push(e));"
+    "root.querySelectorAll('*').forEach(e=>{if(e.shadowRoot)walk(e.shadowRoot)})};walk(document);return out};"
+)
+BOX_JS = (
+    "(()=>{const e=__deep('input[name=NAME]')[0];if(!e)return null;e.scrollIntoView({block:'center'});"
+    "const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()"
+)
+LOGGED_IN_JS = "location.hostname==='www.ocado.com' && !!window.__INITIAL_STATE__?.session?.isLoggedIn"
+OTP_FORM_JS = (
+    "(()=>{const all=[];const walk=(root)=>{root.querySelectorAll('*').forEach(e=>{all.push(e);if(e.shadowRoot)walk(e.shadowRoot)})};"
+    "walk(document);const i=all.find(e=>e.name==='otpVerify');const a=i.getBoundingClientRect();"
+    r"const b=all.filter(e=>e.children.length===0&&/^\s*submit code\s*$/i.test(e.textContent||''))"
+    ".map(e=>{const q=e.getBoundingClientRect();return [q.x+q.width/2,q.y+q.height/2]});"
+    "return {inp:[a.x+a.width/2,a.y+a.height/2],btn:b}})()"
+)
+
+
+def cmd_login(_a):
+    """Sign in with ~/.ocado/cred.json; fetch the emailed one-time code from the user's inbox."""
+    since = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 30))
+    seen = set()
+    prog = f"""
+import json
+c = json.load(open({str(CRED)!r}))
+goto_url("https://www.ocado.com/login"); wait(6)
+js({DEEP!r})
+js("(()=>{{const b=[...document.querySelectorAll('button')].find(b=>/^(Allow All|Accept)$/i.test(b.innerText.trim()));if(b)b.click()}})()")
+if js("!!window.__INITIAL_STATE__?.session?.isLoggedIn"):
+    print("ALREADY"); raise SystemExit
+def box(n):
+    return js({BOX_JS!r}.replace("NAME", n))
+for n, v in (("usernamelogin", c["username"]), ("passwordlogin", c["password"])):
+    xy = box(n)
+    if not xy: print("NOFORM"); raise SystemExit
+    click_at_xy(*xy); wait(0.3); press_key("a", 2); press_key("Backspace"); type_text(v); wait(0.3)
+press_key("Enter"); wait(8)
+js({DEEP!r})
+print("OTP" if js("__deep('input[name=otpVerify]').length>0") else ("IN" if js({LOGGED_IN_JS!r}) else "STUCK"))
+"""
+    st = browser(prog, 120).strip().splitlines()[-1]
+    if st in ("ALREADY", "IN"):
+        print(json.dumps({"login": "ok", "via": st.lower()}))
+        return
+    if st != "OTP":
+        raise OcadoError(
+            f"login did not reach the code step ({st}); try `browser handover start --session {SESSION} --url https://www.ocado.com/login`"
+        )
+    code = None
+    for _ in range(12):
+        time.sleep(10)
+        code = latest_otp(since, seen)
+        if code:
+            break
+    if not code:
+        raise OcadoError("no Ocado code email arrived in 2 minutes")
+    prog2 = f"""
+code = {code!r}
+js({DEEP!r})
+r = js({OTP_FORM_JS!r})
+click_at_xy(*r['inp']); wait(0.3); type_text(code); wait(0.5)
+if r['btn']: click_at_xy(*r['btn'][0])
+else: press_key("Enter")
+wait(12)
+print("IN" if js({LOGGED_IN_JS!r}) else "STUCK")
+"""
+    st2 = browser(prog2, 90).strip().splitlines()[-1]
+    if st2 != "IN":
+        raise OcadoError("code submitted but still on the sign-in page")
+    print(json.dumps({"login": "ok", "via": "password+code"}))
+
+
+def pos_int(v):
+    n = int(v)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return n
+
+
+def nonneg_int(v):
+    n = int(v)
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return n
+
+
+ORDER_RE = re.compile(r"^\d{6,20}$")
+
+
+def order_id(v):
+    if not ORDER_RE.match(v):
+        raise argparse.ArgumentTypeError("order ids are digits only (see `ocado orders`)")
+    return v
+
+
+def build_parser():
+    ap = argparse.ArgumentParser(prog="ocado", description="Ocado account: trolley, orders, favourites, regulars, shopping lists, slots")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--pretty", action="store_true", help="indent --json output")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+
+    sp.add_parser("status", help="is the browser session signed in")
+    sp.add_parser("login", help="sign in (password from ~/.ocado/cred.json, code from the inbox)")
+
+    s = sp.add_parser("search", help="search products")
+    s.add_argument("query")
+    s.add_argument("--limit", type=int, default=10)
+    s = sp.add_parser("product", help="one product by id, sku or URL")
+    s.add_argument("product")
+
+    add_trolley_cmds(sp)
+    add_account_cmds(sp)
+    return ap
+
+
+def add_trolley_cmds(sp):
+    sp.add_parser("trolley", help="what's in the trolley now")
+    s = sp.add_parser("add", help="add to trolley")
+    s.add_argument("product")
+    s.add_argument("--qty", type=pos_int, default=1)
+    s = sp.add_parser("remove", help="remove from trolley (all of it by default)")
+    s.add_argument("product")
+    s.add_argument("--qty", type=pos_int)
+    s.add_argument("--all", action="store_true")
+    s = sp.add_parser("set", help="set an exact trolley quantity (0 removes)")
+    s.add_argument("product")
+    s.add_argument("qty", type=nonneg_int)
+    s = sp.add_parser("restore", help="make the trolley match a saved `--json trolley` snapshot")
+    s.add_argument("snapshot")
+    s.add_argument("--yes", action="store_true")
+    s = sp.add_parser("empty", help="empty the trolley")
+    s.add_argument("--yes", action="store_true")
+
+
+def add_account_cmds(sp):
+    s = sp.add_parser("orders", help="upcoming + past orders")
+    s.add_argument("--limit", type=int, default=10)
+    s = sp.add_parser("order", help="one order's items and totals")
+    s.add_argument("order_id", type=order_id)
+    s = sp.add_parser("order-again", help="add a past order's items to the trolley (Ocado's Order again)")
+    s.add_argument("order_id", type=order_id)
+    s.add_argument("--empty-first", action="store_true")
+    s.add_argument("--yes", action="store_true")
+    s = sp.add_parser("edit", help="open (or --cancel) amendment of a pending order")
+    s.add_argument("order_id", type=order_id)
+    s.add_argument("--cancel", action="store_true")
+
+    s = sp.add_parser("favourites", aliases=["favs"], help="list favourites")
+    s.add_argument("--limit", type=int, default=50)
+    s = sp.add_parser("fav", help="add/remove a favourite")
+    s.add_argument("action", choices=["add", "remove"])
+    s.add_argument("product")
+
+    sp.add_parser("regulars", help="list regulars")
+    s = sp.add_parser("regular", help="add/update/remove a regular")
+    s.add_argument("action", choices=["add", "remove"])
+    s.add_argument("product")
+    s.add_argument("--qty", type=pos_int, default=1)
+    s.add_argument("--frequency", default="WEEKLY", choices=["WEEKLY", "FORTNIGHTLY", "MONTHLY"])
+
+    sp.add_parser("lists", help="shopping lists")
+    s = sp.add_parser("list", help="shopping list actions")
+    s.add_argument("action", choices=["show", "create", "rename", "delete", "add", "remove", "to-trolley"])
+    s.add_argument("list", nargs="?", help="list name or id (not used by create)")
+    s.add_argument("products", nargs="*", help="product ids/skus (add/remove/create)")
+    s.add_argument("--name", help="name for create/rename")
+    s.add_argument("--yes", action="store_true")
+
+    s = sp.add_parser("slots", help="delivery slots")
+    s.add_argument("--days", type=int, default=7)
+    s.add_argument("--all", action="store_true")
+    s = sp.add_parser("reserve", help="reserve a delivery slot")
+    s.add_argument("slot_id")
+
+
+def main():
+    ap = build_parser()
+    argv = sys.argv[1:]
+    flags = [x for x in argv if x in ("--json", "--pretty")]
+    a = ap.parse_args(flags + [x for x in argv if x not in ("--json", "--pretty")])
+    if a.cmd == "list" and a.action == "create":
+        if not a.name:
+            a.name = a.list
+            a.list = None
+        elif a.list:
+            a.products = [a.list, *a.products]
+        if not a.name:
+            ap.error("list create needs a name")
+    elif a.cmd == "list" and not a.list:
+        ap.error("which list?")
+    fn = {
+        "status": cmd_status,
+        "login": cmd_login,
+        "search": cmd_search,
+        "product": cmd_product,
+        "trolley": cmd_trolley,
+        "add": cmd_add,
+        "remove": cmd_remove,
+        "set": cmd_set,
+        "restore": cmd_restore,
+        "empty": cmd_empty,
+        "orders": cmd_orders,
+        "order": cmd_order,
+        "order-again": cmd_order_again,
+        "edit": cmd_edit,
+        "favourites": cmd_favs,
+        "favs": cmd_favs,
+        "fav": cmd_fav,
+        "regulars": cmd_regulars,
+        "regular": cmd_regular,
+        "lists": cmd_lists,
+        "list": cmd_list,
+        "slots": cmd_slots,
+        "reserve": cmd_reserve,
+    }[a.cmd]
+    try:
+        fn(a)
+    except OcadoError as e:
+        print(f"ocado: {e}", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print("ocado: the browser call timed out; a write may or may not have landed, check with `ocado trolley`", file=sys.stderr)
+        sys.exit(2)
+    except (KeyError, TypeError, ValueError) as e:
+        print(
+            f"ocado: unexpected response shape ({type(e).__name__}: {e}); if this was a write, check state with `ocado trolley`",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
