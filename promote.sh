@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Promote a beta (prerelease) to stable for everyone. Run after ./release.sh has
-# shipped a beta and it has soaked. Moves the agent image :latest tag, flips the
-# GitHub release to latest, advances production, and sends the iOS build that
-# TestFlight holds for the tag to App Store review. No rebuild happens. Older
-# betas cascade: every prerelease older than the target is flipped to stable too,
-# so no beta is left behind.
+# Promote a soaked beta (prerelease) to stable for everyone, with no rebuild: moves
+# the image :latest tag, flips the GitHub release to latest (older betas cascade to
+# stable too), advances production, and sends the iOS build that TestFlight holds
+# to App Store review. A release that needs an app newer than the one in the App
+# Store takes two runs: the first sends the app to review and fails without
+# promoting, and a run after Apple's approval releases the app and promotes.
 
 TAG="${1:-}"
 
