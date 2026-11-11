@@ -99,7 +99,7 @@ def test_a_failed_call_is_no_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
     assert asyncio.run(scenario()) is None
 
 
-def test_a_late_answer_is_no_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_late_answer_is_no_verdict_and_logs_the_timeout(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.setattr(typesafe, "JEV_TIMEOUT_MS", 20)
     release = asyncio.Event()
 
@@ -114,6 +114,7 @@ def test_a_late_answer_is_no_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
             return verdict
 
     assert asyncio.run(scenario()) is None
+    assert "jev call failed: TimeoutError" in caplog.text
 
 
 @pytest.mark.parametrize(

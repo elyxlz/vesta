@@ -102,7 +102,7 @@ class TypesafeJudge:
                     return None
                 body = await resp.json()
         except (TimeoutError, aiohttp.ClientError, ValueError) as e:
-            logger.warning("jev call failed: %s", e)
+            logger.warning("jev call failed: %r", e)
             return None
         return verdict_from(body["answers"]) if isinstance(body, dict) and "answers" in body else None
 
@@ -123,5 +123,5 @@ class TypesafeJudge:
                 if resp.status != 200:
                     return False, f"typesafe returned {resp.status}"
         except (TimeoutError, aiohttp.ClientError) as e:
-            return False, f"typesafe request failed: {e}"
+            return False, f"typesafe request failed: {e!r}"
         return True, None
