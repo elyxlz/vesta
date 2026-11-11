@@ -20,7 +20,8 @@ language is not English: `maps --locale it-IT search ...`.
 maps search "frozen yogurt" --near "Alghero" --min-rating 4.4 --sort rating --json
 ```
 
-The `--json` output is a list of results, each with `name`, `address`, `lat`/`lng`, `place_id`,
+The `--json` output is an object `{"query", "returned", "results"}`; read the places from
+`results`, each with `name`, `address`, `lat`/`lng`, `place_id`,
 `cid`, `ftid`, `rating`, `review_count`, `category`, `phone`, `website`, `open_now` (Google's
 answer at request time; null when the place publishes no hours), and a `links` block (`place_url`
 opens the exact place; `directions_url` is a ready directions link). The table shows each
