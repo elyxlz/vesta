@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import http.server
+import re
 import socketserver
 from pathlib import Path
 
@@ -32,7 +33,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *handler_args, **handler_kwargs):
         super().__init__(*handler_args, directory=serve_dir, **handler_kwargs)
 
+    def send_head(self):
+        # Serve a single byte range: iOS/Safari media players will not play a file without 206 support.
+        path = Path(self.translate_path(self.path))
+        m = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+        if not m or not any(m.groups()) or not path.is_file():
+            return super().send_head()
+        size = path.stat().st_size
+        first, last = m.groups()
+        start = int(first) if first else max(0, size - int(last))
+        end = min(int(last), size - 1) if first and last else size - 1
+        if start > end:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.end_headers()
+            return None
+        self.send_response(206)
+        self.send_header("Content-Type", self.guess_type(str(path)))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        if self.command == "GET":
+            with path.open("rb") as f:
+                f.seek(start)
+                left = end - start + 1
+                while left > 0 and (chunk := f.read(min(65536, left))):
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        return None
+
     def end_headers(self):
+        self.send_header("Accept-Ranges", "bytes")
         if args.no_cache:
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
@@ -41,8 +72,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         print(self.client_address[0], fmt % fmt_args, flush=True)
 
 
-class Server(socketserver.TCPServer):
+class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 with Server(("0.0.0.0", args.port), Handler) as httpd:
