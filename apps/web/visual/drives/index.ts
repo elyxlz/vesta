@@ -6,6 +6,7 @@ import { CHAT } from "./chat";
 import { HOME } from "./home";
 import { ONBOARDING } from "./onboarding";
 import { PAGES } from "./pages";
+import { VOICE } from "./voice";
 
 const AREAS: Record<string, Record<string, Scenario>> = {
   "pages.ts": PAGES,
@@ -13,6 +14,7 @@ const AREAS: Record<string, Record<string, Scenario>> = {
   "home.ts": HOME,
   "agent.ts": AGENT,
   "chat.ts": CHAT,
+  "voice.ts": VOICE,
   "agent-settings.ts": AGENT_SETTINGS,
   "app-settings.ts": APP_SETTINGS,
 };

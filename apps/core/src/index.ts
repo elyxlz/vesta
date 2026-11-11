@@ -119,14 +119,15 @@ export { createChatSession } from "./chat/chat-session";
 export type { ChatSession } from "./chat/chat-session";
 export { composerExpandedNext } from "./chat/composer-wrap";
 export {
+  conversationMotion,
   conversationPhase,
+  conversationPhaseLabel,
   conversationStage,
   splitSpokenTail,
+  WAKE_WORD_SETTING,
+  wakeWordBehavior,
 } from "./voice/conversation-panel";
-export type {
-  ConversationPhase,
-  ConversationStage,
-} from "./voice/conversation-panel";
+export type { ConversationStage } from "./voice/conversation-panel";
 export { createDraftStore } from "./attachments/draft-store";
 export type { DraftSource, DraftStore } from "./attachments/draft-store";
 

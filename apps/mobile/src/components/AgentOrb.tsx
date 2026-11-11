@@ -16,6 +16,8 @@ import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
 import { ControllerContext } from "@/controller/context";
 import { designTokens } from "@/theme/generated";
 
+const OPACITY_FADE_MS = 500;
+
 interface AgentOrbProps {
   // The roster agent, so this client's own in-flight request overlays the orb; a nameless orb
   // (the brand mark, the boot splash) renders the status alone.
@@ -50,6 +52,7 @@ export function AgentOrb({
 }: AgentOrbProps) {
   const [rotation] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(1));
+  const [opacity] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
   const { request } = useAgentRequest(use(ControllerContext), name ?? null);
@@ -71,6 +74,17 @@ export function AgentOrb({
   useEffect(() => {
     pulseHapticsEnabled.current = pulseHaptics;
   }, [pulseHaptics]);
+
+  useEffect(() => {
+    const fade = Animated.timing(opacity, {
+      toValue: visual.opacity,
+      duration: OPACITY_FADE_MS,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    });
+    fade.start();
+    return () => fade.stop();
+  }, [opacity, visual.opacity]);
 
   useEffect(() => {
     if (!shouldAnimate) {
@@ -155,7 +169,7 @@ export function AgentOrb({
           borderRadius: size / 2,
           shadowColor: colors[1],
         },
-        { transform: [{ scale: pulse }] },
+        { opacity, transform: [{ scale: pulse }] },
       ]}
     >
       <Animated.View

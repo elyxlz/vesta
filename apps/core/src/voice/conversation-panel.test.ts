@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { SettingDef } from "../api/voice";
 import {
+  conversationMotion,
   conversationPhase,
+  conversationPhaseLabel,
   conversationStage,
   splitSpokenTail,
+  wakeWordBehavior,
 } from "./conversation-panel";
 
 describe("conversation stage", () => {
@@ -25,6 +29,7 @@ describe("conversation phase", () => {
     micMuted: false,
     speaking: false,
     thinking: false,
+    wakeWaiting: false,
   };
 
   it("reads connecting until the session listens, whatever else is true", () => {
@@ -42,6 +47,82 @@ describe("conversation phase", () => {
     );
     expect(conversationPhase({ ...live, thinking: true })).toBe("thinking");
     expect(conversationPhase(live)).toBe("listening");
+  });
+
+  it("waits for the wake phrase below thinking and above listening", () => {
+    expect(
+      conversationPhase({ ...live, wakeWaiting: true, thinking: true }),
+    ).toBe("thinking");
+    expect(conversationPhase({ ...live, wakeWaiting: true })).toBe("waiting");
+  });
+});
+
+describe("conversation phase label", () => {
+  it.each([
+    { phase: "connecting", phrase: "hey aria", expected: "connecting…" },
+    { phase: "waiting", phrase: "hey aria", expected: "say “hey aria”" },
+    { phase: "waiting", phrase: null, expected: "waiting for the wake word" },
+    { phase: "listening", phrase: "hey aria", expected: "listening" },
+  ] as const)("$phase with $phrase", ({ phase, phrase, expected }) => {
+    expect(conversationPhaseLabel(phase, phrase)).toBe(expected);
+  });
+});
+
+describe("conversation motion", () => {
+  const live = {
+    listening: true,
+    micMuted: false,
+    speaking: false,
+    wakeWaiting: false,
+  };
+
+  it.each([
+    {
+      name: "dialing",
+      input: { ...live, listening: false },
+      expected: undefined,
+    },
+    { name: "muted", input: { ...live, micMuted: true }, expected: undefined },
+    {
+      name: "a reply",
+      input: { ...live, speaking: true, wakeWaiting: true },
+      expected: "talking",
+    },
+    {
+      name: "the wake gate",
+      input: { ...live, wakeWaiting: true },
+      expected: "waiting",
+    },
+    { name: "the user's floor", input: live, expected: "listening" },
+  ] as const)("for $name is $expected", ({ input, expected }) => {
+    expect(conversationMotion(input)).toBe(expected);
+  });
+});
+
+describe("wake word behavior", () => {
+  const setting = (key: string, value: unknown): SettingDef => ({
+    key,
+    type: "bool",
+    label: key,
+    value,
+  });
+
+  it("is null for a voice service with no wake word", () => {
+    expect(wakeWordBehavior(undefined)).toBeNull();
+    expect(wakeWordBehavior([setting("barge_in", true)])).toBeNull();
+  });
+
+  it("reads the switch and the phrase of this client", () => {
+    expect(
+      wakeWordBehavior([
+        setting("wake_word", true),
+        setting("wake_word_phrase", "hey vesta"),
+      ]),
+    ).toEqual({ on: true, phrase: "hey vesta" });
+    expect(wakeWordBehavior([setting("wake_word", false)])).toEqual({
+      on: false,
+      phrase: null,
+    });
   });
 });
 

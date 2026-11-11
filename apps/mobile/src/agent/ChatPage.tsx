@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentHoldKey,
   TRIM_HISTORY_SETTLE_MS,
+  WAKE_WORD_SETTING,
+  conversationMotion,
   conversationPhase,
-  fetchVoiceStatus,
-  type OrbMotion,
+  conversationPhaseLabel,
+  wakeWordBehavior,
 } from "@vesta/core";
 import { StyleSheet, View, useWindowDimensions } from "react-native";
-import { useQuery } from "@tanstack/react-query";
 import {
   KeyboardStickyView,
   useReanimatedKeyboardAnimation,
@@ -20,6 +21,10 @@ import Animated, {
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAgent } from "@/agent/AgentProvider";
+import {
+  useVoiceChange,
+  useVoiceSettings,
+} from "@/agent/settings/voice-actions";
 import {
   ChatComposerInput,
   type ChatComposerInputRef,
@@ -160,14 +165,12 @@ export default function ChatPage() {
     return () => clearTimeout(timer);
   }, [isAwayFromLatest, trimHistory]);
 
-  const hasVoiceService = Boolean(agent && "voice" in agent.services);
-  const speechToText = useQuery({
-    queryKey: ["voice", name, "stt"],
-    queryFn: () => fetchVoiceStatus(api, name, "stt"),
-    enabled: Boolean(name && hasVoiceService),
-  });
+  // The settings page reads the same query, so a change there reaches this page.
+  const { settings: voiceSettings } = useVoiceSettings();
+  const voiceChange = useVoiceChange();
+  const speechToText = voiceSettings.data?.stt;
   const voiceEnabled = Boolean(
-    speechToText.data?.configured && speechToText.data.enabled,
+    speechToText?.configured && speechToText.enabled,
   );
   const canSend = socket.connected && agent?.status === "alive";
   const canSendRef = useRef(canSend);
@@ -354,19 +357,36 @@ export default function ChatPage() {
     });
   };
   const endConversation = () => voice.stop();
-  const conversationPhaseNow = conversationPhase({
+  const conversationVoice = {
     listening: voice.listening,
     micMuted: voice.micMuted,
     speaking: voice.speaking,
-    thinking: agent?.activityState === "thinking",
-  });
-  // The status decides the orb's look; the voice phase only decides its motion. A muted mic or a
-  // still-dialing session holds the orb still rather than pretending to listen.
-  const conversationMotion: OrbMotion | undefined = voice.speaking
-    ? "talking"
-    : voice.listening && !voice.micMuted
-      ? "listening"
-      : undefined;
+    wakeWaiting: voice.wakeWaiting,
+  };
+  const wake = wakeWordBehavior(voiceSettings.data?.behaviors?.settings);
+  const conversationLabel = conversationPhaseLabel(
+    conversationPhase({
+      ...conversationVoice,
+      thinking: agent?.activityState === "thinking",
+    }),
+    wake?.phrase ?? null,
+  );
+  // A change in flight shows its value at once, so the switch never waits for the save.
+  const pendingWake = voiceChange.isPending ? voiceChange.variables : undefined;
+  const wakeWordOn = !wake
+    ? null
+    : pendingWake?.type === "setting" && pendingWake.key === WAKE_WORD_SETTING
+      ? pendingWake.value === true
+      : wake.on;
+  const toggleWakeWord = () => {
+    if (wakeWordOn !== null)
+      voiceChange.mutate({
+        type: "setting",
+        domain: "behavior",
+        key: WAKE_WORD_SETTING,
+        value: !wakeWordOn,
+      });
+  };
 
   return (
     <View style={styles.screen}>
@@ -426,12 +446,14 @@ export default function ChatPage() {
                 <VoiceConversationPanel
                   agent={agent}
                   name={name}
-                  phase={conversationPhaseNow}
-                  motion={conversationMotion}
+                  label={conversationLabel}
+                  motion={conversationMotion(conversationVoice)}
                   transcript={conversationTranscript}
                   micMuted={voice.micMuted}
+                  wakeWordOn={wakeWordOn}
                   height={CONVERSATION_PANEL_HEIGHT}
                   onToggleMute={voice.toggleMicMuted}
+                  onToggleWakeWord={toggleWakeWord}
                   onEnd={endConversation}
                 />
               ) : (

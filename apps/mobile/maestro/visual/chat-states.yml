@@ -90,6 +90,17 @@ tags:
       SCREENSHOT: agent-chat-conversation.png
 - stopApp
 - openLink:
+    link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualConversation=waiting"
+- runFlow: wait-for-launch.yml
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-chat-conversation-wake
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat-conversation-wake.png
+- stopApp
+- openLink:
     link: "vesta-dev://agent/aria?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualChat=long"
 - runFlow: wait-for-launch.yml
 - extendedWaitUntil:

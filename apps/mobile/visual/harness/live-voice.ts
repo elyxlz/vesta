@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import type { VoiceMode, VoiceStatus } from "@vesta/core";
 import { visualSwitch } from "./launch-query";
 
-// visualConversation=listening|speaking|muted holds the chat in a live conversation with a fixed
-// transcript, so the panel captures without a microphone or a speech service. Absent, the hook
-// is idle and the composer renders as in production.
+// visualConversation=listening|speaking|muted|waiting holds the chat in a live conversation with a
+// fixed transcript (none while it waits for the wake phrase), so the panel captures without a
+// microphone or a speech service. Absent, the hook is idle and the composer renders as in
+// production.
 const conversation = visualSwitch("visualConversation");
 const TRANSCRIPT = "Also book the room for Thursday";
 
@@ -25,7 +26,8 @@ export function useLiveVoice({ onTranscript }: LiveVoiceOptions) {
   const [micMuted, setMicMuted] = useState(conversation === "muted");
 
   useEffect(() => {
-    if (conversation !== null) onTranscript(TRANSCRIPT);
+    if (conversation !== null && conversation !== "waiting")
+      onTranscript(TRANSCRIPT);
   }, [onTranscript]);
 
   return {
@@ -34,6 +36,7 @@ export function useLiveVoice({ onTranscript }: LiveVoiceOptions) {
     speaking: conversation === "speaking",
     ttsEnabled: true,
     micMuted,
+    wakeWaiting: conversation === "waiting",
     toggleMicMuted: () => setMicMuted((muted) => !muted),
     start: async (_mode: VoiceMode) => undefined,
     stop: () => undefined,

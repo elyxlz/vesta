@@ -23,6 +23,8 @@ export interface OrbVisual {
   pulseScale: number;
   pulseHalfMs: number;
   rotationMs: number;
+  // The whole orb, glow included: 1, except while a conversation waits for the wake phrase.
+  opacity: number;
 }
 
 // Geometry shared by every state: the diagonal gradient axis and the glossy
@@ -38,15 +40,17 @@ const HIGHLIGHT: OrbHighlight = {
 };
 
 // A live-voice overlay on top of the status: same colors and glow, different motion.
-// "listening" barely breathes; "talking" pulses hard and fast, unmistakably speech.
-export type OrbMotion = "listening" | "talking";
+// "waiting" (for the wake phrase) is dim and all but still, so the hit that wakes it reads as
+// the orb coming up; "listening" barely breathes; "talking" pulses hard and fast.
+export type OrbMotion = "waiting" | "listening" | "talking";
 
 const MOTION_CONFIG: Record<
   OrbMotion,
-  Pick<OrbVisual, "pulseScale" | "pulseHalfMs">
+  Pick<OrbVisual, "pulseScale" | "pulseHalfMs" | "opacity">
 > = {
-  listening: { pulseScale: 1.03, pulseHalfMs: 2400 },
-  talking: { pulseScale: 1.16, pulseHalfMs: 430 },
+  waiting: { pulseScale: 1.015, pulseHalfMs: 3600, opacity: 0.4 },
+  listening: { pulseScale: 1.03, pulseHalfMs: 2400, opacity: 1 },
+  talking: { pulseScale: 1.16, pulseHalfMs: 430, opacity: 1 },
 };
 
 // One owner for how the orb looks and moves; each platform renders from this.
@@ -64,6 +68,7 @@ export function orbVisual(
     pulseScale: thinking ? 1.1 : 1.04,
     pulseHalfMs: thinking ? 1200 : 1800,
     rotationMs: thinking ? 2600 : 9000,
+    opacity: 1,
   };
   if (!motion) return base;
   return { ...base, breathes: true, ...MOTION_CONFIG[motion] };

@@ -17,6 +17,8 @@ function recorder() {
     onTurnEnd: (text) => events.push(`turn_end:${text}`),
     onTurnDropped: () => events.push("turn_dropped"),
     onSpeakingChange: (speaking) => events.push(`speaking:${String(speaking)}`),
+    onWakeWaitingChange: (waiting) =>
+      events.push(`wake_waiting:${String(waiting)}`),
     onPlayFailed: (message) => events.push(`play_failed:${message}`),
     onError: (message) => errors.push(message),
     onActiveChange: (value) => active.push(value),
@@ -113,6 +115,23 @@ describe("the engine session", () => {
     socket.accept();
     await starting;
     expect(socket.audio().map((f) => f.byteLength)).toEqual([half, 2]);
+  });
+
+  it("reports each change of the wake gate, and an open gate when the session ends", async () => {
+    const { socket, session, started, events } = setup();
+    await started();
+    socket.emit({ type: "wake_listening", value: "yes" });
+    socket.emit({ type: "wake_listening", value: true });
+    socket.emit({ type: "wake_listening", value: true });
+    socket.emit({ type: "wake_listening", value: false });
+    socket.emit({ type: "wake_listening", value: true });
+    session.stop();
+    expect(events).toEqual([
+      "wake_waiting:true",
+      "wake_waiting:false",
+      "wake_waiting:true",
+      "wake_waiting:false",
+    ]);
   });
 
   it("is active only once the engine accepted the session", async () => {
