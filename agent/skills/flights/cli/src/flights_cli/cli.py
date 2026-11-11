@@ -95,6 +95,10 @@ class FlightSearchQuery:
     currency: str = DEFAULT_CURRENCY
 
 
+# fli returns None, not [], when Google answers without a results payload (a rejected request).
+NO_PAYLOAD_ERROR = "Google Flights returned no results payload: the request was rejected, not an empty route"
+
+
 def _search_flights(query: FlightSearchQuery) -> list[dict]:
     """Run a flight search for a single origin and return list of result dicts."""
     from fli.core import build_flight_segments, parse_cabin_class, parse_max_stops, parse_sort_by, resolve_airport
@@ -125,6 +129,8 @@ def _search_flights(query: FlightSearchQuery) -> list[dict]:
         )
 
         results = SearchFlights().search(filters, currency=query.currency)
+        if results is None:
+            return [{"error": NO_PAYLOAD_ERROR, "origin": query.origin}]
         if not results:
             return []
 
@@ -192,6 +198,8 @@ def _search_dates(query: DateSearchQuery) -> list[dict]:
         )
 
         results = SearchDates().search(filters, currency=query.currency)
+        if results is None:
+            return [{"error": NO_PAYLOAD_ERROR, "origin": query.origin}]
         if not results:
             return []
 

@@ -27,7 +27,7 @@ def _flight(price: float = 114.0, stops: int = 0) -> FlightResult:
     return FlightResult(legs=[leg], price=price, currency="GBP", duration=120, stops=stops)
 
 
-def _search(monkeypatch: pytest.MonkeyPatch, results: list[FlightResult]) -> list[dict]:
+def _search(monkeypatch: pytest.MonkeyPatch, results: list[FlightResult] | None) -> list[dict]:
     monkeypatch.setattr(fli.search, "SearchFlights", lambda: types.SimpleNamespace(search=lambda filters, currency: results))
     return cli_mod._search_flights(cli_mod.FlightSearchQuery(origin="FCO", destination="LHR", date=DEPARTURE_DAY.isoformat(), max_results=10))
 
@@ -63,3 +63,9 @@ def test_flight_to_dict_reports_price_with_the_requested_currency():
 
 def test_flight_to_dict_defaults_to_the_default_currency():
     assert cli_mod._flight_to_dict(_flight())["currency"] == cli_mod.DEFAULT_CURRENCY
+
+
+def test_search_reports_a_rejected_request_instead_of_an_empty_route(monkeypatch):
+    rejected = _search(monkeypatch, None)
+    assert rejected == [{"error": cli_mod.NO_PAYLOAD_ERROR, "origin": "FCO"}]
+    assert _search(monkeypatch, []) == []
