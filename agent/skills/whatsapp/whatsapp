@@ -23,6 +23,9 @@ if ! command -v go >/dev/null; then export PATH="/usr/local/go/bin:$PATH"; fi
 # Bumps go.mod/go.sum, so the next serve's cache check rebuilds against it. Runs
 # in the launcher because the cached binary has no path back to the cli/ source.
 if [ "${1:-}" = "update-deps" ]; then
+  case "${2:-}" in
+    -h|--help) echo "usage: whatsapp update-deps   bump the pinned whatsmeow to latest, then run whatsapp daemon restart"; exit 0 ;;
+  esac
   echo "whatsapp launcher: updating whatsmeow to latest and tidying go.mod..." >&2
   (cd "$CLI_DIR" && go get go.mau.fi/whatsmeow@latest && go mod tidy)
   echo "whatsapp launcher: done. Restart the daemon (whatsapp daemon restart) to build and run against it." >&2
