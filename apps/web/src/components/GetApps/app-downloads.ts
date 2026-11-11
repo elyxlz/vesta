@@ -1,12 +1,9 @@
+import { ANDROID_APP_URL, IOS_APP_URL, RELEASES_URL } from "@vesta/core";
 import type { Platform } from "@/lib/platform";
 
 // Where each app comes from. Desktop files carry the release version in their names
 // (apps/desktop/electron-builder.yml), so they come from the release this bundle shipped in, which
-// is the serving gateway's own version and so always inside its client window. The Android APK
-// keeps one name on every release, so it comes from the latest one.
-const RELEASES_URL = "https://github.com/elyxlz/vesta/releases";
-const APP_STORE_URL =
-  "https://apps.apple.com/us/app/vesta-guardian-angel/id6821612931";
+// is the serving gateway's own version and so always inside its client window.
 
 interface AppChoice {
   label: string;
@@ -51,18 +48,13 @@ export function appTiles(version: string): AppTile[] {
       platform: "android",
       name: "Android",
       hint: null,
-      choices: [
-        {
-          label: "Android",
-          url: `${RELEASES_URL}/latest/download/vesta-android.apk`,
-        },
-      ],
+      choices: [{ label: "Android", url: ANDROID_APP_URL }],
     },
     {
       platform: "ios",
       name: "iPhone",
       hint: null,
-      choices: [{ label: "iPhone", url: APP_STORE_URL }],
+      choices: [{ label: "iPhone", url: IOS_APP_URL }],
     },
   ];
 }
