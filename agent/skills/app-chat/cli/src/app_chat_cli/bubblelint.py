@@ -81,8 +81,8 @@ def bubble_lint_reason(message: str) -> str:
         return ""
     return (
         "bubble lint: this send is a wall (" + ", ".join(why) + "). texting rule: short bubbles, one thought per send, and don't use "
-        "full stops at all. split it into several separate send calls, a beat between "
-        "each, one idea each. if this is genuine reference material (a brief, a code "
+        "full stops at all. split it into several bubbles, one idea each, as blank-line "
+        "paragraphs in the same send. if this is genuine reference material (a brief, a code "
         "block, a list they asked for), resend the same command with --longform to "
         "bypass."
     )
