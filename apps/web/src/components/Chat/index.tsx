@@ -79,6 +79,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     connected,
     historyLoaded,
     hasMore,
+    pagedBack,
     loadingMore,
     loadMore,
     trimHistory,
@@ -283,6 +284,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
           hasMore={hasMore}
+          pagedBack={pagedBack}
           chatMessages={chatMessages}
           connected={connected}
           historyLoaded={historyLoaded}

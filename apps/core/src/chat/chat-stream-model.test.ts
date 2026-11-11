@@ -186,6 +186,17 @@ describe("chat-stream-model", () => {
     expect(state.cursor).toBe(1);
   });
 
+  it("records that the user paged back only once an older page is prepended", () => {
+    let state = seedTail(initialChatState(), {
+      events: [chat(3, "c")],
+      cursor: 3,
+    });
+    expect(state.pagedBack).toBe(false);
+
+    state = prependPage(state, [chat(1, "a"), chat(2, "b")], null);
+    expect(state.pagedBack).toBe(true);
+  });
+
   it("restarts paging from the reseed page when the disconnect outran a whole page", () => {
     let state = seedTail(initialChatState(), {
       events: [chat(1, "a"), chat(2, "b")],

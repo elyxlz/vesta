@@ -28,6 +28,8 @@ interface ChatMessageAreaProps {
   scrollRef: RefObject<ChatScrollHandle | null>;
   loadMore: () => void;
   hasMore: boolean;
+  // The user loaded an older page, so the top of the list is a place they scrolled back to.
+  pagedBack: boolean;
   loadingMore: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
@@ -215,6 +217,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
   scrollRef,
   loadMore,
   hasMore,
+  pagedBack,
   loadingMore,
   fullscreen,
   navbarHeight,
@@ -357,7 +360,7 @@ export const ChatMessageArea = memo(function ChatMessageArea({
           }}
         >
           <div style={{ paddingTop: topPad }}>
-            {count > 0 && !hasMore && (
+            {pagedBack && !hasMore && (
               <div className="flex justify-center py-3">
                 <span className="text-[11px] text-muted-foreground/40">
                   beginning of conversation
