@@ -32,6 +32,10 @@ HTML body: pass ``--body-html <html>`` instead of (or alongside)
 both parts. With only HTML, a stripped plain-text fallback is
 synthesized so non-HTML clients still see something.
 
+Long plain-text bodies: pass ``--body-file <path>`` (or ``-`` to read
+stdin) instead of embedding the text in the command line. It conflicts
+with ``--body``.
+
 Attachments: pass ``--attach <path>`` (repeatable) to attach files.
 MIME type is guessed from the file extension via ``mimetypes``, with
 ``application/octet-stream`` as fallback. Total attachment size is
@@ -641,6 +645,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="HTML body; combine with --body for multipart/alternative",
     )
+    ap.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="read the plain-text body from a file ('-' for stdin); conflicts with --body",
+    )
     ap.add_argument("--from-name", default=None)
     ap.add_argument(
         "--account",
@@ -697,6 +708,17 @@ def _build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _resolve_body(args) -> str:
+    """Resolve --body-file (a file, or '-' for stdin) into the plain-text body."""
+    if args.body_file is None:
+        return args.body
+    if args.body != "":
+        sys.exit("--body and --body-file are mutually exclusive")
+    if args.body_file == "-":
+        return sys.stdin.read()
+    return pathlib.Path(args.body_file).read_text(encoding="utf-8")
+
+
 def main():
     args = _build_parser().parse_args()
     # Hard draft-only guard: refuse any transmitting invocation (send/reply/forward)
@@ -708,7 +730,7 @@ def main():
         SendRequest(
             to=args.to,
             subject=args.subject,
-            body=args.body,
+            body=_resolve_body(args),
             from_name=args.from_name,
             account=args.account,
             cc=args.cc,
