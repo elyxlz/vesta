@@ -2,7 +2,7 @@
 for how the agent sounds. It lives in the agent-editable personality skill, but core loads it
 into the system prompt on every boot so the voice is as unskippable as MEMORY.md. The active
 preset is selected by the agent_personality preference (config store / AGENT_PERSONALITY env,
-shipped default "dry"). These tests cover the prompt-assembly side."""
+shipped default "warm"). These tests cover the prompt-assembly side."""
 
 import core.config as cfg
 from core.client import build_client_options
@@ -37,13 +37,13 @@ def _system_prompt(config, state) -> str:
 
 
 def test_shared_voice_and_default_active_preset_are_loaded(tmp_path, state, monkeypatch):
-    # No AGENT_PERSONALITY set -> the shipped defaults.json value ("dry") is the active preset.
+    # No AGENT_PERSONALITY set -> the shipped defaults.json value ("warm") is the active preset.
     config = _config(tmp_path, monkeypatch)
-    assert config.agent_personality == "dry"
-    _write_voice(config, shared="shared voice rules", presets={"dry": "dry preset voice", "extra": "extra preset voice"})
+    assert config.agent_personality == "warm"
+    _write_voice(config, shared="shared voice rules", presets={"warm": "warm preset voice", "extra": "extra preset voice"})
     prompt = _system_prompt(config, state)
     assert "shared voice rules" in prompt
-    assert "dry preset voice" in prompt
+    assert "warm preset voice" in prompt
     assert "extra preset voice" not in prompt
     assert "my memory body" in prompt
 

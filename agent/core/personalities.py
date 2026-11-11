@@ -7,7 +7,7 @@ import typing as tp
 import pydantic as pyd
 
 PRESETS_PATH = pl.Path(__file__).parent.parent / "skills" / "personality" / "presets"
-_SAFE_DEFAULT = "dry"
+_SAFE_DEFAULT = "warm"
 
 
 class _PersonalityPreset(pyd.BaseModel):
