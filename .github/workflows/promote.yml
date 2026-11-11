@@ -6,7 +6,10 @@ name: Promote
 # advance the production branch. No rebuild happens here, the exact artifacts that beta
 # users tested become stable. Promotion also cascades: every non-draft prerelease older
 # than the target is flipped to stable too (never marked latest), so no beta is ever
-# left behind below the new stable.
+# left behind below the new stable. Two App Store jobs wrap the promotion, both through
+# apps/mobile/scripts/submit-app-store.sh: the gate holds a release whose gateway needs
+# an app newer than the one in the store until Apple has approved that app, and the
+# submit sends the iOS build that TestFlight already holds for the target to review.
 
 on:
   workflow_dispatch:
@@ -24,9 +27,44 @@ concurrency:
   group: promote
   cancel-in-progress: false
 
+env:
+  FASTLANE_VERSION: 2.241.2
+
 jobs:
+  # Usually a pass with no effect. For a release that raises the minimum client version
+  # above the app in the store, the first run sends the build to review with a manual
+  # release and fails, so nothing is promoted; a run after the approval releases the app
+  # and lets the promotion go on.
+  app-store-gate:
+    name: Mobile · Hold a release the App Store app cannot reach
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # The default branch, not the tag: this job runs release tooling and no app code,
+      # so a tag older than the tooling still promotes.
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install fastlane
+        run: gem install fastlane -v "$FASTLANE_VERSION" --no-document
+
+      - name: Check the store app against the minimum client version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_STORE_CONNECT_API_KEY_KEY: ${{ secrets.ASC_API_KEY_P8 }}
+          APP_STORE_CONNECT_API_KEY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          TAG: ${{ inputs.tag }}
+        run: ./apps/mobile/scripts/submit-app-store.sh gate "$TAG"
+
   promote:
     name: Release · Promote to stable
+    needs: app-store-gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -117,3 +155,34 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git push --force origin HEAD:production
           echo "✓ production advanced to ${{ inputs.tag }}"
+
+  # A separate job, so a failed submission never undoes the promotion and "Re-run failed
+  # jobs" retries the submission alone. Only the target is submitted: cascaded betas are
+  # older, and the store takes one version at a time.
+  app-store-submit:
+    name: Mobile · Submit iOS to App Store review
+    needs: promote
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # The default branch, not the tag: this job runs release tooling and no app code,
+      # so a tag older than the tooling still promotes.
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Install fastlane
+        run: gem install fastlane -v "$FASTLANE_VERSION" --no-document
+
+      - name: Submit the TestFlight build for review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_STORE_CONNECT_API_KEY_KEY: ${{ secrets.ASC_API_KEY_P8 }}
+          APP_STORE_CONNECT_API_KEY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          TAG: ${{ inputs.tag }}
+        run: ./apps/mobile/scripts/submit-app-store.sh submit "$TAG"

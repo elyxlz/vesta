@@ -1,0 +1,79 @@
+skip_docs
+
+IOS_BUNDLE_ID = "ai.vesta.mobile"
+State = Spaceship::ConnectAPI::AppStoreVersion::AppVersionState
+# The states in which Apple does not have the version yet.
+SUBMITTABLE = [
+  nil,
+  State::PREPARE_FOR_SUBMISSION,
+  State::REJECTED,
+  State::METADATA_REJECTED,
+  State::DEVELOPER_REJECTED,
+  State::INVALID_BINARY
+].freeze
+
+def store_app
+  app_store_connect_api_key
+  Spaceship::ConnectAPI::App.find(IOS_BUNDLE_ID)
+end
+
+def store_version(app)
+  app.get_app_store_versions(filter: { versionString: ENV.fetch("APP_VERSION"), platform: "IOS" }).first
+end
+
+# Sends the build that TestFlight holds for APP_VERSION to App Store review. A new store
+# version inherits the languages of the listing, and each one needs its own what's-new
+# text, so RELEASE_NOTES goes to all of them.
+def submit_for_review(app, automatic_release:)
+  locales = app.get_latest_app_store_version.get_app_store_version_localizations.map(&:locale)
+  deliver(
+    app_identifier: IOS_BUNDLE_ID,
+    app_version: ENV.fetch("APP_VERSION"),
+    release_notes: locales.to_h { |locale| [locale, ENV.fetch("RELEASE_NOTES")] },
+    metadata_path: Dir.mktmpdir,
+    skip_binary_upload: true,
+    skip_screenshots: true,
+    submit_for_review: true,
+    automatic_release: automatic_release,
+    reject_if_possible: true,
+    run_precheck_before_submit: false,
+    force: true
+  )
+end
+
+# Runs before a promotion. A gateway that needs an app newer than the one in the store
+# would lock that app out, so the promotion waits until Apple has approved APP_VERSION,
+# and the approved version goes public in the same run that promotes the gateway.
+lane :gate_app_store do
+  app = store_app
+  version = ENV.fetch("APP_VERSION")
+  minimum = ENV.fetch("MIN_CLIENT_VERSION")
+  live = app.get_live_app_store_version&.version_string
+  next if live && Gem::Version.new(live) >= Gem::Version.new(minimum)
+
+  held = "The gateway needs app #{minimum} and the App Store has #{live || 'no version'}."
+  candidate = store_version(app)
+  state = candidate&.app_version_state
+  if state == State::PENDING_DEVELOPER_RELEASE
+    candidate.create_app_store_version_release_request
+    UI.success("Released #{version} to the App Store")
+  elsif !SUBMITTABLE.include?(state)
+    UI.user_error!("#{held} #{version} is #{state} at Apple. Promote again when Apple has approved it.")
+  elsif ENV.fetch("MOBILE_BUILD") != "1"
+    UI.user_error!("#{held} This release shipped no mobile build, so no app can satisfy it.")
+  else
+    submit_for_review(app, automatic_release: false)
+    UI.user_error!("#{held} Sent #{version} to App Store review. Promote again when Apple has approved it.")
+  end
+end
+
+# Runs after a promotion. Apple releases the version on approval.
+lane :submit_app_store do
+  app = store_app
+  state = store_version(app)&.app_version_state
+  if SUBMITTABLE.include?(state)
+    submit_for_review(app, automatic_release: true)
+  else
+    UI.important("#{ENV.fetch('APP_VERSION')} is already #{state} at Apple, nothing to submit")
+  end
+end
