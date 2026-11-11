@@ -3,7 +3,7 @@
 // node_modules tree from the asar (the app crashed with "Cannot find module 'electron-updater'"),
 // one shipped an un-bundled preload that threw in the sandbox (the app rendered the web UI). This
 // reads the real asar every build, in CI and locally, and throws on either failure.
-import asar from "@electron/asar";
+import { extractFile, listPackage } from "@electron/asar";
 import path from "node:path";
 
 const RELATIVE_REQUIRE = /(?:require\(|from\s*)["']\.\.?\//;
@@ -20,20 +20,20 @@ export default function verifyPack(context) {
         )
       : path.join(context.appOutDir, "resources", "app.asar");
 
-  // asar.listPackage returns OS-separator paths (backslashes on Windows); normalize before
+  // listPackage returns OS-separator paths (backslashes on Windows); normalize before
   // matching, and address files inside the asar with forward slashes on every platform.
-  const files = asar
-    .listPackage(asarPath)
-    .map((file) => file.replace(/\\/g, "/").replace(/^\//, ""));
+  const files = listPackage(asarPath, {}).map((file) =>
+    file.replace(/\\/g, "/").replace(/^\//, ""),
+  );
   if (!files.some((file) => file.startsWith("node_modules/electron-updater"))) {
     throw new Error(
       `packaged asar is missing production node_modules (electron-updater): ${asarPath}`,
     );
   }
 
-  const preload = asar
-    .extractFile(asarPath, "dist-electron/preload.js")
-    .toString("utf8");
+  const preload = extractFile(asarPath, "dist-electron/preload.js").toString(
+    "utf8",
+  );
   if (RELATIVE_REQUIRE.test(preload)) {
     throw new Error(
       "packaged preload is not bundled: a relative require survives and throws in the sandbox",
