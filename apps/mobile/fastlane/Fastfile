@@ -1,0 +1,25 @@
+skip_docs
+
+IOS_BUNDLE_ID = "ai.vesta.mobile"
+
+# Sends the build that TestFlight holds for APP_VERSION to App Store review, and Apple
+# releases it on approval. A new store version inherits the languages of the listing, and
+# each one needs its own what's-new text, so RELEASE_NOTES goes to all of them.
+lane :submit_app_store do
+  app_store_connect_api_key
+  app = Spaceship::ConnectAPI::App.find(IOS_BUNDLE_ID)
+  locales = app.get_latest_app_store_version.get_app_store_version_localizations.map(&:locale)
+  deliver(
+    app_identifier: IOS_BUNDLE_ID,
+    app_version: ENV.fetch("APP_VERSION"),
+    release_notes: locales.to_h { |locale| [locale, ENV.fetch("RELEASE_NOTES")] },
+    metadata_path: Dir.mktmpdir,
+    skip_binary_upload: true,
+    skip_screenshots: true,
+    submit_for_review: true,
+    automatic_release: true,
+    reject_if_possible: true,
+    run_precheck_before_submit: false,
+    force: true
+  )
+end
