@@ -1,6 +1,6 @@
 import Stack from "expo-router/stack";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-import { formSheetCorners, headerTitleStyle } from "@/theme/sheets";
+import { authSheetOptions, stackHeaderOptions } from "@/theme/sheets";
 
 // Keep the connection landing page behind cold-linked authentication sheets.
 // The group is pathless: existing /connect-link and /scan URLs stay valid.
@@ -11,15 +11,8 @@ export default function ConnectLayout() {
   return (
     <Stack
       screenOptions={{
-        headerShown: false,
-        presentation: "formSheet",
-        ...formSheetCorners,
-        sheetAllowedDetents: "fitToContents",
-        contentStyle: { backgroundColor: colors.card },
-        headerTransparent: true,
-        headerTintColor: colors.text,
-        headerTitleStyle,
-        headerShadowVisible: false,
+        ...stackHeaderOptions(colors),
+        ...authSheetOptions(colors),
       }}
     >
       <Stack.Screen

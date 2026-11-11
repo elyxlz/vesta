@@ -1,7 +1,7 @@
 import Stack from "expo-router/stack";
 import { ProviderDraftProvider } from "@/agent/settings/provider-draft";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-import { headerTitleStyle } from "@/theme/sheets";
+import { stackHeaderOptions } from "@/theme/sheets";
 
 // Direct links enter the same modal stack as navigation from Settings.
 export const unstable_settings = { anchor: "settings" };
@@ -13,16 +13,10 @@ export default function AgentSettingsLayout() {
     <ProviderDraftProvider>
       <Stack
         screenOptions={{
+          ...stackHeaderOptions(colors),
           presentation: "card",
-          contentStyle: { backgroundColor: colors.background },
           headerShown: !android,
-          headerTransparent: true,
-          headerStyle: { backgroundColor: "transparent" },
-          headerTintColor: colors.text,
-          headerTitleStyle,
           headerTitleAlign: "center",
-          headerShadowVisible: false,
-          headerBackButtonDisplayMode: "minimal",
         }}
       >
         <Stack.Screen name="settings" options={{ title: "Settings" }} />
