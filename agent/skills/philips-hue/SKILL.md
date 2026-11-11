@@ -28,9 +28,10 @@ API base: `https://$HUE_BRIDGE_IP/api/$HUE_API_KEY/`. The bridge serves a self-s
 ~/agent/skills/philips-hue/hue color red [room|light]   # Set colour by name or hex
 ~/agent/skills/philips-hue/hue scene cinema [room]   # Activate a scene (fuzzy match)
 ~/agent/skills/philips-hue/hue scenes [room]         # List available scenes
+~/agent/skills/philips-hue/hue house [scene|off]     # Whole house in one call: a scene in every room (default relax), or off
 ```
 
-Room and scene names support fuzzy matching (e.g. "living" matches "Living room", "bed" matches "Bedroom").
+Room and scene names support fuzzy matching (e.g. "living" matches "Living room", "bed" matches "Bedroom"). A `[room|light]` target takes a room name, a light name, or a numeric light id; rooms are tried first, and an unknown name exits with an error.
 
 ## Setup
 

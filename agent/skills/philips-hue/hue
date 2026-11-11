@@ -16,6 +16,7 @@
 #   color <name|hex> [room|light]  Set colour
 #   scene <name> [room]       Activate a scene (fuzzy match)
 #   scenes [room]             List available scenes
+#   house [scene|off]         Whole house: scene in every room (default relax), or off
 
 set -euo pipefail
 
@@ -78,10 +79,30 @@ resolve_target() {
     elif is_light_id "$target"; then
         echo "light:$target"
     else
-        local gid
-        gid=$(resolve_room "$target")
-        echo "group:$gid"
+        local gid lid
+        if gid=$(resolve_room "$target" 2>/dev/null) && [[ -n "$gid" ]]; then
+            echo "group:$gid"
+        elif lid=$(resolve_light "$target") && [[ -n "$lid" ]]; then
+            echo "light:$lid"
+        else
+            return 1
+        fi
     fi
+}
+
+# Fuzzy match a light name, returns light ID
+resolve_light() {
+    api_get "lights" | python3 -c "
+import json, sys
+query = sys.argv[1].lower()
+data = json.load(sys.stdin)
+matches = [(lid, l['name']) for lid, l in data.items() if query in l.get('name', '').lower()]
+exact = [m for m in matches if m[1].lower() == query]
+pick = exact or matches
+if not pick:
+    sys.exit(1)
+print(pick[0][0])
+" "$1" 2>/dev/null
 }
 
 # Apply a state body to a target
@@ -204,10 +225,10 @@ for gid in sorted(groups.keys(), key=int):
         ls = l.get('state', {})
         lname = l.get('name', 'Light ' + lid)
         on = ls.get('on', False)
-        bri = ls.get('bri', 0)
-        bri_pct = round(bri / 254 * 100)
+        bri = ls.get('bri')
+        bri_txt = f'{round(bri / 254 * 100):>3}%' if bri is not None else ' on/off'
         if on:
-            print(f'    {lid:>3}: {lname:<24} ON   {bri_pct:>3}%')
+            print(f'    {lid:>3}: {lname:<24} ON   {bri_txt}')
         else:
             print(f'    {lid:>3}: {lname:<24} OFF')
     print()
@@ -242,7 +263,7 @@ for lid in sorted(data.keys(), key=int):
     name = l.get('name', 'Unknown')
     s = l.get('state', {})
     on = 'ON' if s.get('on', False) else 'OFF'
-    bri = round(s.get('bri', 0) / 254 * 100)
+    bri = round(s['bri'] / 254 * 100) if s.get('bri') is not None else '-'
     reach = 'yes' if s.get('reachable', False) else 'NO'
     print(f'{lid:<6}{name:<28}{on:<6}{bri:<8}{reach}')
 "
@@ -250,14 +271,14 @@ for lid in sorted(data.keys(), key=int):
 
 cmd_on() {
     local target
-    target=$(resolve_target "${1:-}")
+    target=$(resolve_target "${1:-}") || die "no room or light matching '${1:-}'"
     apply_state "$target" '{"on":true}'
     echo "Turned on: ${1:-all}"
 }
 
 cmd_off() {
     local target
-    target=$(resolve_target "${1:-}")
+    target=$(resolve_target "${1:-}") || die "no room or light matching '${1:-}'"
     apply_state "$target" '{"on":false}'
     echo "Turned off: ${1:-all}"
 }
@@ -268,7 +289,7 @@ cmd_dim() {
     (( pct >= 1 && pct <= 100 )) 2>/dev/null || die "brightness must be 1-100"
     local bri=$(( pct * 254 / 100 ))
     local target
-    target=$(resolve_target "${2:-}")
+    target=$(resolve_target "${2:-}") || die "no room or light matching '${2:-}'"
     apply_state "$target" "{\"on\":true,\"bri\":$bri}"
     echo "Set brightness to ${pct}%: ${2:-all}"
 }
@@ -281,7 +302,7 @@ cmd_color() {
     local x="${xy%,*}"
     local y="${xy#*,}"
     local target
-    target=$(resolve_target "${2:-}")
+    target=$(resolve_target "${2:-}") || die "no room or light matching '${2:-}'"
     apply_state "$target" "{\"on\":true,\"xy\":[$x,$y]}"
     echo "Set colour to $color: ${2:-all}"
 }
@@ -366,6 +387,19 @@ for room_name, sname, sid in scenes:
 " "$room_id"
 }
 
+cmd_house() {
+    # Whole-house shortcut: one call sets every room. "off" turns everything off;
+    # anything else is a scene name applied in every room that has it (default: relax).
+    local what="${1:-relax}"
+    if [[ "$what" == "off" ]]; then
+        api_put "groups/0/action" '{"on":false}' >/dev/null
+        echo "House off"
+        return
+    fi
+    cmd_scene "$what" >/dev/null
+    echo "House on: $what"
+}
+
 cmd_help() {
     cat <<'USAGE'
 Usage: hue <command> [args]
@@ -380,6 +414,7 @@ Commands:
   color <name|hex> [room|light]  Set colour by name or hex
   scene <name> [room]       Activate a scene (fuzzy match)
   scenes [room]             List available scenes
+  house [scene|off]         Whole house: scene in every room (default relax), or off
   help                      Show this help message
 
 Rooms: Living room, Bedroom, Office, Hallway
@@ -409,6 +444,7 @@ case "${1:-help}" in
     color|colour) cmd_color "${2:-}" "${3:-}" ;;
     scene)        cmd_scene "${2:-}" "${3:-}" ;;
     scenes)       cmd_scenes "${2:-}" ;;
+    house)        cmd_house "${2:-}" ;;
     help|--help|-h) cmd_help ;;
     *)
         echo "Unknown command: $1" >&2
