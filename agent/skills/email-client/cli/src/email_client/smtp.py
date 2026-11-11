@@ -484,7 +484,18 @@ def _sync_sent_message(acc: str | None, profile: dict, message: EmailMessage) ->
         print(f"warning: sent-sync skipped ({info})", file=sys.stderr)
 
 
+def _refuse_literal_newlines(body: str) -> None:
+    """Exit when the body holds a typed backslash-n and no real line break."""
+    if "\\n" in body and "\n" not in body:
+        sys.exit(
+            "--body contains a literal backslash-n and no real line break; it is sent verbatim, "
+            "so the recipient would see the two characters \\n. Pass real newlines with $'line one\\nline two' "
+            "or a quoted heredoc: --body \"$(cat <<'EOF' ... EOF)\""
+        )
+
+
 def send(req: SendRequest) -> None:
+    _refuse_literal_newlines(req.body)
     if req.reply_to_uid and req.forward_uid:
         sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
     acc = resolve_account(req.account)
