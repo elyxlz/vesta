@@ -173,7 +173,8 @@ def fetch_original(account: str | None, folder: str, uid: str) -> dict:
         "from": _from_full(m),
         "to": _to_full(m),
         "cc": cc,
-        "subject": m.subject,
+        # Unfold RFC 5322 folding (CRLF before WSP); a header value may not carry CR or LF.
+        "subject": _re.sub(r"\r?\n", "", m.subject or ""),
         "date": m.date_str,
         "body": body,
     }
