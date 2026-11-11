@@ -62,7 +62,9 @@ else
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
-# Only lines dated today or yesterday count (an undated line takes the date of the line above it),
+# Only lines dated today or yesterday count (an undated line takes the date of the line above it);
+# a tail with times but no dates counts lines after its second midnight from the end, a midnight
+# being a time later than the next timed line's (an untimed line goes with the timed line below it),
 # a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
 # the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
 # daemon output with the agent's own [AGENT] narration, which is prose, not a component's failure.
@@ -73,10 +75,24 @@ for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
     errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
-        BEGIN { recent = 1 }
-        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
-        { low = tolower($0) }
-        recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
+        { line[NR] = $0 }
+        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { dated = 1 }
+        END {
+            start = 1
+            for (i = NR; i >= 1 && !dated && midnights < 2; i--) {
+                if (line[i] !~ /^\[?[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) continue
+                t = line[i]; sub(/^\[/, "", t); t = substr(t, 1, 8)
+                if (later != "" && t > later && ++midnights == 2) start = i + 1
+                later = t
+            }
+            recent = 1
+            for (i = 1; i <= NR; i++) {
+                if (!dated) recent = (i >= start)
+                else if (line[i] ~ /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) recent = (line[i] ~ ("^\\[?" today)) || (line[i] ~ ("^\\[?" yesterday))
+                low = tolower(line[i])
+                if (recent && line[i] !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)) print line[i]
+            }
+        }' \
         | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
