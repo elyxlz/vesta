@@ -24,6 +24,7 @@ afterEach(async () => {
   delete process.env.VESTA_TEST_USER_DATA;
   delete process.env.VESTA_TEST_ENCRYPTION_AVAILABLE;
   delete process.env.VESTA_TEST_STORAGE_BACKEND;
+  delete process.env.VESTA_TEST_KEY_VERSION;
   await fs.rm(userDataDir, { recursive: true, force: true });
 });
 
@@ -61,7 +62,7 @@ describe("secure storage availability", () => {
       "utf8",
     );
     expect(stored).toContain(CONNECTION.accessToken);
-    expect(credentialStorageIsSecure()).toBe(false);
+    expect(await credentialStorageIsSecure()).toBe(false);
   });
 
   it("persists through an insecure Linux backend and reports it", async () => {
@@ -74,7 +75,7 @@ describe("secure storage availability", () => {
     try {
       await writeConnection(CONNECTION);
       expect(await readConnection()).toEqual(CONNECTION);
-      expect(credentialStorageIsSecure()).toBe(false);
+      expect(await credentialStorageIsSecure()).toBe(false);
     } finally {
       if (original) Object.defineProperty(process, "platform", original);
     }
@@ -106,6 +107,19 @@ describe("connection store", () => {
       }),
     );
     expect(await readConnection()).toBeNull();
+  });
+
+  it("re-encrypts a connection the OS asks to re-encrypt after a key rotation", async () => {
+    const target = path.join(userDataDir, "connection.json");
+    await writeConnection(CONNECTION);
+    const underOldKey = await fs.readFile(target, "utf8");
+
+    process.env.VESTA_TEST_KEY_VERSION = "2";
+    expect(await readConnection()).toEqual(CONNECTION);
+    const underNewKey = await fs.readFile(target, "utf8");
+    expect(underNewKey).not.toBe(underOldKey);
+    expect(underNewKey).not.toContain(CONNECTION.accessToken);
+    expect(await readConnection()).toEqual(CONNECTION);
   });
 
   it("migrates a plaintext connection to encrypted storage", async () => {
