@@ -19,6 +19,7 @@ Tune the rules **with the user** (they judge what's important, you feel what's p
 
 - A kind of notification repeatedly preempting you for little value (every tweet, routine pings) is a signal: propose snoozing it.
 - Something important that should have reached you faster: propose an interrupt rule for it.
+- **Retire a rule with the work it was built for.** A rule made for one errand (a flat hunt, a booking, a delivery) keeps firing after the errand ends, and its keywords and postcodes then match unrelated marketing. Give such a rule `--for` when you add it, and when you close the task, `notifications list` and remove or narrow every rule whose terms only made sense for it.
 - **Confirm with the user before changing rules**: describe the rule in plain language and why it helps. Their call on importance wins.
 
 ## How matching works
