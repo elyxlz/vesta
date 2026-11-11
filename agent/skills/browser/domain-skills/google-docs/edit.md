@@ -13,14 +13,20 @@ to VERIFY after writing. The editor DOM is a canvas renderer, so `innerText` doe
 ## Write: replace the whole body
 ```python
 new_tab("https://docs.google.com/document/d/<ID>/edit")
-wait_for_load(); wait(4)
+wait_for_load()
+wait(4)
 lines = open("/tmp/doc.txt").read().split("\n")
-click_at_xy(600, 400); wait(0.5)            # focus the page body
-press_key("a", modifiers=2); wait(0.5)      # Ctrl+A
-press_key("Delete"); wait(1)
+click_at_xy(600, 400)  # focus the page body
+wait(0.5)
+press_key("a", modifiers=2)  # Ctrl+A
+wait(0.5)
+press_key("Delete")
+wait(1)
 for i, l in enumerate(lines):
-    if l: type_text(l)
-    if i < len(lines) - 1: press_key("Enter")
+    if l:
+        type_text(l)
+    if i < len(lines) - 1:
+        press_key("Enter")
 wait(3)
 ```
 About 6 to 12 s for ~60 lines. Typed text lands as plain paragraphs (no heading styles); a line
