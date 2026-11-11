@@ -29,11 +29,14 @@ CONN_TIMEOUT_SECS = 30
 FILE_SCAN_ROOTS = (Path("/tmp"), Path("~"))
 # A credential is short; a file above this size is not read and is counted as skipped in the report.
 FILE_SCAN_MAX_BYTES = 256 * 1024
-# Directories the file walk never enters, by name (package caches, the git object store, test
-# fixtures and their fake credentials) and by path (the two upstream source trees, whose code spells
-# credential shapes such as `password=` on hundreds of lines; `core` is a read-only mount, and every
-# edit the agent makes under `skills` passes through the transcript, which is scanned).
-FILE_SCAN_PRUNE = frozenset({".git", ".cache", ".npm", "node_modules", "site-packages", "__pycache__", "tests"})
+# Directories the file walk never enters, by name (package caches, Chromium profile caches of
+# compiled JS, HTTP bodies and voice data, the git object store, test fixtures and their fake
+# credentials) and by path (the two upstream source trees, whose code spells credential shapes such
+# as `password=` on hundreds of lines; `core` is a read-only mount, and every edit the agent makes
+# under `skills` passes through the transcript, which is scanned).
+FILE_SCAN_PRUNE = frozenset(
+    {".git", ".cache", ".npm", "node_modules", "site-packages", "__pycache__", "tests", "Cache", "Code Cache", "GPUCache", "WasmTtsEngine"}
+)
 FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"))
 # Refs the scan prints for sources it can only read: a file is fixed by hand, a transcript by rotation.
 READ_ONLY_REF_PREFIXES = ("file:", "transcript:")
