@@ -553,3 +553,18 @@ def test_auth_needed_rearms_after_a_successful_refresh(tmp_path, monkeypatch):
         monitor.run(ctx)
 
     assert [call["account"] for call in calls] == [account, account]  # re-armed by the recovery
+
+
+def test_emit_email_notification_keeps_sender_address_when_there_is_no_display_name(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    monitor._emit_email_notification(_fake_ctx(tmp_path), _email("web@clinic.com", None, "2026-07-08T13:00:00Z"), "me@x.com", "inbox", False)
+    assert calls[0]["sender"] == "web@clinic.com"
+    assert calls[0]["sender_address"] == "web@clinic.com"
+
+
+def test_emit_email_notification_keeps_sender_address_alongside_a_display_name(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    monitor._emit_email_notification(_fake_ctx(tmp_path), _email("a@b.com", "Alice", "2026-07-08T13:00:00Z"), "me@x.com", "inbox", False)
+    assert calls[0]["sender_address"] == "a@b.com"
