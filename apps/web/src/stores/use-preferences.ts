@@ -20,8 +20,9 @@ export interface Preferences {
   conversationAutoEnd: boolean;
   // Agents whose desktop panel remembers a collapsed chat with the dashboard full-page.
   chatCollapsed: string[];
-  // Agents whose desktop view was the full-screen chat when last left, so opening them returns there.
-  chatFullscreen: string[];
+  // Agents whose desktop view was the dashboard panel when last left, so opening them returns
+  // there; an agent this device never left there opens on the full-screen chat.
+  dashboardView: string[];
   // The most recently opened agent, so the home carousel can center it on return.
   lastAgent: string | null;
   // The gateway version whose release notes this browser has seen.
@@ -40,7 +41,7 @@ const DEFAULTS: Preferences = {
   voiceInput: null,
   conversationAutoEnd: true,
   chatCollapsed: [],
-  chatFullscreen: [],
+  dashboardView: [],
   lastAgent: null,
   whatsNewLastSeen: null,
 };
@@ -83,7 +84,7 @@ function legacyPreferences(): Preferences {
     voiceInput: null,
     conversationAutoEnd: flag("voice-conversation-auto-end", true),
     chatCollapsed,
-    chatFullscreen: [],
+    dashboardView: [],
     lastAgent: localStorage.getItem("vesta:last-agent"),
     whatsNewLastSeen: localStorage.getItem("vesta:whats-new-last-seen"),
   };
@@ -113,16 +114,16 @@ export function setChatCollapsed(agent: string, collapsed: boolean): void {
   update({ chatCollapsed: withAgent(chatCollapsed, agent, collapsed) });
 }
 
-export function setChatFullscreen(agent: string, fullscreen: boolean): void {
-  const { chatFullscreen, update } = usePreferences.getState();
-  if (chatFullscreen.includes(agent) === fullscreen) return;
-  update({ chatFullscreen: withAgent(chatFullscreen, agent, fullscreen) });
+export function setDashboardView(agent: string, dashboard: boolean): void {
+  const { dashboardView, update } = usePreferences.getState();
+  if (dashboardView.includes(agent) === dashboard) return;
+  update({ dashboardView: withAgent(dashboardView, agent, dashboard) });
 }
 
 // Where opening an agent lands on desktop: the view it was last left in.
 export function agentViewPath(agent: string): string {
   const base = `/agent/${encodeURIComponent(agent)}`;
-  return usePreferences.getState().chatFullscreen.includes(agent)
-    ? `${base}/chat`
-    : base;
+  return usePreferences.getState().dashboardView.includes(agent)
+    ? base
+    : `${base}/chat`;
 }

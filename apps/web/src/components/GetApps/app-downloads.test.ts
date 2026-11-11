@@ -34,7 +34,10 @@ describe("app tiles", () => {
           "https://github.com/elyxlz/vesta/releases/latest/download/vesta-android.apk",
         ],
       ],
-      ["ios", []],
+      [
+        "ios",
+        ["https://apps.apple.com/us/app/vesta-guardian-angel/id6821612931"],
+      ],
     ]);
   });
 });
