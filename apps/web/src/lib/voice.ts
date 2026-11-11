@@ -192,6 +192,17 @@ export function microphoneDeniedMessage(
   return "Microphone access was denied.";
 }
 
+// The OS would not start the microphone (NotReadableError). Windows shares a microphone between
+// apps, so the usual cause is its privacy switch for desktop apps, which Chromium reports this
+// way, or a chosen microphone that does not open.
+export function microphoneUnavailableMessage(
+  runtime: Pick<RuntimeInfo, "isDesktopApp" | "platform">,
+): string {
+  if (runtime.isDesktopApp && runtime.platform === "windows")
+    return 'Windows could not start the microphone. Turn on "Let desktop apps access your microphone" in Settings > Privacy & security > Microphone, or choose another microphone in voice settings.';
+  return "The microphone could not start. Check it in your system sound settings, or choose another microphone in voice settings.";
+}
+
 export interface Microphone {
   id: string;
   label: string;
@@ -277,7 +288,7 @@ export function browserCapture(
           if (err.name === "NotFoundError")
             throw new Error("No microphone found", { cause: err });
           if (err.name === "NotReadableError")
-            throw new Error("Microphone is in use by another app", {
+            throw new Error(microphoneUnavailableMessage(runtimeInfo), {
               cause: err,
             });
         }
