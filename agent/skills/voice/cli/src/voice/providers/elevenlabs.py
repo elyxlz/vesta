@@ -4,6 +4,7 @@ Text in square brackets is a direction to this model, not speech: `[laughs]` or 
 changes how the line is said. The provider sends the text as it gets it.
 """
 
+import time
 import typing as tp
 
 import aiohttp
@@ -17,6 +18,12 @@ MODEL_ID = "eleven_v4_turbo"
 DEFAULT_VOICE_ID = "FGY2WhTYpPnrIDTdsKH5"  # Laura
 SYNTHESIS_TIMEOUT_SECS = 120
 ERROR_BODY_CHARS = 300
+# The prewarm request: read-only, bills no characters, and answers small. A key without the
+# user scope gets 401, and that still leaves the TLS connection open in the pool.
+PREWARM_PATH = "/v1/user/subscription"
+PREWARM_TIMEOUT_SECS = 5
+# Under the server's 90 s keepalive, so a connection used this recently is still open.
+PREWARM_SKIP_SECS = 60
 
 # Play format -> the ElevenLabs output_format that makes it.
 OUTPUT_FORMATS: dict[str, str] = {
@@ -155,6 +162,8 @@ class ElevenLabsTts:
         "this reply will be spoken aloud, so let your voice show feeling with directions in square brackets, "
         "which it performs and does not say, and put nothing else in square brackets"
     )
+    # Monotonic time of the last request on the shared session, for the prewarm skip.
+    last_used: float = float("-inf")
 
     def settings_schema(self) -> list[SettingDef]:
         return [
@@ -180,6 +189,7 @@ class ElevenLabsTts:
         http: aiohttp.ClientSession,
     ) -> tp.AsyncIterator[bytes]:
         url = f"{ELEVENLABS_API}/v1/text-to-speech/{voice}/stream"
+        self.last_used = time.monotonic()
         try:
             async with http.post(
                 url,
@@ -196,6 +206,22 @@ class ElevenLabsTts:
                     yield chunk
         except (TimeoutError, aiohttp.ClientError) as e:
             raise TtsError(f"elevenlabs request failed: {e}") from e
+
+    async def prewarm(self, creds: dict[str, str], http: aiohttp.ClientSession) -> None:
+        now = time.monotonic()
+        if now - self.last_used < PREWARM_SKIP_SECS:
+            return
+        self.last_used = now
+        try:
+            async with http.get(
+                f"{ELEVENLABS_API}{PREWARM_PATH}",
+                headers={"xi-api-key": api_key(creds)},
+                timeout=aiohttp.ClientTimeout(total=PREWARM_TIMEOUT_SECS),
+            ) as resp:
+                # Read the body so the connection goes back to the pool.
+                await resp.read()
+        except (TimeoutError, aiohttp.ClientError):
+            return
 
     async def usage(self, creds: dict[str, str]) -> Usage:
         return await account_usage(api_key(creds))

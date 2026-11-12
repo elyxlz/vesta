@@ -38,12 +38,13 @@ from voice.providers.base import (
     SttProvider,
     SttStream,
     TtsError,
+    TtsPrewarm,
     TtsProvider,
     Verdict,
 )
 from voice.settings import Domain
 
-from . import behavior, buffers, detector, frames, playback, turns, wake
+from . import behavior, buffers, detector, frames, playback, timing, turns, wake
 
 logger = logging.getLogger("voice.session")
 
@@ -194,6 +195,9 @@ class Session:
     # `bytes` delivery only: the plays to send, and the task that sends them one at a time.
     byte_queue: asyncio.Queue[playback.Play] = dc.field(default_factory=asyncio.Queue)
     byte_sender: asyncio.Task[None] | None = None
+    # The timing clock of the newest turn, and whether `end_turn` started it before the commit.
+    clock: timing.TurnClock | None = None
+    commit_sent: bool = False
 
 
 class _UnsupportedFormatError(Exception):
@@ -364,6 +368,7 @@ def _remember(session: Session, by: str, text: str) -> None:
 
 
 async def _synthesize(session: Session, tts: TtsLink, play: playback.Play, buffer: buffers.PlayBuffer) -> None:
+    timing.mark(buffer.clock, "tts_request", f"id={play.id}")
     audio = tts.provider.synthesize(play.text, tts.voice, tts.audio_format, tts.creds, tts.settings, session.http)
     try:
         await buffers.fill(buffer, audio)
@@ -379,9 +384,14 @@ async def _send_bytes(session: Session, audio_format: str) -> None:
         if play.token not in session.plays:
             continue
         await _send(session.ws, {"type": "play", "id": play.id, "format": audio_format})
-        async for chunk in buffers.read(session.plays[play.token]):
+        buffer = session.plays[play.token]
+        first = True
+        async for chunk in buffers.read(buffer):
             with contextlib.suppress(ConnectionError):
                 await session.ws.send_bytes(chunk)
+            if first:
+                timing.mark(buffer.clock, "play_first_byte", f"id={play.id}")
+                first = False
         await _send(session.ws, {"type": "play_done", "id": play.id})
 
 
@@ -398,8 +408,11 @@ async def _on_speak(session: Session, frame: frames.Speak) -> None:
     if tts is None:
         await _send(session.ws, {"type": "error", "id": frame["id"], "message": "tts is off or has no provider; this session cannot speak"})
         return
+    if session.clock is None:
+        session.clock = timing.start()
+    timing.mark(session.clock, "speak", f"id={frame['id']}")
     play = playback.Play(id=frame["id"], text=frame["text"], token=secrets.token_urlsafe(PLAY_TOKEN_BYTES))
-    buffer = buffers.PlayBuffer(tts.audio_format)
+    buffer = buffers.PlayBuffer(tts.audio_format, clock=session.clock)
     session.plays[play.token] = buffer
     session.synthesis[play.token] = _spawn(session, _synthesize(session, tts, play, buffer))
     session.speaker, to_send = playback.speak(session.speaker, play, hold=session.turn.phase == "user_turn")
@@ -476,11 +489,29 @@ async def _apply(session: Session, action: turns.Action) -> None:
     await _send(session.ws, action)
     if action["type"] == "pause_playback":
         _spawn(session, _tick_after_hold(session))
+    elif action["type"] == "turn_start":
+        _prewarm_tts(session)
     elif action["type"] == "turn_end":
+        timing.mark(session.clock, "turn_end")
         _remember(session, "user", action["text"])
         await _release_held(session)
     elif action["type"] == "turn_dropped":
         await _release_held(session)
+
+
+async def _prewarm(provider: TtsPrewarm, creds: dict[str, str], http: aiohttp.ClientSession) -> None:
+    try:
+        await provider.prewarm(creds, http)
+    except Exception as e:
+        logger.debug("tts prewarm failed: %s", e)
+
+
+def _prewarm_tts(session: Session) -> None:
+    """Warm the TTS provider's connection while the user speaks, so the reply's first audio does
+    not wait on a handshake. It never blocks or fails the turn."""
+    tts = session.tts
+    if tts is not None and isinstance(tts.provider, TtsPrewarm):
+        _spawn(session, _prewarm(tts.provider, tts.creds, session.http))
 
 
 async def _step(session: Session, event: turns.TurnEvent) -> None:
@@ -557,6 +588,10 @@ async def _verdict_for(session: Session, text: str) -> Verdict | None:
 
 async def _on_committed(session: Session, said: str) -> None:
     text = _without_phrase(session, said, live=False)
+    if not session.commit_sent:
+        session.clock = timing.start()
+    session.commit_sent = False
+    timing.mark(session.clock, "stt_committed", f"chars={len(text)}")
     verdict = await _verdict_for(session, text)
     _drop_pending_ask(session)
     session.verdict = None
@@ -730,7 +765,9 @@ async def _on_client(session: Session, frame: frames.ClientFrame) -> Outcome:
         await _on_report(session, frame)
     elif frame["type"] == "end_turn":
         if session.stt is not None:
+            session.clock, session.commit_sent = timing.start(), True
             await session.stt.commit()
+            timing.mark(session.clock, "stt_commit_sent")
     else:
         return "client_ended"
     return None
@@ -854,7 +891,11 @@ async def voice_play(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": buffer.error or "the play has no audio"}, status=502)
     response = web.StreamResponse(headers={"Content-Type": frames.PLAY_FORMATS[buffer.audio_format]})
     await response.prepare(request)
+    first = True
     async for chunk in buffers.read(buffer):
         await response.write(chunk)
+        if first:
+            timing.mark(buffer.clock, "play_first_byte")
+            first = False
     await response.write_eof()
     return response

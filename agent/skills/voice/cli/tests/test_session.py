@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import pathlib as pl
 import typing as tp
 
@@ -660,3 +661,37 @@ def test_a_segment_with_no_words_and_no_other_frame_still_ends_its_live_text(tmp
             ]
 
     asyncio.run(scenario())
+
+
+def test_a_turn_logs_each_stage_from_the_commit_to_the_first_byte(
+    tmp_path: pl.Path, stt: FakeStt, tts: FakeTts, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="voice.timing")
+
+    async def scenario() -> None:
+        async with voice_service(tmp_path) as client, session(client, stt) as (ws, stream):
+            await stream.emit("transcription", "hi")
+            await frames_until(ws, "state")
+            await ws.send_json({"type": "end_turn"})
+            await asyncio.wait_for(stream.committing.wait(), 5)
+            await stream.emit("committed", "Hi.")
+            await frames_until(ws, "turn_end")
+            assert await next_frame(ws) == {"type": "state", "value": "listening"}
+            await ws.send_json({"type": "speak", "id": "r1", "text": "Hello."})
+            play = await next_frame(ws)
+            async with client.get(str(play["url"])) as audio:
+                await audio.read()
+
+    asyncio.run(scenario())
+    lines = [record.getMessage().split() for record in caplog.records if record.name == "voice.timing"]
+    assert [line[2] for line in lines] == [
+        "stage=stt_commit_sent",
+        "stage=stt_committed",
+        "stage=turn_end",
+        "stage=speak",
+        "stage=tts_request",
+        "stage=tts_first_chunk",
+        "stage=play_first_byte",
+    ]
+    assert len({line[1] for line in lines}) == 1
+    assert tts.prewarms == 1

@@ -317,3 +317,32 @@ def test_the_elevenlabs_usage_is_the_credits_of_the_subscription(
             return await elevenlabs.ElevenLabsTts().usage({"api_key": "el-key"})
 
     assert asyncio.run(scenario()) == expected
+
+
+def test_the_elevenlabs_prewarm_asks_once_and_skips_a_warm_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    async def answer(request: web.Request) -> web.Response:
+        seen.append(request.headers["xi-api-key"])
+        return web.json_response({"detail": {"status": "missing_permissions"}}, status=401)
+
+    async def scenario() -> None:
+        app = web.Application()
+        app.router.add_get(elevenlabs.PREWARM_PATH, answer)
+        async with serving(app) as client, aiohttp.ClientSession() as http:
+            monkeypatch.setattr(elevenlabs, "ELEVENLABS_API", str(client.make_url("")).rstrip("/"))
+            provider = elevenlabs.ElevenLabsTts()
+            await provider.prewarm({"api_key": "el-key"}, http)
+            await provider.prewarm({"api_key": "el-key"}, http)
+
+    asyncio.run(scenario())
+    assert seen == ["el-key"]
+
+
+def test_a_failed_elevenlabs_prewarm_raises_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        monkeypatch.setattr(elevenlabs, "ELEVENLABS_API", "http://127.0.0.1:1")
+        async with aiohttp.ClientSession() as http:
+            await elevenlabs.ElevenLabsTts().prewarm(CREDS, http)
+
+    asyncio.run(scenario())
