@@ -26,10 +26,10 @@ The Mac build needs Apple Silicon (M1 or newer). Linux ships a `.deb` (Ubuntu, D
 
 ## Connecting a device
 
-An app connects with a **connect link**: `<gateway address>/app#k=<api key>`. The link carries the gateway's api key, the user's credential that opens every agent on it. You do not hold that key and cannot produce the link, so a new device gets it from one of these:
+An app connects with a **connect link**: `<gateway address>/app#k=<api key>`. The link carries the gateway's api key, the user's credential that opens every agent on it. You do not hold that key and cannot produce the link, so the user finds it, in this order:
 
-- **The host**: `vestad status` on the machine that runs the gateway prints the link and a QR code. Their one path when no device is connected.
-- **A browser that is already connected**: the web app at `$VESTAD_PUBLIC_URL/app` works there with no link. That is enough to download the desktop app, but the link itself still comes from the host.
+1. **The link they got when the gateway was set up.** It is the same link for every device, so ask them to look for it first: where they saved it, or in the message or email that delivered it.
+2. **The host**, when they cannot find it: `vestad status` on the machine that runs the gateway prints the link and a QR code again.
 
 Then the user opens the link in a browser, pastes it on the connect screen of the desktop or mobile app, or scans the QR code with the mobile app.
 
