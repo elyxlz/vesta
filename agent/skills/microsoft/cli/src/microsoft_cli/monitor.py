@@ -40,8 +40,8 @@ def strip_fractional(iso: str) -> str:
 
 
 class MonitorState(TypedDict):
-    """last_cycle seeds a unit polled for the first time; units maps "<kind>:<account>" to the end of
-    the last window that unit read successfully."""
+    """last_cycle seeds a unit polled for the first time; units maps "<kind>:<account>" (mail adds
+    ":<folder>") to the end of the last window that unit read successfully."""
 
     last_cycle: str
     units: dict[str, str]
@@ -94,6 +94,25 @@ def _poll_unit(
     units[unit] = last_dt.isoformat() if read_through is None else read_through.isoformat()
 
 
+def _poll_mail_folders(
+    ctx: MicrosoftContext,
+    state: MonitorState,
+    account: str,
+    watch_folders: list[str],
+    new_check_time: datetime,
+    poll: Callable[[list[str], datetime, datetime, bool], datetime | None],
+) -> None:
+    """Each watched folder is its own unit: a folder that fails to read never holds back a healthy one,
+    whose window would otherwise be re-read and re-notified. A legacy per-account watermark seeds each."""
+    units = state["units"]
+    legacy = units.pop(f"mail:{account}", None)
+    for folder_token in watch_folders:
+        unit = f"mail:{account}:{folder_token}"
+        if legacy is not None:
+            units.setdefault(unit, legacy)
+        _poll_unit(ctx, state, unit, new_check_time, partial(poll, [folder_token], new_check_time))
+
+
 def _whole_window(new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> Callable[[datetime, bool], datetime | None]:
     """Adapt a poll that reads its window in one shot: it read through the whole cycle, or not at all."""
     return lambda last_dt, catching_up: new_check_time if poll(last_dt, catching_up) else None
@@ -120,7 +139,24 @@ def _window_read_through(messages: list[dict], new_check_time: datetime) -> date
         return None
     # Park a second back so a same-second tie split off the truncated window is re-scanned next cycle,
     # not lost to strict `gt`; the boundary second re-notifies (no id-level dedup), a bounded dup over a drop.
-    return received - timedelta(seconds=1) if received.tzinfo else None
+    # Never past the window edge: mail fetched beyond it is left for the next cycle, so it was not read.
+    return min(received - timedelta(seconds=1), new_check_time) if received.tzinfo else None
+
+
+def _within_window(messages: list[dict], new_check_time: datetime) -> list[dict]:
+    """The fetched messages that arrived by the window edge. The fetch has no upper bound, so mail landing
+    after the cycle started is left for the next window (which starts at the edge) instead of notified in
+    both. A message without a usable timestamp cannot be placed and is kept, a possible dup over a drop."""
+    kept = []
+    for message in messages:
+        try:
+            received = datetime.fromisoformat(message["receivedDateTime"])
+        except (KeyError, ValueError):
+            kept.append(message)
+            continue
+        if not received.tzinfo or received <= new_check_time:
+            kept.append(message)
+    return kept
 
 
 class EmailAddress(TypedDict):
@@ -285,7 +321,7 @@ def _poll_owa_rest_mail(
                 limit=_MAX_WINDOW_MESSAGES,
             )
             logger.info("OWA REST: %d new emails for %s in %s", len(messages), account_email, folder_token)
-            for message in messages:  # oldest first, matching arrival order
+            for message in _within_window(messages, new_check_time):  # oldest first, matching arrival order
                 _emit_email_notification(ctx, message, account_email, folder_token, catching_up)
             read_through = _earliest(read_through, _window_read_through(messages, new_check_time))
         except Exception as e:
@@ -584,11 +620,12 @@ def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config) -> None:
         _write_auth_needed(notified_path, notified)
 
 
-def _poll_graph_mail(ctx: MicrosoftContext, acc, new_check_time: datetime, last_dt: datetime, catching_up: bool) -> datetime | None:
+def _poll_graph_mail(
+    ctx: MicrosoftContext, acc, watch_folders: list[str], new_check_time: datetime, last_dt: datetime, catching_up: bool
+) -> datetime | None:
     """Poll one MSAL (Graph) account's watched folders for new mail, returning how far its mail was read."""
     logger = ctx.monitor_logger
     conn = graph.GraphConn(ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url)
-    watch_folders = notify.get_notify_folders(ctx.notify_file, acc.username) if ctx.notify_file else ["inbox"]
     read_through: datetime | None = new_check_time
     for folder_token in watch_folders:
         try:
@@ -611,7 +648,7 @@ def _poll_graph_mail(ctx: MicrosoftContext, acc, new_check_time: datetime, last_
             )
             logger.info("Found %d new emails for %s in %s", len(emails), acc.username, folder_token)
 
-            for email in emails:
+            for email in _within_window(emails, new_check_time):
                 _emit_email_notification(ctx, email, acc.username, folder_token, catching_up)
             read_through = _earliest(read_through, _window_read_through(emails, new_check_time))
         except Exception as e:
@@ -670,7 +707,8 @@ def run(ctx: MicrosoftContext):
                 if acc.username.casefold() in device_owa:
                     continue
                 logger.info("Checking account: %s", acc.username)
-                _poll_unit(ctx, state, f"mail:{acc.username}", new_check_time, partial(_poll_graph_mail, ctx, acc, new_check_time))
+                graph_folders = notify.get_notify_folders(ctx.notify_file, acc.username) if ctx.notify_file else ["inbox"]
+                _poll_mail_folders(ctx, state, acc.username, graph_folders, new_check_time, partial(_poll_graph_mail, ctx, acc))
                 _poll_unit(
                     ctx,
                     state,
@@ -687,12 +725,8 @@ def run(ctx: MicrosoftContext):
                     continue
                 logger.info("Checking OWA REST account: %s", account_email)
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
-                _poll_unit(
-                    ctx,
-                    state,
-                    f"mail:{account_email}",
-                    new_check_time,
-                    partial(_poll_owa_rest_mail, ctx, config, account_email, watch_folders, new_check_time),
+                _poll_mail_folders(
+                    ctx, state, account_email, watch_folders, new_check_time, partial(_poll_owa_rest_mail, ctx, config, account_email)
                 )
                 _poll_unit(
                     ctx,
