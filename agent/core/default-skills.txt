@@ -24,3 +24,4 @@ upstream
 vesta-cloud
 voice
 what-day
+vesta-app
