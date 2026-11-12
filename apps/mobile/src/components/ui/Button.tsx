@@ -157,7 +157,6 @@ export function Button({
                 size === "small" || size === "compact"
                   ? styles.smallLabel
                   : null,
-                variant === "primary" ? styles.primaryLabel : null,
                 usesCardLayout ? styles.cardLabel : null,
                 labelStyle,
                 { color: contentColor },
@@ -236,10 +235,9 @@ const styles = StyleSheet.create({
   buttonGroup: { gap: 8 },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardContent: { alignSelf: "stretch" },
-  label: { fontSize: 16, fontWeight: "700" },
-  primaryLabel: { fontWeight: "600" },
-  smallLabel: { fontSize: 14, fontWeight: "600" },
-  cardLabel: { flex: 1, fontSize: 16, fontWeight: "500" },
+  label: { fontSize: 16, fontWeight: "500" },
+  smallLabel: { fontSize: 14 },
+  cardLabel: { flex: 1 },
   textButton: { alignSelf: "center", padding: 4 },
   textButtonLabel: { fontSize: 13, fontWeight: "500" },
 });

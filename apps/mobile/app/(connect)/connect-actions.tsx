@@ -1,4 +1,3 @@
-import { StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { AuthSheet } from "@/components/auth-sheet";
 import { Button } from "@/components/ui/Button";
@@ -25,7 +24,6 @@ export default function ConnectActionsScreen() {
           accessibilityLabel="Recent gateways"
           icon="time-outline"
           iconSize={20}
-          labelStyle={styles.recentLabel}
           onPress={() => router.push("/recent-gateways")}
         >
           Recent gateways
@@ -34,7 +32,3 @@ export default function ConnectActionsScreen() {
     </AuthSheet>
   );
 }
-
-const styles = StyleSheet.create({
-  recentLabel: { fontWeight: "600" },
-});
