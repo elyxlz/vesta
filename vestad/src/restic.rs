@@ -14,9 +14,10 @@ const RESTIC_TIMEOUT_SECS: u64 = 7200; // 2 hours — multi-GB agents stream the
 /// Ceiling on one pre-update snapshot, far under `RESTIC_TIMEOUT_SECS`: the gateway update screen
 /// is live while these run, so a wedged export is killed (the timeout below fires the kill switch)
 /// and reported as a warning, with the agent keeping its older snapshot as its rollback point,
-/// instead of one agent stalling the whole update. Generous next to the worst observed fleet
-/// backup (tens of seconds), so it never cuts a slow but live snapshot short.
-const PRE_UPDATE_SNAPSHOT_TIMEOUT_SECS: u64 = 15 * 60;
+/// instead of one agent stalling the whole update. Sized for agents whose filesystem export
+/// runs to tens of GB on a disk shared with other snapshots, so a slow but live snapshot is not
+/// cut short.
+const PRE_UPDATE_SNAPSHOT_TIMEOUT_SECS: u64 = 45 * 60;
 
 /// The per-type snapshot budget, owned here beside the kill switch it arms.
 fn snapshot_timeout_secs(backup_type: &BackupType) -> u64 {
