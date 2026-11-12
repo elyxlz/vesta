@@ -197,7 +197,7 @@ def test_failed_poll_leaves_the_window_for_the_next_cycle_to_recover(tmp_path, m
     monitor.run(ctx)
 
     assert [call["sender"] for call in calls] == ["Manager"]
-    assert _watermark(ctx, "mail:me@x.com") > arrived_at
+    assert _watermark(ctx, "mail:me@x.com:inbox") > arrived_at
 
 
 def test_broken_account_does_not_make_a_healthy_one_renotify(tmp_path, monkeypatch):
@@ -226,8 +226,58 @@ def test_broken_account_does_not_make_a_healthy_one_renotify(tmp_path, monkeypat
     monitor.run(ctx)
 
     assert [call["sender"] for call in calls] == ["Colleague"]
-    assert _watermark(ctx, "mail:broken@x.com") == parked_at
-    assert _watermark(ctx, "mail:healthy@x.com") > delivered_at
+    assert _watermark(ctx, "mail:broken@x.com:inbox") == parked_at
+    assert _watermark(ctx, "mail:healthy@x.com:inbox") > delivered_at
+
+
+def test_a_failing_folder_does_not_make_a_healthy_folder_renotify(tmp_path, monkeypatch):
+    """Guards the per-folder granularity: one watermark per account would hold the healthy folder back
+    while a second folder fails, so every cycle re-read and re-notified the healthy folder's window."""
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _single_owa_account(monkeypatch)
+
+    now = datetime.now(UTC)
+    parked_at = now - timedelta(seconds=60)
+    ctx = _run_ctx(tmp_path, cycles=2)
+    ctx.notify_file = tmp_path / "notify.json"
+    ctx.notify_file.write_text(json.dumps({"me@x.com": ["inbox", "second"]}))
+    ctx.monitor_state_file.write_text(parked_at.isoformat())
+    healthy = _mailbox(_email("colleague@x.com", "Colleague", (now - timedelta(seconds=30)).isoformat()))
+
+    def list_messages_since(client, account_email, config, *, folder, **kwargs):
+        if folder == "second":
+            raise httpx.HTTPStatusError("502", request=httpx.Request("GET", "https://x"), response=httpx.Response(502))
+        return healthy(client, account_email, config, folder=folder, **kwargs)
+
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", list_messages_since)
+    monitor.run(ctx)
+
+    assert [call["sender"] for call in calls] == ["Colleague"]
+    assert _watermark(ctx, "mail:me@x.com:second") == parked_at
+
+
+def test_a_legacy_account_watermark_seeds_each_folder_and_is_dropped(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _single_owa_account(monkeypatch)
+
+    now = datetime.now(UTC)
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.notify_file = tmp_path / "notify.json"
+    ctx.notify_file.write_text(json.dumps({"me@x.com": ["inbox", "second"]}))
+    legacy = {"last_cycle": now.isoformat(), "units": {"mail:me@x.com": (now - timedelta(minutes=5)).isoformat()}}
+    ctx.monitor_state_file.write_text(json.dumps(legacy))
+    monkeypatch.setattr(
+        monitor.owa_rest, "list_messages_since", _mailbox(_email("held@x.com", "Held", (now - timedelta(minutes=2)).isoformat()))
+    )
+    monitor.run(ctx)
+
+    # Seeded from the legacy watermark, not last_cycle, so mail it was still holding is not skipped.
+    assert [call["sender"] for call in calls] == ["Held", "Held"]
+    units = json.loads(ctx.monitor_state_file.read_text())["units"]
+    assert set(units) >= {"mail:me@x.com:inbox", "mail:me@x.com:second"}
+    assert "mail:me@x.com" not in units
 
 
 def test_recovery_reads_at_most_the_max_catchup_window(tmp_path, monkeypatch):
@@ -296,8 +346,8 @@ def test_a_window_over_the_drain_limit_parks_the_watermark_at_the_last_message_r
     drained = mailbox[: monitor._MAX_WINDOW_MESSAGES]
     assert [call["sender"] for call in calls] == [call["from"]["emailAddress"]["name"] for call in drained]
     # Parked one second before the last message read, so the boundary second is re-scanned next cycle.
-    assert _watermark(ctx, "mail:me@x.com") == datetime.fromisoformat(drained[-1]["receivedDateTime"]) - timedelta(seconds=1)
-    assert _watermark(ctx, "mail:me@x.com") < datetime.fromisoformat(mailbox[monitor._MAX_WINDOW_MESSAGES]["receivedDateTime"])
+    assert _watermark(ctx, "mail:me@x.com:inbox") == datetime.fromisoformat(drained[-1]["receivedDateTime"]) - timedelta(seconds=1)
+    assert _watermark(ctx, "mail:me@x.com:inbox") < datetime.fromisoformat(mailbox[monitor._MAX_WINDOW_MESSAGES]["receivedDateTime"])
 
 
 def test_the_rest_of_an_oversized_window_is_drained_by_the_following_cycle(tmp_path, monkeypatch):
@@ -359,7 +409,7 @@ def test_graph_mail_pages_a_bounded_window_and_parks_before_the_last_message_rea
     ctx = _run_ctx(tmp_path, cycles=1)
     acc = types.SimpleNamespace(username="me@x.com", account_id="acct-1")
 
-    read_through = monitor._poll_graph_mail(ctx, acc, now, now - timedelta(hours=1), False)
+    read_through = monitor._poll_graph_mail(ctx, acc, ["inbox"], now, now - timedelta(hours=1), False)
 
     assert asked["params"]["$orderby"] == "receivedDateTime asc"
     assert asked["limit"] == monitor._MAX_WINDOW_MESSAGES
