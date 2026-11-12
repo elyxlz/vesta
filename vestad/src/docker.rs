@@ -286,6 +286,10 @@ const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 // Override bollard's 120s default to absorb slow image builds under CI contention.
 const DOCKER_TIMEOUT_SECS: u64 = 600;
+/// A backup commit copies the agent's whole writable layer, which for an agent with tens of
+/// GB of data can outlast `DOCKER_TIMEOUT_SECS` on a busy disk; the snapshot step that follows
+/// already allows hours, so the commit gets the same order of budget.
+const COMMIT_TIMEOUT_SECS: u64 = 7200;
 const DEFAULT_DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1584,10 +1588,14 @@ pub async fn commit_container_to_image(
         .tag(image_tag)
         .pause(true)
         .build();
+    let started = std::time::Instant::now();
     docker
+        .clone()
+        .with_timeout(std::time::Duration::from_secs(COMMIT_TIMEOUT_SECS))
         .commit_container(options, ContainerConfig::default())
         .await
         .map_err(|e| DockerError::Failed(format!("docker commit failed: {e}")))?;
+    tracing::info!(container = %cname, secs = started.elapsed().as_secs(), "docker commit done");
     Ok(())
 }
 
