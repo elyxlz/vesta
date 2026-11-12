@@ -280,6 +280,45 @@ def test_a_legacy_account_watermark_seeds_each_folder_and_is_dropped(tmp_path, m
     assert "mail:me@x.com" not in units
 
 
+def test_mail_arriving_after_the_cycle_starts_is_notified_once_by_the_next_cycle(tmp_path, monkeypatch):
+    """The fetch has no upper bound but the watermark advances to the cycle start, so mail landing in
+    between would be notified by this cycle and again by the next one."""
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _single_owa_account(monkeypatch)
+
+    now = datetime.now(UTC)
+    ctx = _run_ctx(tmp_path, cycles=2)
+    ctx.monitor_state_file.write_text((now - timedelta(seconds=60)).isoformat())
+    late = _email("late@x.com", "Late", (now + timedelta(minutes=5)).isoformat())  # after cycle 1 starts
+    fetch = _mailbox(late)
+    seen_per_cycle = []
+
+    def list_messages_since(*args, **kwargs):
+        seen_per_cycle.append(len(calls))
+        return fetch(*args, **kwargs)
+
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", list_messages_since)
+    cycle_starts = iter([now, now + timedelta(minutes=10)])
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(cycle_starts)
+
+    monkeypatch.setattr(monitor, "datetime", _Clock)
+    monitor.run(ctx)
+
+    assert seen_per_cycle == [0, 0]  # nothing notified by the end of cycle 1
+    assert [call["sender"] for call in calls] == ["Late"]
+
+
+def test_a_full_page_reaching_past_the_cycle_start_parks_at_the_cycle_start():
+    now = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+    page = _oversized_window(now + timedelta(seconds=monitor._MAX_WINDOW_MESSAGES + 30), monitor._MAX_WINDOW_MESSAGES)
+    assert monitor._window_read_through(page, now) == now
+
+
 def test_recovery_reads_at_most_the_max_catchup_window(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))

@@ -139,7 +139,24 @@ def _window_read_through(messages: list[dict], new_check_time: datetime) -> date
         return None
     # Park a second back so a same-second tie split off the truncated window is re-scanned next cycle,
     # not lost to strict `gt`; the boundary second re-notifies (no id-level dedup), a bounded dup over a drop.
-    return received - timedelta(seconds=1) if received.tzinfo else None
+    # Never past the window edge: mail fetched beyond it is left for the next cycle, so it was not read.
+    return min(received - timedelta(seconds=1), new_check_time) if received.tzinfo else None
+
+
+def _within_window(messages: list[dict], new_check_time: datetime) -> list[dict]:
+    """The fetched messages that arrived by the window edge. The fetch has no upper bound, so mail landing
+    after the cycle started is left for the next window (which starts at the edge) instead of notified in
+    both. A message without a usable timestamp cannot be placed and is kept, a possible dup over a drop."""
+    kept = []
+    for message in messages:
+        try:
+            received = datetime.fromisoformat(message["receivedDateTime"])
+        except (KeyError, ValueError):
+            kept.append(message)
+            continue
+        if not received.tzinfo or received <= new_check_time:
+            kept.append(message)
+    return kept
 
 
 class EmailAddress(TypedDict):
@@ -304,7 +321,7 @@ def _poll_owa_rest_mail(
                 limit=_MAX_WINDOW_MESSAGES,
             )
             logger.info("OWA REST: %d new emails for %s in %s", len(messages), account_email, folder_token)
-            for message in messages:  # oldest first, matching arrival order
+            for message in _within_window(messages, new_check_time):  # oldest first, matching arrival order
                 _emit_email_notification(ctx, message, account_email, folder_token, catching_up)
             read_through = _earliest(read_through, _window_read_through(messages, new_check_time))
         except Exception as e:
@@ -631,7 +648,7 @@ def _poll_graph_mail(
             )
             logger.info("Found %d new emails for %s in %s", len(emails), acc.username, folder_token)
 
-            for email in emails:
+            for email in _within_window(emails, new_check_time):
                 _emit_email_notification(ctx, email, acc.username, folder_token, catching_up)
             read_through = _earliest(read_through, _window_read_through(emails, new_check_time))
         except Exception as e:
