@@ -209,7 +209,7 @@ Write what you did and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-0
 
 The user reviews this summary, so it's an accountability record, not a private log.
 
-Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
+Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up. Write every deadline in that list with its DUE date copied from the primary source, and label a reminder's fire time as a nudge ("Quiz 4 due Mon 16 Nov 12:00, nudge Fri 10:00"): a nudge time written bare is read back the next day as the deadline.
 
 **Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `reminders` skill on your own channel.
 
