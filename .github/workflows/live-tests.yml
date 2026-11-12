@@ -52,7 +52,6 @@ on:
 permissions:
   contents: read
   packages: read
-  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -77,7 +76,6 @@ jobs:
         env:
           CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
           REQUIRE_CREDENTIALS: ${{ github.event_name == 'workflow_dispatch' }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$CLAUDE_CREDENTIALS" ]; then
             if [ "$REQUIRE_CREDENTIALS" = "true" ]; then
@@ -88,20 +86,20 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # The secret holds a long-lived `claude setup-token` access token, with no refresh
+          # token. Nothing renews it, so an expired one is replaced by hand.
           ok=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
-          import json, sys
-          json.load(sys.stdin)['claudeAiOauth']['refreshToken']
-          print('ok')" 2>/dev/null || echo "invalid")
-          if [ "$ok" != "ok" ]; then
-            echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken"
+          import json, sys, time
+          oauth = json.load(sys.stdin)['claudeAiOauth']
+          assert oauth['accessToken'].strip()
+          print('ok' if oauth['expiresAt'] > time.time() * 1000 else 'expired')" 2>/dev/null || echo "invalid")
+          if [ "$ok" = "expired" ]; then
+            echo "::error::CLAUDE_CREDENTIALS has expired; make a new token with claude setup-token and set the secret again"
             exit 1
           fi
-          # The secret only stays valid while the refresh-credentials cron keeps rotating it, so a
-          # failing refresher is the first thing to check when this suite dies on auth errors.
-          refresher=$(gh run list --workflow=refresh-credentials.yml --limit 1 \
-            --json conclusion --jq '.[0].conclusion // "never run"' 2>/dev/null || echo "unreadable")
-          if [ "$refresher" != "success" ]; then
-            echo "::warning::Refresh Claude Credentials last run: ${refresher}. CLAUDE_CREDENTIALS is likely stale, so auth failures below are expected: fix that workflow first (usually an expired GH_PAT), re-run it, then re-run this suite."
+          if [ "$ok" != "ok" ]; then
+            echo "::error::CLAUDE_CREDENTIALS is malformed: it needs claudeAiOauth.accessToken and claudeAiOauth.expiresAt"
+            exit 1
           fi
           mkdir -p ~/.claude
           printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json

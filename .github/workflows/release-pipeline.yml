@@ -12,8 +12,7 @@ permissions:
   # ci.yml (called below) requests pull-requests: read; a reusable workflow
   # cannot request more than its caller grants, so grant it here too.
   pull-requests: read
-  # live-tests.yml (called below) requests actions: read for its credentials
-  # preflight, same reusable-workflow rule: grant it here too.
+  # ci.yml's merge gate requests actions: read, same reusable-workflow rule.
   actions: read
 
 concurrency:
