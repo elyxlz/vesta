@@ -56,16 +56,36 @@ def build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
 
+# Appended to every preempting prompt. When the preempt lands between tool calls, the CLI cancels
+# the not-yet-started ones and returns its generic denial text for each ("The user doesn't want to
+# take this action right now. STOP what you are doing and wait for the user to tell you how to
+# proceed."). Read literally, that parks the agent until a human speaks: observed for four hours
+# on an agent in bypassPermissions mode, where no human could have denied anything (the session
+# recorded toolDenialKind "cancelled" at the instant of the preempt).
+PREEMPT_CANCEL_NOTE = (
+    "\n\n(This message preempted your previous turn. If a tool call of yours just came back "
+    'cancelled with "The user doesn\'t want to take this action right now", that cancellation '
+    "was this preempt, not the user: it is not an instruction to stop. Handle this message, then "
+    "redo the cancelled step if it is still needed.)"
+)
+
+
 def build_priority_now_message(prompt: str, *, timestamp: dt.datetime) -> dict[str, tp.Any]:
     """The stream-json envelope for a preempting user message. `priority` is undocumented CLI
     protocol (verified on 2.1.191/2.1.201, probed live 2026-07-06): a queued "now" prompt makes
     the CLI end the running turn at its next step boundary with the graceful "interrupt" reason,
     so background subagents survive — unlike the interrupt control request, whose headless
     handler kills every backgrounded task (issue #982). A CLI that ignores the field just queues
-    the message to run after the current turn: delayed, never lost."""
+    the message to run after the current turn: delayed, never lost.
+
+    The content carries PREEMPT_CANCEL_NOTE so a tool call the preempt cancelled is not read as
+    a user's stop order. Slash commands are passed through untouched, as in build_query."""
+    content = build_query(prompt, timestamp=timestamp)
+    if not prompt.startswith("/"):
+        content += PREEMPT_CANCEL_NOTE
     return {
         "type": "user",
-        "message": {"role": "user", "content": build_query(prompt, timestamp=timestamp)},
+        "message": {"role": "user", "content": content},
         "parent_tool_use_id": None,
         "priority": "now",
     }
