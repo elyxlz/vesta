@@ -66,6 +66,10 @@ fi
 # a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
 # the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
 # daemon output with the agent's own [AGENT] narration, which is prose, not a component's failure.
+# The daemon also relays agent prose under [SYSTEM] (compaction summaries as [CLIENT] lines, task
+# descriptions inside [MESSAGE] JSON), so the counted word must carry error punctuation: an error
+# report reads "Error:", "error.", "error(" or comes as a traceback, while relayed prose says
+# "error messages" or "Errors and fixes:" and must not count.
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
@@ -77,7 +81,7 @@ for log in "$HOME"/agent/logs/*.log; do
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
-        | grep -icE 'error|traceback')
+        | grep -icE 'error[:.!(]|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
     else
