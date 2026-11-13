@@ -1565,8 +1565,7 @@ pub async fn container_restart_policy(docker: &Docker, cname: &str) -> String {
         .and_then(|info| info.host_config)
         .and_then(|h| h.restart_policy)
         .and_then(|r| r.name)
-        .map(|n| format!("{n:?}").to_lowercase().replace('_', "-"))
-        .unwrap_or_default()
+        .map_or_default(|n| format!("{n:?}").to_lowercase().replace('_', "-"))
 }
 
 /// Commit the container's filesystem to a local image. Docker pauses the

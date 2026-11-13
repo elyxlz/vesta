@@ -118,13 +118,12 @@ impl ServiceKeyStore {
         self.by_agent
             .get(agent)
             .and_then(|services| services.get(service))
-            .map(|keys| {
+            .map_or_default(|keys| {
                 keys.iter()
                     .filter(|key| key.is_live_at(now))
                     .map(ServiceKeyInfo::from)
                     .collect()
             })
-            .unwrap_or_default()
     }
 
     /// True when `presented` is a live key for exactly this `(agent, service)` pair.

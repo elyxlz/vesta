@@ -481,15 +481,14 @@ fn agent_info(
     let agent_revs = revs.get(&entry.name);
     let services = services
         .get(&entry.name)
-        .map(|svc| {
+        .map_or_default(|svc| {
             svc.iter()
                 .map(|(svc_name, e)| {
                     let rev = agent_revs.and_then(|m| m.get(svc_name)).copied().unwrap_or(0);
                     (svc_name.clone(), ServiceInfo { port: e.port, rev, public: e.public })
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     AgentInfo {
         status: entry.status,
         activity_state,
