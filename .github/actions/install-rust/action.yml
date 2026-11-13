@@ -1,5 +1,5 @@
 name: "Install Rust"
-description: "Install the stable Rust toolchain, retrying on transient rustup network failures"
+description: "Install the Rust toolchain vestad/rust-toolchain.toml pins, retrying on transient rustup network failures"
 
 inputs:
   targets:
@@ -16,19 +16,22 @@ runs:
   steps:
     # dtolnay/rust-toolchain has no retry, so a single transient rustup download
     # blip fails the whole job. rustup is preinstalled on every GitHub runner, so
-    # we drive it directly and retry with backoff.
+    # we drive it directly and retry with backoff. The version comes from the pin file, the
+    # one owner local cargo reads too, so CI never moves to a new Rust on its own.
     - shell: bash
       env:
         RUST_TARGETS: ${{ inputs.targets }}
         RUST_COMPONENTS: ${{ inputs.components }}
       run: |
         set -euo pipefail
-        args=(stable --profile minimal --no-self-update)
+        channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' vestad/rust-toolchain.toml)"
+        [ -n "$channel" ] || { echo "::error::no channel in vestad/rust-toolchain.toml"; exit 1; }
+        args=("$channel" --profile minimal --no-self-update)
         for target in ${RUST_TARGETS//,/ }; do args+=(--target "$target"); done
         for component in ${RUST_COMPONENTS//,/ }; do args+=(--component "$component"); done
         for attempt in 1 2 3; do
           if rustup toolchain install "${args[@]}"; then
-            rustup default stable
+            rustup default "$channel"
             exit 0
           fi
           delay=$((attempt * 10))

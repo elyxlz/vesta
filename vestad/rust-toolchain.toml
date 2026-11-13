@@ -1,0 +1,6 @@
+# The one Rust version for local builds and CI (.github/actions/install-rust reads the channel).
+# Raise it in its own PR, with the code changes the new clippy asks for.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

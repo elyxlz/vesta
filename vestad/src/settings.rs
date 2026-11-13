@@ -108,7 +108,7 @@ impl Settings {
     /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
     /// reconcile) sees grants the same way.
     pub(crate) fn agent_mounts(&self, name: &str) -> Vec<crate::mounts::HostMount> {
-        self.agents.get(name).map(|s| s.mounts.clone()).unwrap_or_default()
+        self.agents.get(name).map_or_default(|s| s.mounts.clone())
     }
 }
 

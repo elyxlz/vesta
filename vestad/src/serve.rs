@@ -1720,8 +1720,7 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
     let used: std::collections::HashSet<u16> = registry
         .get(agent)
-        .map(|services| services.values().map(|entry| entry.port).collect())
-        .unwrap_or_default();
+        .map_or_default(|services| services.values().map(|entry| entry.port).collect());
     let scan = |lo: u16| (lo..=SERVICE_PORT_MAX).find(|p| !used.contains(p));
     // Preferred: above the ephemeral range, where the port can't be reused as a
     // transient outbound source port between allocation and the caller binding it.
