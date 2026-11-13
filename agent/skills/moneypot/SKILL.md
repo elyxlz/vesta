@@ -71,6 +71,14 @@ A pooled account (a couple's joint card) is just a member: `--members "Alice,Bob
 - **Account repays**: `add-transfer pot --from Joint --to Bob --amount 30`.
 - Everyday spending straight off the joint card needn't be logged.
 
+### Proportional split
+
+When members should fund the pot in proportion to income rather than equally, store weights once (any positive numbers, e.g. each base salary): `moneypot pot weights pot "Alice:90000,Bob:60000"` (`--clear` reverts to equal). `contributions` then adds a section: each member's net stake (paid in, minus withdrawals, plus out-of-pocket the account owes them), their fair share of the total by weight, over/under, and the top-up that brings everyone into proportion without anyone withdrawing. `--weights` gives one-off weights without storing them. `--since YYYY-MM-DD` counts only entries from that date on, for a split rule that starts mid-history (e.g. a new salary basis from a start date). Never do this arithmetic by hand; run the command and quote it.
+
+**Before telling anyone what is owed or whether something was paid:**
+- WHEN you are about to say a payment happened or did not ("already gone out", "part 1 was paid", "Nov is settled") -> find it in the pot (`moneypot list`) or a connected bank feed first. A payment you assumed is not one you saw; if you cannot see it, say "I can't see it" and ask.
+- WHEN choosing `--since` for a gap report -> start at the LAST date the pot was brought level (the last catch-up top-up), never at the date a new split rule began. Money paid in between those two dates is otherwise silently dropped. A different weight basis for that older stretch is a second run with `--weights`.
+
 `contributions pot --account Joint` then reports who's paid in how much and the top-up the lower one needs to stay level, plus what the account still owes each person:
 
 ```
@@ -80,6 +88,8 @@ contributions into 'Joint':
 'Joint' still owes (out-of-pocket, net of repayments):
    Bob  £50.00
 ```
+
+`contributions` counts money paid IN over the pot's life. Once the account has paid anyone back out, it also prints each member's **net stake** (paid in, minus paid back out, plus out-of-pocket the account owes them) and who is behind on that basis. Quote the net stake when the question is "whose money is in there now".
 
 ## HTTP API (optional)
 
