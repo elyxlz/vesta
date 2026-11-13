@@ -737,6 +737,35 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
 
 
 @pytest.mark.anyio
+async def test_converse_stays_authenticated_on_a_403_the_cli_labels_authentication_failed(config):
+    """A 403 (a firewall block page in front of the API) carries the authentication_failed label,
+    yet the credential is fine: the provider stays authenticated and the CLI is not interrupted."""
+    from claude_agent_sdk import AssistantMessage, TextBlock
+
+    from core.client import converse
+    from core.provider import ProviderAuthState, ProviderStatus
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+
+    async with consuming(state, config):
+        await message_queue.put(
+            AssistantMessage(
+                content=[TextBlock(text="Failed to authenticate. API Error: 403 Attention Required! | Cloudflare")],
+                model="opus",
+                error="authentication_failed",
+            )
+        )
+        await message_queue.put(result_msg())
+        await asyncio.wait_for(converse("test prompt", state=state, config=config, show_output=False), timeout=5.0)
+
+    assert state.provider_status.state == ProviderAuthState.AUTHENTICATED
+    assert state.provider_status.model == "opus"
+    assert not mock_client.interrupt.called
+
+
+@pytest.mark.anyio
 async def test_converse_ignores_transient_api_error(config):
     """A transient api-error turn (502) must NOT flip auth — it resolves on retry."""
     from claude_agent_sdk import AssistantMessage, TextBlock
