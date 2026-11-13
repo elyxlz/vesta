@@ -194,6 +194,8 @@ def test_build_restart_context_renders_system_restart_header(tmp_path):
     out = helpers.build_restart_context(agent_message, config)
     assert out.startswith("[System Restart]\nReason: You restarted after a routine shutdown.")
     assert out.endswith("Read the `restart` skill and follow it.")
+    # The header tells the agent a cancelled tool call was the restart, not a user stop.
+    assert helpers.RESTART_CANCEL_NOTE in out.split("\n\n")[0]
 
     # A reason without a category prefix renders whole.
     out2 = helpers.build_restart_context("first start", config)
