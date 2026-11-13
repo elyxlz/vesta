@@ -56,17 +56,19 @@ ProviderStatusKind = ProviderKind | tp.Literal["none"]
 # account can't pay (402). Kimi overloads both statuses, so its Claude-harness path additionally
 # uses the documented error text in is_terminal_provider_error below.
 TERMINAL_PROVIDER_ERRORS = (401, 402)
-# The Claude Agent SDK's AssistantMessage.error values that mean re-auth: 401 and 402.
+# The Claude Agent SDK's AssistantMessage.error values that mean re-auth.
 _TERMINAL_AUTH_ERRORS = frozenset({"authentication_failed", "billing_error"})
+# The CLI labels a 403 authentication_failed too, and the SDK's AssistantMessage carries no status,
+# so the status is read from the error text the CLI writes ("... API Error: 403 <reason>").
+_FORBIDDEN_STATUS_MARKER = "api error: 403"
 
 
 def is_terminal_auth_error(error: str | None) -> bool:
-    """The single decision for the Claude path: does this assistant turn represent a terminal
-    auth/billing failure (401/402) requiring re-auth? The Claude Agent SDK classifies the upstream
-    error directly on the AssistantMessage, so authentication_failed (401) and billing_error (402)
-    are the terminal cases. A normal turn carries error=None and can never flip the agent to
-    unauthenticated; transient errors (rate_limit, server_error) return False, so the CLI's own
-    retries still fix them."""
+    """Does this AssistantMessage label name a failure that needs re-auth? The Claude Agent SDK
+    classifies the upstream error on the message: authentication_failed (a rejected or missing
+    credential) and billing_error (402) are the candidates. A normal turn carries error=None and can
+    never flip the agent to unauthenticated; transient errors (rate_limit, server_error) return
+    False, so the CLI's own retries still fix them."""
     return error in _TERMINAL_AUTH_ERRORS
 
 
@@ -88,14 +90,17 @@ def is_terminal_provider_error(
     Kimi documents 401 for both invalid credentials and valid subscriptions lacking K3, 1M, or
     HighSpeed access; it also uses 402 when membership verification is temporarily unavailable.
     Only its two explicit credential messages are therefore terminal. Other providers retain the
-    SDK's 401/402 classification.
+    SDK's classification, except a 403: a firewall block or a permission refusal that the same
+    credential survives, so signing in again would change nothing and the next request can pass.
     """
+    text = "\n".join(details).lower()
     if kind == "kimi":
         is_401 = assistant_error == "authentication_failed" or api_error_status == 401
         if not is_401:
             return False
-        text = "\n".join(details).lower()
         return any(marker in text for marker in _KIMI_INVALID_CREDENTIAL_MARKERS)
+    if assistant_error == "authentication_failed" and _FORBIDDEN_STATUS_MARKER in text:
+        return False
     return is_terminal_auth_error(assistant_error) or api_error_status in TERMINAL_PROVIDER_ERRORS
 
 

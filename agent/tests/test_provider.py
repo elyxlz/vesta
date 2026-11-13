@@ -100,6 +100,21 @@ def test_is_terminal_auth_error(error, expected):
 
 
 @pytest.mark.parametrize(
+    "details,expected",
+    [
+        (["Please run /login · API Error: 401 Invalid authentication credentials"], True),
+        (["Failed to authenticate: OAuth session expired and could not be refreshed"], True),
+        (["Not logged in · Please run /login"], True),
+        (["Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"], False),
+        (["Failed to authenticate. API Error: 403 Request not allowed"], False),
+    ],
+)
+def test_claude_authentication_failed_is_terminal_unless_the_upstream_status_is_403(details, expected):
+    verdict = is_terminal_provider_error("claude", assistant_error="authentication_failed", api_error_status=None, details=details)
+    assert verdict is expected
+
+
+@pytest.mark.parametrize(
     "error,status,details,expected",
     [
         ("authentication_failed", None, ["API Error: 401 Invalid Authentication"], True),
