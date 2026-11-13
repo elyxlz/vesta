@@ -65,11 +65,9 @@ fi
 # Only lines dated today or yesterday count (an undated line takes the date of the line above it),
 # a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
 # the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
-# daemon output with the agent's own [AGENT] narration, which is prose, not a component's failure.
-# The daemon also relays agent prose under [SYSTEM] (compaction summaries as [CLIENT] lines, task
-# descriptions inside [MESSAGE] JSON), so the counted word must carry error punctuation: an error
-# report reads "Error:", "error.", "error(" or comes as a traceback, while relayed prose says
-# "error messages" or "Errors and fixes:" and must not count.
+# daemon output with prose that must not count: the agent's own [AGENT] narration, and agent prose
+# the daemon relays under [SYSTEM] (compaction summaries, task descriptions). So the counted word
+# carries error punctuation ("Error:", "error.", "error(", traceback), never bare "error messages".
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
