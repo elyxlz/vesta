@@ -133,6 +133,19 @@ def test_an_untagged_daemon_log_still_storms(tmp_path):
     assert "RED whatsapp.log" in run.stdout
 
 
+def test_a_storm_with_a_multi_line_body_per_failure_still_storms(tmp_path):
+    # A producer that dumps a whole error page after each failure pushes all but the last few
+    # failures out of a line-count window, so the storm must still be seen across the bodies.
+    home = _healthy_home(tmp_path)
+    failure = "ERROR poll failed: HTTP 500\n" + "<div>page body</div>\n" * 100
+    (home / "agent" / "logs" / "poller.log").write_text(failure * 260)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED poller.log: 260 error lines" in run.stdout
+
+
 def test_quiet_recent_log_stays_green(tmp_path):
     home = _healthy_home(tmp_path)
     (home / "agent" / "logs" / "calm.log").write_text("INFO fine\n" * 300)
