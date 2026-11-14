@@ -62,6 +62,8 @@ else
 fi
 
 # Error storms: a component can log thousands of errors without one of them reaching a notification.
+# The window is bytes, not lines: a producer that dumps a multi-line page per failure would push
+# all but a few failures out of a line-count window and read as healthy.
 # Only lines dated today or yesterday count (an undated line takes the date of the line above it),
 # a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
 # the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
@@ -72,7 +74,7 @@ esc=$(printf '\033')
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+    errors=$(tail -c 20000000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
