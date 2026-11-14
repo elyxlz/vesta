@@ -43,14 +43,16 @@ def inline(comment_id, login, body, path):
 @pytest.fixture
 def upstream(monkeypatch):
     """A fake upstream: `open` lists the watch query's nodes, `feeds` maps a REST path (without the
-    repo prefix or query) to its items, and `failing` names paths that answer with a transport error."""
-    repo = {"open": [], "feeds": {}, "failing": set()}
+    repo prefix or query) to its items, `failing` names paths that answer with `error`, and `queries`
+    records every GraphQL query sent."""
+    repo = {"open": [], "feeds": {}, "failing": set(), "error": "gh: HTTP 502", "queries": []}
 
     def fake_gh_api(token, path, *, method="GET", fields=None):
         rest = path.removeprefix(f"repos/{cli.UPSTREAM_REPO}/").split("?")[0]
         if path in repo["failing"] or rest in repo["failing"]:
-            return 1, "gh: HTTP 502"
+            return 1, repo["error"]
         if path == "graphql":
+            repo["queries"].append(fields["query"])
             page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": repo["open"]}
             return 0, json.dumps({"data": {"repository": {"pullRequests": page}}})
         return 0, json.dumps(repo["feeds"][rest] if rest in repo["feeds"] else [])
@@ -252,3 +254,21 @@ def test_a_failed_listing_exits_and_leaves_the_record_alone(upstream, poll):
         poll()
     assert stop.value.code == 1
     assert poll.state_path.read_text() == before
+
+
+def test_the_watch_query_asks_for_a_page_github_can_answer(upstream, poll):
+    """Each PR carries its check contexts, so a full 100-PR page times out on GitHub's side."""
+    poll()
+    assert [f"first: {cli.WATCH_PAGE_SIZE}, after" in query for query in upstream["queries"]] == [True]
+    assert cli.WATCH_PAGE_SIZE < cli.PR_PAGE_SIZE
+
+
+def test_a_failed_listing_echoes_one_short_line_not_the_whole_error_page(upstream, poll, capsys):
+    upstream["failing"].add("graphql")
+    upstream["error"] = "<!DOCTYPE html>\n<html>\n  <head><title>Unicorn!</title></head>\n" + "x" * 50_000
+    with pytest.raises(SystemExit):
+        poll()
+    err = capsys.readouterr().err
+    assert err.startswith("Error: gh api graphql failed: <!DOCTYPE html> <html> <head><title>Unicorn!")
+    assert err.count("\n") == 1
+    assert len(err) < cli.ERROR_ECHO_CHARS + 100

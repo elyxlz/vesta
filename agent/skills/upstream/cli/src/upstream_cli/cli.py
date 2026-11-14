@@ -155,16 +155,18 @@ def commit_author_name(agent_name) -> str:
 
 PR_STATES = {"open": "[OPEN]", "closed": "[CLOSED, MERGED]", "all": "[OPEN, CLOSED, MERGED]"}
 PR_PAGE_SIZE = 100
+# The cap on an error body echoed to stderr: a GraphQL timeout answers with a whole HTML page.
+ERROR_ECHO_CHARS = 200
 
 
-def pull_requests_query(states, selection) -> str:
+def pull_requests_query(states, selection, page_size=PR_PAGE_SIZE) -> str:
     """One page of PRs, newest first, each carrying number, title, url, and `selection`. The state
     list is written into the query text: `gh api -f` sends every variable as a string, and GraphQL
     takes an enum list only as a literal."""
     owner, name = UPSTREAM_REPO.split("/", maxsplit=1)
     return (
         f'query($cursor: String) {{ repository(owner: "{owner}", name: "{name}") {{ pullRequests('
-        f"states: {states}, first: {PR_PAGE_SIZE}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
+        f"states: {states}, first: {page_size}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
         f") {{ pageInfo {{ hasNextPage endCursor }} nodes {{ number title url {selection} }} }} }} }}"
     )
 
@@ -181,7 +183,7 @@ def fetch_pr_pages(token, query):
     while True:
         code, out = gh_api(token, "graphql", method="POST", fields=fields)
         if code != 0:
-            print(f"Error: gh api graphql failed: {out}", file=sys.stderr)
+            print(f"Error: gh api graphql failed: {' '.join(out.split())[:ERROR_ECHO_CHARS]}", file=sys.stderr)
             sys.exit(1)
         page = json.loads(out)["data"]["repository"]["pullRequests"]
         prs.extend(page["nodes"])
@@ -231,6 +233,8 @@ WATCH_SELECTION = (
     " head: commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {"
     " ... on CheckRun { name conclusion } ... on StatusContext { context state } } } } } } }"
 )
+# Each PR carries up to 100 check contexts, so a 100-PR page times out on GitHub's side.
+WATCH_PAGE_SIZE = 25
 FAILED_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 FAILED_STATUS_STATES = {"FAILURE", "ERROR"}
 CHECK_VERDICTS = {"SUCCESS": "green", "FAILURE": "red", "ERROR": "red"}
@@ -341,7 +345,7 @@ def poll_prs(token, agent_name, state_path: Path, notif_dir: Path) -> tuple[int,
     notification file. Returns how many PRs are watched and the types written. The first pass ever
     records what it finds and writes nothing, so a backlog never arrives as a storm."""
     me = commit_author_name(agent_name)
-    prs = fetch_pr_pages(token, pull_requests_query(PR_STATES["open"], WATCH_SELECTION))
+    prs = fetch_pr_pages(token, pull_requests_query(PR_STATES["open"], WATCH_SELECTION, WATCH_PAGE_SIZE))
     mine = {str(pr["number"]): pr for pr in prs if [node["commit"]["author"]["name"] for node in pr["commits"]["nodes"]][:1] == [me]}
     known = read_watch_state(state_path)
     seeding = known is None
