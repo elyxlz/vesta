@@ -522,6 +522,29 @@ def _send_email_now(config: Config, client: httpx.Client, *, account_email: str,
     return {"status": "sent"}
 
 
+_NOREPLY_MARKERS = ("noreply", "no-reply", "no_reply", "donotreply", "do-not-reply", "do_not_reply")
+
+
+def reply_source(config: Config, client: httpx.Client, *, account_email: str, email_id: str) -> dict[str, Any]:
+    """The `from` and `replyTo` of the message a reply would answer."""
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    return graph.request_cfg(config, client, "GET", f"/me/messages/{email_id}", account_id, params={"$select": "from,replyTo"}) or {}
+
+
+def refuse_noreply_reply(source: dict[str, Any]) -> None:
+    """A plain reply goes to Reply-To, else From; refuse when every such address is a no-reply mailbox, since the reply would bounce."""
+    entries = source["replyTo"] if "replyTo" in source else []
+    if not entries and "from" in source and source["from"]:
+        entries = [source["from"]]
+    targets = [entry["emailAddress"]["address"] for entry in entries if "address" in entry["emailAddress"]]
+    local_parts = [address.rpartition("@")[0].casefold() for address in targets]
+    if targets and all(any(marker in local for marker in _NOREPLY_MARKERS) for local in local_parts):
+        raise ValueError(
+            f"refusing to reply: the reply would go to {', '.join(targets)}, a no-reply address, and bounce. "
+            "Reply to a message in the thread that came from a real reply address, or pass --allow-noreply."
+        )
+
+
 def reply_to_email(
     config: Config,
     client: httpx.Client,

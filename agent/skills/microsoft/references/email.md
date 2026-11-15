@@ -20,6 +20,8 @@ microsoft email search --account user@example.com --query "invoice" --since 2021
 
 `reply` answers the message's sender, so when the latest message in the thread is the account's own, that sender is the account itself and the reply goes nowhere else. In that case use `--reply-all`, which addresses the original recipients, or `send --to <addr>` with the `RE:` subject; the `recipients` field of the queued send shows where it will go.
 
+`reply` refuses when every address it would reply to (Reply-To, else From) is a no-reply mailbox (`noreply`, `no-reply`, `donotreply`, and similar in the local part), since that reply bounces. Reply to a message in the thread that came from a real reply address, or pass `--allow-noreply` to send anyway. `--reply-all` skips the check.
+
 ## Delayed send and undo
 
 Send, reply, and forward operations wait 30 seconds by default across all Microsoft accounts and both email backends. The delay is one persisted setting for the Microsoft client and cannot be overridden on an individual send:

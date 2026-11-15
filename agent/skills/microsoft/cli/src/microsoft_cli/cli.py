@@ -279,6 +279,9 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
+    p_reply.add_argument(
+        "--allow-noreply", action="store_true", help="Reply even when the reply would go to a no-reply address (it usually bounces)"
+    )
 
     p_reply_draft = email_sub.add_parser("reply-draft")
     p_reply_draft.add_argument("--account", required=True)
@@ -794,6 +797,15 @@ def _dispatch_email(args, config, client):
         )
     if args.command in ("reply-draft", "attachment", "block", "unblock"):
         return _dispatch_special_email(args, config, client)
+    if args.command == "reply" and not args.reply_all and not args.allow_noreply:
+        source = _route(
+            args,
+            config,
+            acct,
+            lambda: email.reply_source(config, client, account_email=acct, email_id=args.email_id),
+            lambda: owa_rest.get_reply_source(client, acct, config, item_id=args.email_id),
+        )
+        email.refuse_noreply_reply(source)
     routes = _email_routes()
     if args.command in routes:
         graph_impl, rest_impl, kw_of = routes[args.command]
