@@ -37,6 +37,7 @@ def _reply_args(**over):
         "attachments": None,
         "reply_all": False,
         "html": False,
+        "allow_noreply": True,
         "backend": backend.GRAPH,
     }
     base.update(over)

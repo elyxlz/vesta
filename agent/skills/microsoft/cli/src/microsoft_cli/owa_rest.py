@@ -343,6 +343,11 @@ def get_message(client: httpx.Client, account_email: str, config, *, item_id: st
     return _get(client, token, f"/me/messages/{item_id}", {"$select": full_select, "$expand": "Attachments"})
 
 
+def get_reply_source(client: httpx.Client, account_email: str, config, *, item_id: str) -> dict:
+    token = load_token(account_email, config)
+    return _get(client, token, f"/me/messages/{item_id}", {"$select": "from,replyTo"})
+
+
 # ---------------------------------------------------------------------------
 # Mail: write
 # ---------------------------------------------------------------------------
