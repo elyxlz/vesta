@@ -5,13 +5,20 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 
 // Sheets overlay the page; their height must never reposition the brand.
 // Center the whole lockup in the full page, not the space above a sheet.
-export function BrandBackdrop({ orb }: { orb?: ReactNode }) {
+export function BrandBackdrop({
+  orb,
+  pattern,
+}: {
+  orb?: ReactNode;
+  pattern?: ReactNode;
+}) {
   const { colors } = usePreferences();
   return (
     <View
       pointerEvents="none"
       style={[styles.backdrop, { backgroundColor: colors.background }]}
     >
+      {pattern}
       <VestaBrand orb={orb} />
     </View>
   );

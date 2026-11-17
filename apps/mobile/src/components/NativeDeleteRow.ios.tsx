@@ -33,7 +33,7 @@ export function NativeDeleteRow({
 }: NativeDeleteRowProps) {
   const { fontScale } = useWindowDimensions();
   const { dark } = usePreferences();
-  const rowHeight = Math.max(64, Math.ceil(40 * fontScale + 24));
+  const rowHeight = Math.max(52, Math.ceil(22 * fontScale + 30));
   const rowModifiers = [
     frame({ height: rowHeight }),
     listRowBackground("#00000000"),

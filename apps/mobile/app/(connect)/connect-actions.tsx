@@ -9,21 +9,17 @@ export default function ConnectActionsScreen() {
   const hasRecentGateways = Boolean(recentGateways?.length);
 
   return (
-    <AuthSheet gap={16}>
+    <AuthSheet gap={10}>
       <Button
-        accessibilityLabel="Connect to self-hosted Vesta"
-        icon="server-outline"
-        iconSize={20}
+        accessibilityLabel="Connect to Vesta"
         onPress={() => router.push("/connect-link")}
       >
-        Connect to self-hosted Vesta
+        Connect to Vesta
       </Button>
       {hasRecentGateways ? (
         <Button
           variant="secondary"
           accessibilityLabel="Recent gateways"
-          icon="time-outline"
-          iconSize={20}
           onPress={() => router.push("/recent-gateways")}
         >
           Recent gateways
