@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -256,6 +258,31 @@ func TestClientOutdatedSurfacesUpdateDepsOnStatus(t *testing.T) {
 	}
 	if reason, _ := got["reason"].(string); !strings.Contains(reason, "405") {
 		t.Errorf("reason = %v, want the recorded 405 rejection", got["reason"])
+	}
+}
+
+// TestClientOutdatedWritesNotification: a 405 leaves the daemon process up but silent, so the
+// agent must hear about it through one daemon_died notification rather than a failed send.
+func TestClientOutdatedWritesNotification(t *testing.T) {
+	notifDir := t.TempDir()
+	wac := &WhatsAppClient{state: newStateStore(t.TempDir()), logger: waLog.Noop, notificationsDir: notifDir}
+
+	wac.eventHandler(&events.ClientOutdated{})
+
+	entries, err := os.ReadDir(notifDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("want one notification, got %v (err %v)", entries, err)
+	}
+	data, err := os.ReadFile(filepath.Join(notifDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notif map[string]string
+	if err := json.Unmarshal(data, &notif); err != nil {
+		t.Fatal(err)
+	}
+	if notif["type"] != "daemon_died" || notif["signal"] != exitClientOutdated {
+		t.Errorf("notification = %v, want daemon_died with signal %q", notif, exitClientOutdated)
 	}
 }
 
