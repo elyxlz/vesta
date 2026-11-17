@@ -36,7 +36,7 @@ it("uses the provider sign-in appearance for a default primary action", () => {
   });
   expect(Object.assign({}, ...label.props.style)).toMatchObject({
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: "600",
     color: "#26211a",
   });
 });
@@ -89,7 +89,7 @@ it.each([
         );
         if (variant === "primary") {
           const label = button.props.children({ pressed }).props.children[1];
-          expect(Object.assign({}, ...label.props.style).fontWeight).toBe("500");
+          expect(Object.assign({}, ...label.props.style).fontWeight).toBe("600");
         }
       }
     }

@@ -157,6 +157,7 @@ export function Button({
                 size === "small" || size === "compact"
                   ? styles.smallLabel
                   : null,
+                variant === "primary" ? styles.primaryLabel : null,
                 usesCardLayout ? styles.cardLabel : null,
                 labelStyle,
                 { color: contentColor },
@@ -216,16 +217,18 @@ export function TextButton({
   );
 }
 
+// A pill's side padding is at least twice the space above and below its
+// label: (minHeight - label line height) / 2.
 const styles = StyleSheet.create({
   button: {
     minHeight: 48,
     borderRadius: radii.pill,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 18,
+    paddingHorizontal: 28,
   },
-  largeButton: { minHeight: 50 },
-  smallButton: { minHeight: 40, paddingHorizontal: 14 },
+  largeButton: { minHeight: 50, paddingHorizontal: 30 },
+  smallButton: { minHeight: 40, paddingHorizontal: 22 },
   compactButton: { minHeight: 18, paddingHorizontal: 14 },
   cardButton: {
     minHeight: 50,
@@ -236,6 +239,7 @@ const styles = StyleSheet.create({
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardContent: { alignSelf: "stretch" },
   label: { fontSize: 16, fontWeight: "500" },
+  primaryLabel: { fontWeight: "600" },
   smallLabel: { fontSize: 14 },
   cardLabel: { flex: 1 },
   textButton: { alignSelf: "center", padding: 4 },
