@@ -4,6 +4,9 @@ import {
   StyleSheet,
   View,
   type LayoutChangeEvent,
+  type NativeSyntheticEvent,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -11,11 +14,16 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { requireOptionalNativeModule } from "expo";
+import { requireNativeViewManager } from "expo-modules-core";
+import { MenuView } from "@expo/ui/community/menu";
 import { SymbolView } from "expo-symbols";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import type { ReplyTarget } from "@/agent/message-actions";
+import { ATTACH_ACTIONS, runAttachAction } from "@/agent/chat/attach-menu";
 import { QuotedBlock } from "@/agent/chat/quoted-block";
+import type { PickedAsset } from "@/attachments/pick";
 import { CHAT_COMPOSER_CONTROL_HEIGHT } from "@/components/chat-composer-input.types";
 
 // A bare glyph button hugs its icon; the slop keeps the tap target at the control height.
@@ -110,28 +118,107 @@ const ReplyPreview = memo(function ReplyPreview({
   );
 });
 
-export function AttachButton({
-  disabled,
-  onPress,
-}: {
-  disabled: boolean;
-  onPress: () => void;
-}) {
+// The plus glyph inside the composer is a picture only. The touch belongs to
+// AttachMenuTrigger, which sits over it outside the glass: a menu grows out of
+// the glass that holds its trigger, and that would be the whole composer.
+export function AttachGlyph({ disabled }: { disabled: boolean }) {
   const { colors } = usePreferences();
   return (
-    <Pressable
-      accessibilityLabel="Add attachment"
-      accessibilityRole="button"
-      disabled={disabled}
-      hitSlop={GLYPH_HIT_SLOP}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.glyphButton,
-        { opacity: disabled ? 0.38 : pressed ? 0.72 : 1 },
-      ]}
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[styles.glyphButton, { opacity: disabled ? 0.38 : 1 }]}
     >
       <Ionicons name="add" size={26} color={colors.text} />
-    </Pressable>
+    </View>
+  );
+}
+
+interface NativeMenuButtonProps {
+  actions: readonly { id: string; title: string; systemImage: string }[];
+  anchorRect: { x: number; y: number; width: number; height: number };
+  enabled: boolean;
+  label: string;
+  onAction: (event: NativeSyntheticEvent<{ id: string }>) => void;
+  style: StyleProp<ViewStyle>;
+}
+
+// Optional, so a build without the native module opens the menu from the
+// trigger itself.
+const NativeMenuButton =
+  IS_IOS && requireOptionalNativeModule("VestaMenuButton")
+    ? requireNativeViewManager<NativeMenuButtonProps>(
+        "VestaMenuButton",
+        "VestaMenuButtonView",
+      )
+    : null;
+
+const NATIVE_ATTACH_ACTIONS = ATTACH_ACTIONS.map((action) => ({
+  id: action.id,
+  title: action.title,
+  systemImage: action.image,
+}));
+
+// The space between the composer's top edge and the menu above it.
+const ATTACH_MENU_GAP = 8;
+const ATTACH_ANCHOR_HEIGHT = CHAT_COMPOSER_CONTROL_HEIGHT;
+
+// `rise` is the distance from the trigger's top edge to the composer's top
+// edge, and `inset` the distance from its left edge to the composer's. The
+// menu grows up out of an invisible anchor that sits above the composer's
+// top left corner, clear of the glass.
+export function AttachMenuTrigger({
+  disabled,
+  onAssets,
+  rise,
+  inset,
+  style,
+}: {
+  disabled: boolean;
+  onAssets: (assets: PickedAsset[]) => void;
+  rise: number;
+  inset: number;
+  style: StyleProp<ViewStyle>;
+}) {
+  const { dark } = usePreferences();
+  if (NativeMenuButton) {
+    return (
+      <NativeMenuButton
+        actions={NATIVE_ATTACH_ACTIONS}
+        anchorRect={{
+          x: -inset,
+          y: -rise - ATTACH_MENU_GAP - ATTACH_ANCHOR_HEIGHT,
+          width: GLYPH_BUTTON_WIDTH,
+          height: ATTACH_ANCHOR_HEIGHT,
+        }}
+        enabled={!disabled}
+        label="Add attachment"
+        onAction={({ nativeEvent }) =>
+          runAttachAction(nativeEvent.id, onAssets)
+        }
+        style={[styles.glyphButton, style]}
+      />
+    );
+  }
+  return (
+    <View pointerEvents={disabled ? "none" : "auto"} style={style}>
+      <MenuView
+        actions={[...ATTACH_ACTIONS]}
+        colorScheme={dark ? "dark" : "light"}
+        onPressAction={({ nativeEvent }) =>
+          runAttachAction(nativeEvent.event, onAssets)
+        }
+      >
+        <View
+          accessible
+          accessibilityLabel="Add attachment"
+          accessibilityRole="button"
+          accessibilityState={{ disabled }}
+          hitSlop={GLYPH_HIT_SLOP}
+          style={styles.glyphButton}
+        />
+      </MenuView>
+    </View>
   );
 }
 

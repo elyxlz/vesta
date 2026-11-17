@@ -55,6 +55,7 @@ import {
 import { openWebLink } from "@/agent/chat/open-web-link";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+const TAIL_ROTATION_DEG = 8;
 
 // react-native-markdown-display keeps the fence info string on the node, outside its declared type.
 function fenceInfo(node: ASTNode): string | null {
@@ -313,11 +314,7 @@ export const ChatEvent = memo(function ChatEvent({
         </View>
       ),
       blockquote: (node, children) => (
-        <QuotedBlock
-          key={node.key}
-          style={styles.markdownBlockquote}
-          onAccent={user}
-        >
+        <QuotedBlock key={node.key} style={styles.markdownBlockquote}>
           {children}
         </QuotedBlock>
       ),
@@ -620,8 +617,8 @@ const styles = StyleSheet.create({
   bubbleMenu: { maxWidth: "88%" },
   bubble: {
     position: "relative",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   bubbleFallback: {
     borderRadius: radii.bubble,
@@ -632,8 +629,19 @@ const styles = StyleSheet.create({
     bottom: 0,
     overflow: "visible",
   },
-  userBubbleTail: { right: -5 },
-  agentBubbleTail: { left: -6 },
+  // The tail turns about the corner where it meets the bubble's bottom edge,
+  // so its top leans into the rounded corner. The iOS shape in
+  // modules/vesta-message-menu leans by the same angle.
+  userBubbleTail: {
+    right: -5,
+    transformOrigin: "left bottom",
+    transform: [{ rotate: `${String(-TAIL_ROTATION_DEG)}deg` }],
+  },
+  agentBubbleTail: {
+    left: -6,
+    transformOrigin: "right bottom",
+    transform: [{ rotate: `${String(TAIL_ROTATION_DEG)}deg` }],
+  },
   typingBubble: {
     position: "relative",
     width: 56,

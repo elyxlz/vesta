@@ -413,10 +413,21 @@ private final class VestaMessageMenuView: ExpoView,
       controlPoint2: CGPoint(x: origin.x + 21, y: origin.y + 16)
     )
     path.close()
+    lean(path, about: CGPoint(x: origin.x + 26, y: origin.y + 16), by: tailLean)
     // Mirroring the SVG reverses its winding. Reverse it again so appending
     // it to the rounded body creates one nonzero-fill preview shape instead
     // of subtracting the overlapping portion.
     return path.reversing()
+  }
+
+  // The tail turns about the corner where it meets the bubble's bottom edge,
+  // so its top leans into the rounded corner.
+  private let tailLean: CGFloat = 8 * .pi / 180
+
+  private func lean(_ path: UIBezierPath, about pivot: CGPoint, by angle: CGFloat) {
+    path.apply(CGAffineTransform(translationX: -pivot.x, y: -pivot.y))
+    path.apply(CGAffineTransform(rotationAngle: angle))
+    path.apply(CGAffineTransform(translationX: pivot.x, y: pivot.y))
   }
 
   private func makeTrailingTailPath(bodyRect: CGRect) -> UIBezierPath {
@@ -441,6 +452,7 @@ private final class VestaMessageMenuView: ExpoView,
       controlPoint2: CGPoint(x: origin.x + 5, y: origin.y + 16)
     )
     path.close()
+    lean(path, about: CGPoint(x: origin.x, y: origin.y + 16), by: -tailLean)
     return path
   }
 }

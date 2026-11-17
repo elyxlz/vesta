@@ -36,15 +36,16 @@ import { ComposerRow } from "@/agent/chat/composer-row";
 import { usePagerScrollLock } from "@/agent/pager-scroll-lock";
 import { GlassSurface } from "@/components/ui/glass-surface";
 import {
-  AttachButton,
+  AttachGlyph,
+  AttachMenuTrigger,
   ComposerActions,
   ReplySlot,
 } from "@/agent/chat/chat-composer";
 import { useComposerInset } from "@/agent/chat/use-composer-inset";
 import { AttachmentChips } from "@/agent/chat/attachment-chips";
+import type { PickedAsset } from "@/attachments/pick";
 import { AttachmentViewer } from "@/agent/chat/attachment-viewer";
 import type { OpenViewerRequest } from "@/agent/chat/attachment-content";
-import { showAttachMenu } from "@/agent/chat/attach-menu";
 import { useAttachmentDrafts } from "@/attachments/use-attachment-drafts";
 import { VoiceConversationPanel } from "@/agent/chat/voice-conversation-panel";
 import { ChatTranscript } from "@/agent/chat/chat-transcript";
@@ -310,11 +311,10 @@ export default function ChatPage() {
   // The send affordance lights up for text or a ready batch of chips; a still-uploading
   // chips-only draft keeps the trailing button in its voice form until the uploads finish.
   const hasDraft = input.trim().length > 0 || attachments.ready;
-  const openAttachMenu = useCallback(() => {
-    showAttachMenu((assets) => {
-      void attachmentsRef.current.addAssets(assets);
-    });
+  const addPickedAssets = useCallback((assets: PickedAsset[]) => {
+    void attachmentsRef.current.addAssets(assets);
   }, []);
+  const [composerHeight, setComposerHeight] = useState(0);
   const [viewer, setViewer] = useState<OpenViewerRequest | null>(null);
   const openAttachment = useCallback((request: OpenViewerRequest) => {
     setViewer(request);
@@ -421,78 +421,92 @@ export default function ChatPage() {
                 onPress={scrollToLatest}
               />
             </View>
-            <GlassSurface style={styles.composerSurface}>
-              {recordingMode === "conversation" ? (
-                <VoiceConversationPanel
-                  agent={agent}
-                  name={name}
-                  phase={conversationPhaseNow}
-                  motion={conversationMotion}
-                  transcript={conversationTranscript}
-                  micMuted={voice.micMuted}
-                  height={CONVERSATION_PANEL_HEIGHT}
-                  onToggleMute={voice.toggleMicMuted}
-                  onEnd={endConversation}
+            <View
+              onLayout={(event) =>
+                setComposerHeight(event.nativeEvent.layout.height)
+              }
+            >
+              <GlassSurface style={styles.composerSurface}>
+                {recordingMode === "conversation" ? (
+                  <VoiceConversationPanel
+                    agent={agent}
+                    name={name}
+                    phase={conversationPhaseNow}
+                    motion={conversationMotion}
+                    transcript={conversationTranscript}
+                    micMuted={voice.micMuted}
+                    height={CONVERSATION_PANEL_HEIGHT}
+                    onToggleMute={voice.toggleMicMuted}
+                    onEnd={endConversation}
+                  />
+                ) : (
+                  <>
+                    <ReplySlot
+                      target={replyTarget}
+                      height={replyHeight}
+                      onCancel={cancelReply}
+                      onHeight={slideReplyTo}
+                    />
+                    <AttachmentChips
+                      drafts={attachments.drafts}
+                      previewUri={attachments.previewUri}
+                      onRetry={attachments.retry}
+                      onRemove={attachments.remove}
+                    />
+                    <ComposerRow
+                      value={input}
+                      attach={<AttachGlyph disabled={!canSend} />}
+                      input={
+                        <ChatComposerInput
+                          ref={inputRef}
+                          maxLength={20_000}
+                          onChangeText={setInput}
+                          placeholder={
+                            recordingMode === "dictation"
+                              ? "Listening…"
+                              : !canSend
+                                ? "Waiting for agent…"
+                                : hasChips && input.length === 0
+                                  ? "Add a caption…"
+                                  : `Message ${name}`
+                          }
+                          placeholderTextColor={colors.tertiaryText}
+                          selectionColor={colors.accent}
+                          textColor={colors.text}
+                          value={input}
+                        />
+                      }
+                      actions={
+                        <ComposerActions
+                          canSend={canSend}
+                          hasDraft={hasDraft}
+                          recordingMode={recordingMode}
+                          voiceEnabled={voiceEnabled}
+                          onSend={send}
+                          onDictate={startDictation}
+                          onConfirm={confirmDictation}
+                          onCancel={cancelDictation}
+                          onConversation={startConversation}
+                        />
+                      }
+                    />
+                  </>
+                )}
+              </GlassSurface>
+              {recordingMode === "conversation" ? null : (
+                <AttachMenuTrigger
+                  disabled={!canSend}
+                  onAssets={addPickedAssets}
+                  rise={
+                    composerHeight -
+                    COMPOSER_SURFACE_PADDING -
+                    CHAT_COMPOSER_CONTROL_HEIGHT
+                  }
+                  inset={COMPOSER_SURFACE_PADDING}
+                  style={styles.attachTrigger}
                 />
-              ) : (
-                <>
-                  <ReplySlot
-                    target={replyTarget}
-                    height={replyHeight}
-                    onCancel={cancelReply}
-                    onHeight={slideReplyTo}
-                  />
-                  <AttachmentChips
-                    drafts={attachments.drafts}
-                    previewUri={attachments.previewUri}
-                    onRetry={attachments.retry}
-                    onRemove={attachments.remove}
-                  />
-                  <ComposerRow
-                    value={input}
-                    attach={
-                      <AttachButton
-                        disabled={!canSend}
-                        onPress={openAttachMenu}
-                      />
-                    }
-                    input={
-                      <ChatComposerInput
-                        ref={inputRef}
-                        maxLength={20_000}
-                        onChangeText={setInput}
-                        placeholder={
-                          recordingMode === "dictation"
-                            ? "Listening…"
-                            : !canSend
-                              ? "Waiting for agent…"
-                              : hasChips && input.length === 0
-                                ? "Add a caption…"
-                                : `Message ${name}`
-                        }
-                        placeholderTextColor={colors.tertiaryText}
-                        selectionColor={colors.accent}
-                        textColor={colors.text}
-                        value={input}
-                      />
-                    }
-                    actions={
-                      <ComposerActions
-                        canSend={canSend}
-                        hasDraft={hasDraft}
-                        recordingMode={recordingMode}
-                        voiceEnabled={voiceEnabled}
-                        onSend={send}
-                        onDictate={startDictation}
-                        onConfirm={confirmDictation}
-                        onCancel={cancelDictation}
-                        onConversation={startConversation}
-                      />
-                    }
-                  />
-                </>
               )}
-            </GlassSurface>
+            </View>
           </Animated.View>
         </View>
       </KeyboardStickyView>
@@ -518,6 +532,13 @@ const styles = StyleSheet.create({
     padding: COMPOSER_SURFACE_PADDING,
     borderRadius: CHAT_COMPOSER_CONTROL_HEIGHT / 2 + COMPOSER_SURFACE_PADDING,
     overflow: "hidden",
+  },
+  // Over the plus glyph, which sits at the composer's bottom left corner on
+  // one line and on two.
+  attachTrigger: {
+    position: "absolute",
+    left: COMPOSER_SURFACE_PADDING,
+    bottom: COMPOSER_SURFACE_PADDING,
   },
   scrollToBottomSlot: {
     position: "absolute",
