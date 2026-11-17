@@ -62,6 +62,9 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		// bump reconnects it, never a restart or a re-pair.
 		wac.logger.Errorf("WhatsApp rejected this client version (405); run `whatsapp update-deps`, then `whatsapp daemon restart`")
 		wac.recordExit(exitClientOutdated, "WhatsApp rejected this client version (405 client outdated); the pinned whatsmeow is behind the protocol")
+		if wac.notificationsDir != "" {
+			writeDeathNotification(wac.notificationsDir, exitClientOutdated)
+		}
 	case *events.Disconnected:
 		wac.applyConnAction(classifyConnEvent(v), "")
 	case *events.StreamReplaced:
