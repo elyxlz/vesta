@@ -18,7 +18,7 @@ private struct MessageMenuAction: Record {
 private struct PreviewGeometryKey: Equatable {
   let bounds: CGRect
   let tailSide: String
-  let tailOverhang: CGFloat
+  let tailCornerRadius: CGFloat
   let cornerRadius: CGFloat
 }
 
@@ -36,7 +36,7 @@ private final class VestaMessageMenuView: ExpoView,
     }
   }
   var tailSide: MessageTailSide = .none
-  var tailOverhang: CGFloat = 0
+  var tailCornerRadius: CGFloat = 6
   var previewCornerRadius: CGFloat = 22
   var bubbleFillColor: UIColor = .clear
   var bubbleStrokeColor: UIColor = .clear
@@ -220,65 +220,33 @@ private final class VestaMessageMenuView: ExpoView,
     let geometryKey = PreviewGeometryKey(
       bounds: bounds,
       tailSide: tailSide.rawValue,
-      tailOverhang: tailOverhang,
+      tailCornerRadius: tailCornerRadius,
       cornerRadius: previewCornerRadius
     )
     if geometryKey == cachedGeometryKey, let cachedVisiblePath {
       return cachedVisiblePath
     }
 
-    let overhang = max(0, min(tailOverhang, bounds.width))
-    let bodyRect: CGRect
-    bodyRect = bounds.inset(
-      by: UIEdgeInsets(
-        top: 0,
-        left: overhang,
-        bottom: 0,
-        right: overhang
-      )
-    )
-
     // CALayer keeps the configured radius when opposite corners overlap; it
     // does not replace it with half the current view height. Keeping this
     // constant is important when a one-line bubble grows to multiple lines.
     let radius = max(0, previewCornerRadius)
-    let bodyPath = makeContinuousRoundedRectPath(
-      rect: bodyRect,
-      radius: radius
+    let tailRadius = min(radius, max(0, tailCornerRadius))
+    let visiblePath = makeContinuousRoundedRectPath(
+      rect: bounds,
+      radius: radius,
+      bottomLeadingRadius: tailSide == .leading ? tailRadius : radius,
+      bottomTrailingRadius: tailSide == .trailing ? tailRadius : radius
     )
-
-    let visiblePath: UIBezierPath
-    switch tailSide {
-    case .leading:
-      visiblePath = union(
-        bodyPath,
-        with: makeLeadingTailPath(bodyRect: bodyRect)
-      )
-    case .trailing:
-      visiblePath = union(
-        bodyPath,
-        with: makeTrailingTailPath(bodyRect: bodyRect)
-      )
-    case .none:
-      visiblePath = bodyPath
-    }
     cachedGeometryKey = geometryKey
     cachedVisiblePath = visiblePath
     return visiblePath
   }
 
-  private func makeContinuousRoundedRectPath(
-    rect: CGRect,
-    radius: CGFloat
-  ) -> UIBezierPath {
-    guard radius > 0, !rect.isEmpty else {
-      return UIBezierPath(rect: rect)
-    }
-
-    // These are UIKit's continuous-corner control points. Unlike a circular
-    // rounded rect, the curve eases into each edge over a longer distance.
-    // That is the same corner style React Native renders for
-    // `borderCurve: "continuous"` on the message bubble.
+  // UIKit's continuous-corner control points. Unlike a circular rounded
+  // rect, the curve eases into each edge over a longer distance. That is the
+  // same corner style React Native renders for `borderCurve: "continuous"`.
+  private func makeCornerCurve(radius: CGFloat) -> UIBezierPath {
     let edgeExtent = 1.52866483 * radius
     let cornerCurve = UIBezierPath()
     cornerCurve.move(to: CGPoint(x: edgeExtent, y: 0))
@@ -303,9 +271,24 @@ private final class VestaMessageMenuView: ExpoView,
       controlPoint1: CGPoint(x: 0, y: 0.86840689 * radius),
       controlPoint2: CGPoint(x: 0, y: 1.08849323 * radius)
     )
+    return cornerCurve
+  }
 
-    let corners: [(CGAffineTransform, [CGPoint])] = [
+  // The last bubble of a group has one tighter bottom corner on the sender's
+  // side, so each bottom corner takes its own radius.
+  private func makeContinuousRoundedRectPath(
+    rect: CGRect,
+    radius: CGFloat,
+    bottomLeadingRadius: CGFloat,
+    bottomTrailingRadius: CGFloat
+  ) -> UIBezierPath {
+    guard radius > 0, !rect.isEmpty else {
+      return UIBezierPath(rect: rect)
+    }
+
+    let corners: [(CGFloat, CGAffineTransform, [CGPoint])] = [
       (
+        radius,
         CGAffineTransform(
           a: 1,
           b: 0,
@@ -321,6 +304,7 @@ private final class VestaMessageMenuView: ExpoView,
         ]
       ),
       (
+        radius,
         CGAffineTransform(
           a: -1,
           b: 0,
@@ -336,6 +320,7 @@ private final class VestaMessageMenuView: ExpoView,
         ]
       ),
       (
+        bottomLeadingRadius,
         CGAffineTransform(
           a: 1,
           b: 0,
@@ -351,6 +336,7 @@ private final class VestaMessageMenuView: ExpoView,
         ]
       ),
       (
+        bottomTrailingRadius,
         CGAffineTransform(
           a: -1,
           b: 0,
@@ -371,89 +357,17 @@ private final class VestaMessageMenuView: ExpoView,
     // Intersecting them preserves the configured radius even when the upper
     // and lower continuous curves overlap on a compact bubble.
     return corners.reduce(UIBezierPath(rect: rect)) { bodyPath, corner in
-      let constraint = cornerCurve.copy() as! UIBezierPath
-      constraint.apply(corner.0)
-      corner.1.forEach(constraint.addLine)
+      guard corner.0 > 0 else {
+        return bodyPath
+      }
+      let constraint = makeCornerCurve(radius: corner.0)
+      constraint.apply(corner.1)
+      corner.2.forEach(constraint.addLine)
       constraint.close()
       return UIBezierPath(
         cgPath: bodyPath.cgPath.intersection(constraint.cgPath)
       )
     }
-  }
-
-  private func union(
-    _ path: UIBezierPath,
-    with otherPath: UIBezierPath
-  ) -> UIBezierPath {
-    UIBezierPath(cgPath: path.cgPath.union(otherPath.cgPath))
-  }
-
-  private func makeLeadingTailPath(bodyRect: CGRect) -> UIBezierPath {
-    let origin = CGPoint(
-      x: bodyRect.minX - tailOverhang,
-      y: bodyRect.maxY - 16
-    )
-    let path = UIBezierPath()
-    path.move(to: CGPoint(x: origin.x + 26, y: origin.y + 16))
-    path.addLine(to: CGPoint(x: origin.x + 6, y: origin.y + 1))
-    path.addCurve(
-      to: CGPoint(x: origin.x + 1, y: origin.y + 15),
-      controlPoint1: CGPoint(x: origin.x + 6, y: origin.y + 10),
-      controlPoint2: CGPoint(x: origin.x + 5, y: origin.y + 14)
-    )
-    path.addLine(to: CGPoint(x: origin.x, y: origin.y + 15))
-    path.addCurve(
-      to: CGPoint(x: origin.x + 12, y: origin.y + 12),
-      controlPoint1: CGPoint(x: origin.x + 6, y: origin.y + 16),
-      controlPoint2: CGPoint(x: origin.x + 9, y: origin.y + 14)
-    )
-    path.addCurve(
-      to: CGPoint(x: origin.x + 26, y: origin.y + 16),
-      controlPoint1: CGPoint(x: origin.x + 16, y: origin.y + 15),
-      controlPoint2: CGPoint(x: origin.x + 21, y: origin.y + 16)
-    )
-    path.close()
-    lean(path, about: CGPoint(x: origin.x + 26, y: origin.y + 16), by: tailLean)
-    // Mirroring the SVG reverses its winding. Reverse it again so appending
-    // it to the rounded body creates one nonzero-fill preview shape instead
-    // of subtracting the overlapping portion.
-    return path.reversing()
-  }
-
-  // The tail turns about the corner where it meets the bubble's bottom edge,
-  // so its top leans into the rounded corner.
-  private let tailLean: CGFloat = 8 * .pi / 180
-
-  private func lean(_ path: UIBezierPath, about pivot: CGPoint, by angle: CGFloat) {
-    path.apply(CGAffineTransform(translationX: -pivot.x, y: -pivot.y))
-    path.apply(CGAffineTransform(rotationAngle: angle))
-    path.apply(CGAffineTransform(translationX: pivot.x, y: pivot.y))
-  }
-
-  private func makeTrailingTailPath(bodyRect: CGRect) -> UIBezierPath {
-    let origin = CGPoint(x: bodyRect.maxX - 21, y: bodyRect.maxY - 16)
-    let path = UIBezierPath()
-    path.move(to: CGPoint(x: origin.x, y: origin.y + 16))
-    path.addLine(to: CGPoint(x: origin.x + 20, y: origin.y + 2))
-    path.addCurve(
-      to: CGPoint(x: origin.x + 25, y: origin.y + 15),
-      controlPoint1: CGPoint(x: origin.x + 20, y: origin.y + 11),
-      controlPoint2: CGPoint(x: origin.x + 21, y: origin.y + 14)
-    )
-    path.addLine(to: CGPoint(x: origin.x + 26, y: origin.y + 15))
-    path.addCurve(
-      to: CGPoint(x: origin.x + 15, y: origin.y + 12),
-      controlPoint1: CGPoint(x: origin.x + 20, y: origin.y + 16),
-      controlPoint2: CGPoint(x: origin.x + 17, y: origin.y + 14)
-    )
-    path.addCurve(
-      to: CGPoint(x: origin.x, y: origin.y + 16),
-      controlPoint1: CGPoint(x: origin.x + 11, y: origin.y + 15),
-      controlPoint2: CGPoint(x: origin.x + 5, y: origin.y + 16)
-    )
-    path.close()
-    lean(path, about: CGPoint(x: origin.x, y: origin.y + 16), by: -tailLean)
-    return path
   }
 }
 
@@ -471,9 +385,9 @@ public final class VestaMessageMenuModule: Module {
         view.tailSide = side
         view.setNeedsLayout()
       }
-      Prop("tailOverhang") {
-        (view: VestaMessageMenuView, overhang: Double) in
-        view.tailOverhang = CGFloat(overhang)
+      Prop("tailCornerRadius") {
+        (view: VestaMessageMenuView, radius: Double) in
+        view.tailCornerRadius = CGFloat(radius)
         view.setNeedsLayout()
       }
       Prop("previewCornerRadius") {
