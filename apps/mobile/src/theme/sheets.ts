@@ -1,7 +1,6 @@
 import type { NativeStackNavigationOptions } from "expo-router";
 import type { AppColors } from "@/theme/colors";
 import { radii } from "@/theme/layout";
-import { fontNames } from "@/theme/typography";
 
 const IS_ANDROID = process.env.EXPO_OS === "android";
 
@@ -13,7 +12,6 @@ const formSheetCorners: { sheetCornerRadius?: number } = IS_ANDROID
 
 // Native stack titles and Android's in-content sheet titles share this style.
 export const headerTitleStyle = {
-  fontFamily: fontNames.heading.native["500"],
   fontSize: 20,
   fontWeight: "500",
 } as const;

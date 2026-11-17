@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { composerExpandedNext } from "@vesta/core";
 import { CHAT_COMPOSER_INPUT_HORIZONTAL_PADDING } from "@/components/chat-composer-input.types";
-import { fontNames } from "@/theme/typography";
 
 // One line while the text fits beside the buttons. Once it would wrap, the input keeps its line
 // alone and the buttons move to a line below. The input never changes parent or index: a native
@@ -83,7 +82,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     opacity: 0,
-    fontFamily: fontNames.sans.native["400"],
+    fontWeight: "400",
     fontSize: 17,
   },
 });
