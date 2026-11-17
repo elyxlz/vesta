@@ -7,6 +7,7 @@ import (
 
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 func (wac *WhatsAppClient) ArchiveChat(chatIdentifier string) (bool, string) {
@@ -124,4 +125,22 @@ func (wac *WhatsAppClient) DeleteChat(chatIdentifier string) (bool, string) {
 		return false, fmt.Sprintf("Failed to clear local messages: %v", err)
 	}
 	return true, fmt.Sprintf("Chat deleted: %d messages removed from local DB and deletion pushed to all devices", n)
+}
+
+// BlockContact blocks a contact so they can no longer message or call this account.
+func (wac *WhatsAppClient) BlockContact(identifier string) (bool, string) {
+	jid, err := wac.ResolveRecipient(identifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve contact: %v", err)
+	}
+	if jid.Server == types.GroupServer {
+		return false, "Cannot block a group; use leave-group instead"
+	}
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+	if _, err := wac.client.UpdateBlocklist(context.Background(), jid, events.BlocklistChangeActionBlock); err != nil {
+		return false, fmt.Sprintf("Failed to block contact: %v", err)
+	}
+	return true, "Contact blocked successfully"
 }
