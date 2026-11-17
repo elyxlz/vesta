@@ -5,7 +5,6 @@ describe("agent pager", () => {
   it("lists the enabled pages in order", () => {
     expect(
       getAgentPageKeys({
-        showChatPage: true,
         showDashboardPage: true,
         showNotificationsPage: false,
         showLogsPage: false,
@@ -13,7 +12,6 @@ describe("agent pager", () => {
     ).toEqual(["chat", "dashboard"]);
     expect(
       getAgentPageKeys({
-        showChatPage: true,
         showDashboardPage: false,
         showNotificationsPage: true,
         showLogsPage: true,
@@ -21,10 +19,9 @@ describe("agent pager", () => {
     ).toEqual(["chat", "notifications", "logs"]);
   });
 
-  it("keeps chat when every page is off", () => {
+  it("shows chat alone when every optional page is off", () => {
     expect(
       getAgentPageKeys({
-        showChatPage: false,
         showDashboardPage: false,
         showNotificationsPage: false,
         showLogsPage: false,

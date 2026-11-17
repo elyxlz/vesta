@@ -170,14 +170,6 @@ function AgentSettingsContent() {
       </FormGroup>
       <FormSection title="Pages">
         <SwitchRow
-          label="Chat"
-          detail="Messages with this agent."
-          value={preferences.showChatPage}
-          onValueChange={(value) =>
-            void preferences.update({ showChatPage: value })
-          }
-        />
-        <SwitchRow
           label="Dashboard"
           detail="Tasks, reminders, and more."
           value={preferences.showDashboardPage}
