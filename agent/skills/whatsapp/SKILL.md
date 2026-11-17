@@ -170,7 +170,7 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
 `whatsapp` with no args lists everything. Others (all take `--help`): `send-file`, `send-audio`,
 `react`, `revoke-message`, `download-media`, `create-group`, `leave-group`, `rename-group`,
 `set-group-description`, `set-group-photo`, `get-group-invite-link`, `update-group-participants`,
-`archive-chat`, `delete-chat`, `remove-contact`.
+`archive-chat`, `delete-chat`, `remove-contact`, `block-contact`.
 
 ## Rules
 

@@ -79,6 +79,16 @@ func TestResolveRecipientAllowsGroupJID(t *testing.T) {
 	}
 }
 
+// TestBlockContactRejectsGroup proves a group JID is refused before any
+// connection is attempted: WhatsApp's blocklist holds users only.
+func TestBlockContactRejectsGroup(t *testing.T) {
+	wac := &WhatsAppClient{}
+	ok, msg := wac.BlockContact(groupIDDigits + "@" + types.GroupServer)
+	if ok || !strings.Contains(msg, "Cannot block a group") {
+		t.Errorf("BlockContact on a group JID must be refused, got ok=%v msg=%q", ok, msg)
+	}
+}
+
 func TestResolveRecipientRejectsSavedGroupIDContact(t *testing.T) {
 	store := newTestStore(t)
 	jid := groupIDDigits + "@" + types.DefaultUserServer

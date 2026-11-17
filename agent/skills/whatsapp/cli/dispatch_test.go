@@ -77,7 +77,7 @@ func TestCommandWriteFlags(t *testing.T) {
 		"leave-group": true, "create-group": true, "rename-group": true,
 		"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
 		"set-profile-photo": true, "set-profile-name": true,
-		"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
+		"revoke-message": true, "archive-chat": true, "block-contact": true, "archive-all-chats": true,
 		"delete-chat": true, "clear-all-chats": true,
 		"call": true, "say": true, "hangup": true,
 	}
@@ -107,6 +107,7 @@ func TestCommandPositionals(t *testing.T) {
 		"check-delivery":        {"message-id"},
 		"delete-chat":           {"to"},
 		"archive-chat":          {"to"},
+		"block-contact":         {"to"},
 		"call":                  {"to"},
 		"say":                   {"text"},
 	}

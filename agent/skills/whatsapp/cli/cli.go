@@ -463,6 +463,7 @@ var commands = []command{
 	{name: "provision", hidden: true, timeout: ProvisionSocketTimeout, run: cmdProvisionManaged},
 	{name: "list-received-contacts", run: cmdListReceivedContacts},
 	{name: "archive-chat", positionals: []string{"to"}, write: true, run: cmdArchiveChat},
+	{name: "block-contact", positionals: []string{"to"}, write: true, run: cmdBlockContact},
 	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
 	{name: "delete-chat", positionals: []string{"to"}, write: true, run: cmdDeleteChat},
 	{name: "clear-all-chats", write: true, run: cmdClearAllChats},
@@ -1476,4 +1477,8 @@ func cmdClearAllChats(args []string, wac *WhatsAppClient) (any, error) {
 		result["errors"] = errs
 	}
 	return result, nil
+}
+
+func cmdBlockContact(args []string, wac *WhatsAppClient) (any, error) {
+	return cmdChatTarget("block-contact", "Contact to block (contact name, phone, or JID)", args, wac.BlockContact)
 }
