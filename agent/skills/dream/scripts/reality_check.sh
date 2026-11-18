@@ -126,6 +126,18 @@ else
     bad "no dreamer summary written in ${DREAM_LAPSE_HOURS}h: a night was missed"
 fi
 
+# Voice notes: the whatsapp daemon hands every inbound voice note to `transcribe`, which needs a
+# connected STT provider or a local whisper-cli; either gap only shows when a voice note arrives.
+if [ -n "$(find "$HOME/agent/data/daemons" -maxdepth 1 -name 'whatsapp*.pid' 2>/dev/null)" ]; then
+    if ! command -v transcribe >/dev/null 2>&1; then
+        bad "transcribe is not on PATH: inbound voice notes cannot be read (uv tool install --editable ~/agent/skills/voice/cli)"
+    elif [ -x "${WHISPER_BIN:-/usr/local/bin/whisper-cli}" ] || voice status 2>/dev/null | grep -q '"stt": {[^}]*"connected": \["'; then
+        ok "voice notes can be transcribed (transcribe on PATH with a backend)"
+    else
+        bad "transcribe has no backend: no STT provider connected and no whisper-cli (see whisper skill SETUP.md)"
+    fi
+fi
+
 if [ "$red" -gt 0 ]; then
     printf '%s RED: fix each tonight or write the reason off in the summary.\n' "$red"
     exit 1
