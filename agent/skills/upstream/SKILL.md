@@ -137,6 +137,16 @@ are what separate the two.
 - **Evidence names what is in the diff.** Every test the PR body mentions exists in the
   diff by name, and the body pastes the run's count. A claim the diff does not contain is
   read as the behavior being untested, and it costs the PR its credibility.
+- **Run the repo's own tests for the file you touched, in the worktree, before the first
+  push.** Your box's validation and the fixtures in the repo's test suite are different
+  envelopes; the worktree is a full checkout, so the suite that gates CI is right there:
+  `cd /tmp/vesta-pr && uv run pytest agent/tests/test_<area>.py -q` (or the file's own
+  runner). A change that passes on-box but breaks a fixture sits red for days, since the
+  watcher only reports transitions it observes.
+- **After any push, run `upstream gh pr checks <n>` once directly once the run has had
+  time to settle** (roughly 45 minutes for the slowest jobs). The watcher reports
+  transitions between polls it survived; a red that settles during a failing stretch, or
+  a first red recorded as the baseline, reaches no one.
 
 ## Creating a PR
 
