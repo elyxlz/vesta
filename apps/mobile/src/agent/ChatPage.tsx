@@ -314,7 +314,6 @@ export default function ChatPage() {
   const addPickedAssets = useCallback((assets: PickedAsset[]) => {
     void attachmentsRef.current.addAssets(assets);
   }, []);
-  const [composerHeight, setComposerHeight] = useState(0);
   const [viewer, setViewer] = useState<OpenViewerRequest | null>(null);
   const openAttachment = useCallback((request: OpenViewerRequest) => {
     setViewer(request);
@@ -421,11 +420,7 @@ export default function ChatPage() {
                 onPress={scrollToLatest}
               />
             </View>
-            <View
-              onLayout={(event) =>
-                setComposerHeight(event.nativeEvent.layout.height)
-              }
-            >
+            <View>
               <GlassSurface style={styles.composerSurface}>
                 {recordingMode === "conversation" ? (
                   <VoiceConversationPanel
@@ -497,13 +492,7 @@ export default function ChatPage() {
                 <AttachMenuTrigger
                   disabled={!canSend}
                   onAssets={addPickedAssets}
-                  rise={
-                    composerHeight -
-                    COMPOSER_SURFACE_PADDING -
-                    CHAT_COMPOSER_CONTROL_HEIGHT
-                  }
                   inset={COMPOSER_SURFACE_PADDING}
-                  style={styles.attachTrigger}
                 />
               )}
             </View>
@@ -532,13 +521,6 @@ const styles = StyleSheet.create({
     padding: COMPOSER_SURFACE_PADDING,
     borderRadius: CHAT_COMPOSER_CONTROL_HEIGHT / 2 + COMPOSER_SURFACE_PADDING,
     overflow: "hidden",
-  },
-  // Over the plus glyph, which sits at the composer's bottom left corner on
-  // one line and on two.
-  attachTrigger: {
-    position: "absolute",
-    left: COMPOSER_SURFACE_PADDING,
-    bottom: COMPOSER_SURFACE_PADDING,
   },
   scrollToBottomSlot: {
     position: "absolute",

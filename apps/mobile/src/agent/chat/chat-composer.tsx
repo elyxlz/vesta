@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -162,62 +162,82 @@ const NATIVE_ATTACH_ACTIONS = ATTACH_ACTIONS.map((action) => ({
 // The space between the composer's top edge and the menu above it.
 const ATTACH_MENU_GAP = 8;
 const ATTACH_ANCHOR_HEIGHT = CHAT_COMPOSER_CONTROL_HEIGHT;
+const ATTACH_ANCHOR_SETTLE_MS = 200;
 
-// `rise` is the distance from the trigger's top edge to the composer's top
-// edge, and `inset` the distance from its left edge to the composer's. The
-// menu grows up out of an invisible anchor that sits above the composer's
-// top left corner, clear of the glass.
+// The trigger sits at the bottom of a column as tall as the composer, so the
+// column's own layout gives the distance up to the composer's top edge. The
+// menu grows up out of an invisible anchor above that edge, clear of the
+// glass. The composer resizes on every frame of a reply slide, and a render
+// in the middle of that slide resets its animated values for a frame, so the
+// height is stored only once the layout is still.
 export function AttachMenuTrigger({
   disabled,
   onAssets,
-  rise,
   inset,
-  style,
 }: {
   disabled: boolean;
   onAssets: (assets: PickedAsset[]) => void;
-  rise: number;
   inset: number;
-  style: StyleProp<ViewStyle>;
 }) {
   const { dark } = usePreferences();
-  if (NativeMenuButton) {
-    return (
-      <NativeMenuButton
-        actions={NATIVE_ATTACH_ACTIONS}
-        anchorRect={{
-          x: -inset,
-          y: -rise - ATTACH_MENU_GAP - ATTACH_ANCHOR_HEIGHT,
-          width: GLYPH_BUTTON_WIDTH,
-          height: ATTACH_ANCHOR_HEIGHT,
-        }}
-        enabled={!disabled}
-        label="Add attachment"
-        onAction={({ nativeEvent }) =>
-          runAttachAction(nativeEvent.id, onAssets)
-        }
-        style={[styles.glyphButton, style]}
-      />
-    );
-  }
+  const [rise, setRise] = useState(0);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (settleTimer.current) clearTimeout(settleTimer.current);
+    },
+    [],
+  );
+  const onColumnLayout = (event: LayoutChangeEvent) => {
+    const next = event.nativeEvent.layout.height - CHAT_COMPOSER_CONTROL_HEIGHT;
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = null;
+      setRise(next);
+    }, ATTACH_ANCHOR_SETTLE_MS);
+  };
   return (
-    <View pointerEvents={disabled ? "none" : "auto"} style={style}>
-      <MenuView
-        actions={[...ATTACH_ACTIONS]}
-        colorScheme={dark ? "dark" : "light"}
-        onPressAction={({ nativeEvent }) =>
-          runAttachAction(nativeEvent.event, onAssets)
-        }
-      >
-        <View
-          accessible
-          accessibilityLabel="Add attachment"
-          accessibilityRole="button"
-          accessibilityState={{ disabled }}
-          hitSlop={GLYPH_HIT_SLOP}
+    <View
+      onLayout={onColumnLayout}
+      pointerEvents="box-none"
+      style={[styles.attachColumn, { left: inset, bottom: inset }]}
+    >
+      {NativeMenuButton ? (
+        <NativeMenuButton
+          actions={NATIVE_ATTACH_ACTIONS}
+          anchorRect={{
+            x: -inset,
+            y: -rise - ATTACH_MENU_GAP - ATTACH_ANCHOR_HEIGHT,
+            width: GLYPH_BUTTON_WIDTH,
+            height: ATTACH_ANCHOR_HEIGHT,
+          }}
+          enabled={!disabled}
+          label="Add attachment"
+          onAction={({ nativeEvent }) =>
+            runAttachAction(nativeEvent.id, onAssets)
+          }
           style={styles.glyphButton}
         />
-      </MenuView>
+      ) : (
+        <View pointerEvents={disabled ? "none" : "auto"}>
+          <MenuView
+            actions={[...ATTACH_ACTIONS]}
+            colorScheme={dark ? "dark" : "light"}
+            onPressAction={({ nativeEvent }) =>
+              runAttachAction(nativeEvent.event, onAssets)
+            }
+          >
+            <View
+              accessible
+              accessibilityLabel="Add attachment"
+              accessibilityRole="button"
+              accessibilityState={{ disabled }}
+              hitSlop={GLYPH_HIT_SLOP}
+              style={styles.glyphButton}
+            />
+          </MenuView>
+        </View>
+      )}
     </View>
   );
 }
@@ -371,6 +391,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+  },
+  attachColumn: {
+    position: "absolute",
+    top: 0,
+    width: GLYPH_BUTTON_WIDTH,
+    justifyContent: "flex-end",
   },
   glyphButton: {
     width: GLYPH_BUTTON_WIDTH,
