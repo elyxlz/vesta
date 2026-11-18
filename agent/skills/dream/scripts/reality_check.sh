@@ -66,8 +66,9 @@ fi
 # a line whose only count is zero ("0 error(s)", "no errors") reports success and is skipped, and
 # the file's colour codes are stripped first so a dated line is seen as dated. vesta.log interleaves
 # daemon output with prose that must not count: the agent's own [AGENT] narration, and agent prose
-# the daemon relays under [SYSTEM] (compaction summaries, task descriptions). So the counted word
-# carries error punctuation ("Error:", "error.", "error(", traceback), never bare "error messages".
+# the daemon relays under [CLIENT] (compaction summaries) or [MESSAGE] (task and notification
+# bodies). Those three tags are excluded by name, never whitelisted, so an untagged daemon line or
+# a [SYSTEM]/[RUNTIME] component failure still counts.
 today=$(date +%F)
 yesterday=$(date -d yesterday +%F)
 esc=$(printf '\033')
@@ -78,8 +79,8 @@ for log in "$HOME"/agent/logs/*.log; do
         BEGIN { recent = 1 }
         /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
         { low = tolower($0) }
-        recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
-        | grep -icE 'error[:.!(]|traceback')
+        recent && $0 !~ /\[AGENT\]/ && $0 !~ /\[CLIENT\]/ && $0 !~ /\[MESSAGE\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
+        | grep -icE 'error|traceback')
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
     else
