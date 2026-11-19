@@ -51,6 +51,8 @@ microsoft auth setup --account you@example.com --device              # force dev
 microsoft auth setup --account you@example.com --capture             # finish after the browser sign-in
 ```
 
+**Finishing a device-code sign-in:** `--flow-cache` checks once. Until the user has entered the code it returns `{"status": "pending"}`, so re-run it every ~10 s (a short loop in a background command) until `success`; the code lives 15 minutes, and an `AADSTS70020 ... expired` failure means start over with a fresh `auth setup`.
+
 How it chooses (by the account's domain, no need to ask):
 - **Personal Microsoft account** (outlook.com, hotmail.*, live.*, msn.com, etc.): defaults to **device-code** sign-in. The user visits a URL and enters a code, once. Tokens auto-refresh via MSAL indefinitely. The sign-in covers mail and calendar; Teams is work/school only.
 - **Work/school account** (any custom domain, e.g. a university or company like UCL): defaults to the **browser handover** up front, because the tenant almost always blocks the default public client and would reject a device code. `auth setup` hands the user **one URL** to sign into their own webmail (SSO + MFA), then captures the token. No admin consent needed. No wasted device-code round-trip.

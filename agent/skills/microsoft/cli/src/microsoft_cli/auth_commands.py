@@ -93,6 +93,14 @@ def authenticate_account(config: Config) -> dict[str, str]:
     }
 
 
+def _is_pending(result: dict, error_msg: str) -> bool:
+    """The user has not entered the device code yet. Entra puts the OAuth code in `error`
+    (authorization_pending / slow_down) and only an AADSTS70016 sentence in the description,
+    so matching the description alone misreads a pending sign-in as a failure."""
+    code = result["error"] if "error" in result else ""
+    return code in ("authorization_pending", "slow_down") or "authorization_pending" in error_msg or "AADSTS70016" in error_msg
+
+
 def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str]:
     try:
         flow = json.loads(flow_cache)
@@ -104,7 +112,7 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
 
     if "error" in result:
         error_msg = result["error_description"] if "error_description" in result else result["error"]
-        if "authorization_pending" in error_msg:
+        if _is_pending(result, error_msg):
             return {
                 "status": "pending",
                 "message": "Authentication is still pending.",
@@ -207,7 +215,7 @@ def owa_complete(config: Config, *, account_email: str, flow_cache: str) -> dict
 
     if "error" in result:
         error_msg = result["error_description"] if "error_description" in result else result["error"]
-        if "authorization_pending" in error_msg:
+        if _is_pending(result, error_msg):
             return {"status": "pending", "message": "Authorization is still pending."}
         raise Exception(f"OWA REST authorization failed: {error_msg}")
 
@@ -316,7 +324,7 @@ def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
 
     if "error" in result:
         error_msg = result["error_description"] if "error_description" in result else result["error"]
-        if "authorization_pending" in error_msg:
+        if _is_pending(result, error_msg):
             return {"status": "pending", "message": "Authorization is still pending."}
         if _is_consent_wall(error_msg):
             return {
@@ -502,7 +510,7 @@ def _setup_finish_device(config: Config, *, account_email: str, flow_cache: str)
     result = app.acquire_token_by_device_flow(flow)
     if "error" in result:
         error_msg = result["error_description"] if "error_description" in result else result["error"]
-        if "authorization_pending" in error_msg:
+        if _is_pending(result, error_msg):
             return {"status": "pending", "message": "Sign-in is still pending; finish the code entry, then retry."}
         if _is_consent_wall(error_msg):
             # Locked tenant: device code is blocked, pivot to the browser capture with no extra ask.
