@@ -207,8 +207,6 @@ def _emit_email_notification(ctx: MicrosoftContext, email: dict, account: str, f
         return
     logger.info("Writing notification for email from %s", sender_addr)
     display_name = sender_name or sender_addr
-    # Only include sender_address when it adds info beyond the display name.
-    extra_addr = sender_addr if sender_name and sender_name != sender_addr else None
     notifications.write_notification(
         ctx.notif_dir,
         "email",
@@ -218,7 +216,8 @@ def _emit_email_notification(ctx: MicrosoftContext, email: dict, account: str, f
         sender=display_name,
         subject=email["subject"] if "subject" in email else None,
         preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
-        sender_address=extra_addr,
+        # Always set: notification rules match on sender_address, even when it repeats the sender.
+        sender_address=sender_addr,
         account=account,
         folder=folder_token,
         missed=catching_up or None,
