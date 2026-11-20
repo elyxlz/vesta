@@ -83,6 +83,8 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
     """Capture ``?code=...&state=...`` from the OAuth redirect."""
 
     captured: dict | None = None
+    # Browsers open idle preconnect sockets to the redirect origin; time them out.
+    timeout = 5
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -120,6 +122,14 @@ def _free_port() -> int:
     return port
 
 
+def _start_redirect_server(port: int) -> http.server.ThreadingHTTPServer:
+    """Serve the redirect handler on 127.0.0.1:``port``, one thread per connection,
+    so an idle socket cannot block the request that carries the code."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), _RedirectHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def auth_loopback_oauth(provider: str, profile: dict, user: str) -> dict:
     port = _free_port()
     redirect_uri = f"http://127.0.0.1:{port}/"
@@ -138,9 +148,7 @@ def auth_loopback_oauth(provider: str, profile: dict, user: str) -> dict:
         auth_params["login_hint"] = user
     auth_url = profile["oauth_auth_url"] + "?" + urllib.parse.urlencode(auth_params)
 
-    server = http.server.HTTPServer(("127.0.0.1", port), _RedirectHandler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
+    server = _start_redirect_server(port)
 
     print("\nOpen this URL in a browser on any device that can reach this host:\n")
     print(f"  {auth_url}\n")
