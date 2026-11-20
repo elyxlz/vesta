@@ -611,8 +611,19 @@ def remind_list(config: Config, *, limit: int | None = 50, show_completed: bool 
         return [_reminder_view(row) for row in cursor]
 
 
-# The fields `reminders get --field` accepts: the keys of the view every read command returns.
-REMINDER_FIELDS = ("id", "message", "schedule", "next_run", "created_at", "status", "deleted_at")
+# The fields `reminders get --field` accepts: every key `remind_get` returns, not only the
+# shared view's. `remind_get` adds the two metadata keys after `_reminder_view`.
+REMINDER_FIELDS = (
+    "id",
+    "message",
+    "schedule",
+    "next_run",
+    "created_at",
+    "status",
+    "deleted_at",
+    "metadata_path",
+    "metadata_content",
+)
 
 
 def _reminder_view(row) -> dict:
