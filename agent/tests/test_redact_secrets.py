@@ -1339,3 +1339,63 @@ def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monk
 
     assert _file_hits(out) == []
     assert "No secrets found." in out
+
+
+def test_skip_retires_an_adjudicated_event_row(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    """The recurring-FP cost: the same benign rows (Italian prose containing "password", a header
+    NAME) re-appear in every nightly report and get re-reviewed each time. --skip retires a
+    reviewed-benign row, and the report says how many hits it suppressed rather than going quiet."""
+    monkeypatch.setattr(redact, "SKIP_LIST", tmp_path / "redact_skip_refs.txt")
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the aws key is {SECRET} for backups"))
+    out = _scan_output(monkeypatch, capsys)
+    ref = out.splitlines()[-1].split("|")[0]
+
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--skip", ref])
+    assert redact.main() == 0
+    capsys.readouterr()
+    skip_file = tmp_path / "redact_skip_refs.txt"
+    assert skip_file.read_text() == f"{ref}\n"
+    assert skip_file.stat().st_mode & 0o777 == 0o600
+
+    # a re-run of the same adjudication is a visible no-op
+    assert redact.main() == 0
+    assert "Added 0 ref(s)" in capsys.readouterr().out
+
+    out = _scan_output(monkeypatch, capsys)
+    assert "1 adjudicated false-positive hit(s) suppressed" in out
+    assert "No secrets found." in out
+    assert not any(line.startswith(f"{ref}|") for line in out.splitlines())
+
+
+def test_skip_retires_an_adjudicated_channel_store_row(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(redact, "SKIP_LIST", tmp_path / "redact_skip_refs.txt")
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    _make_whatsapp_store(tmp_path, f"here is my aws key {SECRET} use it")
+    out = _scan_output(monkeypatch, capsys)
+    refs = [line.split("|")[0] for line in out.splitlines() if "|" in line]
+    assert "whatsapp:messages:1" in refs  # the fts shadow row is reported too
+
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--skip", *refs])
+    assert redact.main() == 0
+    capsys.readouterr()
+
+    out = _scan_output(monkeypatch, capsys)
+    assert f"{len(refs)} adjudicated false-positive hit(s) suppressed" in out
+    assert "No secrets found." in out
+
+
+def test_skip_refuses_read_only_and_malformed_refs(tmp_path, monkeypatch, capsys):
+    """A DB row is immutable, so skipping it forever is safe; file: and transcript: refs name
+    content that can change under the same ref and must keep being reported."""
+    monkeypatch.setattr(redact, "SKIP_LIST", tmp_path / "redact_skip_refs.txt")
+    for argv in (
+        ["redact_secrets.py", "--skip"],
+        ["redact_secrets.py", "--skip", "file:/root/notes.txt"],
+        ["redact_secrets.py", "--skip", "transcript:/root/x.jsonl:12"],
+        ["redact_secrets.py", "--skip", "not-a-ref"],
+    ):
+        monkeypatch.setattr("sys.argv", argv)
+        assert redact.main() == 1
+        capsys.readouterr()
+    assert not (tmp_path / "redact_skip_refs.txt").exists()
