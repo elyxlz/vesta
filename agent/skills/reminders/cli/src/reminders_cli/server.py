@@ -21,7 +21,10 @@ def _create_app(config: Config) -> FastAPI:
         raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/reminders")
-    def list_reminders(limit: int = 50, show_deleted: bool = False):
+    def list_reminders(limit: int | None = None, show_deleted: bool = False):
+        # Unbounded by default: HTTP is the machine surface, and a silent page size would make a
+        # truncated list read as "no" (remind_list reads limit=None as "every row"). ?limit=N caps
+        # it for callers who ask.
         return commands.remind_list(config, limit=limit, show_deleted=show_deleted)
 
     @app.post("/reminders", status_code=201)
