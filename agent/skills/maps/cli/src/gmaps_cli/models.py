@@ -84,6 +84,15 @@ class MapListItem:
 class Step:
     instruction: str
     line: str | None = None
+    vehicle: str | None = None
+    headsign: str | None = None
+    from_stop: str | None = None
+    to_stop: str | None = None
+    depart: str | None = None
+    arrive: str | None = None
+    num_stops: int | None = None
+    duration: str | None = None
+    distance: str | None = None
 
 
 @dataclass
@@ -92,6 +101,9 @@ class DirectionsLeg:
     duration_text: str | None
     distance_text: str | None
     steps: list[Step] = field(default_factory=list)
+    depart: str | None = None
+    arrive: str | None = None
+    fare: str | None = None
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)

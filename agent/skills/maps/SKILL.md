@@ -57,7 +57,9 @@ You refer to the place by `cid` alone: `search` and `show` remember each place's
 `directions` resolves the `cid` with no extra call. `--mode` is `driving`, `transit`, `walking`,
 or `bicycling`. Omit `--from` so the phone uses the user's current location; pass `--from <cid>`
 to fix the start. Add `--steps` (with `--from`) to also fetch the trip: duration, distance, and
-turn-by-turn steps. Tell the user the duration; send the `directions_url`.
+turn-by-turn steps. For transit, each step is one walk or ride (line, vehicle, headsign, board and
+alight stop with times, stop count) and the leg adds `depart`, `arrive` and `fare`. Tell the user
+the duration; send the `directions_url`.
 
 For transit, `--depart HH:MM` or `--arrive HH:MM` (with `--from` and `--tz`) fetch the route for
 that time, so the duration reflects the schedule, and the returned `directions_url` opens Maps
