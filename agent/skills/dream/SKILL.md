@@ -164,6 +164,7 @@ MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory
 
 **Consolidate:**
 - If the same fact lives in two places, pick one home and replace the other with a one-line pointer. Two facts in two places drift; one fact and a pointer don't.
+- A figure, date, or amount baked into a rule example, a lesson, or a carry-forward note is still a figure that drifts, and it is worse than a tracked one: it has no reconcile trigger (not a surfacing moment, not a tracked item, not a "same fact in two places" you would notice), so it silently rots into a false statement inside a durable rule. State the lesson and point to whatever store owns the live value; never copy the number itself into the rule.
 - When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md").
 
 **Keep:**
