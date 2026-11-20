@@ -76,7 +76,7 @@ func textAfterFullStop(text string) bool {
 // many characters, or text carrying on past a full stop), or "" if it passes.
 // The caller turns a non-empty reason into an error that blocks the send.
 func bubbleLintReason(message string) string {
-	nChars := utf8.RuneCountInString(message)
+	nChars := utf8.RuneCountInString(bubbleURLRe.ReplaceAllString(message, "<url>")) // a url is one token, whatever its length
 	var why []string
 	if nChars > bubbleMaxChars {
 		why = append(why, fmt.Sprintf("%d chars", nChars))

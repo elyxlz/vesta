@@ -71,7 +71,7 @@ def text_after_full_stop(text: str) -> bool:
 def bubble_lint_reason(message: str) -> str:
     """Return a non-empty explanation when message is a wall (too many
     characters, or text carrying on past a full stop), or "" if it passes."""
-    n_chars = len(message)
+    n_chars = len(_URL_RE.sub("<url>", message))  # a url is one token, whatever its length
     why = []
     if n_chars > BUBBLE_MAX_CHARS:
         why.append(f"{n_chars} chars")

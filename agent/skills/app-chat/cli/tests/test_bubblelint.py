@@ -1,6 +1,6 @@
 """Mirrors telegram/whatsapp cli/bubblelint_test.go for the app-chat Python port."""
 
-from app_chat_cli.bubblelint import bubble_lint_reason, text_after_full_stop
+from app_chat_cli.bubblelint import BUBBLE_MAX_CHARS, bubble_lint_reason, text_after_full_stop
 
 
 def test_bubble_lint_passes():
@@ -90,3 +90,12 @@ def test_text_after_full_stop():
         ("1. Hello 2. Hi", True),
     ]:
         assert text_after_full_stop(msg) is want, msg
+
+
+def test_url_counts_as_one_token():
+    # A url is one token toward the character cap, so a long link (login, verify,
+    # magic link) is one thought, not a wall.
+    long_url = "https://example.com/verify/abc123?token=" + "x" * BUBBLE_MAX_CHARS
+    for msg in [long_url, "here's the link " + long_url]:
+        assert bubble_lint_reason(msg) == "", len(msg)
+    assert bubble_lint_reason("so this goes on and on " * 10 + long_url) != ""
