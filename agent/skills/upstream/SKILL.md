@@ -206,11 +206,14 @@ git -C ~ diff --no-index ~/agent/skills/<skill>/<path> /tmp/vesta-pr/agent/skill
 Never `cp` the whole file over your local one. Finish with the skill's own tests
 (`cd ~/agent/skills/<name>/cli && uv run pytest`) and the ruff pass below.
 
-## Formatting before pushing
+## Checks before pushing
 
 Run `./check.sh guards` IN THE WORKTREE: it is ruff plus repo conventions (lint escapes,
-comment-length cap of 8 lines, import cycles, shellcheck). Format Python from `~/agent`
-so the pinned ruff and config match CI: `cd ~/agent && ruff format <path> && ruff check <path>`.
+comment-length cap of 8 lines, import cycles, shellcheck). It runs no tests, so add
+`./check.sh agent` whenever the diff touches code under `agent/`: `agent/tests/` covers
+files with no `cli/` of their own, skill scripts included, which neither the guards suite
+nor a skill's own pytest reaches. Format Python from `~/agent` so the pinned ruff and
+config match CI: `cd ~/agent && ruff format <path> && ruff check <path>`.
 Markdown under `agent/` must contain no em or en dashes:
 `grep -rnP '\x{2014}|\x{2013}' <paths>` must be empty; instruct subagents about this up
 front, since models reach for those dashes by default.
