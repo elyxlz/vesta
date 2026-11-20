@@ -611,8 +611,9 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--to",
+        action="append",
         default=None,
-        help="recipient (required unless --reply-to-uid is set, in which case the original sender is the default)",
+        help="recipient; repeat for multiple addresses, or one comma-separated string (default: the replied-to sender with --reply-to-uid)",
     )
     ap.add_argument(
         "--cc",
@@ -699,6 +700,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = _build_parser().parse_args()
+    # --to is repeatable; join at the CLI boundary so SendRequest.to stays one
+    # comma-separated string and repeated flags cannot silently drop recipients.
+    to = ", ".join(args.to) if args.to else None
     # Hard draft-only guard: refuse any transmitting invocation (send/reply/forward)
     # before touching SMTP. Drafting (--draft) and the no-network preview (--dry-run)
     # stay allowed. Default off: no behavior change when EMAIL_DRAFT_ONLY is unset.
@@ -706,7 +710,7 @@ def main():
         sys.exit(_DRAFT_ONLY_MESSAGE)
     send(
         SendRequest(
-            to=args.to,
+            to=to,
             subject=args.subject,
             body=args.body,
             from_name=args.from_name,
