@@ -174,12 +174,13 @@ PATTERNS = [
         r"|[ ]*\\?[\"'][^ \"'\\]{4,}"
         r"|\\?[\"']?(?:[ ]*[:=]+[ ]*|[ ]+)\\?[\"'][ ]+[^ \"'\\]{4,}\\?[\"'])"
     ),
-    # Any name ENDING in key/token/secret/password/passwd followed by : or =, so EXA_KEY=<tok>, an
+    # Any name ENDING in key/token/secret/passphrase/password/passwd/pass/pwd followed by : or =, so
+    # EXA_KEY=<tok>, a SOCKS5_PASS=<val> env var, an
     # X-Plex-Token: header, and a JSON "token" field all hit. The match anchors at the suffix word
     # itself: a quantified name-prefix here backtracks quadratically inside base64 runs and hangs
     # the scan on large events. Value guard: >=16 token chars with at least one digit keeps prose
     # ("the key = a good one") and identifier assignments (PRIMARY_KEY=account_number) out.
-    r"(?:key|token|secret|passw(?:or)?d)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
+    r"(?:key|token|secret|passphrase|passw(?:or)?d|pass|pwd)\\?[\"']?[ ]*\\?[:=]+[ ]*\\?[\"']?(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{16,}",
     # `Authorization: Bearer <tok>`: the secret is named by the SCHEME, not by a key name.
     r"Bearer[ ]+(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9_\-.]{16,}",
     # Apple app-specific password pasted BARE. Every rule above needs a label, prefix or URL around
