@@ -17,6 +17,8 @@ delete, and respond act on every occurrence of a recurring event, except
 appending an EXDATE. Recurring events expand into concrete occurrences in
 the query window. Writes to fetched events carry the etag as ``If-Match``,
 so a concurrent server-side change fails loudly instead of being clobbered.
+Subscribed calendars (a feed URL added to the account) are read-only: their
+events are read from the source feed, and every write or get-by-id is refused.
 
 Commands (dispatched from ``email-client calendar ...``):
 
@@ -236,7 +238,13 @@ def _master_vevent(vcal: ics.Component, uid: str) -> ics.Component:
 
 def cmd_list_calendars(args) -> None:
     ctx = caldav_client.caldav_account(args.account)
-    out = [{"id": info.id, "summary": info.name, "primary": info.primary} for info in caldav_client.list_calendars(ctx)]
+    out = []
+    for info in caldav_client.list_calendars(ctx):
+        entry = {"id": info.id, "summary": info.name, "primary": info.primary}
+        if info.source is not None:
+            # Only the host: a feed URL often embeds a private token.
+            entry.update(subscribed=True, read_only=True, source_host=caldav_client.feed_host(info.source))
+        out.append(entry)
     print(json.dumps(out, ensure_ascii=False))
 
 
@@ -245,7 +253,12 @@ def cmd_list(args) -> None:
     start, end = _window(args.days_ahead, args.days_back)
     occurrences: list[tuple[ics.Occurrence, ics.TzMap]] = []
     degraded: list[dict] = []
-    for calendar_data in caldav_client.report_events(ctx, args.calendar, start, end):
+    try:
+        resources = caldav_client.report_events(ctx, args.calendar, start, end)
+    except caldav_client.FeedError as e:
+        resources = []
+        degraded.append({"calendar": args.calendar, "feed_error": str(e)})
+    for calendar_data in resources:
         try:
             vcal = ics.parse_calendar(calendar_data)
             tzmap = ics.timezone_map(vcal)
