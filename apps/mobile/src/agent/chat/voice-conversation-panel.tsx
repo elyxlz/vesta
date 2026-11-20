@@ -13,7 +13,6 @@ import {
 } from "@vesta/core";
 import { AgentOrb } from "@/components/AgentOrb";
 import { Text } from "@/components/ui/Typography";
-import { fontNames } from "@/theme/typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const ORB_SIZE = 140;
@@ -219,8 +218,8 @@ const styles = StyleSheet.create({
   pillText: {
     fontSize: 14,
     lineHeight: PILL_LINE_HEIGHT,
-    fontFamily: fontNames.sans.native["400"],
+    fontWeight: "400",
   },
-  pillTail: { fontFamily: fontNames.sans.native["600"] },
+  pillTail: { fontWeight: "600" },
   pillPhase: { textAlign: "center" },
 });

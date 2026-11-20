@@ -17,7 +17,6 @@ import Markdown, {
 } from "react-native-markdown-display";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
-import Svg, { Path } from "react-native-svg";
 import { formatResetTime } from "@vesta/core";
 import type { ChatAttachment, ChatMessage, InputMethod } from "@vesta/core";
 import contentCopyIcon from "../../../assets/menu-icons/content-copy.xml";
@@ -55,6 +54,9 @@ import {
 import { openWebLink } from "@/agent/chat/open-web-link";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+// The last bubble of a group has one tighter bottom corner on the sender's
+// side, as on web.
+const TAIL_CORNER_RADIUS = 6;
 
 // react-native-markdown-display keeps the fence info string on the node, outside its declared type.
 function fenceInfo(node: ASTNode): string | null {
@@ -116,45 +118,6 @@ function openMarkdownLink(href: string): boolean {
     Alert.alert("Couldn’t open link", url);
   });
   return false;
-}
-
-function BubbleTail({
-  user,
-  fill,
-  stroke,
-}: {
-  user: boolean;
-  fill: string;
-  stroke: string;
-}) {
-  const fillPath = user
-    ? "M 0 16 L 20 2 C 20 11 21 14 25 15 H 26 C 20 16 17 14 15 12 C 11 15 5 16 0 16 Z"
-    : "M 26 16 L 6 1 C 6 10 5 14 1 15 H 0 C 6 16 9 14 12 12 C 16 15 21 16 26 16 Z";
-
-  return (
-    <Svg
-      pointerEvents="none"
-      width={26}
-      height={16}
-      viewBox="0 0 26 16"
-      style={[
-        styles.bubbleTail,
-        user ? styles.userBubbleTail : styles.agentBubbleTail,
-      ]}
-    >
-      <Path d={fillPath} fill={fill} />
-      {!user ? (
-        <Path
-          d="M 6 1 C 6 10 5 14 1 15 H 0 C 6 16 9 14 12 12"
-          fill="none"
-          stroke={stroke}
-          strokeWidth={StyleSheet.hairlineWidth}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-      ) : null}
-    </Svg>
-  );
 }
 
 export const ChatDateHeader = memo(function ChatDateHeader({
@@ -313,11 +276,7 @@ export const ChatEvent = memo(function ChatEvent({
         </View>
       ),
       blockquote: (node, children) => (
-        <QuotedBlock
-          key={node.key}
-          style={styles.markdownBlockquote}
-          onAccent={user}
-        >
+        <QuotedBlock key={node.key} style={styles.markdownBlockquote}>
           {children}
         </QuotedBlock>
       ),
@@ -394,6 +353,11 @@ export const ChatEvent = memo(function ChatEvent({
           : [
               styles.bubbleFallback,
               { backgroundColor: bubbleColor },
+              endsBubbleGroup
+                ? user
+                  ? styles.userTailCorner
+                  : styles.agentTailCorner
+                : null,
               user
                 ? null
                 : {
@@ -403,9 +367,6 @@ export const ChatEvent = memo(function ChatEvent({
             ],
       ]}
     >
-      {endsBubbleGroup && !USES_NATIVE_BUBBLE_SHAPE ? (
-        <BubbleTail user={user} fill={bubbleColor} stroke={colors.border} />
-      ) : null}
       {attachments.map((attachment) => (
         <AttachmentContent
           key={attachment.id}
@@ -493,7 +454,7 @@ export const ChatEvent = memo(function ChatEvent({
         onOpenChange={onMenuOpenChange}
         previewCornerRadius={radii.bubble}
         style={styles.bubbleMenu}
-        tailOverhang={endsBubbleGroup ? (user ? 5 : 6) : 0}
+        tailCornerRadius={TAIL_CORNER_RADIUS}
         tailSide={endsBubbleGroup ? (user ? "trailing" : "leading") : "none"}
       >
         {bubble}
@@ -563,7 +524,6 @@ export const TypingIndicator = memo(function TypingIndicator({
           },
         ]}
       >
-        <BubbleTail user={false} fill={colors.bubble} stroke={colors.border} />
         <View style={styles.typingDots}>
           {dots.map((dot, index) => (
             <Animated.View
@@ -620,20 +580,15 @@ const styles = StyleSheet.create({
   bubbleMenu: { maxWidth: "88%" },
   bubble: {
     position: "relative",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   bubbleFallback: {
     borderRadius: radii.bubble,
     borderCurve: "continuous",
   },
-  bubbleTail: {
-    position: "absolute",
-    bottom: 0,
-    overflow: "visible",
-  },
-  userBubbleTail: { right: -5 },
-  agentBubbleTail: { left: -6 },
+  userTailCorner: { borderBottomRightRadius: TAIL_CORNER_RADIUS },
+  agentTailCorner: { borderBottomLeftRadius: TAIL_CORNER_RADIUS },
   typingBubble: {
     position: "relative",
     width: 56,
@@ -641,6 +596,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: radii.bubble,
+    borderBottomLeftRadius: TAIL_CORNER_RADIUS,
     borderCurve: "continuous",
   },
   typingDots: {

@@ -15,12 +15,6 @@ import { NavigationBar } from "expo-navigation-bar";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import * as WebBrowser from "expo-web-browser";
-import { Archivo_400Regular } from "@expo-google-fonts/archivo/400Regular";
-import { Archivo_500Medium } from "@expo-google-fonts/archivo/500Medium";
-import { Archivo_600SemiBold } from "@expo-google-fonts/archivo/600SemiBold";
-import { Archivo_700Bold } from "@expo-google-fonts/archivo/700Bold";
-import { Archivo_800ExtraBold } from "@expo-google-fonts/archivo/800ExtraBold";
-import { Archivo_900Black } from "@expo-google-fonts/archivo/900Black";
 import { JetBrainsMono_400Regular } from "@expo-google-fonts/jetbrains-mono/400Regular";
 import { JetBrainsMono_600SemiBold } from "@expo-google-fonts/jetbrains-mono/600SemiBold";
 import { JetBrainsMono_700Bold } from "@expo-google-fonts/jetbrains-mono/700Bold";
@@ -54,7 +48,6 @@ import {
   type BootDestination,
   type BootTargetFrame,
 } from "@/components/BootTransition";
-import { fontNames } from "@/theme/typography";
 import {
   authSheetOptions,
   blockingSheetOptions,
@@ -163,7 +156,6 @@ function SessionNavigation() {
             screenOptions={{
               ...stackHeaderOptions(colors),
               headerLargeTitleStyle: {
-                fontFamily: fontNames.heading.native["500"],
                 fontWeight: "500",
               },
             }}
@@ -283,12 +275,6 @@ const styles = StyleSheet.create({
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    Archivo_400Regular,
-    Archivo_500Medium,
-    Archivo_600SemiBold,
-    Archivo_700Bold,
-    Archivo_800ExtraBold,
-    Archivo_900Black,
     JetBrainsMono_400Regular,
     JetBrainsMono_600SemiBold,
     JetBrainsMono_700Bold,

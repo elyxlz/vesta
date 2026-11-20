@@ -31,12 +31,18 @@ it("centers the lockup in the full page without reserving space for sheets or sy
     backgroundColor: "#fff",
   });
   expect(backdrop.props.pointerEvents).toBe("none");
-  expect(backdrop.props.children.type).toBe("VestaBrand");
+  expect(backdrop.props.children[1].type).toBe("VestaBrand");
 });
 
 it("preserves the auth orb's boot-transition target", () => {
   const orb = "custom boot target";
-  expect(BrandBackdrop({ orb }).props.children.props.orb).toBe(orb);
+  expect(BrandBackdrop({ orb }).props.children[1].props.orb).toBe(orb);
+});
+
+it("draws the pattern behind the lockup", () => {
+  const [pattern, brand] = BrandBackdrop({ pattern: "dots" }).props.children;
+  expect(pattern).toBe("dots");
+  expect(brand.type).toBe("VestaBrand");
 });
 
 it("uses the same page-filling backdrop while a blocking sheet is being presented", () => {

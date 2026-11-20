@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
   connectingCopy: { flex: 1, gap: 3 },
   connectingTitle: { fontSize: 16, fontWeight: "500" },
   connectingDetail: { fontSize: 14, lineHeight: 20 },
-  form: { gap: 16, marginTop: 16 },
+  form: { gap: 10, marginTop: 16 },
   actions: { flexDirection: "row", alignItems: "center", gap: 12 },
   connectAction: { flex: 1 },
   scanButton: {

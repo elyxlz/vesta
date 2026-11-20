@@ -36,18 +36,6 @@ function gatewayName(gateway: RecentGateway): string {
   return new URL(gateway.url).host;
 }
 
-// Joined by hand so the label reads identically on iOS and Android; the
-// platforms join date and time with different separators otherwise.
-function lastConnectedLabel(timestamp: number): string {
-  const date = new Date(timestamp);
-  const day = date.toLocaleDateString([], { month: "short", day: "numeric" });
-  const time = date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return `${day} at ${time}`;
-}
-
 export default function RecentGatewaysScreen() {
   const {
     status,
@@ -249,65 +237,25 @@ export default function RecentGatewaysScreen() {
                       { opacity: pressed ? 0.72 : 1 },
                     ]}
                   >
-                    <View
-                      style={[
-                        styles.gatewayIcon,
-                        { backgroundColor: colors.accentSoft },
-                      ]}
+                    <View style={styles.gatewayEdge} />
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.gatewayName, { color: colors.text }]}
                     >
+                      {gatewayName(gateway)}
+                    </Text>
+                    <View style={styles.gatewayEdge}>
                       <Ionicons
-                        name={
-                          gateway.hosted ? "cloud-outline" : "server-outline"
-                        }
-                        size={18}
-                        color={colors.text}
+                        name={current ? "checkmark" : "chevron-forward"}
+                        size={current ? 20 : 16}
+                        color={current ? colors.accent : colors.tertiaryText}
                       />
                     </View>
-                    <View style={styles.gatewayCopy}>
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.gatewayName, { color: colors.text }]}
-                      >
-                        {gatewayName(gateway)}
-                      </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.gatewayDetail,
-                          { color: colors.secondaryText },
-                        ]}
-                      >
-                        Last connected{" "}
-                        {lastConnectedLabel(gateway.lastConnectedAt)}
-                      </Text>
-                    </View>
-                    {current ? (
-                      <Text
-                        style={[
-                          styles.currentLabel,
-                          {
-                            backgroundColor: colors.accentSoft,
-                            color: colors.accent,
-                          },
-                        ]}
-                      >
-                        Current
-                      </Text>
-                    ) : (
-                      <Ionicons
-                        name="chevron-forward"
-                        size={17}
-                        color={colors.tertiaryText}
-                      />
-                    )}
                   </Pressable>
                 );
                 const containerStyle = [
                   styles.gateway,
-                  {
-                    backgroundColor: colors.input,
-                    borderColor: colors.border,
-                  },
+                  { backgroundColor: colors.input },
                 ];
                 return current ? (
                   <View key={gateway.id} style={containerStyle}>
@@ -328,18 +276,6 @@ export default function RecentGatewaysScreen() {
               })}
             </View>
           )}
-
-          <View style={styles.footerActions}>
-            <Button
-              size="compact"
-              variant="ghost"
-              labelStyle={styles.footerActionLabel}
-              disabled={isConnecting}
-              onPress={router.back}
-            >
-              Back
-            </Button>
-          </View>
         </Animated.View>
       )}
       <ConfirmDialog
@@ -390,44 +326,25 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 4,
   },
-  listContent: { gap: 10 },
+  listContent: { gap: 8 },
   gateway: {
-    minHeight: 64,
+    minHeight: 52,
     borderRadius: radii.card,
     borderCurve: "continuous",
-    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
     alignItems: "center",
     overflow: "hidden",
   },
   gatewayMain: {
     flex: 1,
-    minHeight: 64,
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 6,
   },
-  gatewayIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  gatewayCopy: { flex: 1, gap: 2 },
-  gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
-  gatewayDetail: { fontSize: 13, lineHeight: 18 },
-  currentLabel: {
-    borderRadius: radii.pill,
-    overflow: "hidden",
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "600",
-  },
-  footerActions: { marginTop: 16 },
-  footerActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
+  // The same width on both sides keeps the name on the card's center line.
+  gatewayEdge: { width: 20, alignItems: "flex-end" },
+  gatewayName: { flex: 1, fontSize: 17, lineHeight: 22, textAlign: "center" },
 });

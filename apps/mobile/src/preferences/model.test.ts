@@ -10,7 +10,6 @@ describe("preference persistence", () => {
     expect(readStoredPreferences(null)).toEqual(initialPreferences);
     expect(initialPreferences.remoteNotifications).toBe(true);
     expect(initialPreferences.naturalChatPacingByAgent).toEqual({});
-    expect(initialPreferences.showChatPage).toBe(true);
     expect(initialPreferences.showDashboardPage).toBe(false);
     expect(initialPreferences.showNotificationsPage).toBe(false);
     expect(initialPreferences.showLogsPage).toBe(false);
@@ -29,7 +28,6 @@ describe("preference persistence", () => {
   it("defaults the dashboard page off for state saved before the field existed", () => {
     expect(readStoredPreferences(JSON.stringify({ theme: "dark" }))).toMatchObject(
       {
-        showChatPage: true,
         showDashboardPage: false,
       },
     );

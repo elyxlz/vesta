@@ -30,14 +30,14 @@ function buildMarkdownStyles(colors: AppColors) {
   return {
     body: {
       color: colors.text,
-      fontFamily: fontNames.sans.native["400"],
+      fontWeight: "400" as const,
       fontSize: 16,
       lineHeight: 23,
     },
     heading1: {
       ...HEADING_LAYOUT,
       color: colors.text,
-      fontFamily: fontNames.heading.native["600"],
+      fontWeight: "600" as const,
       fontSize: 20,
       lineHeight: 25,
       marginTop: 5,
@@ -46,7 +46,7 @@ function buildMarkdownStyles(colors: AppColors) {
     heading2: {
       ...HEADING_LAYOUT,
       color: colors.text,
-      fontFamily: fontNames.heading.native["600"],
+      fontWeight: "600" as const,
       fontSize: 18,
       lineHeight: 23,
       marginTop: 5,
@@ -55,7 +55,7 @@ function buildMarkdownStyles(colors: AppColors) {
     heading3: {
       ...HEADING_LAYOUT,
       color: colors.text,
-      fontFamily: fontNames.heading.native["600"],
+      fontWeight: "600" as const,
       fontSize: 16,
       lineHeight: 22,
       marginTop: 4,
@@ -64,7 +64,7 @@ function buildMarkdownStyles(colors: AppColors) {
     heading4: {
       ...HEADING_LAYOUT,
       color: colors.secondaryText,
-      fontFamily: fontNames.sans.native["600"],
+      fontWeight: "600" as const,
       fontSize: 15,
       lineHeight: 21,
       marginTop: 3,
@@ -73,7 +73,7 @@ function buildMarkdownStyles(colors: AppColors) {
     heading5: {
       ...HEADING_LAYOUT,
       color: colors.secondaryText,
-      fontFamily: fontNames.sans.native["600"],
+      fontWeight: "600" as const,
       fontSize: 15,
       lineHeight: 21,
       marginTop: 3,
@@ -82,13 +82,13 @@ function buildMarkdownStyles(colors: AppColors) {
     heading6: {
       ...HEADING_LAYOUT,
       color: colors.secondaryText,
-      fontFamily: fontNames.sans.native["600"],
+      fontWeight: "600" as const,
       fontSize: 15,
       lineHeight: 21,
       marginTop: 3,
       marginBottom: 4,
     },
-    strong: { fontFamily: fontNames.sans.native["600"] },
+    strong: { fontWeight: "600" as const },
     em: { fontStyle: "italic" as const },
     s: {
       color: colors.tertiaryText,
@@ -105,14 +105,14 @@ function buildMarkdownStyles(colors: AppColors) {
     },
     link: {
       color: colors.interactive,
-      fontFamily: fontNames.sans.native["500"],
+      fontWeight: "500" as const,
       textDecorationLine: "underline" as const,
       textDecorationColor: colors.interactive,
     },
     blocklink: { borderBottomWidth: 0 },
     blockquote: {
       color: colors.secondaryText,
-      fontFamily: fontNames.sans.native["400"],
+      fontWeight: "400" as const,
       fontSize: 13,
       lineHeight: 17,
     },
@@ -132,7 +132,7 @@ function buildMarkdownStyles(colors: AppColors) {
       minWidth: 20,
       marginLeft: 0,
       marginRight: 5,
-      fontFamily: fontNames.sans.native["500"],
+      fontWeight: "500" as const,
       fontSize: 14,
       lineHeight: 23,
       textAlign: "right" as const,

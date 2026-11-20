@@ -21,7 +21,6 @@ it("keeps Android sheet titles in the same font, size, and weight as iOS", () =>
   const title = android.props.children[1].props.children[0];
 
   expect(ios.props.style).toEqual({
-    fontFamily: "Archivo_500Medium",
     fontSize: 20,
     fontWeight: "500",
   });
@@ -60,8 +59,12 @@ it("gives sheet controls symmetric circular surfaces without shifting the title"
     right: 16,
     backgroundColor: "#f4f1ed",
   });
-  expect(Object.assign({}, ...close.props.style)).not.toHaveProperty("boxShadow");
-  expect(Object.assign({}, ...action.props.style)).not.toHaveProperty("boxShadow");
+  expect(Object.assign({}, ...close.props.style)).not.toHaveProperty(
+    "boxShadow",
+  );
+  expect(Object.assign({}, ...action.props.style)).not.toHaveProperty(
+    "boxShadow",
+  );
   expect(close.props.accessibilityLabel).toBe("Close notifications");
   expect(action.props.accessibilityLabel).toBe("Notification rules");
   expect(close.props.children.props.size).toBe(32);

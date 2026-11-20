@@ -22,9 +22,12 @@ function LiveUserNotifications({ controller }: { controller: Controller }) {
     return controller.subscribeDeltas((delta: Delta) => {
       if (delta.type !== "user_notification") return;
       if (!shouldPresentUserNotification(delta, activeAgentName())) return;
+      // iOS refuses to schedule while the user has not allowed notifications.
       void Notifications.scheduleNotificationAsync({
         content: { title: delta.title, body: delta.body },
         trigger: null,
+      }).catch((cause: unknown) => {
+        console.warn("Could not present the notification:", cause);
       });
     });
   }, [controller]);

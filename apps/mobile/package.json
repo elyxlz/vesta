@@ -18,7 +18,6 @@
     "visual:android:capture": "node ./scripts/visual-android.mjs capture"
   },
   "dependencies": {
-    "@expo-google-fonts/archivo": "^0.4.2",
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
     "@expo-google-fonts/source-serif-4": "^0.4.1",
     "@expo/ui": "~57.0.15",

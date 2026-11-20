@@ -13,7 +13,6 @@ import {
   type ChatComposerInputProps,
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input.types";
-import { fontNames } from "@/theme/typography";
 
 const LINE_HEIGHT = 22;
 const MIN_HEIGHT = CHAT_COMPOSER_CONTROL_HEIGHT;
@@ -89,7 +88,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: CHAT_COMPOSER_INPUT_HORIZONTAL_PADDING,
     paddingTop: VERTICAL_PADDING,
     paddingBottom: VERTICAL_PADDING,
-    fontFamily: fontNames.sans.native["400"],
+    fontWeight: "400",
     fontSize: 17,
     lineHeight: LINE_HEIGHT,
   },

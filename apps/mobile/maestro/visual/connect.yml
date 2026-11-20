@@ -58,7 +58,7 @@ tags:
       SCREENSHOT: connect-actions.png
 
 - tapOn:
-    text: "Connect to self-hosted Vesta"
+    text: "Connect to Vesta"
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
     visible: "Connect your gateway"
