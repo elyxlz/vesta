@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -55,7 +55,12 @@ def _coord(text: str) -> tuple[float, float]:
 
 
 def _next_epoch(hhmm: str, tz_name: str) -> int:
-    """Unix epoch for the next occurrence of HH:MM in the given IANA timezone."""
+    """Wall-clock seconds for the next occurrence of HH:MM in the given IANA timezone.
+
+    Google's transit time slot (`3j` in the pb, `8j` in the link) reads the value as local
+    wall-clock time encoded as if it were UTC, not as a true Unix epoch, so the local time is
+    re-stamped as UTC before conversion. A true epoch lands the route off by the UTC offset.
+    """
     try:
         tz = ZoneInfo(tz_name)
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -65,7 +70,7 @@ def _next_epoch(hhmm: str, tz_name: str) -> int:
     when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if when < now:
         when += timedelta(days=1)
-    return int(when.timestamp())
+    return int(when.replace(tzinfo=UTC).timestamp())
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
