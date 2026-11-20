@@ -568,3 +568,86 @@ def test_delay_is_client_configuration_not_a_send_option(tmp_path):
 
     assert "seconds" not in vars(send_args)
     assert cli._dispatch_email(delay_args, Config(data_dir=tmp_path), None) == {"send_delay_seconds": 45}
+
+
+_DRAFT = {
+    "subject": "Re: Hello",
+    "isDraft": True,
+    "toRecipients": [{"emailAddress": {"address": "bob@example.com"}}],
+    "ccRecipients": [{"emailAddress": {"address": "cc@example.com"}}],
+    "bccRecipients": [],
+}
+
+
+def _graph_draft(monkeypatch, draft):
+    calls = []
+
+    def fake_request(_config, _client, method, path, _account_id, **kwargs):
+        calls.append((method, path))
+        return draft if method == "GET" else None
+
+    monkeypatch.setattr(email.auth, "get_account_id_by_email", lambda *_args: "account-1")
+    monkeypatch.setattr(email.graph, "request_cfg", fake_request)
+    return calls
+
+
+def test_send_draft_queues_the_existing_draft_and_undo_keeps_it(tmp_path, monkeypatch):
+    config = Config(data_dir=tmp_path)
+    calls = _graph_draft(monkeypatch, _DRAFT)
+
+    result = email.send_draft(config, None, account_email="me@example.com", draft_id="draft-1")
+
+    assert result["action"] == "send-draft"
+    assert result["subject"] == "Re: Hello"
+    assert result["recipients"] == "bob@example.com, cc@example.com"
+    assert calls == [("GET", "/me/messages/draft-1")]
+    assert pending_send.undo(config, None, result["id"]) == {"id": result["id"], "status": "cancelled"}
+    assert calls == [("GET", "/me/messages/draft-1")]
+    assert pending_send.list_pending(tmp_path) == []
+
+
+def test_send_draft_dispatches_the_same_draft_id(tmp_path, monkeypatch):
+    config = Config(data_dir=tmp_path)
+    calls = _graph_draft(monkeypatch, _DRAFT)
+    queued = email.send_draft(config, None, account_email="me@example.com", draft_id="draft-1")
+
+    assert pending_send.dispatch_due(config, None, now=datetime.fromisoformat(queued["send_at"])) is True
+    assert calls == [("GET", "/me/messages/draft-1"), ("POST", "/me/messages/draft-1/send")]
+
+
+def test_send_draft_without_delay_sends_immediately(tmp_path, monkeypatch):
+    pending_send.set_delay_seconds(tmp_path, 0)
+    calls = _graph_draft(monkeypatch, _DRAFT)
+
+    result = email.send_draft(Config(data_dir=tmp_path), None, account_email="me@example.com", draft_id="draft-1")
+
+    assert result == {"status": "sent", "id": "draft-1", "recipients": "bob@example.com, cc@example.com"}
+    assert calls[-1] == ("POST", "/me/messages/draft-1/send")
+
+
+def test_send_draft_refuses_a_sent_message(tmp_path, monkeypatch):
+    calls = _graph_draft(monkeypatch, {**_DRAFT, "isDraft": False})
+
+    with pytest.raises(ValueError, match="not a draft"):
+        email.send_draft(Config(data_dir=tmp_path), None, account_email="me@example.com", draft_id="msg-1")
+    assert calls == [("GET", "/me/messages/msg-1")]
+    assert pending_send.list_pending(tmp_path) == []
+
+
+def test_send_draft_on_owa_rest_queues_for_the_owa_backend(tmp_path, monkeypatch):
+    monkeypatch.setattr(owa_rest_commands.owa_rest, "get_message_fields", lambda *_args, **_kwargs: _DRAFT)
+
+    result = owa_rest_commands.send_draft(Config(data_dir=tmp_path), None, account_email="me@example.com", draft_id="draft-1")
+
+    [queued] = pending_send.list_pending(tmp_path)
+    assert queued.id == result["id"]
+    assert queued.backend == pending_send.OWA_REST_BACKEND
+    assert queued.payload == b"draft-1"
+
+
+def test_send_draft_is_refused_in_draft_only_mode(monkeypatch):
+    monkeypatch.setenv("EMAIL_DRAFT_ONLY", "1")
+    args = cli.build_parser().parse_args(["email", "send-draft", "--account", "me@example.com", "--id", "draft-1"])
+
+    with pytest.raises(RuntimeError, match="draft-only mode"):
+        cli._dispatch_email(args, Config(), None)

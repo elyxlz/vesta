@@ -55,9 +55,12 @@ microsoft email archive --account user@example.com --id <email_id>              
 microsoft email draft --account user@example.com --to bob@example.com --subject "Proposal" --body "rough notes..."
 microsoft email draft --account user@example.com --reply-to <email_id> --body "draft answer for review"    # threaded reply draft
 microsoft email draft --account user@example.com --forward <email_id> --to bob@example.com --body "fyi"      # forward draft
+microsoft email send-draft --account user@example.com --id <draft_id>                                      # send it once approved
 ```
 
 `draft` saves to the Drafts folder without sending. `--reply-to` / `--forward` (mutually exclusive) build a **threaded** draft off an existing message; `--subject` is optional then (inherited). Accepts `--cc`/`--bcc`/`--attachments`.
+
+`send-draft` sends an existing draft (from `draft` or `reply-draft`) exactly as the user reviewed it: no re-typed body, no leftover copy in Drafts. It goes through the same delay and `pending`/`undo` queue as `send` (action `send-draft`), except `undo` leaves the draft in Drafts. It refuses a message that is not a draft or has no recipients, and is blocked by `EMAIL_DRAFT_ONLY` and `MICROSOFT_READ_ONLY` like `send`.
 
 ## Folders
 

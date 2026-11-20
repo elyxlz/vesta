@@ -49,6 +49,8 @@ microsoft email reply-draft --account user@example.com --id '<email_id>' --body 
 `--body` is plain text (`- ` lines become bullets), placed above the quoted thread. On a re-edit
 pass `--replace-draft <old_id>` (the `id` printed by the prior run) so repeated tweaks leave
 exactly one draft, not a pile. Graph-only.
+Once the user approves, send that draft as is with `email send-draft --id <draft_id>`; never re-create
+it with `email reply`.
 
 ### Contact Communication Styles
 [How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]

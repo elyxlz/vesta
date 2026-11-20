@@ -20,6 +20,8 @@ RETRY_DELAY_SECONDS = 30
 MAX_DELIVERY_ATTEMPTS = 3
 GRAPH_BACKEND = "graph"
 OWA_REST_BACKEND = "owa-rest"
+SEND_DRAFT_ACTION = "send-draft"
+DRAFT_FIELDS = "subject,isDraft,toRecipients,ccRecipients,bccRecipients"
 INTERRUPTED_ERROR = "dispatch was interrupted; check the Sent folder before undoing or resending"
 _DATABASE_NAME = "pending-sends.db"
 _UNDOABLE_STATES = "('pending', 'failed')"
@@ -223,19 +225,46 @@ def recover_dispatching(data_dir: Path) -> None:
         connection.execute("UPDATE sends SET state = 'failed', last_error = ? WHERE state = 'dispatching'", (INTERRUPTED_ERROR,))
 
 
+def _send_draft_now(config: Config, client: httpx.Client, *, account: str, backend: str, draft_id: str) -> None:
+    if backend == GRAPH_BACKEND:
+        account_id = auth.get_account_id_by_email(account, config.cache_file)
+        graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
+    elif backend == OWA_REST_BACKEND:
+        owa_rest.send_draft(client, account, config, item_id=draft_id)
+    else:
+        raise ValueError(f"unknown pending-send backend {backend!r}")
+
+
+def send_existing_draft(config: Config, client: httpx.Client, *, account: str, backend: str, draft_id: str, draft: dict) -> dict[str, str]:
+    """Send a draft the user reviewed, unchanged, through the same delay and undo window as `send`.
+    `draft` is the message read back with DRAFT_FIELDS."""
+    if not draft.get("isDraft"):
+        raise ValueError(f"message {draft_id!r} is not a draft; only an unsent draft can be sent with send-draft")
+    fields = ("toRecipients", "ccRecipients", "bccRecipients")
+    recipients = ", ".join(r["emailAddress"]["address"] for f in fields for r in draft.get(f) or [])
+    if not recipients:
+        raise ValueError(f"draft {draft_id!r} has no recipients")
+    if delay_seconds(config.data_dir) > 0:
+        queued = enqueue(
+            config.data_dir,
+            account=account,
+            action=SEND_DRAFT_ACTION,
+            subject=draft.get("subject") or "(no subject)",
+            recipients=recipients,
+            backend=backend,
+            payload=draft_id.encode(),
+        )
+        return queued.public()
+    _send_draft_now(config, client, account=account, backend=backend, draft_id=draft_id)
+    return {"status": "sent", "id": draft_id, "recipients": recipients}
+
+
 def dispatch_due(config: Config, client: httpx.Client, *, now: datetime | None = None) -> bool:
     queued = claim_due(config.data_dir, now=now)
     if queued is None:
         return False
     try:
-        draft_id = queued.payload.decode()
-        if queued.backend == GRAPH_BACKEND:
-            account_id = auth.get_account_id_by_email(queued.account, config.cache_file)
-            graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
-        elif queued.backend == OWA_REST_BACKEND:
-            owa_rest.send_draft(client, queued.account, config, item_id=draft_id)
-        else:
-            raise ValueError(f"unknown pending-send backend {queued.backend!r}")
+        _send_draft_now(config, client, account=queued.account, backend=queued.backend, draft_id=queued.payload.decode())
     except Exception as error:
         retry(config.data_dir, queued.id, str(error), now=now)
         raise
@@ -245,6 +274,14 @@ def dispatch_due(config: Config, client: httpx.Client, *, now: datetime | None =
 
 def undo(config: Config, client: httpx.Client, pending_id: str) -> dict[str, str]:
     queued = cancel(config.data_dir, pending_id)
+    # A cancelled send-draft leaves the user's reviewed draft in Drafts; every other action owns its draft.
+    if queued.action != SEND_DRAFT_ACTION:
+        _delete_draft(config, client, queued)
+    finish_cancel(config.data_dir, pending_id)
+    return {"id": pending_id, "status": "cancelled"}
+
+
+def _delete_draft(config: Config, client: httpx.Client, queued: PendingSend) -> None:
     draft_id = queued.payload.decode()
     if queued.backend == GRAPH_BACKEND:
         account_id = auth.get_account_id_by_email(queued.account, config.cache_file)
@@ -253,5 +290,3 @@ def undo(config: Config, client: httpx.Client, pending_id: str) -> dict[str, str
         owa_rest.delete_message(client, queued.account, config, item_id=draft_id)
     else:
         raise ValueError(f"unknown pending-send backend {queued.backend!r}")
-    finish_cancel(config.data_dir, pending_id)
-    return {"id": pending_id, "status": "cancelled"}

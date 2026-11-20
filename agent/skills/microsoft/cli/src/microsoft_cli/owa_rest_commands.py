@@ -103,6 +103,13 @@ def send_email(config: Config, client, *, account_email: str, mail: MailDraft) -
     return owa_rest.send_message(client, account_email, config, mail=mail)
 
 
+def send_draft(config: Config, client, *, account_email: str, draft_id: str) -> dict:
+    draft = owa_rest.get_message_fields(client, account_email, config, item_id=draft_id, select=pending_send.DRAFT_FIELDS)
+    return pending_send.send_existing_draft(
+        config, client, account=account_email, backend=pending_send.OWA_REST_BACKEND, draft_id=draft_id, draft=draft
+    )
+
+
 def create_email_draft(config: Config, client, *, account_email: str, mail: MailDraft) -> dict:
     if mail.reply_to_id and mail.forward_id:
         raise ValueError("specify at most one of --reply-to or --forward")

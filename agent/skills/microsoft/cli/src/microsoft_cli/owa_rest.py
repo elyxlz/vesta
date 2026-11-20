@@ -396,6 +396,11 @@ def send_message(client: httpx.Client, account_email: str, config, *, mail: Mail
     return {"status": "sent"}
 
 
+def get_message_fields(client: httpx.Client, account_email: str, config, *, item_id: str, select: str) -> dict:
+    token = load_token(account_email, config)
+    return _get(client, token, f"/me/messages/{item_id}", {"$select": select})
+
+
 def send_draft(client: httpx.Client, account_email: str, config, *, item_id: str) -> None:
     token = load_token(account_email, config)
     _post(client, token, f"/me/messages/{item_id}/send")

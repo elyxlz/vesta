@@ -522,6 +522,14 @@ def _send_email_now(config: Config, client: httpx.Client, *, account_email: str,
     return {"status": "sent"}
 
 
+def send_draft(config: Config, client: httpx.Client, *, account_email: str, draft_id: str) -> dict[str, str]:
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    draft = graph.request_cfg(config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": pending_send.DRAFT_FIELDS})
+    return pending_send.send_existing_draft(
+        config, client, account=account_email, backend=pending_send.GRAPH_BACKEND, draft_id=draft_id, draft=draft or {}
+    )
+
+
 def reply_to_email(
     config: Config,
     client: httpx.Client,
