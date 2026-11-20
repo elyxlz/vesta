@@ -94,6 +94,8 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 **When the fix is a check, a detector, a threshold, or a monitor, also simulate the HEALTHY case.** Replaying the failure it was built for only proves it fires. Ask literally: what does this print when everything is fine? If the answer is "the last bad value", "nothing, so the previous reading stands", or "I cannot tell the difference", the check is a high-water mark that pins you to a stale state, and it looks healthy the whole time because it still returns a plausible number. Then run the case where the probe itself fails while the target is fine (empty output, a timeout, a broken flag): the detector must fall back to a reliable signal or do nothing, never take the failure branch.
 
+**Escalation for RECURRED failures.** A replay or a simulation does NOT count as validation for a failure class that has already recurred once: only a real execution of the changed code on the real data path does. Run the actual script against the actual DB, file, calendar, or mail; a unit-level real run of the exact guarded path is enough when a full end-to-end run would be unsafe. If you cannot run it for real tonight, log the fix as UNRESOLVED (replay only) in the summary and carry it over; never mark it validated.
+
 ### 5. Upstream
 
 Read the `upstream` skill and follow it. It can be a no-op; don't invent work to fill it.
