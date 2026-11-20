@@ -252,7 +252,9 @@ family, and let the patient choose who is told.
   the hour, **snooze it** (`reminders snooze <id> --in-hours N`); anything further out waits for
   Afterwards. A cheerful reminder about a job application landing mid-crisis is its own small
   cruelty. **Snooze, never delete**: deleting is unrecoverable, and it silently drops something the
-  user is counting on at the exact moment they have no attention to notice it missing.
+  user is counting on at the exact moment they have no attention to notice it missing. A
+  **recurring** reminder cannot be snoozed (the CLI rejects it, and deleting kills every future
+  fire): write "skip <id> at <time>" into the LIVE file below and, when it fires, do not send it.
 - Never compact or restart context mid-emergency if you can defer it. **Append** the live state to
   `data/LIVE-<what>-<date>.md` line by line as it happens, so a restart cannot lose the thread.
   Append, do not compose; writing a document is attention the patient is owed.
