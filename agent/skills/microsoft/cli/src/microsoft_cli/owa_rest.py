@@ -29,7 +29,7 @@ import httpx
 
 from . import auth
 from .config import OWA_REST_SCOPES, read_json_marker
-from .payloads import AGENT_EVENT_CATEGORY, EventFields, EventPatch, MailDraft
+from .payloads import AGENT_EVENT_CATEGORY, EventFields, EventPatch, MailDraft, merge_attendees
 from .settings import OWA_REST_CLIENT_ID
 
 OWA_REST_BASE = "https://outlook.office.com/api/v2.0"
@@ -720,6 +720,9 @@ def update_event(client: httpx.Client, account_email: str, config, *, event_id: 
         updates["location"] = {"displayName": patch.location}
     if patch.body is not None:
         updates["body"] = {"contentType": "Text", "content": patch.body}
+    if patch.edits_attendees:
+        current = _get(client, token, f"/me/events/{event_id}", {"$select": "attendees"})
+        updates["attendees"] = merge_attendees(current.get("attendees", []), patch)
     if not updates:
         raise OwaRestError("nothing to update")
     _patch(client, token, f"/me/events/{event_id}", updates)

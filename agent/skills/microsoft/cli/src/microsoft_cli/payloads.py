@@ -58,3 +58,25 @@ class EventPatch:
     timezone: str | None = None
     reminder_on: bool | None = None
     reminder_minutes: int | None = None
+    add_attendees: list[str] | None = None
+    remove_attendees: list[str] | None = None
+
+    @property
+    def edits_attendees(self) -> bool:
+        return bool(self.add_attendees or self.remove_attendees)
+
+
+def merge_attendees(current: list[dict], patch: EventPatch) -> list[dict]:
+    """Full attendee list for a PATCH, since writing `attendees` replaces the whole list."""
+    removed = {a.lower() for a in patch.remove_attendees or []}
+    merged = [
+        {"emailAddress": a["emailAddress"], "type": a.get("type", "required")}
+        for a in current
+        if a.get("emailAddress", {}).get("address", "").lower() not in removed
+    ]
+    present = {a["emailAddress"].get("address", "").lower() for a in merged}
+    for address in patch.add_attendees or []:
+        if address.lower() not in present and address.lower() not in removed:
+            merged.append({"emailAddress": {"address": address}, "type": "required"})
+            present.add(address.lower())
+    return merged

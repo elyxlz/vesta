@@ -8,7 +8,7 @@ import httpx
 
 from . import auth, graph
 from .config import Config
-from .payloads import AGENT_EVENT_CATEGORY, EventFields, EventPatch
+from .payloads import AGENT_EVENT_CATEGORY, EventFields, EventPatch, merge_attendees
 
 
 def _validate_timezone(timezone: str) -> None:
@@ -236,6 +236,9 @@ def update_event(config: Config, client: httpx.Client, *, account_email: str, ev
         formatted_updates["isReminderOn"] = patch.reminder_on
     if patch.reminder_minutes is not None:
         formatted_updates["reminderMinutesBeforeStart"] = patch.reminder_minutes
+    if patch.edits_attendees:
+        current = graph.request_cfg(config, client, "GET", f"/me/events/{event_id}", account_id, params={"$select": "attendees"}) or {}
+        formatted_updates["attendees"] = merge_attendees(current.get("attendees", []), patch)
 
     if not formatted_updates:
         raise ValueError("Must specify at least one field to update")
