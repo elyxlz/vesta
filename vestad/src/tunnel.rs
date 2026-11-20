@@ -975,8 +975,7 @@ fn choose_subdomain(
 pub(crate) fn gethostname() -> String {
     let output = std::process::Command::new("hostname")
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+        .map_or_default(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if output.is_empty() {
         "vesta".to_string()
     } else {

@@ -193,7 +193,7 @@ fn rate_limited_body(window: &crate::docker::RateLimitedWindow, now_epoch_secs: 
         .resets_at
         .and_then(|resets_at| u64::try_from(resets_at).ok())
         .filter(|resets_at| *resets_at > now_epoch_secs)
-        .map(|resets_at| {
+        .map_or_default(|resets_at| {
             let remaining = resets_at - now_epoch_secs;
             let (hours, minutes) = (remaining / 3600, remaining % 3600 / 60);
             if hours > 0 {
@@ -201,8 +201,7 @@ fn rate_limited_body(window: &crate::docker::RateLimitedWindow, now_epoch_secs: 
             } else {
                 format!(", resets in {minutes}m")
             }
-        })
-        .unwrap_or_default();
+        });
     format!("{name}{reset}.")
 }
 

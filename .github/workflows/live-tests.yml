@@ -61,7 +61,8 @@ env:
 jobs:
   test-live:
     name: Agent · Run live end-to-end tests
-    runs-on: ubuntu-latest
+    # Pinned with the Docker jobs in ci.yml (see test-integration there).
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

@@ -1116,8 +1116,7 @@ fn pending_ids(snapshot: &serde_json::Value) -> Vec<String> {
         .get("notifications")
         .and_then(|n| n.get("pending"))
         .and_then(|p| p.as_array())
-        .map(|items| items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-        .unwrap_or_default()
+        .map_or_default(|items| items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
 }
 
 #[cfg(test)]
