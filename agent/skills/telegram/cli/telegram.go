@@ -316,6 +316,16 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 
 	// Write notification for incoming messages
 	if ctx, ok := tc.notifContextFor(msg); ok {
+		// Resolve the reply pointer here, where the store is in hand. Best effort: a quoted
+		// message this store never saw leaves the id alone rather than dropping the notification.
+		var replyToText string
+		if replyToID != 0 {
+			if quoted, err := tc.store.GetMessageContent(replyToID); err != nil {
+				log.Printf("Failed to resolve reply_to_id %d: %v", replyToID, err)
+			} else {
+				replyToText = quoted
+			}
+		}
 		WriteNotification(
 			tc.notificationsDir,
 			int64(msg.MessageID),
@@ -330,6 +340,7 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 			content,
 			mediaType,
 			replyToID,
+			replyToText,
 		)
 	}
 }
