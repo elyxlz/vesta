@@ -112,7 +112,21 @@ def _parse_match(spec: str) -> dict[str, object]:
     op = "regex" if "~" in opsym else "contains"
     if op == "regex":
         re.compile(value)  # surfaces re.error -> reported by main()
+    _refuse_match_all(op, value, f"--match {spec!r}", negated=opsym.startswith("!"))
     return _predicate(field, op, value, opsym.startswith("!"))
+
+
+def _refuse_match_all(op: str, value: str, label: str, negated: bool = False) -> None:
+    """Refuse a positive predicate that matches the empty string: it matches every notification. A
+    deliberate catch-all omits the predicate instead."""
+    if negated:
+        return
+    hits_empty = value == "" if op == "contains" else re.search(value, "", re.IGNORECASE) is not None
+    if hits_empty:
+        raise ValueError(
+            f"{label} matches the empty string, so it would match every notification "
+            "(empty value, or a regex with an empty alternative like '|x' or 'x|'). Fix the value."
+        )
 
 
 def _specificity(rule: dict[str, object]) -> int:
@@ -170,29 +184,34 @@ def cmd_list(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_add(args: argparse.Namespace) -> int:
-    if args.source and args.source.strip().lower() == CORE_SOURCE:
-        print(f"error: cannot target source={CORE_SOURCE}; core notifications are never affected by rules", file=sys.stderr)
-        return 1
+def _build_predicates(args: argparse.Namespace) -> list[dict[str, object]]:
     # --sender / --keyword are ergonomic shortcuts for the common cases; both compile to `match`
     # predicates so the stored shape is uniform (sender = substring over identity fields; keyword =
     # regex over the body/message text).
     predicates: list[dict[str, object]] = []
     if args.sender is not None:
+        _refuse_match_all("contains", args.sender.strip(), "--sender")
         predicates.append(_predicate("sender", "contains", args.sender))
     if args.keyword is not None:
         try:
             re.compile(args.keyword)
         except re.error as e:
-            print(f"error: --keyword is a regex and {args.keyword!r} is invalid: {e}", file=sys.stderr)
-            return 1
+            raise ValueError(f"--keyword is a regex and {args.keyword!r} is invalid: {e}") from e
+        _refuse_match_all("regex", args.keyword, f"--keyword {args.keyword!r}")
         predicates.append(_predicate("text", "regex", args.keyword))
-    for spec in args.match or []:
-        try:
-            predicates.append(_parse_match(spec))
-        except (ValueError, re.error) as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
+    predicates.extend(_parse_match(spec) for spec in args.match or [])
+    return predicates
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    if args.source and args.source.strip().lower() == CORE_SOURCE:
+        print(f"error: cannot target source={CORE_SOURCE}; core notifications are never affected by rules", file=sys.stderr)
+        return 1
+    try:
+        predicates = _build_predicates(args)
+    except (ValueError, re.error) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     rule: dict[str, object] = {"id": uuid.uuid4().hex, "source": args.source, "type": args.type, "match": predicates, "action": args.action}
     if args.for_duration is not None:
         try:
