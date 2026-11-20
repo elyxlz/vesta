@@ -35,6 +35,32 @@ for pid_file in "$HOME"/agent/data/daemons/*.pid; do
     fi
 done
 
+# Messaging auth: a messaging daemon can be alive and signed out, which the pid probe above cannot
+# see, because kill -0 only proves a process exists. A signed-out messaging daemon is the channel to
+# the user going silent while every liveness signal stays green.
+#
+# Only an EXPLICIT signed-out answer is RED. A missing command, a non-zero exit, a timeout, or an
+# answer that does not carry the field are UNKNOWN: they print without incrementing red, because a
+# probe that cannot reach its target must not report the target as broken. Unknown is still printed
+# rather than skipped, so fail-safe does not become fail-silent.
+for messenger in whatsapp telegram; do
+    [ -e "$HOME/agent/data/daemons/$messenger.pid" ] || continue
+    command -v "$messenger" >/dev/null 2>&1 || {
+        ok "$messenger has a daemon record but no command on PATH, auth state unknown"
+        continue
+    }
+    status=$(timeout 30 "$messenger" daemon status 2>/dev/null)
+    if [ -z "$status" ]; then
+        ok "$messenger daemon status gave no answer, auth state unknown (not treated as down)"
+    elif printf '%s' "$status" | grep -q '"logged_in"[[:space:]]*:[[:space:]]*false'; then
+        bad "$messenger is running but SIGNED OUT: it can neither send nor receive, and relinking needs the user"
+    elif printf '%s' "$status" | grep -q '"logged_in"[[:space:]]*:[[:space:]]*true'; then
+        ok "$messenger is signed in"
+    else
+        ok "$messenger status did not report logged_in, auth state unknown (not treated as down)"
+    fi
+done
+
 # Disk: a full disk fails writes quietly all over the box. The filesystem under $HOME is the host's,
 # so its percentage is mostly other tenants: own usage is a RED to clear here only under host
 # pressure, the host alone is a RED to escalate once writes are about to fail, reported separately.
