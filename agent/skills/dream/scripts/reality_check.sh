@@ -78,6 +78,16 @@ for log in "$HOME"/agent/logs/*.log; do
         { low = tolower($0) }
         recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
         | grep -icE 'error|traceback')
+    # A supervisor restart loop logs "died; restarting" with no error word, so the error count stays
+    # low while the component is dead. Count churn separately, aged by the same line dates.
+    churn=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+        BEGIN { recent = 1 }
+        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
+        recent && $0 !~ /\[AGENT\]/' \
+        | grep -icE '(died|crashed).*restart|restarting')
+    if [ "$churn" -gt 100 ]; then
+        bad "$(basename "$log"): $churn restart-loop lines in the last 2 days; something keeps dying and being respawned, read it"
+    fi
     if [ "$errors" -gt 200 ]; then
         bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
     else
@@ -87,12 +97,38 @@ done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
 # a turn that ran and chose silence still reads its cache. That usage line is the one trace every
-# refusal leaves, so count those lines rather than the daemon's rate-limit warnings.
-refused=$(grep -h "$today .*\[USAGE\] in=0 out=0 cache_read=0 " "$HOME"/agent/logs/vesta.log* 2>/dev/null | wc -l)
+# refusal leaves, so count those lines rather than the daemon's rate-limit warnings. A turn that a
+# new message preempted (right after "Preempt sent", the message is redelivered) or that hit a
+# compaction boundary logs the same zero line, so a zero line within three lines of either marker
+# is not a refusal.
+refused=$(cat "$HOME"/agent/logs/vesta.log* 2>/dev/null | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" '
+    BEGIN { since = 99 }
+    /\[AGENT\]/ { next }
+    /Preempt sent|Compaction boundary reached/ { since = 0; next }
+    { since++ }
+    index($0, today) == 1 && /\[USAGE\] in=0 out=0 cache_read=0 / && !(since <= 3 && since > 0) { n++ }
+    END { print n + 0 }')
 if [ "$refused" -ge "$REFUSED_TURNS_RED" ]; then
     bad "the provider refused $refused turns today: each was a message or a job that never ran; find the window in vesta.log and what it dropped"
 else
     ok "the provider refused $refused turns today"
+fi
+
+# Downtime: a shutdown whose next startup comes much later means the agent sat stopped (a restart
+# that failed, a host fault) and every message and reminder in that window waited or was skipped.
+# Nothing else records it, because nothing runs while the agent is down. Shutdown and startup lines
+# carry their date and time as the first two fields once colour codes are stripped.
+gap=$(cat "$HOME"/agent/logs/vesta.log* 2>/dev/null | sed "s/$esc\[[0-9;]*m//g" | grep -v '\[AGENT\]' \
+    | grep -E '\[SHUTDOWN\] Shutting down|\[INIT\] .* starting' | sort | awk -v today="$today" -v yesterday="$yesterday" '
+    { cmd = "date -d \"" $1 " " $2 "\" +%s"; cmd | getline t; close(cmd) }
+    /\[SHUTDOWN\]/ { down = t; day = $1; next }
+    /\[INIT\]/ && down && (day == today || day == yesterday) { g = int((t - down) / 60); if (g > max) { max = g; at = day " " } down = 0 }
+    END { print max + 0, at }')
+gap_min=${gap%% *}
+if [ "$gap_min" -ge "${DOWNTIME_MIN_RED:-30}" ]; then
+    bad "agent was down $gap_min minutes after a shutdown on ${gap#* }; find why the restart failed (vestad /gateway/logs) and what fired while down"
+else
+    ok "longest shutdown-to-startup gap in 2 days: $gap_min minutes"
 fi
 
 # Events DB freshness: the store is written on every turn, but it runs in WAL mode, so between

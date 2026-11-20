@@ -249,6 +249,22 @@ def test_turns_that_ran_and_yesterdays_refusals_are_not_refused_turns(tmp_path):
     assert "OK  the provider refused 0 turns today" in run.stdout
 
 
+def test_preempted_and_compacted_turns_are_not_refused_turns(tmp_path):
+    # A turn cut short by a new message, or by a compaction boundary, logs the same zero usage line
+    # as a refusal, but nothing was dropped: the message is redelivered and the session resumes.
+    home = _healthy_home(tmp_path)
+    day = _day(0)
+    preempt = f"{GREEN}{day} 03:00:00 [DEBUG] [SYSTEM] [RUNTIME] Preempt sent (priority=now){RESET}\n"
+    compact = f"{GREEN}{day} 03:00:00 [SYSTEM] [CLIENT] Compaction boundary reached{RESET}\n"
+    lines = (preempt + _usage_line(day, cache_read=0)) * 3 + (compact + _usage_line(day, cache_read=0)) * 2
+    (home / "agent" / "logs" / "vesta.log").write_text(_usage_line(day, cache_read=0) + lines)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  the provider refused 1 turns today" in run.stdout
+
+
 def test_this_agent_filling_the_disk_goes_red(tmp_path):
     home = _healthy_home(tmp_path)
     _fake_disk_usage(home, 95)
@@ -429,3 +445,53 @@ def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "no dreamer summaries yet" in run.stdout
+
+
+def test_a_silent_restart_loop_goes_red(tmp_path):
+    # A worker that dies and is respawned every tick logs no "error" word, so only a churn count sees it.
+    home = _healthy_home(tmp_path)
+    lines = f"[{_day(0)} 10:00:00] [acct:INBOX] worker died; restarting\n" * 300
+    (home / "agent" / "logs" / "looping.log").write_text(lines)
+
+    run = _run(home)
+
+    assert run.returncode == 1
+    assert "RED looping.log" in run.stdout
+    assert "restart-loop" in run.stdout
+
+
+def test_an_old_restart_loop_ages_out(tmp_path):
+    home = _healthy_home(tmp_path)
+    lines = f"[{_day(3)} 10:00:00] worker died; restarting\n" * 300 + f"[{_day(0)} 10:00:00] connected\n"
+    (home / "agent" / "logs" / "healed.log").write_text(lines)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+
+
+def _restart_lines(day: str, down_at: str, up_at: str) -> str:
+    shutdown = f"{GREEN}{day} {down_at} [SYSTEM] [SHUTDOWN] Shutting down (compaction){RESET}\n"
+    startup = f"{GREEN}{day} {up_at} [SYSTEM] [INIT] agent starting on vesta v0.0.0{RESET}\n"
+    return shutdown + startup
+
+
+def test_a_long_shutdown_to_startup_gap_goes_red(tmp_path):
+    # Nothing runs while the agent is down, so a restart that failed for hours leaves only this gap.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text(_restart_lines(_day(0), "04:00:00", "10:00:00"))
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED agent was down 360 minutes" in run.stdout
+
+
+def test_a_quick_restart_stays_green(tmp_path):
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text(_restart_lines(_day(0), "04:00:00", "04:00:02"))
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  longest shutdown-to-startup gap in 2 days: 0 minutes" in run.stdout
