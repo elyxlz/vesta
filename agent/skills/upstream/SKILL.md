@@ -30,7 +30,9 @@ Three calls are intercepted and carry extra behavior:
   filed (edit those with `upstream gh pr edit`).
 - `upstream gh issue create --title T --body B`: validates the title, appends the same
   footer, creates the issue. The App cannot comment on or edit an issue after posting
-  (403), so the body must be complete at create time.
+  (403), so the body must be complete at create time. This limit is ISSUES ONLY:
+  `upstream gh pr comment <n> --body ...` DOES work (verified 2026-09-07), which is how
+  to add evidence to someone else's PR instead of filing a duplicate on the same hunk.
 - `upstream gh pr list --mine [--state open|closed|all] [--limit N]`: the PRs this agent
   wrote. Every PR here is authored by `vesta-upstream[bot]`, so ownership lives in commit
   authors (`<agent-name> (vesta)`) and plain `gh pr list` cannot answer "which are mine".
