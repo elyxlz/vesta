@@ -32,6 +32,7 @@ Both sides of the conversation are searchable: your own messages, and the inboun
 - OR: `cats OR dogs` finds messages with either word
 - Prefix: `sched*` matches schedule, scheduled, scheduling, etc.
 - NOT: `meeting NOT cancelled` excludes matches
+- Terms with a hyphen, dot, or colon must be quoted: `recall '"Cube-a"'`. Unquoted, `Cube-a` is parsed as a column filter and fails with `no such column: a`
 
 ## Learned Patterns
 
