@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Refuse a MEMORY.md write that grows the file while it is over its cap, or
+that loses a structural invariant.
+
+WHY THIS EXISTS. MEMORY.md is injected into every system prompt, so every
+character costs tokens on every message, and it has a hard character cap that
+`memory_size.sh` reports. Reporting is not enough. The instruction "consolidate
+next time" is easy to issue sincerely and then violate, because nothing in the
+loop can refuse the write: the number is visible, the growth happens anyway,
+and the next night issues the same sentence.
+
+The failure this was built for is specific and repeats. During a curation pass
+whose entire purpose was shrinking the file, three consecutive rewrites of one
+section were each LONGER than the block they replaced, and only a hand-typed
+assertion caught them. A guard you have to remember to type is a guard that
+works until the night you are busy.
+
+It also enforces the structural invariant that has been broken twice: taking a
+slice end from a marker in a DIFFERENT section deletes everything between, and
+a `^## ` header count is the cheapest way to notice before the write lands
+rather than afterwards.
+
+USAGE
+  memory-guard <candidate-file> [--cap N] [--memory PATH]
+  memory-guard --self-test
+
+  Write the proposed new MEMORY.md to a temp file, run this against it, and
+  only copy it into place on exit 0.
+
+EXIT CODES
+  0  PASS    the write is allowed
+  1  REFUSE  the write breaks an invariant; the message says which
+  2  BLIND   a file could not be read, so no judgement was possible
+
+The cap defaults to 50000 to match `memory_size.sh`. If you change the cap,
+change it in both places or pass --cap; a constant that moves in one home and
+not the other is its own class of bug.
+"""
+
+import argparse
+import pathlib
+import re
+import sys
+
+DEFAULT_CAP = 50_000
+
+# Structural tokens whose loss would be silent and expensive. Deliberately
+# minimal and generic: this is a structural guard, not a content review.
+REQUIRED = ["## Charter"]
+
+
+def judge(candidate: str, live: str, cap: int = DEFAULT_CAP):
+    """Return (exit_code, [messages]). Pure, so the self-test can drive it."""
+    msgs = []
+
+    n_new = len(re.findall(r"^## ", candidate, re.MULTILINE))
+    n_old = len(re.findall(r"^## ", live, re.MULTILINE))
+    if n_new != n_old:
+        msgs.append(
+            f"REFUSE: '## ' header count changed, {n_old} -> {n_new}. A slice end taken "
+            "from a marker in another section deletes every section in between."
+        )
+
+    msgs.extend(f"REFUSE: required section missing from candidate: {tok!r}" for tok in REQUIRED if tok in live and tok not in candidate)
+
+    if len(candidate) > cap and len(candidate) > len(live):
+        msgs.append(
+            f"REFUSE: file is over the {cap:,} cap at {len(live):,} and this write GROWS "
+            f"it to {len(candidate):,} (+{len(candidate) - len(live):,}). While over cap a "
+            "write must not add net characters: cut something in the same write, or make "
+            "the addition pay for itself."
+        )
+
+    if msgs:
+        return 1, msgs
+
+    delta = len(candidate) - len(live)
+    over = "" if len(candidate) <= cap else f"  STILL OVER CAP by {len(candidate) - cap:,}"
+    return 0, [f"PASS: {len(live):,} -> {len(candidate):,} ({delta:+,}), headers {n_old}.{over}"]
+
+
+def self_test() -> int:
+    """Control-test both directions: it must refuse the bad write AND allow the good one."""
+    small = "## Charter\nx\n## 1. THINGS\ny\n"
+    over = small + ("z" * 60_000)
+    cases = [
+        ("identical write is allowed", over, over, 0),
+        ("one character larger while over cap is REFUSED", over + "z", over, 1),
+        ("smaller while over cap is allowed", over[:-5_000], over, 0),
+        ("a lost section header is REFUSED", over.replace("## 1. THINGS", "1. THINGS"), over, 1),
+        ("a lost Charter is REFUSED", over.replace("## Charter", "Charter"), over, 1),
+        ("growth is allowed when UNDER cap", small + "y" * 100, small, 0),
+        ("an added section header is REFUSED", over + "\n## 2. NEW\n", over, 1),
+    ]
+    ok = True
+    for name, cand, base, want in cases:
+        got, _ = judge(cand, base)
+        if got != want:
+            ok = False
+        print(f"  {'ok  ' if got == want else 'FAIL'} {name} (want {want}, got {got})")
+    print("self-test PASSED" if ok else "self-test FAILED")
+    return 0 if ok else 1
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(add_help=True, description="Refuse a bad MEMORY.md write.")
+    ap.add_argument("candidate", nargs="?", help="file holding the proposed new MEMORY.md")
+    ap.add_argument("--cap", type=int, default=DEFAULT_CAP)
+    ap.add_argument("--memory", default=str(pathlib.Path.home() / "agent" / "MEMORY.md"))
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args()
+
+    if args.self_test:
+        return self_test()
+    if not args.candidate:
+        ap.print_help()
+        return 2
+
+    try:
+        candidate = pathlib.Path(args.candidate).read_text()
+    except OSError as e:
+        print(f"BLIND: cannot read candidate: {e}")
+        return 2
+    try:
+        live = pathlib.Path(args.memory).read_text()
+    except OSError as e:
+        print(f"BLIND: cannot read {args.memory}: {e}")
+        return 2
+
+    code, msgs = judge(candidate, live, args.cap)
+    for m in msgs:
+        print(m)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
