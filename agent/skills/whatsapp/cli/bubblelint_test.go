@@ -77,6 +77,33 @@ func TestBubbleLintBlocks(t *testing.T) {
 	}
 }
 
+// TestDashReason pins the em/en dash block. House style forbids them everywhere
+// with no --longform bypass, so any send carrying U+2014 or U+2013 is rejected,
+// while clean text and a plain hyphen pass untouched.
+func TestDashReason(t *testing.T) {
+	blocked := []string{
+		"ok — here you go",   // em dash mid-sentence
+		"1 Sep — £500",       // em dash in a relayed list: the real slip
+		"the range is 10–20", // en dash in a range
+	}
+	for _, msg := range blocked {
+		if dashReason(msg) == "" {
+			t.Errorf("dashReason(%q) passed, want a block reason", msg)
+		}
+	}
+	clean := []string{
+		"ok, here you go",
+		"next-day delivery is fine", // plain hyphen in a compound word passes
+		"1 Sep, 500",
+		"10-20 people", // a hyphen range passes; only em and en dashes are blocked
+	}
+	for _, msg := range clean {
+		if reason := dashReason(msg); reason != "" {
+			t.Errorf("dashReason(%q) = %q, want pass", msg, reason)
+		}
+	}
+}
+
 // TestTextAfterFullStop pins the detector directly, including the protected
 // spans that must not read as full stops.
 func TestTextAfterFullStop(t *testing.T) {
