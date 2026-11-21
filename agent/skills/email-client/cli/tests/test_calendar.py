@@ -377,6 +377,17 @@ def test_list_expands_recurring_into_occurrences(rec, monkeypatch, capsys):
     assert starts[-1].startswith("2026-07-17T09:00:00")
 
 
+def test_list_exposes_rrule_on_recurring_entries_only(rec, monkeypatch, capsys):
+    _freeze_window(monkeypatch)
+    rec.responses = [("REPORT", "/events/", (207, MULTISTATUS))]
+    out = json.loads(_run(["calendar", "list", "--days-ahead", "10"], capsys))
+    assert {e["id"]: e["recurrence"] for e in out} == {
+        "evt-timed@google.com": None,
+        "evt-allday": None,
+        "evt-weekly": ["RRULE:FREQ=DAILY;COUNT=5"],
+    }
+
+
 def test_list_custom_calendar_id_used_verbatim_on_google(rec, monkeypatch, capsys):
     _freeze_window(monkeypatch)
     rec.responses = [("REPORT", "/events/", (207, MULTISTATUS))]
@@ -594,6 +605,12 @@ def test_get_event_via_uid_report(rec, capsys):
     assert out["attendees"][0]["responseStatus"] == "needsAction"
 
 
+def test_get_exposes_rrule_of_recurring_event(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(RECURRING_ICS)))]
+    out = json.loads(_run(["calendar", "get", "--id", "evt-series@google.com"], capsys))
+    assert out["recurrence"] == ["RRULE:FREQ=DAILY;COUNT=5"]
+
+
 def test_get_falls_back_to_resource_name_when_report_is_empty(rec, capsys):
     rec.responses = [
         ("REPORT", "/events/", (207, '<D:multistatus xmlns:D="DAV:"/>')),
@@ -688,6 +705,50 @@ def test_create_rejects_bad_timezone(rec, capsys):
     assert "invalid timezone" in str(ei.value)
 
 
+def test_create_all_day_yearly_recurrence_writes_rrule(rec, capsys):
+    _run(["calendar", "create", "--subject", "Birthday", "--start", "2026-03-14", "--recurrence", "rrule:freq=yearly"], capsys)
+    body = rec.calls[0]["body"]
+    assert "DTSTART;VALUE=DATE:20260314" in body
+    assert "RRULE:FREQ=YEARLY\r\n" in body
+
+
+def test_create_timed_recurrence_with_utc_until(rec, capsys):
+    _run(
+        [
+            "calendar",
+            "create",
+            "--subject",
+            "Standup",
+            "--start",
+            "2026-07-20T09:00:00",
+            "--timezone",
+            "Europe/London",
+            "--recurrence",
+            "FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261231T235959Z",
+        ],
+        capsys,
+    )
+    assert "RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261231T235959Z" in rec.calls[0]["body"]
+
+
+@pytest.mark.parametrize(
+    ("rule", "start", "reason"),
+    [
+        ("YEARLY", "2026-03-14", "KEY=VALUE"),
+        ("FREQ=HOURLY", "2026-03-14", "supported"),
+        ("FREQ=DAILY;BYHOUR=9", "2026-03-14", "supported"),
+        ("FREQ=DAILY;COUNT=3;UNTIL=20260320", "2026-03-14", "COUNT and UNTIL"),
+        ("FREQ=DAILY;UNTIL=20260320T000000Z", "2026-03-14", "UNTIL must be"),
+        ("FREQ=DAILY;UNTIL=20260320", "2026-03-14T09:00:00", "UNTIL must be"),
+    ],
+)
+def test_create_rejects_invalid_recurrence_without_writing(rec, capsys, rule, start, reason):
+    with pytest.raises(SystemExit) as ei:
+        _run(["calendar", "create", "--subject", "x", "--start", start, "--recurrence", rule], capsys)
+    assert reason in str(ei.value)
+    assert rec.calls == []
+
+
 def test_build_vtimezone_has_both_dst_blocks():
     vtz = ics.build_vtimezone(ZoneInfo("Europe/London"), 2026)
     names = sorted(child.name for child in vtz.children)
@@ -750,6 +811,19 @@ def test_update_replaces_attendees(rec, capsys):
     put = next(c for c in rec.calls if c["method"] == "PUT")
     assert "mailto:new@x.com" in put["body"].replace("\r\n ", "")
     assert "mailto:me@gmail.com" not in put["body"].replace("ORGANIZER:mailto:me@gmail.com", "")
+
+
+def test_update_sets_recurrence_and_none_removes_it(rec, capsys):
+    rec.responses = [("REPORT", "/events/", (207, _report_body(EXISTING_ICS)))]
+    _run(["calendar", "update", "--id", "evt-timed@google.com", "--recurrence", "FREQ=MONTHLY;COUNT=6"], capsys)
+    put = next(c for c in rec.calls if c["method"] == "PUT")
+    assert "RRULE:FREQ=MONTHLY;COUNT=6" in put["body"]
+
+    rec.calls.clear()
+    rec.responses = [("REPORT", "/events/", (207, _report_body(RECURRING_ICS)))]
+    _run(["calendar", "update", "--id", "evt-series@google.com", "--recurrence", "none"], capsys)
+    put = next(c for c in rec.calls if c["method"] == "PUT")
+    assert "RRULE" not in put["body"]
 
 
 def test_delete_finds_event_then_deletes(rec, capsys):

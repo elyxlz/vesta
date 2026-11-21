@@ -134,6 +134,20 @@ def _touch(vevent: ics.Component) -> None:
     ics.set_prop(vevent, "DTSTAMP", ics.format_utc(dt.datetime.now(dt.UTC)))
 
 
+def _set_recurrence(vevent: ics.Component, value: str) -> None:
+    """Write --recurrence as the RRULE ('none' removes it), validated against DTSTART."""
+    if value.strip().lower() == "none":
+        ics.remove_props(vevent, "RRULE")
+        return
+    rule_text = re.sub(r"^RRULE:", "", value.strip(), flags=re.IGNORECASE).upper()
+    dtstart = ics.first_prop(vevent, "DTSTART")
+    all_day = dtstart is not None and "T" not in dtstart.value
+    error = ics.rrule_error(rule_text, all_day)
+    if error:
+        sys.exit(f"invalid --recurrence {value!r}: {error}")
+    ics.set_prop(vevent, "RRULE", rule_text)
+
+
 def _if_match(etag: str | None) -> dict[str, str] | None:
     return {"If-Match": etag} if etag else None
 
@@ -165,6 +179,10 @@ def _timezone_warning(vevent: ics.Component, tzmap: ics.TzMap) -> str | None:
     return None
 
 
+def _recurrence_json(vevent: ics.Component) -> list[str] | None:
+    return [f"RRULE:{prop.value}" for prop in ics.all_props(vevent, "RRULE")] or None
+
+
 def _summary_json(occ: ics.Occurrence, tzmap: ics.TzMap) -> dict:
     vevent = occ.vevent
     out = {
@@ -175,6 +193,7 @@ def _summary_json(occ: ics.Occurrence, tzmap: ics.TzMap) -> dict:
         "location": _text(vevent, "LOCATION") or None,
         "attendees": [_clean_addr(prop.value) for prop in ics.all_props(vevent, "ATTENDEE")],
         "status": _text(vevent, "STATUS").lower() or None,
+        "recurrence": _recurrence_json(vevent),
     }
     warning = _timezone_warning(vevent, tzmap)
     if warning:
@@ -208,7 +227,7 @@ def _detail_json(vevent: ics.Component, tzmap: ics.TzMap) -> dict:
         "status": _text(vevent, "STATUS").lower() or None,
         "organizer": _clean_addr(organizer.value) if organizer is not None else None,
         "attendees": [_attendee_json(prop) for prop in ics.all_props(vevent, "ATTENDEE")],
-        "recurrence": [f"RRULE:{prop.value}" for prop in ics.all_props(vevent, "RRULE")] or None,
+        "recurrence": _recurrence_json(vevent),
     }
     warning = _timezone_warning(vevent, tzmap)
     if warning:
@@ -315,6 +334,8 @@ def cmd_create(args) -> None:
         ics.set_prop(vevent, "LOCATION", ics.escape_text(args.location))
     if args.body:
         ics.set_prop(vevent, "DESCRIPTION", ics.escape_text(args.body))
+    if args.recurrence:
+        _set_recurrence(vevent, args.recurrence)
     attendees = _split_attendees(args.attendees)
     if attendees:
         vevent.props.extend(_attendee_prop(addr) for addr in attendees)
@@ -337,8 +358,8 @@ def cmd_update(args) -> None:
     if (args.start is not None or args.end is not None) and not args.timezone:
         sys.exit("--timezone is required when updating --start or --end")
     attendees = _split_attendees(args.attendees)
-    if all(value is None for value in (args.subject, args.start, args.end, args.location, args.body)) and not attendees:
-        sys.exit("nothing to update; pass at least one of --subject/--start/--end/--location/--body/--attendees")
+    if all(value is None for value in (args.subject, args.start, args.end, args.location, args.body, args.recurrence)) and not attendees:
+        sys.exit("nothing to update; pass at least one of --subject/--start/--end/--location/--body/--attendees/--recurrence")
     ctx = caldav_client.caldav_account(args.account)
     tz = _zone(args.timezone or "UTC")
 
@@ -358,6 +379,8 @@ def cmd_update(args) -> None:
         ics.set_prop(vevent, "LOCATION", ics.escape_text(args.location))
     if args.body is not None:
         ics.set_prop(vevent, "DESCRIPTION", ics.escape_text(args.body))
+    if args.recurrence is not None:
+        _set_recurrence(vevent, args.recurrence)
     if attendees:
         ics.remove_props(vevent, "ATTENDEE")
         vevent.props.extend(_attendee_prop(addr) for addr in attendees)
@@ -452,6 +475,7 @@ def build_parser(sub) -> None:
 
     def _cal(p):
         p.add_argument("--calendar", default="primary", help="calendar id (default: primary)")
+        _acct(p)
 
     c_lc = csub.add_parser("list-calendars", help="list the account's calendars")
     _acct(c_lc)
@@ -460,12 +484,10 @@ def build_parser(sub) -> None:
     c_l.add_argument("--days-ahead", type=int, default=7, help="days forward to include (default 7)")
     c_l.add_argument("--days-back", type=int, default=0, help="days back to include (default 0)")
     _cal(c_l)
-    _acct(c_l)
 
     c_g = csub.add_parser("get", help="get one event by id")
     c_g.add_argument("--id", required=True, help="event id (iCalendar UID)")
     _cal(c_g)
-    _acct(c_g)
 
     c_c = csub.add_parser("create", help="create an event (attendees get invites)")
     c_c.add_argument("--subject", required=True, help="event title")
@@ -475,8 +497,8 @@ def build_parser(sub) -> None:
     c_c.add_argument("--location", default=None)
     c_c.add_argument("--body", default=None, help="event description")
     c_c.add_argument("--timezone", default=None, help="IANA timezone (default UTC)")
+    c_c.add_argument("--recurrence", default=None, help="RFC 5545 RRULE, e.g. FREQ=YEARLY or FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10")
     _cal(c_c)
-    _acct(c_c)
 
     c_u = csub.add_parser("update", help="patch an event; edits apply to the whole series")
     c_u.add_argument("--id", required=True, help="event id (iCalendar UID)")
@@ -487,20 +509,18 @@ def build_parser(sub) -> None:
     c_u.add_argument("--location", default=None)
     c_u.add_argument("--body", default=None, help="event description")
     c_u.add_argument("--timezone", default=None, help="IANA timezone (required with --start/--end)")
+    c_u.add_argument("--recurrence", default=None, help="replace the RRULE (e.g. FREQ=YEARLY); 'none' makes the event one-off")
     _cal(c_u)
-    _acct(c_u)
 
     c_d = csub.add_parser("delete", help="delete an event (the whole series for recurring events)")
     c_d.add_argument("--id", required=True, help="event id (iCalendar UID)")
     c_d.add_argument("--occurrence", default=None, help="cancel only the occurrence starting at this ISO date/datetime")
     _cal(c_d)
-    _acct(c_d)
 
     c_r = csub.add_parser("respond", help="respond to an invite (applies to the whole series)")
     c_r.add_argument("--id", required=True, help="event id (iCalendar UID)")
     c_r.add_argument("--response", required=True, choices=["accept", "decline", "tentative"])
     _cal(c_r)
-    _acct(c_r)
 
 
 _DISPATCH = {
