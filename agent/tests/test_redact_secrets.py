@@ -1339,3 +1339,16 @@ def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monk
 
     assert _file_hits(out) == []
     assert "No secrets found." in out
+
+
+def test_snippet_masks_a_neighbouring_secret_cut_by_the_window_edge():
+    first = "Q7xkP2mVt9LwZr4N8cYb3HsJ6dFg0aEuW5iKoTqRnXy"
+    second = "M3vB8nC1xZ6lK9jH4gF7dS2aQ5wE0rT8yU1iO6pLkJh"
+    text = f'{{\n  "peer": {{\n    "inbound_token": "{first}",\n    "outbound_token": "{second}"\n  }}\n}}'
+
+    matches = redact.find_matches(text)
+
+    assert len(matches) == 2
+    for snippet in matches:
+        assert first[-12:] not in snippet and second[-12:] not in snippet
+        assert first[:12] not in snippet and second[:12] not in snippet

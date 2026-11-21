@@ -340,7 +340,25 @@ def _hit_spans(text: str) -> list[tuple[int, int]]:
 def find_matches(text: str) -> list[str]:
     """Every secret in one string as a masked context snippet. Pure and DB-free, so the DB scan and
     the tests share exactly one detection path."""
-    return [_mask_context(text[max(0, start - CONTEXT_CHARS) : end + CONTEXT_CHARS]) for start, end in _hit_spans(text)]
+    spans = sorted(_hit_spans(text))
+    return [_mask_context(_masked_window(text, spans, max(0, start - CONTEXT_CHARS), end + CONTEXT_CHARS)) for start, end in spans]
+
+
+def _masked_window(text: str, spans: list[tuple[int, int]], lo: int, hi: int) -> str:
+    """text[lo:hi] with every overlapping hit span (found on the FULL text) replaced: a neighbouring
+    secret cut by the window edge no longer matches any pattern on its own and would print in clear."""
+    out, pos = [], lo
+    for start, end in spans:
+        if end <= lo or start >= hi:
+            continue
+        s, e = max(start, lo), min(end, hi)
+        if s < pos:
+            pos = max(pos, e)
+            continue
+        out += [text[pos:s], REDACTED]
+        pos = e
+    out.append(text[pos:hi])
+    return "".join(out)
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
