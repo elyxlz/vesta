@@ -318,6 +318,24 @@ The browser sits at `$VESTAD_PUBLIC_URL/agents/$AGENT_NAME/<svc>/...`, so the pr
 - **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses. `public: true` is only for a page that must load with no credential at all (the QR-link-page shape), carries nothing sensitive, and is the rare exception, never the convenient default.
 - A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in your restart daemons (the `restart` skill explains how), so the link survives reboots.
 
+## Push a notification to the user's phone
+
+`user-notification <kind> <title> [body]` posts to `/agents/$AGENT_NAME/user-notification`, and
+vestad shows it on every connected app client and, when the kind pushes, sends it as a push
+notification to the backgrounded mobile app. It is how to reach the user's phone from any
+custom surface: a daemon, a dashboard panel, a script. Kinds are a closed set:
+
+- `message`: something new to read. Pushes by default.
+- `needs_user`: only the user can unblock it (sign in again, approve something). Pushes by default.
+- `task`: task or reminder activity. Does not push by default.
+
+The user can switch push on or off per kind. Clients render `title: body`, so keep the title a
+short headline (the surface or sender) and put the preview in the body; vestad truncates the
+title at 120 characters and the body at 180, and a blank title shows the agent's name. The
+helper is best-effort and swallows every error, so to see the HTTP status, curl the endpoint
+directly with the JSON body `{"kind": ..., "title": ..., "body": ...}`. Replies sent with
+`app-chat send` already push on their own, so never add a `message` notification for one.
+
 ## Update vestad
 
 Check the running version and whether a newer release exists, then apply it:
