@@ -1,0 +1,254 @@
+#!/root/.local/share/uv/tools/vesta-browser/bin/python
+"""One pass over Bob, emitting a notification for anything that is genuinely new.
+
+Run by `hibob daemon`, but safe to run by hand. Exit 0 on a clean pass, 1 on a
+failure, and a FAILURE IS LOUD: an unreachable browser or a dead session must not
+look like "nothing new today", because those two states are otherwise identical
+from the outside and the second is the whole point of the daemon.
+
+WHAT IT WATCHES
+  - New open tasks, and tasks whose due date moved.
+  - A task crossing into due-today or overdue, once each.
+
+WHAT IT DELIBERATELY DOES NOT DO
+  - It never marks, completes or writes anything in Bob. Read-only.
+  - It does not notify on a task disappearing (that is the user completing it, which is
+    good news they already know).
+
+STATE: ~/agent/data/hibob/seen.json, a map of task id -> the fields we compare.
+A first run with no state file records everything and notifies about NOTHING, so
+installing the daemon does not dump an entire onboarding backlog into the intake.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+import time
+
+SKILL = pathlib.Path(__file__).resolve().parent
+HIBOB = str(SKILL / "hibob")
+STATE_DIR = pathlib.Path.home() / "agent/data/hibob"
+STATE_PATH = STATE_DIR / "seen.json"
+NOTIF_DIR = pathlib.Path.home() / "agent/notifications"
+SOURCE = "hibob"
+
+
+def _write_notification(notif_type: str, interrupt: bool, **fields) -> pathlib.Path:
+    """Write `<ns>-hibob-<type>.json`, renamed into place so no partial file is read."""
+    NOTIF_DIR.mkdir(parents=True, exist_ok=True)
+    notif = {
+        "source": SOURCE,
+        "type": notif_type,
+        "interrupt": interrupt,
+        "timestamp": dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat(),
+        **fields,
+    }
+    path = NOTIF_DIR / f"{time.time_ns()}-{SOURCE}-{notif_type}.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(notif))
+    tmp.replace(path)
+    return path
+
+
+def _current_url() -> str | None:
+    """Where the browser tab is right now, or None if it cannot be asked.
+
+    Read through the hibob CLI's own interpreter so this needs no second venv.
+    """
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '/root/agent/skills/browser/cli/src');"
+             "from vesta_browser import helpers; print(helpers.js('location.href') or '')"],
+            capture_output=True, text=True, timeout=60,
+        )
+        url = out.stdout.strip()
+        return url or None
+    except Exception:
+        return None
+
+
+def _restore_url(url: str) -> None:
+    """Put the tab back where it was. Best effort: a failure here is not a poll failure."""
+    try:
+        subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '/root/agent/skills/browser/cli/src');"
+             "from vesta_browser import helpers; helpers.goto(sys.argv[1])", url],
+            capture_output=True, text=True, timeout=90,
+        )
+    except Exception:
+        pass
+
+
+def _fetch_tasks() -> list[dict]:
+    """Open tasks via the CLI. Raises on anything that is not a clean, parseable pass."""
+    proc = subprocess.run(
+        [HIBOB, "tasks", "list", "--status", "Open", "--limit", "200", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"hibob tasks list exited {proc.returncode}: "
+            f"{(proc.stderr or proc.stdout).strip()[:300]}"
+        )
+    out = proc.stdout.strip()
+    if not out:
+        # Empty stdout with exit 0 is the classic fake zero. Never treat it as "no tasks".
+        raise RuntimeError("hibob tasks list produced NO output with exit 0")
+    data = json.loads(out)
+    tasks = data.get("tasks") if isinstance(data, dict) else data
+    if not isinstance(tasks, list):
+        raise RuntimeError(f"unexpected payload shape: {type(tasks).__name__}")
+    return tasks
+
+
+def _key(t: dict) -> str:
+    return str(t.get("id") or t.get("triggeredTaskId") or t.get("title"))
+
+
+def _snapshot(t: dict) -> dict:
+    return {
+        "title": t.get("title"),
+        "dueDate": t.get("dueDate"),
+        "taskList": t.get("taskList"),
+        "flagged": [],
+    }
+
+
+def _ensure_browser() -> None:
+    """Start the browser if no session is alive. The dependency belongs to the dependant.
+
+    WHY (9 Sep 2026): this poller drives a logged-in page, and the browser was only ever started BY
+    HAND, so nothing brought it back after a restart. `daemon_coverage.py` reports it ORPHAN,
+    "started by hand and invisible to both". A restart therefore left this daemon polling into
+    nothing, indefinitely and silently.
+
+    Putting `browser launch` in the restart fleet was tried first and REVERTED within the hour: the
+    fleet's liveness probe runs `<skill> daemon status`, `browser` has no such subcommand, and
+    preflight went from "16 daemons, 0 down" to a permanent false DOWN. A check that cries wolf is
+    worse than the gap it covers.
+
+    So the launch lives here, at the point of use, where the thing that needs the browser is the
+    thing that starts it. Best-effort on purpose: if it fails, `_fetch_tasks()` raises immediately
+    afterwards and the caller reports that, which is a better error than anything this could invent.
+
+    This does NOT restore the Bob login. An expired Okta session is his identity and needs a
+    handover (task 30796f17); a fresh browser on a signed-out profile still fails, loudly.
+    """
+    try:
+        out = subprocess.run(
+            ["browser", "sessions"], capture_output=True, text=True, timeout=30
+        ).stdout
+        if '"browser_alive": true' in out or '"browser_alive":true' in out:
+            return
+        subprocess.run(
+            ["browser", "launch", "--headless", "--user-data-dir", "/root/.browser/profile"],
+            capture_output=True, text=True, timeout=180,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
+def main() -> int:
+    # The CLI parks the tab on app.hibob.com to make its fetch same-origin, which
+    # silently hijacks whatever another tool was doing there. On 7 Sep that killed a
+    # half-finished Gmail filter import and knocked an Okta page out mid-flow. So note
+    # where the tab was and put it back.
+    _ensure_browser()
+    before = _current_url()
+    try:
+        tasks = _fetch_tasks()
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        if before and "app.hibob.com" not in before:
+            _restore_url(before)
+        print(f"hibob poll FAILED: {exc}", file=sys.stderr)
+        return 1
+    if before and "app.hibob.com" not in before:
+        _restore_url(before)
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    first_run = not STATE_PATH.is_file()
+    seen: dict = {} if first_run else json.loads(STATE_PATH.read_text())
+
+    today = dt.date.today()
+    fresh: dict = {}
+    new_tasks: list[dict] = []
+    moved: list[tuple[dict, str]] = []
+    timing: list[tuple[dict, str]] = []
+
+    for t in tasks:
+        k = _key(t)
+        snap = _snapshot(t)
+        prior = seen.get(k)
+        snap["flagged"] = list((prior or {}).get("flagged", []))
+
+        if prior is None:
+            if not first_run:
+                new_tasks.append(t)
+        elif prior.get("dueDate") != snap["dueDate"]:
+            moved.append((t, prior.get("dueDate")))
+
+        due_raw = snap["dueDate"]
+        due = None
+        if due_raw:
+            try:
+                due = dt.date.fromisoformat(str(due_raw)[:10])
+            except ValueError:
+                due = None
+        if due and not first_run:
+            if due < today and "overdue" not in snap["flagged"]:
+                snap["flagged"].append("overdue")
+                timing.append((t, "overdue"))
+            elif due == today and "today" not in snap["flagged"]:
+                snap["flagged"].append("today")
+                timing.append((t, "today"))
+
+        fresh[k] = snap
+
+    for t in new_tasks:
+        _write_notification(
+            "task_new",
+            True,
+            title=t.get("title"),
+            due_date=t.get("dueDate"),
+            task_list=t.get("taskList"),
+        )
+    for t, was in moved:
+        _write_notification(
+            "task_due_changed",
+            False,
+            title=t.get("title"),
+            due_date=t.get("dueDate"),
+            previous_due_date=was,
+        )
+    for t, kind in timing:
+        _write_notification(
+            "task_overdue" if kind == "overdue" else "task_due_today",
+            True,
+            title=t.get("title"),
+            due_date=t.get("dueDate"),
+            task_list=t.get("taskList"),
+        )
+
+    tmp = STATE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(fresh, indent=1))
+    tmp.replace(STATE_PATH)
+
+    if first_run:
+        print(f"first run: recorded {len(fresh)} open task(s), notified about none")
+    else:
+        print(
+            f"{len(tasks)} open task(s); "
+            f"{len(new_tasks)} new, {len(moved)} re-dated, {len(timing)} timing"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
