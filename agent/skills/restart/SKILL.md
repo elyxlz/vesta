@@ -5,7 +5,13 @@ description: What to do after a container restart. Starts the per-skill daemons 
 
 # Restart
 
-Read `/run/vestad-env` so the values are in your context (Read tool, not bash).
+Print `/run/vestad-env` with secret values masked, so the ports, name, and host are in your context and the token is not:
+
+```bash
+sed -E 's/^(export [A-Z_]*(TOKEN|SECRET|KEY)[A-Z_]*=).*/\1<set, not shown>/' /run/vestad-env
+```
+
+Every value is already exported into your environment, so commands use `$AGENT_TOKEN` and never need the literal. Never read the file unmasked: whatever enters context is written to the transcript, which cannot be scrubbed.
 
 Run `~/agent/skills/restart/start-daemons.sh`. It brings up every daemon this container runs and is safe to re-run: it starts only what is down. Then check User State in MEMORY.md and reach out on their preferred channel. Match the moment: new day → warm; mid-convo restart → brief; crash → mention it; middle of the night → wait.
 
