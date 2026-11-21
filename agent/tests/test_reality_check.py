@@ -223,7 +223,7 @@ def test_a_day_of_refused_turns_goes_red(tmp_path):
     run = _run(home)
 
     assert run.returncode == 1, run.stdout + run.stderr
-    assert "RED the provider refused 3 turns today" in run.stdout
+    assert "RED the provider refused 3 turns in the last 2 days" in run.stdout
 
 
 def test_a_lone_refused_turn_stays_green(tmp_path):
@@ -233,20 +233,31 @@ def test_a_lone_refused_turn_stays_green(tmp_path):
     run = _run(home)
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "OK  the provider refused 1 turns today" in run.stdout
+    assert "OK  the provider refused 1 turns in the last 2 days" in run.stdout
 
 
-def test_turns_that_ran_and_yesterdays_refusals_are_not_refused_turns(tmp_path):
-    # A turn that ran and chose silence still reads its cache; a refusal on another day is that
-    # day's finding, not tonight's.
+def test_turns_that_ran_and_older_refusals_are_not_refused_turns(tmp_path):
+    # A turn that ran and chose silence still reads its cache; a refusal older than yesterday is
+    # that day's finding, not tonight's.
     home = _healthy_home(tmp_path)
-    lines = _usage_line(_day(0), cache_read=433470) * 5 + _usage_line(_day(1), cache_read=0) * 5
+    lines = _usage_line(_day(0), cache_read=433470) * 5 + _usage_line(_day(2), cache_read=0) * 5
     (home / "agent" / "logs" / "vesta.log").write_text(lines)
 
     run = _run(home)
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "OK  the provider refused 0 turns today" in run.stdout
+    assert "OK  the provider refused 0 turns in the last 2 days" in run.stdout
+
+
+def test_yesterdays_refused_turns_go_red(tmp_path):
+    # The dream runs after midnight, so the day it reviews is yesterday.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "vesta.log").write_text(_usage_line(_day(1), cache_read=0) * 3)
+
+    run = _run(home)
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED the provider refused 3 turns in the last 2 days" in run.stdout
 
 
 def test_this_agent_filling_the_disk_goes_red(tmp_path):
@@ -429,3 +440,15 @@ def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "no dreamer summaries yet" in run.stdout
+
+
+def test_preempted_turns_are_not_refused_turns(tmp_path):
+    # A turn cut short by a preempt leaves the same zero usage record as a refusal, but it did run.
+    home = _healthy_home(tmp_path)
+    preempt = f"{_day(0)} 03:00:00 [DEBUG] [SYSTEM] [RUNTIME] Preempt sent (priority=now)\n"
+    (home / "agent" / "logs" / "vesta.log").write_text((preempt + _usage_line(_day(0), cache_read=0)) * 5)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  the provider refused 0 turns in the last 2 days" in run.stdout
