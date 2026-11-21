@@ -1,5 +1,6 @@
 """The dream's reality check probes the running system, not the dream's own record."""
 
+import json
 import os
 import pathlib as pl
 import subprocess
@@ -429,3 +430,64 @@ def test_a_box_that_has_never_dreamed_stays_green(tmp_path):
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "no dreamer summaries yet" in run.stdout
+
+
+def _whatsapp_box(tmp_path: pl.Path, *, transcribe: bool, whisper: bool, stt_connected: list[str]) -> dict[str, str]:
+    # PATH is narrowed to the shims plus the system dirs, so the test machine's own transcribe,
+    # voice, or whisper-cli never decides the outcome.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "data" / "daemons" / "whatsapp.pid").write_text(f"{os.getpid()} 12345")
+    shims = {"voice": f"""echo '{{"stt": {{"providers": ["deepgram"], "connected": {json.dumps(stt_connected)}, "selected": null}}}}'"""}
+    if transcribe:
+        shims["transcribe"] = "exit 0"
+    for name, body in shims.items():
+        shim = home / "bin" / name
+        shim.write_text(f"#!/bin/sh\n{body}\n")
+        shim.chmod(0o755)
+    whisper_bin = home / "whisper-cli"
+    if whisper:
+        whisper_bin.write_text("#!/bin/sh\n")
+        whisper_bin.chmod(0o755)
+    return {"HOME": str(home), "PATH": f"{home / 'bin'}:/usr/bin:/bin", "WHISPER_BIN": str(whisper_bin)}
+
+
+def _run_env(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["sh", str(SCRIPT)], env={**os.environ, **env}, capture_output=True, text=True, timeout=60, check=False)
+
+
+def test_whatsapp_with_a_local_whisper_backend_stays_green(tmp_path):
+    run = _run_env(_whatsapp_box(tmp_path, transcribe=True, whisper=True, stt_connected=[]))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  voice notes can be transcribed" in run.stdout
+
+
+def test_whatsapp_with_a_connected_stt_provider_stays_green(tmp_path):
+    run = _run_env(_whatsapp_box(tmp_path, transcribe=True, whisper=False, stt_connected=["deepgram"]))
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  voice notes can be transcribed" in run.stdout
+
+
+def test_whatsapp_without_transcribe_goes_red(tmp_path):
+    run = _run_env(_whatsapp_box(tmp_path, transcribe=False, whisper=True, stt_connected=["deepgram"]))
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED transcribe is not on PATH" in run.stdout
+
+
+def test_whatsapp_with_no_transcription_backend_goes_red(tmp_path):
+    run = _run_env(_whatsapp_box(tmp_path, transcribe=True, whisper=False, stt_connected=[]))
+
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert "RED transcribe has no backend" in run.stdout
+
+
+def test_a_box_without_whatsapp_skips_the_voice_note_probe(tmp_path):
+    env = _whatsapp_box(tmp_path, transcribe=False, whisper=False, stt_connected=[])
+    (tmp_path / "agent" / "data" / "daemons" / "whatsapp.pid").unlink()
+
+    run = _run_env(env)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "transcri" not in run.stdout
