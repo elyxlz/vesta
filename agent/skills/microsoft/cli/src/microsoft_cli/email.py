@@ -7,6 +7,7 @@ import pathlib as pl
 import sys
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -41,7 +42,8 @@ MAX_FILTER_SCAN = 2000
 def _iso_utc_bound(date_str: str, *, end_of_day: bool) -> str:
     """Normalize a plain date (YYYY-MM-DD) or full ISO datetime into an ISO-8601 UTC
     bound such as 2021-01-01T00:00:00Z. A plain date becomes the start of that day, or
-    the end (23:59:59) when `end_of_day` is set, so a --since/--until range is inclusive."""
+    the end (23:59:59) when `end_of_day` is set, so a --since/--until range is inclusive.
+    A datetime without an offset is read in the local timezone; an explicit offset or Z is kept."""
     value = date_str.strip()
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
@@ -50,7 +52,7 @@ def _iso_utc_bound(date_str: str, *, end_of_day: bool) -> str:
     except ValueError:
         parsed = datetime.fromisoformat(value)
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.replace(tzinfo=ZoneInfo(graph.get_default_iana_timezone()))
         parsed = parsed.astimezone(UTC)
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 

@@ -43,3 +43,15 @@ def test_email_matches_query_across_subject_from_and_preview():
 def test_owa_date_filter_uses_pascalcase_property():
     clause = owa_rest_commands._owa_date_filter("2021-01-01", "2021-12-31")
     assert clause == "ReceivedDateTime ge 2021-01-01T00:00:00Z and ReceivedDateTime le 2021-12-31T23:59:59Z"
+
+
+def test_iso_utc_bound_naive_datetime_reads_local_timezone(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/London")
+    assert email._iso_utc_bound("2026-10-09T11:00", end_of_day=False) == "2026-10-09T10:00:00Z"
+    assert email._iso_utc_bound("2026-01-09T11:00", end_of_day=True) == "2026-01-09T11:00:00Z"
+
+
+def test_iso_utc_bound_explicit_offset_ignores_local_timezone(monkeypatch):
+    monkeypatch.setenv("TZ", "America/New_York")
+    assert email._iso_utc_bound("2026-10-09T11:00Z", end_of_day=False) == "2026-10-09T11:00:00Z"
+    assert email._iso_utc_bound("2026-10-09T11:00+01:00", end_of_day=False) == "2026-10-09T10:00:00Z"
