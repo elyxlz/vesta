@@ -648,6 +648,24 @@ def _rrule_supported(rule: dict[str, str]) -> bool:
     return _numeric_rule_values_valid(rule)
 
 
+def rrule_error(rule_text: str, all_day: bool) -> str | None:
+    """Why ``rule_text`` is not an RRULE that ``expand`` can read back, or None when it is."""
+    if not rule_text or not all("=" in part for part in rule_text.split(";")):
+        return "expected KEY=VALUE parts separated by ';', e.g. FREQ=YEARLY"
+    rule = _parse_rrule(rule_text)
+    if not _rrule_supported(rule):
+        keys = ", ".join(sorted(SUPPORTED_RRULE_KEYS - {"FREQ"}))
+        return f"supported: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY with optional {keys}"
+    if "COUNT" in rule and "UNTIL" in rule:
+        return "COUNT and UNTIL cannot both be set"
+    if "UNTIL" in rule:
+        # RFC 5545: UNTIL is a DATE for an all-day DTSTART, else a UTC date-time.
+        match = _DT_RE.match(rule["UNTIL"])
+        if not match or (match.group(2) is None) != all_day or (not all_day and not match.group(3)):
+            return "UNTIL must be YYYYMMDD for an all-day event, else YYYYMMDDTHHMMSSZ (UTC)"
+    return None
+
+
 def _rule_interval(rule: dict[str, str]) -> int:
     return int(rule["INTERVAL"]) if "INTERVAL" in rule else 1
 
