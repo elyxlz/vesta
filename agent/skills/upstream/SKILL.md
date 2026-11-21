@@ -36,7 +36,11 @@ Three calls are intercepted and carry extra behavior:
   authors (`<agent-name> (vesta)`) and plain `gh pr list` cannot answer "which are mine".
   Every PR in that state is checked, so a zero is a real zero; `--limit` only caps the
   rows printed. Run it before touching any branch you did not create this session; never
-  take an author name you saw in a log as your own commit author.
+  take an author name you saw in a log as your own commit author. `@me` is REFUSED
+  wherever it filters by author or assignee (a flag, or inside a search query),
+  because it resolves to the shared App and silently answers "the whole fleet" to
+  the question "which are mine": every row really is a PR, so the wrong answer looks
+  exactly like the right one.
 
 Titles are `type(scope): description`: type one of feat, fix, refactor, perf, docs, test,
 ci, chore, style, build; scope lowercase; description imperative, lowercase start, no
