@@ -18,6 +18,7 @@ import hashlib
 import json
 import string
 import subprocess
+import time
 import typing as tp
 
 from . import owa_rest, teams
@@ -229,12 +230,18 @@ def stop() -> None:
 
 
 def save_captured(config, account_email: str, captured: dict[str, dict[str, float | str]]) -> list[str]:
-    """Persist captured tokens (mail over OWA REST, Teams over Graph). Returns what was saved."""
+    """Persist captured tokens (mail over OWA REST, Teams over Graph). Returns what was saved.
+
+    A headless refresh can re-harvest an already-expired token from the session when the SPA will not
+    mint a fresh one (Teams v2 does this once the SSO cookie lapses). Persisting and reporting such a
+    token would mask a dead credential behind a "Refreshed" log, so only save and report a token
+    whose expiry is still in the future."""
+    now = time.time()
     saved = []
-    if "mail" in captured:
+    if "mail" in captured and float(captured["mail"]["expires_at"]) > now:
         owa_rest.save_token(account_email, config, token=captured["mail"]["token"], expires_at=captured["mail"]["expires_at"], source="browser")
         saved.append("mail/calendar")
-    if "teams" in captured:
+    if "teams" in captured and float(captured["teams"]["expires_at"]) > now:
         teams.save_token(account_email, config, token=captured["teams"]["token"], expires_at=captured["teams"]["expires_at"], source="browser")
         saved.append("Teams")
     return saved

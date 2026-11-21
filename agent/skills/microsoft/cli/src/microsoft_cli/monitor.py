@@ -570,8 +570,23 @@ def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config) -> None:
     for account in capture.due_accounts(config, time.time()):
         try:
             saved = capture.refresh_and_save(config, account)
-            logger.info("Refreshed Microsoft tokens for %s: %s", account, ", ".join(saved))
-            if account in notified:
+            logger.info("Refreshed Microsoft tokens for %s: %s", account, ", ".join(saved) or "nothing usable")
+            now = time.time()
+            expiries = [
+                e for e in (owa_rest.browser_token_expiry(account, config), teams.browser_token_expiry(account, config)) if e is not None
+            ]
+            still_expired = any(e <= now for e in expiries)
+            if still_expired:
+                # A refresh that ran without error but left a token expired means the headless
+                # re-harvest could not mint a fresh one (a lapsed SSO cookie): the credential is
+                # effectively dead, so notify once like an outright CaptureError instead of logging
+                # a misleading success every cycle.
+                if account not in notified:
+                    notified.add(account)
+                    changed = True
+                    msg = f"Microsoft token for {account} expired; re-run: microsoft auth setup --account {account} --browser"
+                    notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=msg)
+            elif account in notified:
                 notified.discard(account)
                 changed = True
         except capture.CaptureError as e:
