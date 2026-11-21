@@ -36,3 +36,6 @@ cd ~/agent/skills/plex
 - `search`/`info` print the real file path on the Plex disk (e.g. `/media/Movies/...`), useful for verifying a download landed in the right folder and matching quality (2160p vs 1080p).
 - Apostrophes in a query are fine here (unlike the torrent search); quote the whole query.
 - Derived from plexapi, owned in-house. No external repo dependency.
+
+## Quiet dialogue / loud effects on one title only
+Before theorising, read the live session: GET `/status/sessions` (X-Plex-Token) shows the player product, the exact file, and whether audio is transcoding (`TranscodeSession.audioDecision`) or direct playing. A session read shows only that moment, so confirm which version the user was playing when the problem happened (they may already have switched). A transcode of DTS/TrueHD to stereo buries centre-channel dialogue; a direct-played multichannel mix downmixed by the player can do the same. Fix: play a DD/DDP (AC3/EAC3) version via "Play Version", or use a dialogue/night-mode setting on the player or TV where one exists.
