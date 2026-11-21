@@ -768,6 +768,9 @@ def remind_update(config: Config, *, reminder_id: str, spec: UpdateSpec) -> dict
         raise ValueError("Pick one zone change: --tz <zone> pins the schedule to that zone, --unpin-tz follows the agent's own zone")
     if spec.message is None and spec.tz is None and not spec.unpin_tz:
         raise ValueError('Say what to change: --message "...", --tz <zone>, or --unpin-tz')
+    if spec.message is not None and not spec.message.strip():
+        # Blank means a shell accident; erasing the text silently is worse than refusing.
+        raise ValueError("--message is empty; that would erase the reminder's text. To remove the reminder use: reminders delete <id>")
 
     with closing(db.get_db(config.data_dir)) as conn:
         row = _require_live_reminder_row(conn, reminder_id)
