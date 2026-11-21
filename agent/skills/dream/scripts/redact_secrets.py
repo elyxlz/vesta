@@ -348,10 +348,10 @@ def _masked_window(text: str, spans: list[tuple[int, int]], lo: int, hi: int) ->
     """text[lo:hi] with every overlapping hit span (found on the FULL text) replaced: a neighbouring
     secret cut by the window edge no longer matches any pattern on its own and would print in clear."""
     out, pos = [], lo
-    for s, e in spans:
-        if e <= lo or s >= hi:
+    for start, end in spans:
+        if end <= lo or start >= hi:
             continue
-        s, e = max(s, lo), min(e, hi)
+        s, e = max(start, lo), min(end, hi)
         if s < pos:
             pos = max(pos, e)
             continue
