@@ -147,9 +147,15 @@ git -C ~ remote set-url upstream https://github.com/elyxlz/vesta.git 2>/dev/null
   git -C ~ remote add upstream https://github.com/elyxlz/vesta.git
 git -C ~ fetch upstream
 git -C ~ worktree add /tmp/vesta-pr -b feature/<name> upstream/master
-cd /tmp/vesta-pr   # apply changes, commit
+cd /tmp/vesta-pr   # apply changes
+git add <the paths you changed>   # never `git add -A`: it sweeps in anything else touched in the tree
+git diff --cached --stat          # must list only the files this PR is about
+git commit -m "..."
+git diff --stat upstream/master...HEAD   # same check on the whole branch before pushing
 upstream gh pr create --title "fix(skills/x): ..." --body "...Closes #N"
 ```
+
+A stray file in a PR fails CI on something unrelated (seen: a stale dashboard css swept in by `git add -A`, red on the dashboard-sync guard) and drags a reviewer through noise.
 
 Branch off `upstream/master` only, never `agent-upstream` (a standalone snapshot with no
 master ancestry; the shared-history guard catches it). A bare `git push upstream` has no
