@@ -370,11 +370,58 @@ func runOneShot(command string) {
 	emitAndExit(output, exitCode)
 }
 
-// parseFlags parses a command's flags, returning what the FlagSet wrote about the problem: the
+// boolValued reports whether a flag takes no separate value, so `--name` stands alone and the
+// token after it is not its value. flag's own bool values implement IsBoolFlag for exactly
+// this question.
+func boolValued(v flag.Value) bool {
+	b, ok := v.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
+}
+
+// rejectDuplicateFlags rejects a repeated value-carrying flag before parsing: Go's flag silently
+// keeps only the LAST value of one, so `send --message "first" --message "second"` delivers only
+// "second" and the first bubble vanishes with no error anywhere. parseFlags is shared by every
+// command, so one guard covers every subcommand's value flags. The scan mirrors flag's own token
+// consumption, so it cannot miscount: -name and --name are one flag, = carries an inline value,
+// the token after a value-carrying flag is its value (never a flag occurrence), and -- ends the
+// flags. Unknown names stay with fs.Parse; repeated bool flags stay allowed (no value to drop).
+func rejectDuplicateFlags(fs *flag.FlagSet, args []string) error {
+	valueCarrying := map[string]bool{}
+	fs.VisitAll(func(f *flag.Flag) { valueCarrying[f.Name] = !boolValued(f.Value) })
+	seen := map[string]bool{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" { // flag stops here; the rest are positionals
+			break
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			continue
+		}
+		name := strings.TrimPrefix(arg[1:], "-")
+		name, _, inline := strings.Cut(name, "=")
+		if !valueCarrying[name] {
+			continue
+		}
+		if seen[name] {
+			return fmt.Errorf("flag %q given more than once (values would silently overwrite each other); pass one value, or use separate send calls", "--"+name)
+		}
+		seen[name] = true
+		if !inline {
+			i++ // the next token is this flag's value, not a flag occurrence
+		}
+	}
+	return nil
+}
+
+// parseFlags parses a command's flags, first rejecting a repeated value-carrying flag (see
+// rejectDuplicateFlags), then returning what the FlagSet wrote about any other problem: the
 // usage for `--help`, or the rejection plus the flag list for anything it does not accept. The
 // FlagSet writes that text to an io.Writer and returns an error that on its own says nothing,
 // so without capturing it the text lands on the daemon's stderr where nothing can read it.
 func parseFlags(fs *flag.FlagSet, args []string) error {
+	if err := rejectDuplicateFlags(fs, args); err != nil {
+		return err
+	}
 	var written bytes.Buffer
 	fs.SetOutput(&written)
 	err := fs.Parse(args)
