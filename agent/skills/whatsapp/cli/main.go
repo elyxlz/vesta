@@ -121,6 +121,11 @@ func main() {
 			}
 			os.Args = append([]string{os.Args[0]}, append(injected, remaining[i:]...)...)
 		}
+		resolved, err := absolutizePathFlags(os.Args[1:])
+		if err != nil {
+			failJSON("%s", err.Error())
+		}
+		os.Args = append([]string{os.Args[0]}, resolved...)
 	}
 
 	switch command {
