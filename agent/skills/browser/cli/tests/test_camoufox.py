@@ -24,6 +24,18 @@ print("not json", flush=True)
 time.sleep(30)
 """
 
+# Answers "ready", then replies to every request with the OBSERVE shape. That is what the worker
+# sends when a reply is read by the wrong waiter: valid JSON, an object, and missing every key the
+# exec caller reads.
+FAKE_WORKER_WRONG_SHAPE = """
+import json, os, pathlib, sys
+profile = sys.argv[sys.argv.index("--profile") + 1]
+pathlib.Path(profile, "fake.pid").write_text(str(os.getpid()))
+print(json.dumps({"ready": True}), flush=True)
+for line in sys.stdin:
+    print(json.dumps({"page": {"state": "ready"}}), flush=True)
+"""
+
 FAKE_WORKER_SILENT = """
 import os, pathlib, sys, time
 profile = sys.argv[sys.argv.index("--profile") + 1]
@@ -305,3 +317,21 @@ def test_stop_leaves_user_js_in_place(rig):
 
     asyncio.run(run())
     assert (session.profile_dir / "user.js").exists()
+
+
+def test_a_reply_missing_the_exec_keys_is_a_garbled_pipe_not_a_crash(rig):
+    """A reply of the wrong shape must reach the caller's existing recovery, not raise KeyError."""
+    paths, session = rig
+    fake = _write_fake_worker(session.scratch_dir, "wrong_shape_worker.py", FAKE_WORKER_WRONG_SHAPE)
+    fake_paths = dataclasses.replace(paths, worker_script=fake)
+
+    async def run():
+        runtime = await camoufox.start(session, fake_paths, headed=HEADED)
+        try:
+            return await camoufox.exec_code(runtime, session, fake_paths, "print('x')", timeout_s=10)
+        finally:
+            await camoufox.stop(runtime, session)
+
+    outcome = asyncio.run(run())
+    assert outcome.exit_code is None
+    assert "capability_mismatch" in outcome.stderr
