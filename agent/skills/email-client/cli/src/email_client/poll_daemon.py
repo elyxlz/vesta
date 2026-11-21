@@ -51,6 +51,8 @@ IDLE_TIMEOUT_SECS = 270
 RECONNECT_SECS = 1500
 # Backoff after a connection error before a worker retries.
 RETRY_DELAY_SECS = 30
+# Auth failures do not heal on their own; retry slowly so a re-auth is picked up without a hot loop.
+AUTH_RETRY_SECS = 600
 # How often the supervisor checks accounts.json for added/removed accounts.
 INDEX_CHECK_SECS = 10
 # Cap one fetch batch so a long offline period doesn't time out a single
@@ -169,10 +171,12 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
     from .imap import connect
 
     high_uid_path = watermark_path(account, folder)
+    auth_alerted = False
     while not stop_event.is_set():
         mb = None
         try:
             mb = connect(account, initial_folder=folder)
+            auth_alerted = False
             use_idle = "IDLE" in (mb.client.capabilities or ())
             log(f"[{account}:{folder}] connected ({'IDLE' if use_idle else 'poll'} mode)")
             emit_new(account, folder, mb, log, high_uid_path)
@@ -191,6 +195,17 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
                     if stop_event.wait(interval):
                         break
                     emit_new(account, folder, mb, log, high_uid_path)
+        except SystemExit as e:
+            # Auth helpers in imap.py call sys.exit() (a CLI convention). In a thread that
+            # escapes `except Exception`, kills the worker silently, and the supervisor
+            # restarts it every tick forever, so an expired token never surfaces.
+            reason = str(e.code) if e.code is not None else "exited"
+            log(f"[{account}:{folder}] auth/config failure: {reason}; retrying in {AUTH_RETRY_SECS}s")
+            if not auth_alerted:
+                write_auth_failed_notification(account, folder, reason)
+                auth_alerted = True
+            stop_event.wait(AUTH_RETRY_SECS)
+            continue
         except Exception as e:
             log(f"[{account}:{folder}] error: {e}; retrying in {RETRY_DELAY_SECS}s")
             stop_event.wait(RETRY_DELAY_SECS)
@@ -199,6 +214,26 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
                 with contextlib.suppress(Exception):
                     mb.logout()
     log(f"[{account}:{folder}] worker stopped")
+
+
+def write_auth_failed_notification(account: str, folder: str, reason: str) -> None:
+    """One interrupting notification when a watched account can no longer authenticate."""
+    NOTIF_DIR.mkdir(parents=True, exist_ok=True)
+    notif = {
+        "source": "email-client",
+        "type": "auth_failed",
+        "interrupt": True,
+        "account": account,
+        "folder": folder,
+        "reason": reason[:500],
+        "hint": f"re-authenticate: email-client auth add --account {account} --reauth",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+    }
+    fname = f"email-client-auth_failed-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+    final = NOTIF_DIR / fname
+    tmp = NOTIF_DIR / f"{fname}.tmp"
+    tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
+    tmp.replace(final)
 
 
 def write_daemon_died_notification(reason: str) -> None:
