@@ -480,6 +480,9 @@ def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str], json_ids: 
             f"INSERT INTO events_fts(rowid, text_content) SELECT id, {fts.text} FROM events WHERE {fts_where}",
             json_ids,
         )
+        # A 'delete' only tombstones the old tokens; the scrubbed value stays in the index segments
+        # until they merge, so force the merge before the vacuum.
+        conn.execute("INSERT INTO events_fts(events_fts) VALUES('optimize')")
     conn.commit()
     return len(changed)
 
