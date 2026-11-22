@@ -343,7 +343,29 @@ def _hit_spans(text: str) -> list[tuple[int, int]]:
 def find_matches(text: str) -> list[str]:
     """Every secret in one string as a masked context snippet. Pure and DB-free, so the DB scan and
     the tests share exactly one detection path."""
-    return [_mask_context(text[max(0, start - CONTEXT_CHARS) : end + CONTEXT_CHARS]) for start, end in _hit_spans(text)]
+    spans = sorted(_hit_spans(text))
+    merged: list[list[int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    # Redact the whole text before windowing: a neighbouring secret cut by the window edge is too
+    # short to match on its own and would print in clear.
+    pieces, starts, last = [], [], 0
+    for start, end in merged:
+        pieces.append(text[last:start])
+        starts.append(sum(len(p) for p in pieces))
+        pieces.append(REDACTED)
+        last = end
+    pieces.append(text[last:])
+    redacted = "".join(pieces)
+    out = []
+    for start, _ in spans:
+        i = max(k for k, (m_start, _m) in enumerate(merged) if m_start <= start)
+        at = starts[i]
+        out.append(_mask_context(redacted[max(0, at - CONTEXT_CHARS) : at + len(REDACTED) + CONTEXT_CHARS]))
+    return out
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:

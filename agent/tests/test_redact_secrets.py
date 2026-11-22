@@ -50,6 +50,17 @@ def test_scan_masks_the_secret_but_keeps_context(event_bus, db_conn):
     assert "the aws key is" in snippet and "for backups" in snippet
 
 
+def test_find_matches_masks_a_neighbouring_secret_cut_by_the_window():
+    first, second = "AKIAABCDEFGHIJKLMNOP", "AKIAQRSTUVWXYZ234567"
+    text = f"key one {first} and after that, the second one {second} end"
+
+    snippets = redact.find_matches(text)
+
+    assert len(snippets) == 2
+    for snippet in snippets:
+        assert "KLMNOP" not in snippet and "WXYZ234567" not in snippet
+
+
 def test_scan_reports_every_match_in_an_event(event_bus, db_conn):
     event_bus.emit(AssistantEvent(type="assistant", text="first AKIAABCDEFGHIJKLMNOP then xoxb-1234-abcdef in one message"))
 
