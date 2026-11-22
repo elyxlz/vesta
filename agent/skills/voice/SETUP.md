@@ -48,7 +48,7 @@ Each user needs their own keys. Deepgram and ElevenLabs can each do both jobs, S
 **Dashboard:** https://elevenlabs.io
 
 1. Sign in or create an account.
-2. Profile (top right) -> **My Account** -> **API Keys**.
+2. Open **Developers -> API Keys** (direct link: https://elevenlabs.io/app/api/api-keys).
 3. Click **Create New Key**.
 4. Give the key permission for:
    - **Text to Speech** (required for synthesis)
