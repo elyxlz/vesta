@@ -50,6 +50,17 @@ def test_scan_masks_the_secret_but_keeps_context(event_bus, db_conn):
     assert "the aws key is" in snippet and "for backups" in snippet
 
 
+def test_find_matches_masks_a_neighbouring_secret_cut_by_the_window():
+    first, second = "AKIAABCDEFGHIJKLMNOP", "AKIAQRSTUVWXYZ234567"
+    text = f"key one {first} and after that, the second one {second} end"
+
+    snippets = redact.find_matches(text)
+
+    assert len(snippets) == 2
+    for snippet in snippets:
+        assert "KLMNOP" not in snippet and "WXYZ234567" not in snippet
+
+
 def test_scan_reports_every_match_in_an_event(event_bus, db_conn):
     event_bus.emit(AssistantEvent(type="assistant", text="first AKIAABCDEFGHIJKLMNOP then xoxb-1234-abcdef in one message"))
 
@@ -1327,7 +1338,9 @@ def test_scan_leaves_the_database_stores_to_their_row_refs(tmp_path, event_bus, 
     assert _file_hits(out) == []
 
 
-@pytest.mark.parametrize("pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts"])
+@pytest.mark.parametrize(
+    "pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts", "agent/data/browser/profiles/camoufox/s1"]
+)
 def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monkeypatch, capsys, pruned):
     """By name anywhere (a cache, a test fixture dir) and by path (the upstream source trees)."""
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")

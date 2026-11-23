@@ -29,12 +29,29 @@ CONN_TIMEOUT_SECS = 30
 FILE_SCAN_ROOTS = (Path("/tmp"), Path("~"))
 # A credential is short; a file above this size is not read and is counted as skipped in the report.
 FILE_SCAN_MAX_BYTES = 256 * 1024
-# Directories the file walk never enters, by name (package caches, the git object store, test
+# Directories the file walk never enters, by name (package caches, Chromium profile caches of
+# compiled JS, Chromium and Firefox `cache2` HTTP bodies and voice data, the git object store, test
 # fixtures and their fake credentials) and by path (the two upstream source trees, whose code spells
-# credential shapes such as `password=` on hundreds of lines; `core` is a read-only mount, and every
-# edit the agent makes under `skills` passes through the transcript, which is scanned).
-FILE_SCAN_PRUNE = frozenset({".git", ".cache", ".npm", "node_modules", "site-packages", "__pycache__", "tests"})
-FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"))
+# credential shapes such as `password=` on hundreds of lines, `core` a read-only mount and `skills`
+# edited only through the scanned transcript; and the browser session profiles, whose cookie stores
+# are where sign-ins belong and whose cache walk alone exceeds the scan budget).
+FILE_SCAN_PRUNE = frozenset(
+    {
+        ".git",
+        ".cache",
+        ".npm",
+        "node_modules",
+        "site-packages",
+        "__pycache__",
+        "tests",
+        "Cache",
+        "Code Cache",
+        "GPUCache",
+        "WasmTtsEngine",
+        "cache2",
+    }
+)
+FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"), Path("~/agent/data/browser/profiles"))
 # Refs the scan prints for sources it can only read: a file is fixed by hand, a transcript by rotation.
 READ_ONLY_REF_PREFIXES = ("file:", "transcript:")
 # The tables FTS5 creates behind a virtual table: binary index shards, never scanned directly.
@@ -340,7 +357,29 @@ def _hit_spans(text: str) -> list[tuple[int, int]]:
 def find_matches(text: str) -> list[str]:
     """Every secret in one string as a masked context snippet. Pure and DB-free, so the DB scan and
     the tests share exactly one detection path."""
-    return [_mask_context(text[max(0, start - CONTEXT_CHARS) : end + CONTEXT_CHARS]) for start, end in _hit_spans(text)]
+    spans = sorted(_hit_spans(text))
+    merged: list[list[int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    # Redact the whole text before windowing: a neighbouring secret cut by the window edge is too
+    # short to match on its own and would print in clear.
+    pieces, starts, last = [], [], 0
+    for start, end in merged:
+        pieces.append(text[last:start])
+        starts.append(sum(len(p) for p in pieces))
+        pieces.append(REDACTED)
+        last = end
+    pieces.append(text[last:])
+    redacted = "".join(pieces)
+    out = []
+    for start, _ in spans:
+        i = max(k for k, (m_start, _m) in enumerate(merged) if m_start <= start)
+        at = starts[i]
+        out.append(_mask_context(redacted[max(0, at - CONTEXT_CHARS) : at + len(REDACTED) + CONTEXT_CHARS]))
+    return out
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
