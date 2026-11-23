@@ -617,6 +617,16 @@ func executeCommand(name string, args []string, wac *WhatsAppClient) (any, error
 	if wac.readOnly && cmd.write {
 		return nil, fmt.Errorf("command %q blocked: instance is read-only", name)
 	}
+	// Serialise sends to the same chat: a parallel burst (two bubbles fired in one
+	// turn) would otherwise race here and arrive out of order. See sendlock.go.
+	if cmd.name == "send-message" || cmd.name == "send-file" || cmd.name == "send-audio" {
+		if target := sendTarget(args); target != "" {
+			if !acquireSendSlot(target) {
+				return nil, fmt.Errorf("parallel send blocked (nothing was sent): another send to this chat is already in flight. Send ONE bubble per tool call, wait for its result, then send the next.")
+			}
+			defer releaseSendSlot(target)
+		}
+	}
 	return cmd.run(args, wac)
 }
 
