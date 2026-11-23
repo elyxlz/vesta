@@ -127,7 +127,7 @@ Every command prints one line of JSON on stdout. A command that fails prints `{"
 voice status
 
 # Providers
-voice <role> check <provider> [--key <k>]     # test a provider for a role; stores nothing
+voice <role> check <provider> [--key <k>]     # test a provider for a role; stores nothing; no --key tests the stored key
 voice <role> connect <provider> [--key <k>]   # test it, store it, select it
 voice <role> use <provider>                   # switch to a connected provider; needs no key
 voice <role> disconnect <provider>            # remove its key; the next connected provider takes over

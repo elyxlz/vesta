@@ -1,7 +1,7 @@
 """voice: the one command of the voice skill.
 
     voice status
-    voice <role> check <provider> [--key <k>]
+    voice <role> check <provider> [--key <k>]   (no --key: test the stored key)
     voice <role> connect <provider> [--key <k>]
     voice <role> use <provider>
     voice <role> disconnect <provider>
@@ -111,7 +111,11 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    _check(args.role, args.provider, args.key)
+    # With no --key, re-test the key already connected for this provider, so a stored key can be checked without retyping it.
+    key = args.key
+    if key is None:
+        key = vc.provider_creds(vc.load(_data_dir())[args.role], args.provider).get("api_key")
+    _check(args.role, args.provider, key)
     print(json.dumps({"role": args.role, "provider": args.provider, "ok": True}))
     return 0
 
