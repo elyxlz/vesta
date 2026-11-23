@@ -118,7 +118,34 @@ def test_agent_narration_does_not_count_as_an_error_storm(tmp_path):
     run = _run(home)
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "OK  vesta.log: 0 error lines in the last 2 days" in run.stdout
+    # The narration fixture carries no dates, so the scope label is the undated one; the test is
+    # about the count, so it stays agnostic to which window the probe names.
+    assert "OK  vesta.log: 0 error lines" in run.stdout
+
+
+def test_an_undated_log_names_its_window(tmp_path):
+    """A log whose lines carry no dates cannot prove its tail is recent, so the probe must say so
+    instead of silently claiming a scope the lines cannot support."""
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "undated.log").write_text("INFO fine\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  undated.log: 0 error lines in an undated window" in run.stdout
+    assert "the last 2 days" not in run.stdout
+
+
+def test_a_dated_log_keeps_the_two_day_scope(tmp_path):
+    # Dated lines keep the original scope label: the honesty note is for the undated shape only.
+    home = _healthy_home(tmp_path)
+    (home / "agent" / "logs" / "dated.log").write_text(f"{_day(0)} 01:00:00 INFO fine\n" * 300)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  dated.log: 0 error lines in the last 2 days" in run.stdout
+    assert "undated" not in run.stdout
 
 
 def test_an_untagged_daemon_log_still_storms(tmp_path):

@@ -72,16 +72,23 @@ esc=$(printf '\033')
 for log in "$HOME"/agent/logs/*.log; do
     [ -e "$log" ] || continue
     [ -n "$(find "$log" -mmin -1440 2>/dev/null)" ] || continue
-    errors=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
+    counts=$(tail -n 2000 "$log" | sed "s/$esc\[[0-9;]*m//g" | awk -v today="$today" -v yesterday="$yesterday" '
         BEGIN { recent = 1 }
-        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)) }
+        /^\[?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { recent = ($0 ~ ("^\\[?" today)) || ($0 ~ ("^\\[?" yesterday)); dated++ }
         { low = tolower($0) }
-        recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/)' \
-        | grep -icE 'error|traceback')
+        recent && $0 !~ /\[AGENT\]/ && !((low ~ /(^|[^0-9])0 (errors|error\(s\)|warnings|warning\(s\))/ || low ~ /no errors/) && low !~ /[1-9][0-9]* (error|warning)/) && low ~ /error|traceback/ { errors++ }
+        END { print errors+0, dated+0 }
+    ')
+    errors=${counts%% *}
+    dated=${counts##* }
+    # A log whose lines carry no dates cannot be scoped to the last 2 days, so the tail window is
+    # all the probe has; say so instead of silently claiming a scope the line cannot prove.
+    scope="the last 2 days"
+    [ "$dated" -eq 0 ] && scope="an undated window (the log carries no dates, so the 2000-line tail is unverified)"
     if [ "$errors" -gt 200 ]; then
-        bad "$(basename "$log"): $errors error lines in the last 2 days; read it and find the producer"
+        bad "$(basename "$log"): $errors error lines in $scope; read it and find the producer"
     else
-        ok "$(basename "$log"): $errors error lines in the last 2 days"
+        ok "$(basename "$log"): $errors error lines in $scope"
     fi
 done
 
