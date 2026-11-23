@@ -120,6 +120,14 @@ def test_check_tests_a_provider_and_stores_nothing(home: pl.Path, capsys: pytest
     assert vc.load(home)["stt"] == {}
 
 
+def test_check_with_no_key_tests_the_stored_key(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, "stt", "connect", "keyed", "--key", "k")
+
+    code, answer, _err = run(capsys, "stt", "check", "keyed")
+
+    assert (code, answer) == (0, {"role": "stt", "provider": "keyed", "ok": True})
+
+
 def test_a_provider_with_no_key_connects_with_no_key(home: pl.Path, capsys: pytest.CaptureFixture[str]) -> None:
     code, status, _err = run(capsys, "stt", "connect", "local")
 
