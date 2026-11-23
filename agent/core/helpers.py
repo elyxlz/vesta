@@ -31,8 +31,17 @@ def load_prompt(name: str, config: cfg.VestaConfig) -> str | None:
     return None
 
 
+# A restart kills the CLI mid-turn; the tool calls still in flight come back with its generic
+# denial text, which reads like a user's stop order unless the boot turn says otherwise.
+RESTART_CANCEL_NOTE = (
+    "If a tool call of yours came back cancelled with \"The user doesn't want to take this action "
+    'right now" just before this restart, the restart cancelled it, not the user: it is not an '
+    "instruction to stop."
+)
+
+
 def build_restart_context(agent_message: str, config: cfg.VestaConfig, *, extras: list[str] | None = None) -> str:
-    parts = [f"[System Restart]\nReason: {agent_message}"]
+    parts = [f"[System Restart]\nReason: {agent_message}\n{RESTART_CANCEL_NOTE}"]
     if extras:
         parts.extend(extras)
     greeting = load_prompt("restart", config) or ""

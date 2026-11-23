@@ -456,3 +456,23 @@ async def test_turnless_stream_activity_drives_state():
         await wait_for_condition(lambda: state.event_bus.state == "thinking", message="turnless activity never set thinking")
         await message_queue.put(result_msg())
         await wait_for_condition(lambda: state.event_bus.state == "idle", message="the second turnless result never set idle")
+
+
+def test_priority_now_message_says_a_cancelled_tool_is_not_a_user_stop():
+    """A preempt cancels pending tool calls with the CLI's generic 'user doesn't want' text; the
+    preempting prompt must say that cancellation was the preempt, so the agent does not park."""
+    from core.sdk_parsing import PREEMPT_CANCEL_NOTE, build_priority_now_message
+
+    message = build_priority_now_message("new notification", timestamp=dt.datetime(2026, 11, 12, 17, 46))
+    content = message["message"]["content"]
+    assert content.startswith("[Current time:")
+    assert "new notification" in content
+    assert content.endswith(PREEMPT_CANCEL_NOTE)
+    assert "not an instruction to stop" in PREEMPT_CANCEL_NOTE
+
+
+def test_priority_now_message_leaves_slash_commands_untouched():
+    from core.sdk_parsing import build_priority_now_message
+
+    message = build_priority_now_message("/compact", timestamp=dt.datetime(2026, 11, 12, 17, 46))
+    assert message["message"]["content"] == "/compact"
