@@ -201,6 +201,7 @@ To configure your home airports for the `cheapest` command, edit `LONDON_AIRPORT
 
 - **Google Flights destination must be single IATA code.** Multi-origin works, multi-destination does NOT
 - **Google Flights prices in the currency the IP/locale implies**, so pin it with `--currency` on `search`, `dates` and `cheapest` (default `USD`); every result carries `price` plus the `currency` it is quoted in, so quote both onward. Trip.com and Duffel prices likewise depend on currency/locale/IP.
+- **When Google Flights rejects every search** ("the request was rejected, not an empty route"), low-cost carriers' own public fare endpoints still answer over plain HTTP: Ryanair `https://www.ryanair.com/api/farfnd/v4/roundTripFares` (also `oneWayFares` and per-day `cheapestPerDay`) returns months of fares for a route in one call. Fares are per person and the cheapest bucket only, so re-read the exact date before quoting and price each seat separately.
 - Results carry no `price_usd` field: a script or note that reads `price_usd` reads `price` and `currency` instead.
 
 ## Saved Profiles
