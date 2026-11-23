@@ -55,6 +55,8 @@ for r in db.execute(q):
 PY
 ```
 
+For app-chat, read its store through the CLI, not raw SQL: `app-chat history --limit 20` lists each row with a `role`, `"user"` for messages they sent and `"chat"` for your replies, so anything inbound is a `"role": "user"` row newer than the daemon died.
+
 Anything inbound you have not already acted on is a message the user believes they sent you. Media
 is the case that matters most: inbound attachments generally are not downloaded until something asks
 for them, retention windows on the provider side are measured in days rather than weeks, and a
