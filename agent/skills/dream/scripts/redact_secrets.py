@@ -30,14 +30,28 @@ FILE_SCAN_ROOTS = (Path("/tmp"), Path("~"))
 # A credential is short; a file above this size is not read and is counted as skipped in the report.
 FILE_SCAN_MAX_BYTES = 256 * 1024
 # Directories the file walk never enters, by name (package caches, Chromium profile caches of
-# compiled JS, HTTP bodies and voice data, the git object store, test fixtures and their fake
-# credentials) and by path (the two upstream source trees, whose code spells credential shapes such
-# as `password=` on hundreds of lines; `core` is a read-only mount, and every edit the agent makes
-# under `skills` passes through the transcript, which is scanned).
+# compiled JS, Chromium and Firefox `cache2` HTTP bodies and voice data, the git object store, test
+# fixtures and their fake credentials) and by path (the two upstream source trees, whose code spells
+# credential shapes such as `password=` on hundreds of lines, `core` a read-only mount and `skills`
+# edited only through the scanned transcript; and the browser session profiles, whose cookie stores
+# are where sign-ins belong and whose cache walk alone exceeds the scan budget).
 FILE_SCAN_PRUNE = frozenset(
-    {".git", ".cache", ".npm", "node_modules", "site-packages", "__pycache__", "tests", "Cache", "Code Cache", "GPUCache", "WasmTtsEngine"}
+    {
+        ".git",
+        ".cache",
+        ".npm",
+        "node_modules",
+        "site-packages",
+        "__pycache__",
+        "tests",
+        "Cache",
+        "Code Cache",
+        "GPUCache",
+        "WasmTtsEngine",
+        "cache2",
+    }
 )
-FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"))
+FILE_SCAN_PRUNE_PATHS = (Path("~/agent/core"), Path("~/agent/skills"), Path("~/agent/data/browser/profiles"))
 # Refs the scan prints for sources it can only read: a file is fixed by hand, a transcript by rotation.
 READ_ONLY_REF_PREFIXES = ("file:", "transcript:")
 # The tables FTS5 creates behind a virtual table: binary index shards, never scanned directly.

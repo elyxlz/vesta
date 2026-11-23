@@ -1338,7 +1338,9 @@ def test_scan_leaves_the_database_stores_to_their_row_refs(tmp_path, event_bus, 
     assert _file_hits(out) == []
 
 
-@pytest.mark.parametrize("pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts"])
+@pytest.mark.parametrize(
+    "pruned", [*sorted(redact.FILE_SCAN_PRUNE), "agent/core/prompts", "agent/skills/dream/scripts", "agent/data/browser/profiles/camoufox/s1"]
+)
 def test_scan_never_enters_a_pruned_directory(tmp_path, event_bus, db_conn, monkeypatch, capsys, pruned):
     """By name anywhere (a cache, a test fixture dir) and by path (the upstream source trees)."""
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
