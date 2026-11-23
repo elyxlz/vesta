@@ -48,7 +48,10 @@ def _fail(message: str) -> int:
 
 
 def _log(message: str) -> None:
-    print(f"[{NAME}] {message}", file=sys.stderr, flush=True)
+    # A timestamp on every line: a log without dates cannot be scoped to a window, so a steady
+    # failure rate hides behind any small tail window. Name it like the poll lines do.
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{NAME} {stamp}] {message}", file=sys.stderr, flush=True)
 
 
 @dataclass
