@@ -17,10 +17,7 @@ if (isDesktopApp) {
   }
 }
 
-await Promise.all([
-  document.fonts.load("normal 400 16px 'Archivo Variable'"),
-  document.fonts.load("normal 500 16px 'Source Serif 4 Variable'"),
-]);
+await document.fonts.load("normal 500 16px 'Source Serif 4 Variable'");
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("missing #root element");

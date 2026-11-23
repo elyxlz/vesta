@@ -13,6 +13,7 @@ import {
 } from "@/components/BootTransition";
 import { BRAND_ORB_SIZE } from "@/components/VestaBrand";
 import { BrandBackdrop } from "@/components/brand-backdrop";
+import { SparkleGrid } from "@/components/sparkle-grid";
 import { usePrivacyBlocked } from "@/privacy/use-privacy-blocked";
 
 export default function ConnectScreen() {
@@ -60,6 +61,7 @@ function ConnectContent() {
   return (
     <View style={styles.screen}>
       <BrandBackdrop
+        pattern={<SparkleGrid />}
         orb={
           <BootTransitionTarget destination="connect" status="alive">
             <AgentOrb

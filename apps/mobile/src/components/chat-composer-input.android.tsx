@@ -20,10 +20,8 @@ import {
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input.types";
 import { useChatComposerLifecycle } from "@/components/chat-composer-input-lifecycle";
-import { fontNames } from "@/theme/typography";
 
 const textStyle = {
-  fontFamily: fontNames.sans.native["400"],
   fontSize: 17,
   fontWeight: "400" as const,
   lineHeight: 22,

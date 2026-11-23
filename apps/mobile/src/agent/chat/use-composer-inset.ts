@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import {
   Easing,
+  useAnimatedReaction,
   useDerivedValue,
   useSharedValue,
   withTiming,
@@ -14,7 +15,7 @@ const CHAT_COMPOSER_GAP = 6;
 // `isScrollAtEnd` on an inverted list); the transcript follows a reply slide exactly when it does.
 const LIST_AT_END_OFFSET = 20;
 const REPLY_SLIDE = {
-  duration: 250,
+  duration: 400,
   easing: Easing.bezier(0.32, 0.72, 0, 1).factory(),
 };
 
@@ -29,6 +30,7 @@ export function useComposerInset(freeze: SharedValue<boolean>) {
   const replyHeight = useSharedValue(0);
   const replyTarget = useSharedValue(0);
   const listFollows = useSharedValue(false);
+  const pendingGrow = useSharedValue<number | null>(null);
   const measuredHeight = useRef<number | null>(null);
   const insetRef = useRef(0);
   const targetRef = useRef(0);
@@ -55,6 +57,36 @@ export function useComposerInset(freeze: SharedValue<boolean>) {
     applyMeasured();
   }, [applyMeasured]);
 
+  const startSlide = useCallback(
+    (height: number) => {
+      "worklet";
+      replyTarget.set(height);
+      replyHeight.set(
+        withTiming(height, REPLY_SLIDE, (finished) => {
+          if (finished) scheduleOnRN(settle);
+        }),
+      );
+    },
+    [replyHeight, replyTarget, settle],
+  );
+
+  // A larger inset reaches the list in two steps: the scroll view takes the
+  // inset in the pass that runs this reaction, and moves its content in the
+  // next frame's pass. The slide starts in that next frame, so the shift never
+  // shows against an offset the list has not taken yet. A smaller inset moves
+  // the content at once, so that slide starts with no wait.
+  useAnimatedReaction(
+    () => composerInset.get(),
+    (inset, previous) => {
+      const height = pendingGrow.get();
+      if (height === null || previous === null || inset <= previous) return;
+      pendingGrow.set(null);
+      requestAnimationFrame(() => {
+        startSlide(height);
+      });
+    },
+  );
+
   const slideReplyTo = useCallback(
     (height: number) => {
       const delta = height - targetRef.current;
@@ -74,23 +106,21 @@ export function useComposerInset(freeze: SharedValue<boolean>) {
         listFollows.set(
           !freeze.get() && scrollOffset.get() <= LIST_AT_END_OFFSET,
         );
-        replyTarget.set(height);
+        // On a larger inset the reaction above starts the slide.
+        pendingGrow.set(delta > 0 ? height : null);
         composerInset.set(inset);
-        replyHeight.set(
-          withTiming(height, REPLY_SLIDE, (finished) => {
-            if (finished) scheduleOnRN(settle);
-          }),
-        );
+        if (delta < 0) startSlide(height);
       });
     },
     [
       composerInset,
       freeze,
       listFollows,
+      pendingGrow,
       replyHeight,
       replyTarget,
       scrollOffset,
-      settle,
+      startSlide,
     ],
   );
 

@@ -346,8 +346,6 @@ export function BootSplash({
             <Button
               size="small"
               variant="secondary"
-              icon="log-out-outline"
-              iconColor={colors.danger}
               loading={disconnecting}
               onPress={() => {
                 if (disconnecting) return;
@@ -355,7 +353,7 @@ export function BootSplash({
                 void onDisconnect().catch(() => setDisconnecting(false));
               }}
             >
-              Disconnect gateway
+              Disconnect
             </Button>
           </Animated.View>
         </>

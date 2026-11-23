@@ -36,7 +36,7 @@ interface MessageContextMenuProps<Id extends string> {
   menuRef?: Ref<MessageMenuHandle>;
   style?: StyleProp<ViewStyle>;
   tailSide?: TailSide;
-  tailOverhang?: number;
+  tailCornerRadius?: number;
   previewCornerRadius?: number;
   bubbleFillColor?: ColorValue;
   bubbleStrokeColor?: ColorValue;
@@ -67,7 +67,7 @@ export function MessageContextMenu<Id extends string = string>({
   menuRef,
   style,
   tailSide = "none",
-  tailOverhang = 0,
+  tailCornerRadius,
   previewCornerRadius = 22,
   bubbleFillColor = "transparent",
   bubbleStrokeColor = "transparent",
@@ -79,14 +79,6 @@ export function MessageContextMenu<Id extends string = string>({
   };
 
   if (NativeMessageContextMenu) {
-    const tailLayout =
-      tailSide === "none"
-        ? null
-        : {
-            marginHorizontal: -tailOverhang,
-            paddingHorizontal: tailOverhang,
-          };
-
     return (
       <NativeMessageContextMenu
         actions={actions}
@@ -96,8 +88,8 @@ export function MessageContextMenu<Id extends string = string>({
         onAction={({ nativeEvent }) => emitAction(nativeEvent.id)}
         onOpenChange={({ nativeEvent }) => onOpenChange?.(nativeEvent.open)}
         previewCornerRadius={previewCornerRadius}
-        style={[style, tailLayout]}
-        tailOverhang={tailOverhang}
+        style={style}
+        tailCornerRadius={tailCornerRadius}
         tailSide={tailSide}
       >
         {children}

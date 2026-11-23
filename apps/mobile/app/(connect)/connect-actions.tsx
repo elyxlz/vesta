@@ -1,4 +1,3 @@
-import { StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { AuthSheet } from "@/components/auth-sheet";
 import { Button } from "@/components/ui/Button";
@@ -10,23 +9,17 @@ export default function ConnectActionsScreen() {
   const hasRecentGateways = Boolean(recentGateways?.length);
 
   return (
-    <AuthSheet gap={16}>
+    <AuthSheet gap={10}>
       <Button
-        accessibilityLabel="Connect to self-hosted Vesta"
-        icon="server-outline"
-        iconSize={20}
+        accessibilityLabel="Connect to Vesta"
         onPress={() => router.push("/connect-link")}
       >
-        Connect to self-hosted Vesta
+        Connect to Vesta
       </Button>
       {hasRecentGateways ? (
         <Button
-          size="compact"
-          variant="ghost"
+          variant="secondary"
           accessibilityLabel="Recent gateways"
-          icon="time-outline"
-          iconSize={16}
-          labelStyle={[styles.actionLabel, styles.recentActionLabel]}
           onPress={() => router.push("/recent-gateways")}
         >
           Recent gateways
@@ -35,8 +28,3 @@ export default function ConnectActionsScreen() {
     </AuthSheet>
   );
 }
-
-const styles = StyleSheet.create({
-  actionLabel: { fontSize: 14, lineHeight: 18, fontWeight: "600" },
-  recentActionLabel: { fontSize: 13, fontWeight: "500" },
-});

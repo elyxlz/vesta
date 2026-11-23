@@ -1,4 +1,4 @@
-import { ActionSheetIOS, Alert } from "react-native";
+import { Alert } from "react-native";
 import {
   captureFromCamera,
   openPermissionSettings,
@@ -8,16 +8,27 @@ import {
   type PickResult,
 } from "@/attachments/pick";
 
-// The attach entry: three sources behind one native menu (the iOS action sheet, an alert-style
-// chooser on Android), each feeding the same draft pipeline. A camera permanently denied offers
-// the Settings app instead of failing silently.
+// The attach entry: three sources behind the native menu that opens from the composer's plus
+// button, each feeding the same draft pipeline. A camera permanently denied offers the Settings
+// app instead of failing silently.
 
-const OPTIONS = [
-  "Photo & Video Library",
-  "Take Photo or Video",
-  "File",
-  "Cancel",
+export const ATTACH_ACTIONS = [
+  {
+    id: "library",
+    title: "Photo & Video Library",
+    image: "photo.on.rectangle",
+  },
+  { id: "camera", title: "Take Photo or Video", image: "camera" },
+  { id: "file", title: "File", image: "doc" },
 ] as const;
+
+type AttachActionId = (typeof ATTACH_ACTIONS)[number]["id"];
+
+const PICKERS: Record<AttachActionId, () => Promise<PickResult>> = {
+  library: pickFromLibrary,
+  camera: captureFromCamera,
+  file: pickDocuments,
+};
 
 async function deliver(
   result: PickResult,
@@ -39,32 +50,11 @@ async function deliver(
   }
 }
 
-export function showAttachMenu(
+export function runAttachAction(
+  id: string,
   onAssets: (assets: PickedAsset[]) => void,
 ): void {
-  const run = (pick: () => Promise<PickResult>) => {
-    void pick().then((result) => deliver(result, onAssets));
-  };
-  if (process.env.EXPO_OS === "ios") {
-    ActionSheetIOS.showActionSheetWithOptions(
-      { options: [...OPTIONS], cancelButtonIndex: 3 },
-      (index) => {
-        if (index === 0) run(pickFromLibrary);
-        else if (index === 1) run(captureFromCamera);
-        else if (index === 2) run(pickDocuments);
-      },
-    );
-    return;
-  }
-  // Android's Alert renders at most 3 buttons, so cancel is the outside tap, not a button.
-  Alert.alert(
-    "Add attachment",
-    undefined,
-    [
-      { text: OPTIONS[0], onPress: () => run(pickFromLibrary) },
-      { text: OPTIONS[1], onPress: () => run(captureFromCamera) },
-      { text: OPTIONS[2], onPress: () => run(pickDocuments) },
-    ],
-    { cancelable: true },
-  );
+  const action = ATTACH_ACTIONS.find((entry) => entry.id === id);
+  if (!action) return;
+  void PICKERS[action.id]().then((result) => deliver(result, onAssets));
 }

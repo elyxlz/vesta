@@ -520,7 +520,11 @@ jobs:
     name: vestad · Run end-to-end integration tests
     needs: [version-check, detect-changes, build-agent-image]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.agent == 'true'
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the Docker jobs depend on the runner's Docker engine.
+    # On ubuntu-26.04 (Docker 29, containerd image store) the suite's commit, export, and
+    # import steps run far slower and it no longer finishes inside its budget. Raise the
+    # pin in its own PR, with what the newer engine needs.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -610,7 +614,8 @@ jobs:
     name: vestad · Lint, unit, and Docker tests (Linux x64)
     needs: [version-check, detect-changes, build-agent-image]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true'
-    runs-on: ubuntu-latest
+    # Pinned with test-integration: this job runs the Docker unit tests.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

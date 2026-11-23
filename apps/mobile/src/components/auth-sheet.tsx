@@ -120,7 +120,7 @@ function AuthSheetHeader({
   const { colors } = usePreferences();
   const headerContent = (
     <View style={styles.titleRow}>
-      <Text family="heading" style={[styles.title, { color: colors.text }]}>
+      <Text family="serif" style={[styles.title, { color: colors.text }]}>
         {title}
       </Text>
     </View>

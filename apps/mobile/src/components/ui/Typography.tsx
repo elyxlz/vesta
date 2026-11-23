@@ -19,47 +19,37 @@ function numericWeight(weight: TextStyle["fontWeight"]): number {
   return 400;
 }
 
-function fontFor(family: FontFamily, weight: TextStyle["fontWeight"]): string {
+type NamedFamily = Exclude<FontFamily, "sans" | "heading">;
+
+// The loaded face of a named family at the nearest weight it ships.
+function faceFor(family: NamedFamily, weight: TextStyle["fontWeight"]): string {
   const value = numericWeight(weight);
-  if (family === "wordmark") {
-    if (value >= 700) return fontNames.wordmark.native["700"];
-    if (value >= 600) return fontNames.wordmark.native["600"];
-    if (value >= 500) return fontNames.wordmark.native["500"];
-    return fontNames.wordmark.native["400"];
-  }
-  if (family === "heading") {
-    if (value >= 700) return fontNames.heading.native["700"];
-    if (value >= 600) return fontNames.heading.native["600"];
-    if (value >= 500) return fontNames.heading.native["500"];
-    return fontNames.heading.native["400"];
-  }
-  if (family === "serif") {
-    if (value >= 700) return fontNames.serif.native["700"];
-    if (value >= 600) return fontNames.serif.native["600"];
-    if (value >= 500) return fontNames.serif.native["500"];
-    return fontNames.serif.native["400"];
-  }
   if (family === "mono") {
     if (value >= 700) return fontNames.mono.native["700"];
     if (value >= 600) return fontNames.mono.native["600"];
     return fontNames.mono.native["400"];
   }
-  if (value >= 900) return fontNames.sans.native["900"];
-  if (value >= 800) return fontNames.sans.native["800"];
-  if (value >= 700) return fontNames.sans.native["700"];
-  if (value >= 600) return fontNames.sans.native["600"];
-  if (value >= 500) return fontNames.sans.native["500"];
-  return fontNames.sans.native["400"];
+  const faces = fontNames[family].native;
+  if (value >= 700) return faces["700"];
+  if (value >= 600) return faces["600"];
+  if (value >= 500) return faces["500"];
+  return faces["400"];
 }
 
+// Sans and heading text is the system font, which takes its weight from
+// `fontWeight`. A named family is one loaded face per weight, so the face
+// name carries the weight.
 function themedStyle(
   style: TextProps["style"] | TextInputProps["style"],
   family: FontFamily,
 ): TextStyle {
   const flattened = StyleSheet.flatten(style) ?? {};
+  if (family === "sans" || family === "heading") {
+    return { ...flattened, fontFamily: undefined };
+  }
   return {
     ...flattened,
-    fontFamily: fontFor(family, flattened.fontWeight),
+    fontFamily: faceFor(family, flattened.fontWeight),
     fontWeight: undefined,
   };
 }

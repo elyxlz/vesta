@@ -6,7 +6,6 @@ export const PREFERENCES_KEY = "vesta.preferences.v1";
 export interface PreferencesState {
   theme: ThemePreference;
   naturalChatPacingByAgent: Record<string, boolean>;
-  showChatPage: boolean;
   showDashboardPage: boolean;
   showNotificationsPage: boolean;
   showLogsPage: boolean;
@@ -22,7 +21,6 @@ export interface PreferencesState {
 export const initialPreferences: PreferencesState = {
   theme: "system",
   naturalChatPacingByAgent: {},
-  showChatPage: true,
   showDashboardPage: false,
   showNotificationsPage: false,
   showLogsPage: false,
@@ -62,8 +60,6 @@ export function readStoredPreferences(value: string | null): PreferencesState {
       naturalChatPacingByAgent: readBooleanRecord(
         parsed.naturalChatPacingByAgent,
       ),
-      showChatPage:
-        typeof parsed.showChatPage === "boolean" ? parsed.showChatPage : true,
       showDashboardPage:
         typeof parsed.showDashboardPage === "boolean"
           ? parsed.showDashboardPage
