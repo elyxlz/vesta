@@ -30,7 +30,6 @@ POLL_SECS = 0.5
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_WAIT_SECS = 3
 SETTLE_SECS = 2
-POLL_INTERVAL_SECS = 300
 # One pass is a handful of API calls; a pass still running past this is a hung gh.
 TICK_TIMEOUT_SECS = 120
 
@@ -40,6 +39,9 @@ def _budget(name: str, default: int) -> int:
 
 
 STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
+# Installation API quota is shared across every agent on one GitHub App, so a
+# box that polls slower spares the others: overridable per environment.
+POLL_INTERVAL_SECS = _budget("UPSTREAM_POLL_INTERVAL_SECS", 300)
 
 
 def _fail(message: str) -> int:
