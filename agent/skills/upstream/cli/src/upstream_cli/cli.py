@@ -61,7 +61,7 @@ def get_installation_token():
         with urllib.request.urlopen(request, timeout=30) as resp:
             return json.load(resp)["token"]
     except urllib.error.HTTPError as err:
-        print(f"Error getting token: {err.code} {err.read().decode()}", file=sys.stderr)
+        print(f"Error getting token: {err.code} {err.read().decode()[:200]}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -181,7 +181,7 @@ def fetch_pr_pages(token, query):
     while True:
         code, out = gh_api(token, "graphql", method="POST", fields=fields)
         if code != 0:
-            print(f"Error: gh api graphql failed: {out}", file=sys.stderr)
+            print(f"Error: gh api graphql failed: {out[:200]}", file=sys.stderr)
             sys.exit(1)
         page = json.loads(out)["data"]["repository"]["pullRequests"]
         prs.extend(page["nodes"])
@@ -226,10 +226,10 @@ WATCH_STATE_PATH = Path.home() / "agent/data/upstream-prs.json"
 # The App's own login: a comment it posted is this agent's or another agent's reply, never news.
 BOT_LOGIN = "vesta-upstream[bot]"
 # The opener is the first commit's author; the head commit's rollup is what `pr checks` reports.
+# The rollup rides the page query state-only and failing names are fetched per red PR: a page of
+# nodes carrying full check contexts outgrows what GitHub serves once the repo's open-PR count is large.
 WATCH_SELECTION = (
-    "commits(first: 1) { nodes { commit { author { name } } } }"
-    " head: commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {"
-    " ... on CheckRun { name conclusion } ... on StatusContext { context state } } } } } } }"
+    "commits(first: 1) { nodes { commit { author { name } } } } head: commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }"
 )
 FAILED_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 FAILED_STATUS_STATES = {"FAILURE", "ERROR"}
@@ -260,19 +260,26 @@ def write_watch_state(path: Path, state: dict[str, WatchedPr]) -> None:
 
 
 def check_verdict(pr) -> tuple[str, list[str]]:
-    """The head commit's rollup as green, red, or pending, plus the contexts that failed."""
+    """The head commit's rollup as green, red, or pending; failing names arrive via failing_context_names."""
     head = pr["head"]["nodes"]
     rollup = head[0]["commit"]["statusCheckRollup"] if head else None
     if rollup is None:
         return "pending", []
-    failing = []
-    for context in rollup["contexts"]["nodes"]:
-        if "name" in context and context["conclusion"] in FAILED_CONCLUSIONS:
-            failing.append(context["name"])
-        elif "context" in context and context["state"] in FAILED_STATUS_STATES:
-            failing.append(context["context"])
     state = rollup["state"]
-    return (CHECK_VERDICTS[state] if state in CHECK_VERDICTS else "pending"), failing
+    return (CHECK_VERDICTS[state] if state in CHECK_VERDICTS else "pending"), []
+
+
+def failing_context_names(token, oid) -> list[str]:
+    """The failing checks behind a red verdict, read each way a repo reports checks. Only the red path
+    pays this: the page query carries the state alone, so a full page stays servable."""
+    names = []
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/commits/{oid}/check-runs?per_page=100")
+    if code == 0:
+        names += [run["name"] for run in json.loads(out).get("check_runs", []) if run.get("conclusion") in FAILED_CONCLUSIONS]
+    code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/commits/{oid}/status")
+    if code == 0:
+        names += [item["context"] for item in json.loads(out).get("statuses", []) if item.get("state") in FAILED_STATUS_STATES]
+    return names
 
 
 def comment_news(kind, item) -> dict[str, str] | None:
@@ -300,12 +307,14 @@ def watch_open_pr(token, number, pr, previous: WatchedPr | None) -> tuple[Watche
     verdict, failing = check_verdict(pr)
     entry["checks"] = verdict
     if verdict != "pending" and verdict != (previous["checks"] if previous else "pending"):
+        if verdict == "red" and pr["head"]["nodes"]:
+            failing = failing_context_names(token, pr["head"]["nodes"][0]["commit"]["oid"])
         message = "checks green" if verdict == "green" else f"checks red: {', '.join(failing)}"
         news.append(("pr_checks", {**about, "url": pr["url"], "checks": verdict, "failing": ", ".join(failing), "message": message}))
     for kind, path in COMMENT_FEEDS.items():
         code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/{path.format(n=number)}?per_page=100")
         if code != 0:
-            print(f"Warning: could not read {kind}s of #{number}: {out}", file=sys.stderr)
+            print(f"Warning: could not read {kind}s of #{number}: {out[:200]}", file=sys.stderr)
             continue
         last = seen[kind] if kind in seen else 0
         for item in json.loads(out):
