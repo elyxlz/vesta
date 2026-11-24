@@ -120,9 +120,9 @@ def test_checks_report_each_settled_verdict_once_and_again_after_a_push(upstream
     upstream["open"] = [open_pr(7, rollup="FAILURE")]
     upstream["feeds"]["commits/sha7/check-runs"] = {
         "check_runs": [
-            {"name": "guards", "conclusion": "FAILURE"},
-            {"name": "agent", "conclusion": "SUCCESS"},
-            {"name": "web", "conclusion": "CANCELLED"},
+            {"name": "guards", "conclusion": "failure"},
+            {"name": "agent", "conclusion": "success"},
+            {"name": "web", "conclusion": "cancelled"},
         ]
     }
     upstream["feeds"]["commits/sha7/status"] = {"statuses": [{"context": "deploy", "state": "ERROR"}]}

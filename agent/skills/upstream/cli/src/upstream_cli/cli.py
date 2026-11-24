@@ -271,14 +271,19 @@ def check_verdict(pr) -> tuple[str, list[str]]:
 
 def failing_context_names(token, oid) -> list[str]:
     """The failing checks behind a red verdict, read each way a repo reports checks. Only the red path
-    pays this: the page query carries the state alone, so a full page stays servable."""
+    pays this: the page query carries the state alone, so a full page stays servable. REST spells
+    conclusions lowercase ("failure") where GraphQL spells them uppercase, so normalize before matching."""
     names = []
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/commits/{oid}/check-runs?per_page=100")
     if code == 0:
-        names += [run["name"] for run in json.loads(out).get("check_runs", []) if run.get("conclusion") in FAILED_CONCLUSIONS]
+        names += [
+            run["name"] for run in json.loads(out).get("check_runs", []) if str(run.get("conclusion") or "").upper() in FAILED_CONCLUSIONS
+        ]
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/commits/{oid}/status")
     if code == 0:
-        names += [item["context"] for item in json.loads(out).get("statuses", []) if item.get("state") in FAILED_STATUS_STATES]
+        names += [
+            item["context"] for item in json.loads(out).get("statuses", []) if str(item.get("state") or "").upper() in FAILED_STATUS_STATES
+        ]
     return names
 
 
