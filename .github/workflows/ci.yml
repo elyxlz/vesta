@@ -895,20 +895,23 @@ jobs:
 
       # CSC_KEYCHAIN is set only when the cert was present, so it keys the signed
       # path: with a keychain, electron-builder discovers the identity there and
-      # notarizes; without one, force a genuinely unsigned build.
+      # notarizes with the App Store Connect API key, which belongs to the same
+      # Apple team as the certificate; without one, force a genuinely unsigned build.
       - name: Build signed and notarized Electron app
         if: github.event_name != 'pull_request'
         working-directory: apps/desktop
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           if [ -n "$CSC_KEYCHAIN" ]; then
+            export APPLE_API_KEY="$RUNNER_TEMP/asc-api-key.p8"
+            printf '%s\n' "$ASC_API_KEY_P8" > "$APPLE_API_KEY"
             npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never
           else
             echo "No signing certificate configured; building unsigned."
-            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            unset ASC_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER
             CSC_IDENTITY_AUTO_DISCOVERY=false \
               npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
           fi
