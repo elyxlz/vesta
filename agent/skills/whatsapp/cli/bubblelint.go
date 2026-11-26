@@ -24,7 +24,11 @@ const (
 )
 
 var (
-	bubbleURLRe        = regexp.MustCompile(`https?://\S+`)         // urls
+	bubbleURLRe = regexp.MustCompile(`https?://\S+`) // urls
+	// Dotted number runs: IP addresses and version strings (192.168.68.1, 1.0.5.224). Must run
+	// BEFORE bubbleDecimalRe, which eats them pairwise ("192.168" then "68.1") and leaves a lone
+	// "." behind that then reads as a full stop, so any send naming an IP was refused.
+	bubbleDottedNumRe  = regexp.MustCompile(`\b\d+(?:\.\d+){2,}\b`)
 	bubbleDecimalRe    = regexp.MustCompile(`\b\d+[.,]\d+\b`)       // decimals: 8.6, 86,5
 	bubbleInitialismRe = regexp.MustCompile(`\b(?:[A-Za-z]\.){2,}`) // initialisms: W.A.S.T.E., U.K.
 	// Bare, schemeless hostnames: UGG.co.uk, example.com, sub-domain.example.co.uk. A dot-connected
@@ -39,7 +43,7 @@ var (
 	// (e.g., a.m., U.K.) are absent because bubbleInitialismRe already covers them.
 	bubbleAbbrRe = regexp.MustCompile(`(?i)\b(?:mr|mrs|ms|dr|prof|jr|sr|st|vs|approx|fig` +
 		`|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec` +
-		`|inc|ltd|co|corp|ave|rd|blvd|vol|ch|pp)\.`)
+		`|inc|ltd|co|corp|ave|rd|blvd|vol|ch|pp|est)\.`)
 	bubbleEllipsisRe = regexp.MustCompile(`\.{3,}`) // ellipsis: a texting beat, not a full stop
 	// A line-leading ordered-list marker ("1.", "2)") is not a full stop: each item is one
 	// short thought. Only the marker is blanked, so a real wall inside an item still trips.
@@ -50,7 +54,7 @@ var (
 // stripProtected blanks out spans whose '.', '?' or '!' are not full stops, so
 // they cannot trip the lint.
 func stripProtected(text string) string {
-	for _, re := range []*regexp.Regexp{bubbleListMarkerRe, bubbleURLRe, bubbleDecimalRe, bubbleInitialismRe, bubbleHostRe, bubbleAbbrRe, bubbleEllipsisRe} {
+	for _, re := range []*regexp.Regexp{bubbleListMarkerRe, bubbleURLRe, bubbleDottedNumRe, bubbleDecimalRe, bubbleInitialismRe, bubbleHostRe, bubbleAbbrRe, bubbleEllipsisRe} {
 		text = re.ReplaceAllString(text, " ")
 	}
 	return text

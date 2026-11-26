@@ -37,6 +37,10 @@ func TestBubbleLintPasses(t *testing.T) {
 		"Is one of you in Sardinia? ☀️",                 // a trailing emoji decorates the bubble, not a second thought
 		"ok! 👍",                                         // same for a thumbs-up
 		"done. 🚀🚀",                                      // several trailing emoji still decorate one bubble
+		"Gateway 192.168.68.1 (the NVR network).",       // an IP address is one token, not full stops
+		"the camera is at 192.168.68.201, gateway next", // IP mid-sentence
+		"update to version 1.0.5.224 first",             // dotted version string
+		"Est. arrival 0-2 working days",                 // 'Est.' is always followed by more
 	}
 	for _, msg := range cases {
 		if reason := bubbleLintReason(msg); reason != "" {
@@ -53,6 +57,7 @@ func TestBubbleLintBlocks(t *testing.T) {
 		msg  string
 	}{
 		{"text after a full stop", "hey. ok"},
+		{"real stop after an IP", "set it to 192.168.68.1. then reboot the NVR"},
 		{"two sentences in one bubble", "done. anything else?"},
 		{"three sentences in one bubble", "i checked the first folder. then the second one. nothing in either."},
 		{"text after a question mark", "hey! how are you?"},
