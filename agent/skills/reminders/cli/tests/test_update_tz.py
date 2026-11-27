@@ -181,3 +181,12 @@ def test_a_job_armed_in_the_stored_zone_is_never_rearmed(tmp_config: Config, mon
             assert not commands.cron_zone_moved(scheduler.get_job(reminder_id), _trigger_data(tmp_config, reminder_id))
     finally:
         scheduler.shutdown(wait=False)
+
+
+def test_update_refuses_a_blank_message(tmp_config: Config):
+    """`--message "$(cat missing)"` expands to "" and used to erase the reminder text with exit 0."""
+    rid = _daily_brief(tmp_config)["id"]
+    for blank in ("", "   ", "\n"):
+        with pytest.raises(ValueError, match="empty"):
+            commands.remind_update(tmp_config, reminder_id=rid, spec=commands.UpdateSpec(message=blank))
+    assert _row(tmp_config, rid)["message"] == "morning brief"
