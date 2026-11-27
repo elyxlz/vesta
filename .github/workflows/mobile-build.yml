@@ -75,6 +75,15 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('apps/package-lock.json') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # The same JDK as the Android compile check in ci.yml. The runner's default JDK
+      # moves with the image, and the native CMake configure fails on a newer one.
+      - name: Set up Java
+        if: inputs.platform == 'android'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
       # The user-home gradle.properties overrides the Expo template's, whose
       # 512m Metaspace cap OOMs the daemon on this build.
       - name: Size the gradle daemon for the runner
