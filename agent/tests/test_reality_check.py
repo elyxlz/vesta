@@ -121,6 +121,23 @@ def test_agent_narration_does_not_count_as_an_error_storm(tmp_path):
     assert "OK  vesta.log: 0 error lines in the last 2 days" in run.stdout
 
 
+def test_subagent_envelopes_do_not_count_as_an_error_storm(tmp_path):
+    # The daemon logs a subagent's own greps as [SYSTEM] [MESSAGE] [task_...] envelopes, so a night
+    # spent diagnosing the log must not read as the log's components failing all night.
+    home = _healthy_home(tmp_path)
+    day = _day(0)
+    envelope = (
+        f'{GREEN}{day} 03:31:20 [SYSTEM] [MESSAGE] [task_progress] {{"type": "system", "subtype": "task_progress", '
+        '"task_id": "abc", "description": "count ERROR lines in vesta.log"}}' + RESET + "\n"
+    )
+    (home / "agent" / "logs" / "vesta.log").write_text(envelope * 260)
+
+    run = _run(home)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK  vesta.log: 0 error lines in the last 2 days" in run.stdout
+
+
 def test_an_untagged_daemon_log_still_storms(tmp_path):
     # The exclusion subtracts [AGENT]; it must not become a whitelist for [SYSTEM], or the five
     # daemon logs that carry neither tag would score zero forever and never RED again.
