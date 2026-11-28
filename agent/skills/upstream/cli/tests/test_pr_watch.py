@@ -15,16 +15,16 @@ OTHER = "someone-else (vesta)"
 MAINTAINER = "maintainer"
 
 
-def open_pr(number, author=ME, rollup="PENDING", contexts=()):
-    """One node of the watch query. `contexts` are (name, conclusion) pairs; None rollup means no checks ran."""
-    nodes = [{"name": name, "conclusion": conclusion} for name, conclusion in contexts]
-    status = None if rollup is None else {"state": rollup, "contexts": {"nodes": nodes}}
+def open_pr(number, author=ME, rollup="PENDING"):
+    """One node of the watch query: the rollup rides state-only (names are REST, red path only);
+    None rollup means no checks ran."""
+    status = None if rollup is None else {"state": rollup}
     return {
         "number": number,
         "title": f"pr {number}",
         "url": f"https://x/{number}",
         "commits": {"nodes": [{"commit": {"author": {"name": author}}}]},
-        "head": {"nodes": [{"commit": {"statusCheckRollup": status}}]},
+        "head": {"nodes": [{"commit": {"oid": f"sha{number}", "statusCheckRollup": status}}]},
     }
 
 
@@ -117,18 +117,26 @@ def test_checks_report_each_settled_verdict_once_and_again_after_a_push(upstream
     upstream["open"] = [open_pr(7, rollup="PENDING")]
     poll()
     assert poll() == []
-    upstream["open"] = [open_pr(7, rollup="FAILURE", contexts=[("guards", "FAILURE"), ("agent", "SUCCESS"), ("web", "CANCELLED")])]
+    upstream["open"] = [open_pr(7, rollup="FAILURE")]
+    upstream["feeds"]["commits/sha7/check-runs"] = {
+        "check_runs": [
+            {"name": "guards", "conclusion": "failure"},
+            {"name": "agent", "conclusion": "success"},
+            {"name": "web", "conclusion": "cancelled"},
+        ]
+    }
+    upstream["feeds"]["commits/sha7/status"] = {"statuses": [{"context": "deploy", "state": "ERROR"}]}
     [red] = poll()
     assert red["type"] == "pr_checks"
     assert red["checks"] == "red"
-    assert red["failing"] == "guards, web"
-    assert red["message"] == "checks red: guards, web"
+    assert red["failing"] == "guards, web, deploy"
+    assert red["message"] == "checks red: guards, web, deploy"
     assert red["url"] == "https://x/7"
     assert poll() == []
     # A push resets the rollup; the next settled verdict is news again, even the same colour.
     upstream["open"] = [open_pr(7, rollup="PENDING")]
     assert poll() == []
-    upstream["open"] = [open_pr(7, rollup="SUCCESS", contexts=[("guards", "SUCCESS")])]
+    upstream["open"] = [open_pr(7, rollup="SUCCESS")]
     [green] = poll()
     assert green["type"] == "pr_checks"
     assert green["checks"] == "green"
@@ -140,6 +148,19 @@ def test_a_pr_with_no_checks_at_all_is_pending(upstream, poll):
     upstream["open"] = [open_pr(7, rollup=None)]
     poll()
     assert poll() == []
+
+
+def test_a_red_verdict_survives_unreadable_name_reads(upstream, poll):
+    """The colour rides the page query, so a failed REST read of the names costs the names, not the news."""
+    upstream["open"] = [open_pr(7, rollup="PENDING")]
+    poll()
+    upstream["open"] = [open_pr(7, rollup="FAILURE")]
+    upstream["failing"].update({"commits/sha7/check-runs", "commits/sha7/status"})
+    [red] = poll()
+    assert red["type"] == "pr_checks"
+    assert red["checks"] == "red"
+    assert red["failing"] == ""
+    assert red["message"] == "checks red: "
 
 
 def test_reviews_and_inline_comments_are_comments_too(upstream, poll):
