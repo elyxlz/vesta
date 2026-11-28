@@ -98,6 +98,12 @@ def gh_api(token, path, *, method="GET", fields=None) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def error_peek(out: str, cap: int = 400) -> str:
+    """An error body for a log line, capped: a server HTML page runs ~50KB, and printing it whole
+    every poll buried the daemon log in byte-identical noise that hid the one useful line."""
+    return out if len(out) <= cap else out[:cap] + f"... [{len(out) - cap} more bytes]"
+
+
 def run(cmd, env=None):
     result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0 and result.stderr:
@@ -157,14 +163,15 @@ PR_STATES = {"open": "[OPEN]", "closed": "[CLOSED, MERGED]", "all": "[OPEN, CLOS
 PR_PAGE_SIZE = 100
 
 
-def pull_requests_query(states, selection) -> str:
+def pull_requests_query(states, selection, page_size=PR_PAGE_SIZE) -> str:
     """One page of PRs, newest first, each carrying number, title, url, and `selection`. The state
     list is written into the query text: `gh api -f` sends every variable as a string, and GraphQL
-    takes an enum list only as a literal."""
+    takes an enum list only as a literal. Callers that also ask for check rollups pass a smaller
+    page_size: GitHub's graphql handler can 500 on a full page of rollup contexts."""
     owner, name = UPSTREAM_REPO.split("/", maxsplit=1)
     return (
         f'query($cursor: String) {{ repository(owner: "{owner}", name: "{name}") {{ pullRequests('
-        f"states: {states}, first: {PR_PAGE_SIZE}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
+        f"states: {states}, first: {page_size}, after: $cursor, orderBy: {{field: CREATED_AT, direction: DESC}}"
         f") {{ pageInfo {{ hasNextPage endCursor }} nodes {{ number title url {selection} }} }} }} }}"
     )
 
@@ -181,7 +188,7 @@ def fetch_pr_pages(token, query):
     while True:
         code, out = gh_api(token, "graphql", method="POST", fields=fields)
         if code != 0:
-            print(f"Error: gh api graphql failed: {out}", file=sys.stderr)
+            print(f"Error: gh api graphql failed: {error_peek(out)}", file=sys.stderr)
             sys.exit(1)
         page = json.loads(out)["data"]["repository"]["pullRequests"]
         prs.extend(page["nodes"])
@@ -234,6 +241,10 @@ WATCH_SELECTION = (
 FAILED_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 FAILED_STATUS_STATES = {"FAILURE", "ERROR"}
 CHECK_VERDICTS = {"SUCCESS": "green", "FAILURE": "red", "ERROR": "red"}
+# GitHub's graphql handler intermittently 500s (its "Unicorn!" page) on a full 100-PR page that
+# also asks for check rollups; a 50-PR page of the same query passes. Pagination keeps the answer
+# complete, so the watcher pages at 50 instead of failing at 100.
+WATCH_PAGE_SIZE = 50
 # The three feeds a PR's conversation lands in, and the REST path of each.
 COMMENT_FEEDS = {"comment": "issues/{n}/comments", "review": "pulls/{n}/reviews", "review_comment": "pulls/{n}/comments"}
 
@@ -305,7 +316,7 @@ def watch_open_pr(token, number, pr, previous: WatchedPr | None) -> tuple[Watche
     for kind, path in COMMENT_FEEDS.items():
         code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/{path.format(n=number)}?per_page=100")
         if code != 0:
-            print(f"Warning: could not read {kind}s of #{number}: {out}", file=sys.stderr)
+            print(f"Warning: could not read {kind}s of #{number}: {error_peek(out)}", file=sys.stderr)
             continue
         last = seen[kind] if kind in seen else 0
         for item in json.loads(out):
@@ -321,7 +332,7 @@ def settled_pr_news(token, number, previous: WatchedPr) -> tuple[str, dict[str, 
     closed it. None keeps watching it: the read failed, or the PR is open after all."""
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/pulls/{number}")
     if code != 0:
-        print(f"Warning: could not read #{number}: {out}", file=sys.stderr)
+        print(f"Warning: could not read #{number}: {error_peek(out)}", file=sys.stderr)
         return None
     pr = json.loads(out)
     about: dict[str, object] = {"number": int(number), "title": previous["title"], "url": previous["url"]}
@@ -341,7 +352,7 @@ def poll_prs(token, agent_name, state_path: Path, notif_dir: Path) -> tuple[int,
     notification file. Returns how many PRs are watched and the types written. The first pass ever
     records what it finds and writes nothing, so a backlog never arrives as a storm."""
     me = commit_author_name(agent_name)
-    prs = fetch_pr_pages(token, pull_requests_query(PR_STATES["open"], WATCH_SELECTION))
+    prs = fetch_pr_pages(token, pull_requests_query(PR_STATES["open"], WATCH_SELECTION, WATCH_PAGE_SIZE))
     mine = {str(pr["number"]): pr for pr in prs if [node["commit"]["author"]["name"] for node in pr["commits"]["nodes"]][:1] == [me]}
     known = read_watch_state(state_path)
     seeding = known is None
@@ -441,7 +452,7 @@ def create_pr(token, title, body, branch, base):
         if existing:
             print(f"Existing PR: {existing[0]['html_url']}")
         return
-    print(f"Error: {out}", file=sys.stderr)
+    print(f"Error: {error_peek(out)}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -601,7 +612,7 @@ def issue_create(rest):
     body = body_with_attribution(args.body, agent_name, vesta_version)
     code, out = gh_api(token, f"repos/{UPSTREAM_REPO}/issues", method="POST", fields={"title": args.title, "body": body})
     if code != 0:
-        print(f"Error: {out}", file=sys.stderr)
+        print(f"Error: {error_peek(out)}", file=sys.stderr)
         sys.exit(1)
     print(f"Issue created: {json.loads(out)['html_url']}")
 
