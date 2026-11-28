@@ -83,6 +83,12 @@ for log in "$HOME"/agent/logs/*.log; do
     else
         ok "$(basename "$log"): $errors error lines in the last 2 days"
     fi
+    # The error count reads only the tail, so a producer that dumps whole pages per failure
+    # (226 MB of GitHub HTML in upstream.log, Nov 2026) slips past it; size catches that.
+    size_mb=$(( $(stat -c %s "$log" 2>/dev/null || echo 0) / 1048576 ))
+    if [ "$size_mb" -gt 100 ]; then
+        bad "$(basename "$log") is ${size_mb}MB; a producer is dumping bodies, fix it, then truncate in place"
+    fi
 done
 
 # Refused turns: a turn the provider refused logs in=0 out=0 cache_read=0, since nothing ran, while
